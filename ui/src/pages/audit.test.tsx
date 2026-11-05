@@ -1,5 +1,5 @@
 import { describe as group, expect, test } from "vitest";
-import type { AuditEvent } from "../api";
+import { formatTime, type AuditEvent } from "../api";
 import { ACTIONS, describe } from "./AuditLogPage";
 import { parse } from "../router";
 
@@ -17,6 +17,10 @@ group("the audit log page", () => {
   test("says what each event did in a few words", () => {
     expect(describe(event("source.allow_sql", { on: true, via: "import" }))).toBe("Turned on (import)");
     expect(describe(event("source.allow_writing", { on: false, via: "form" }))).toBe("Turned off (form)");
+    expect(describe(event("source.max_runs", { before: null, after: 2, via: "form" }))).toBe("From no limit to 2 (form)");
+    expect(describe(event("source.max_runs", { before: 4, after: null, via: "import" }))).toBe(
+      "From 4 to no limit (import)",
+    );
     expect(describe(event("token.created", { name: "ci", role: "designer", unmask: true, expiresAt: null }))).toBe(
       "ci: designer, sees unmasked values, never expires",
     );
@@ -25,6 +29,13 @@ group("the audit log page", () => {
       "POST 401, from 10.0.0.9, 12 more not kept before this",
     );
     expect(describe(event("mark.cleared", { field: "email" }))).toBe("field: email");
+    expect(describe(event("auth.sign_in", { role: "designer", unmask: true }))).toBe(
+      "designer, sees unmasked values",
+    );
+    expect(describe(event("auth.sign_in_refused", { reason: "No second factor." }))).toBe("No second factor.");
+    expect(describe(event("database.restored", { backup: "kilnmark-20261103T200000Z", takenAt: "2026-11-03T20:00:00Z" }))).toBe(
+      `From kilnmark-20261103T200000Z, taken ${formatTime("2026-11-03T20:00:00Z")}`,
+    );
     expect(describe(event("flow.sql", { source: "warehouse", statements: 2, version: 3 }))).toBe(
       "2 statements on warehouse, version 3",
     );
@@ -35,11 +46,20 @@ group("the audit log page", () => {
       [
         "api.refused",
         "api.request",
+        "auth.sign_in",
+        "auth.sign_in_refused",
+        "auth.sign_out",
+        "access.review",
+        "unmask.requested",
+        "unmask.approved",
+        "unmask.refused",
+        "database.restored",
         "flow.sql",
         "mark.cleared",
         "mark.set",
         "source.allow_sql",
         "source.allow_writing",
+        "source.max_runs",
         "source.deleted",
         "token.created",
         "token.revoked",

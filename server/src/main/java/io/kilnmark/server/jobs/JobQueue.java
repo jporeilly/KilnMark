@@ -50,6 +50,38 @@ public class JobQueue {
     public record Recovery(int requeued, int failed) {
     }
 
+    /**
+     * A source a run uses that limits how many runs use it at once: its id, its name (for the run's
+     * page) and its Most runs at once (ADR 0040).
+     */
+    public record SourceLimit(long sourceId, String source, int max) {
+    }
+
+    /**
+     * What taking places found: the places taken (their lock keys, to give back with
+     * {@link ScanLease#givePlaces}), or {@code full}, the first source with no free place, in which
+     * case nothing is held.
+     */
+    public record Places(List<Long> keys, SourceLimit full) {
+
+        public Places {
+            keys = List.copyOf(keys);
+        }
+
+        /** Whether every place asked for was taken. */
+        public boolean taken() {
+            return full == null;
+        }
+    }
+
+    /**
+     * The lock key of place {@code k} of source {@code sourceId}: a 64-bit advisory lock key, made as
+     * {@link #targetKey} makes a written asset's.
+     */
+    static long placeKey(long sourceId, int k) {
+        return targetKey("kilnmark:source-place:" + sourceId + ":" + k);
+    }
+
     private final Db db;
     private final KilnmarkConfig config;
 
@@ -113,12 +145,16 @@ public class JobQueue {
         }
     }
 
-    /** Claims the next job that is due, if any, and marks it running for {@code workerId}. */
+    /**
+     * Claims the job queued first among those that are due, if any, and marks it running for
+     * {@code workerId}. First queued, not first due: a run waiting for a place on a source, put back
+     * for a few seconds, is then not overtaken by runs queued after it (ADR 0040).
+     */
     public Optional<Job> claim(String workerId) {
         return db.tx(c -> {
             long id;
             try (PreparedStatement ps = c.prepareStatement("SELECT id FROM kilnmark.job "
-                + "WHERE status = 'queued' AND run_after <= now() ORDER BY run_after, id "
+                + "WHERE status = 'queued' AND run_after <= now() ORDER BY id "
                 + "FOR UPDATE SKIP LOCKED LIMIT 1");
                  ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
@@ -232,6 +268,10 @@ public class JobQueue {
         private final int lockClass;
         private final long sourceId;
         private final int backendPid;
+        /** Source places held on this connection: advisory locks nest within a session, so they are counted here. */
+        private final java.util.Set<Long> places = new java.util.HashSet<>();
+        /** Whether this lease has held a place: closing it then wakes the runs waiting for one. */
+        private boolean heldPlaces;
         private boolean closed;
 
         /** {@code sourceId} is the lock's key: a source id, or a pipeline job's id. */
@@ -280,6 +320,84 @@ public class JobQueue {
             });
         }
 
+        /**
+         * Takes one place on each source, on this lease's connection: sources in id order, the first
+         * free place of each (place {@code k} for {@code k} from 0 to the limit less one). All or
+         * nothing: if a source has no free place, the places taken so far are given back, so a run
+         * never holds a place while it waits for another. Places are freed by {@link #givePlaces},
+         * or when the lease closes (by PostgreSQL, when a worker dies).
+         */
+        public synchronized Places takePlaces(java.util.Collection<SourceLimit> sources) {
+            java.util.Map<Long, SourceLimit> byId = new java.util.TreeMap<>();
+            sources.forEach(s -> byId.putIfAbsent(s.sourceId(), s));
+            List<Long> taken = new ArrayList<>();
+            try {
+                for (SourceLimit s : byId.values()) {
+                    Long got = null;
+                    for (int k = 0; k < s.max() && got == null; k++) {
+                        long key = placeKey(s.sourceId(), k);
+                        // A place this session already holds would be granted again: it is not free.
+                        if (!places.contains(key)
+                            && tryLock("SELECT pg_try_advisory_lock(?)", ps -> ps.setLong(1, key))) {
+                            got = key;
+                        }
+                    }
+                    if (got == null) {
+                        unlockPlaces(taken); // no wake: nothing was free for long, and waking would loop
+                        return new Places(List.of(), s);
+                    }
+                    places.add(got);
+                    taken.add(got);
+                }
+            } catch (RuntimeException e) {
+                unlockPlaces(taken);
+                throw e;
+            }
+            heldPlaces |= !taken.isEmpty(); // only places kept: a run that gave them back wakes no one
+            return new Places(taken, null);
+        }
+
+        /**
+         * Gives back places taken with {@link #takePlaces}, and wakes the runs waiting for one; never
+         * throws (closing the lease frees them anyway).
+         */
+        public synchronized void givePlaces(List<Long> keys) {
+            if (unlockPlaces(keys)) {
+                wakeWaiting(c);
+            }
+        }
+
+        /** Unlocks places this lease holds; whether any was. Never throws. */
+        private boolean unlockPlaces(List<Long> keys) {
+            boolean freed = false;
+            for (long key : keys) {
+                if (places.remove(key)) {
+                    try {
+                        freed |= tryLock("SELECT pg_advisory_unlock(?)", ps -> ps.setLong(1, key));
+                    } catch (RuntimeException e) {
+                        LOG.debugf("Could not give back a source's place; closing the lease does");
+                    }
+                }
+            }
+            return freed;
+        }
+
+        /**
+         * Makes the pipeline jobs put back to wait (for a place, or for a job's lock) due now, and
+         * wakes the workers, so a run that has waited takes a freed place before runs queued after it
+         * ({@link #claim} takes the first queued). Pipeline jobs are tried once, so none is waiting
+         * for a back-off. Never throws.
+         */
+        private static void wakeWaiting(Connection c) {
+            try (Statement s = c.createStatement()) {
+                s.executeUpdate("UPDATE kilnmark.job SET run_after = now() WHERE kind = '"
+                    + io.kilnmark.server.pipelines.PipelineStore.JOB_KIND + "' AND status = 'queued' AND run_after > now()");
+                s.execute("NOTIFY " + CHANNEL);
+            } catch (SQLException e) {
+                LOG.debugf("Could not wake the runs waiting for a place; they look again within seconds");
+            }
+        }
+
         private interface Binder {
             void bind(PreparedStatement ps) throws SQLException;
         }
@@ -320,10 +438,14 @@ public class JobQueue {
                 return;
             }
             closed = true;
+            places.clear();
             // Every advisory lock this session took (a pipeline's target and source locks too), so the
             // connection goes back to the pool holding none.
             try (c; PreparedStatement ps = c.prepareStatement("SELECT pg_advisory_unlock_all()")) {
                 ps.execute();
+                if (heldPlaces) {
+                    wakeWaiting(c); // after the places are free, or a woken run would find them still held
+                }
             } catch (SQLException e) {
                 LOG.debugf(e, "Releasing source %d's scan lock; a closed connection releases it anyway", sourceId);
             }
@@ -347,11 +469,20 @@ public class JobQueue {
 
     /**
      * After an error: queued again with a back-off if attempts remain, otherwise failed with its run.
+     * A pipeline job whose run has not started is queued again for a few seconds without using an
+     * attempt, whatever its attempts.
      *
      * @return true if requeued
      */
     public boolean retryOrFail(Job job, String error) {
         return db.tx(c -> {
+            if (neverStarted(c, job.id())) {
+                // A pipeline run tried once, that failed before it started (reading the queue, taking its
+                // places): nothing ran, so it waits again rather than failing (ADR 0040).
+                requeue(c, job.id(), job.workerId(), NOT_STARTED_RETRY, true, "Not started: " + error);
+                notify(c);
+                return true;
+            }
             if (job.attempts() < job.maxAttempts()) {
                 requeue(c, job.id(), job.workerId(), Duration.ofSeconds(30L * job.attempts()), false,
                     "Attempt " + job.attempts() + " failed: " + error);
@@ -379,6 +510,21 @@ public class JobQueue {
             notify(c);
             return null;
         });
+    }
+
+    /** How long a pipeline job that could not start goes back in the queue for. */
+    static final Duration NOT_STARTED_RETRY = Duration.ofSeconds(5);
+
+    /** Whether the job is a pipeline run's whose run has not started: still queued. */
+    private static boolean neverStarted(Connection c, long jobId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.job j JOIN kilnmark.pipeline_run r "
+            + "ON r.id = (j.payload ->> 'pipelineRunId')::bigint WHERE j.id = ? AND j.kind = '"
+            + io.kilnmark.server.pipelines.PipelineStore.JOB_KIND + "' AND r.status = 'queued'")) {
+            ps.setLong(1, jobId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
     }
 
     private static boolean requeue(Connection c, long jobId, String workerId, Duration delay, boolean uncount,
@@ -429,15 +575,18 @@ public class JobQueue {
     /**
      * Recovers jobs left running by a worker that stopped: heartbeat older than {@code staleAfter}
      * and nobody holding its source's scan lock. Requeued while attempts remain; otherwise the job and its
-     * run are marked failed with a reason.
+     * run are marked failed with a reason. A pipeline job whose run never started (still queued) is
+     * requeued without using an attempt: nothing of it ran.
      */
     public Recovery recoverStale(Duration staleAfter) {
         return db.tx(c -> {
-            record Stale(long id, int attempts, int maxAttempts, String worker, long runId) {
+            record Stale(long id, int attempts, int maxAttempts, String worker, long runId, boolean neverStarted) {
             }
             List<Stale> stale = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement("""
-                SELECT j.id, j.attempts, j.max_attempts, j.locked_by, (j.payload ->> 'runId')::bigint
+                SELECT j.id, j.attempts, j.max_attempts, j.locked_by, (j.payload ->> 'runId')::bigint,
+                       j.kind = 'pipeline' AND EXISTS (SELECT 1 FROM kilnmark.pipeline_run r
+                           WHERE r.id = (j.payload ->> 'pipelineRunId')::bigint AND r.status = 'queued')
                 FROM kilnmark.job j
                 WHERE j.status = 'running'
                   AND (j.heartbeat_at IS NULL OR j.heartbeat_at < now() - make_interval(secs => ?))
@@ -461,7 +610,8 @@ public class JobQueue {
                 ps.setLong(5, OID_RANGE);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
-                        stale.add(new Stale(rs.getLong(1), rs.getInt(2), rs.getInt(3), rs.getString(4), rs.getLong(5)));
+                        stale.add(new Stale(rs.getLong(1), rs.getInt(2), rs.getInt(3), rs.getString(4), rs.getLong(5),
+                            rs.getBoolean(6)));
                     }
                 }
             }
@@ -470,7 +620,12 @@ public class JobQueue {
             for (Stale s : stale) {
                 String why = "Worker " + s.worker() + " stopped responding during attempt " + s.attempts() + " of "
                     + s.maxAttempts();
-                if (s.attempts() < s.maxAttempts()) {
+                if (s.neverStarted()) {
+                    // A pipeline run that had not started (it was taking, or waiting for, its places): nothing
+                    // ran, so it goes back in the queue without using its one attempt (ADR 0040).
+                    requeue(c, s.id(), s.worker(), Duration.ZERO, true, why + ", before the run started");
+                    requeued++;
+                } else if (s.attempts() < s.maxAttempts()) {
                     requeue(c, s.id(), s.worker(), Duration.ZERO, false, why);
                     requeueRun(c, s.runId(), "Queued again: the worker running this scan stopped responding");
                     requeued++;

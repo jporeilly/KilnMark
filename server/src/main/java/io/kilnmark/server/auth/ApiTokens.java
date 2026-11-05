@@ -73,7 +73,8 @@ public class ApiTokens {
 
     /** A stored token, without its hash. {@code unmask}: it holds {@link AccessRole#UNMASK_GRANT}. */
     public record Token(long id, String name, AccessRole role, boolean unmask, String createdBy, Instant createdAt,
-                        Instant expiresAt, Instant lastUsedAt, Instant revokedAt, String revokedReason) {
+                        Instant expiresAt, Instant lastUsedAt, Instant revokedAt, String revokedReason,
+                        String unmaskRequestedBy, String unmaskApprovedBy) {
 
         /**
          * {@code active}, {@code expired}, {@code set-aside} (an environment token replaced by a new
@@ -118,6 +119,12 @@ public class ApiTokens {
         this.httpHost = httpHost;
     }
 
+    /** A lifetime in words: whole days where it is, else hours. */
+    static String days(Duration d) {
+        long hours = d.toHours();
+        return hours % 24 == 0 ? hours / 24 + (hours == 24 ? " day" : " days") : hours + " hours";
+    }
+
     /** A new random token: {@code km_} and 43 base64url characters. */
     String newSecret() {
         byte[] raw = new byte[SECRET_BYTES];
@@ -139,12 +146,40 @@ public class ApiTokens {
         return create(name, role, expiresAt, createdBy, null);
     }
 
+    /** Letters and symbols that draw nothing: the Hangul fillers (choseong, jungseong, compatibility, half-width) and blank braille. */
+    private static final java.util.Set<Integer> BLANK = java.util.Set.of(0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800);
+
+    /**
+     * Whether a token name would read as a provider sign-in's ({@code sso:...}), however it is
+     * written: compatibility forms folded (full-width letters and colons), accents and other marks
+     * dropped, and anything before the first letter or digit ignored: spaces of every kind, and the
+     * letters and symbols that draw nothing (the Hangul fillers, the blank braille pattern).
+     */
+    static boolean looksLikeProviderName(String name) {
+        String n = java.text.Normalizer.normalize(name, java.text.Normalizer.Form.NFKC).replaceAll("\\p{M}", "");
+        int i = 0;
+        while (i < n.length() && (!Character.isLetterOrDigit(n.codePointAt(i)) || BLANK.contains(n.codePointAt(i)))) {
+            i += Character.charCount(n.codePointAt(i));
+        }
+        return n.regionMatches(true, i, OidcIdentityAugmentor.PREFIX, 0, OidcIdentityAugmentor.PREFIX.length());
+    }
+
     /**
      * Creates a token. {@code expiresAt} may be null for one that never expires. {@code unmask}
      * says whether it holds {@link AccessRole#UNMASK_GRANT}; null means yes for a designer token and
      * no for any other. Only a designer token may hold it (ADR 0027).
      */
     public Issued create(String name, AccessRole role, Instant expiresAt, String createdBy, Boolean unmask) {
+        return create(name, role, expiresAt, createdBy, unmask, null);
+    }
+
+    /**
+     * {@link #create(String, AccessRole, Instant, String, Boolean)}, by the person {@code personKey}
+     * (a provider sign-in's {@link OidcIdentityAugmentor#personKey}, or null for a token): with the
+     * unmask grant needing two people, only a person may ask for it (ADR 0038).
+     */
+    public Issued create(String name, AccessRole role, Instant expiresAt, String createdBy, Boolean unmask,
+                         String personKey) {
         String clean = name == null ? "" : name.strip();
         if (clean.isEmpty() || clean.length() > 100) {
             throw new IllegalArgumentException("name: give the token a name of 1 to 100 characters, such as ci-pipeline");
@@ -152,6 +187,10 @@ public class ApiTokens {
         if (clean.codePoints().anyMatch(ApiTokens::unprintable)) {
             throw new IllegalArgumentException("name: use letters, digits, spaces and punctuation only, without line "
                 + "breaks or other control characters");
+        }
+        if (looksLikeProviderName(clean)) {
+            throw new IllegalArgumentException("name: names starting " + OidcIdentityAugmentor.PREFIX + " are kept for "
+                + "people who sign in with the identity provider; choose another");
         }
         if (role == null) {
             throw new IllegalArgumentException("role: use viewer, steward, designer or admin");
@@ -164,35 +203,129 @@ public class ApiTokens {
         if (expiresAt != null && !expiresAt.isAfter(Instant.now())) {
             throw new IllegalArgumentException("expiresAt: choose a time in the future, or leave it out for no expiry");
         }
+        Optional<Duration> max = maxLifetime();
+        // five minutes' slack: the browser works out "in 30 days" by its own clock, which may run ahead
+        if (max.isPresent() && (expiresAt == null || expiresAt.isAfter(Instant.now().plus(max.get())
+            .plus(Duration.ofMinutes(5))))) {
+            throw new IllegalArgumentException("expiresAt: this server requires every token to expire within "
+                + days(max.get()) + " (kilnmark.auth.token-max-lifetime); choose an expiry no later than that");
+        }
         String secret = newSecret();
-        Token t = db.tx(c -> insert(c, clean, role, grant, hash(secret), createdBy, expiresAt));
+        // With approval required, the grant waits for a second person: made without it, and asked for by
+        // someone the provider names (a token names no person, and an admin can always make another)
+        boolean waits = grant && unmaskApproval();
+        if (waits && personKey == null) {
+            throw new IllegalArgumentException("unmask: on this server seeing sensitive values takes two people "
+                + "signed in with your identity provider. Sign in with it to ask, or create the token without it");
+        }
+        Token t = limited(db.tx(c -> insert(c, clean, role, grant && !waits, hash(secret), createdBy, expiresAt,
+            waits ? createdBy : null, waits ? personKey : null)));
         LOG.infof("API token %d (%s, %s%s) created by %s", t.id(), loggable(t.name()), t.role().id(),
             t.unmask() ? ", sees unmasked values" : "", loggable(createdBy));
         return new Issued(t, secret);
     }
 
     private static final String COLUMNS =
-        "id, name, role, created_by, created_at, expires_at, last_used_at, revoked_at, revoked_reason, unmask";
+        "id, name, role, created_by, created_at, expires_at, last_used_at, revoked_at, revoked_reason, unmask, "
+            + "unmask_requested_by, unmask_approved_by";
 
-    private static Token token(ResultSet rs) throws SQLException {
+    /** A token as stored. */
+    private static Token row(ResultSet rs) throws SQLException {
         return new Token(rs.getLong(1), rs.getString(2), AccessRole.parse(rs.getString(3)), rs.getBoolean(10),
             rs.getString(4), Db.instant(rs.getTimestamp(5)), Db.instant(rs.getTimestamp(6)),
-            Db.instant(rs.getTimestamp(7)), Db.instant(rs.getTimestamp(8)), rs.getString(9));
+            Db.instant(rs.getTimestamp(7)), Db.instant(rs.getTimestamp(8)), rs.getString(9), rs.getString(11),
+            rs.getString(12));
+    }
+
+    /** A token as it works now: its expiry no later than the longest lifetime allows (ADR 0037). */
+    private Token token(ResultSet rs) throws SQLException {
+        return limited(row(rs));
+    }
+
+    /** {@code t} with the expiry it really has: its own, or its creation plus the longest lifetime, whichever is sooner. */
+    private Token limited(Token t) {
+        Instant limited = expiry(t.createdBy(), t.createdAt(), t.expiresAt());
+        return limited == t.expiresAt() ? t : new Token(t.id(), t.name(), t.role(), t.unmask(), t.createdBy(),
+            t.createdAt(), limited, t.lastUsedAt(), t.revokedAt(), t.revokedReason(), t.unmaskRequestedBy(),
+            t.unmaskApprovedBy());
+    }
+
+    /** The shortest and longest lifetime the setting may give: under a day no token could be made, and very long would overflow. */
+    static final Duration SHORTEST_LIMIT = Duration.ofDays(1);
+    static final Duration LONGEST_LIMIT = Duration.ofDays(3650);
+
+    /** The longest a token may last, from {@code kilnmark.auth.token-max-lifetime}; empty: no limit. Checked at start. */
+    public Optional<Duration> maxLifetime() {
+        return config == null ? Optional.empty() : config.auth().tokenMaxLifetime();
+    }
+
+    /**
+     * Refuses a longest lifetime under a day or over ten years, so a mistake (0 meant as "strict", a
+     * negative number, a typo with many zeros) never quietly means no limit or fails every sign-in.
+     *
+     * @throws IllegalStateException saying what to change
+     */
+    static void checkLimit(Optional<Duration> max) {
+        if (max.isPresent() && (max.get().compareTo(SHORTEST_LIMIT) < 0 || max.get().compareTo(LONGEST_LIMIT) > 0)) {
+            throw new IllegalStateException("kilnmark.auth.token-max-lifetime must be between 1 day and 3650 days, for "
+                + "example 90d; leave it unset for no limit.");
+        }
+    }
+
+    /**
+     * SQL that is true while the token {@code t} works: not revoked, and before its own expiry and the
+     * longest lifetime (from its creation; the environment's admin token is not limited). The one
+     * place sign-in, the admin count and notifications all ask (ADR 0037). The limit is the server's
+     * own setting, written as a whole number of seconds, never a caller's value.
+     */
+    static String worksSql(String t, Optional<Duration> max) {
+        String expiry = max.isEmpty() ? t + ".expires_at"
+            : "LEAST(" + t + ".expires_at, CASE WHEN " + t + ".created_by = '" + FROM_ENVIRONMENT + "' THEN NULL ELSE "
+                + t + ".created_at + make_interval(secs => " + max.get().toSeconds() + ") END)";
+        return "(" + t + ".revoked_at IS NULL AND (" + expiry + " IS NULL OR " + expiry + " > now()))";
+    }
+
+    /** {@link #worksSql} with this server's limit. */
+    public String worksSql(String t) {
+        return worksSql(t, maxLifetime());
+    }
+
+    /**
+     * When a token stops working: its own expiry, or its creation plus the longest lifetime, whichever
+     * comes first. The environment's admin token is not limited: it is replaced by changing the setting.
+     */
+    Instant expiry(String createdBy, Instant createdAt, Instant expiresAt) {
+        Optional<Duration> max = maxLifetime();
+        if (max.isEmpty() || FROM_ENVIRONMENT.equals(createdBy) || createdAt == null) {
+            return expiresAt;
+        }
+        Instant limit = createdAt.plus(max.get());
+        return expiresAt == null || limit.isBefore(expiresAt) ? limit : expiresAt;
     }
 
     private static Token insert(Connection c, String name, AccessRole role, boolean unmask, byte[] hash,
                                 String createdBy, Instant expiresAt) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.api_token "
-            + "(name, role, unmask, hash, created_by, expires_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING " + COLUMNS)) {
+        return insert(c, name, role, unmask, hash, createdBy, expiresAt, null, null);
+    }
+
+    private static Token insert(Connection c, String name, AccessRole role, boolean unmask, byte[] hash,
+                                String createdBy, Instant expiresAt, String unmaskRequestedBy, String requestedKey)
+        throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.api_token (name, role, unmask, hash, "
+            + "created_by, expires_at, unmask_requested_by, unmask_requested_key, unmask_requested_at) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE now() END) RETURNING " + COLUMNS)) {
             ps.setString(1, name);
             ps.setString(2, role.id());
             ps.setBoolean(3, unmask);
             ps.setBytes(4, hash);
             ps.setString(5, createdBy);
             ps.setTimestamp(6, Db.timestamp(expiresAt));
+            ps.setString(7, unmaskRequestedBy);
+            ps.setString(8, requestedKey);
+            ps.setString(9, unmaskRequestedBy);
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
-                return token(rs);
+                return row(rs); // as stored; create shows it limited()
             }
         }
     }
@@ -219,6 +352,103 @@ public class ApiTokens {
                 ps.setLong(1, id);
                 try (ResultSet rs = ps.executeQuery()) {
                     return rs.next() ? Optional.of(token(rs)) : Optional.empty();
+                }
+            }
+        });
+    }
+
+    /**
+     * Refuses approval of the unmask grant without sign-in through the identity provider: the two
+     * people are told apart by the provider (ADR 0038), and tokens alone name no one.
+     *
+     * @throws IllegalStateException saying what to change
+     */
+    static void checkApproval(boolean approval, boolean provider) {
+        if (approval && !provider) {
+            throw new IllegalStateException("kilnmark.auth.unmask-approval needs sign-in with your identity provider "
+                + "(QUARKUS_OIDC_TENANT_ENABLED=true and its settings): the two people are told apart by it. Set "
+                + "it up, or turn unmask-approval off.");
+        }
+    }
+
+    /** Whether a second admin must approve the unmask grant (ADR 0038). */
+    public boolean unmaskApproval() {
+        return config != null && config.auth().unmaskApproval();
+    }
+
+    /** Why an approval or refusal of a token's unmask grant was not made. */
+    public enum GrantProblem {
+        /** No such token. */
+        NOT_FOUND,
+        /** The token asks for no grant (approved, refused, revoked, or never asked). */
+        NOTHING_ASKED,
+        /** The admin who asked for it may not approve it: a second person must. */
+        SAME_PERSON,
+        /** The approver is a token, which names no person: a person signed in with the provider must approve. */
+        NOT_A_PERSON
+    }
+
+    /** The outcome of approving or refusing a grant: the token as it now is and who had asked, or why not. */
+    public record GrantDecision(Token token, GrantProblem problem, String askedBy) {
+        GrantDecision(Token token, GrantProblem problem) {
+            this(token, problem, null);
+        }
+    }
+
+    /**
+     * Gives the token the unmask grant it asked for, approved by {@code by} (as Kilnmark names callers),
+     * the person {@code byKey} (ADR 0038): a person signed in with the provider, other than the one who
+     * asked, compared by the provider's fixed id for each, never by name. Who approved stays on the token.
+     */
+    public GrantDecision approveUnmask(long id, String by, String byKey) {
+        return decideUnmask(id, by, byKey, true);
+    }
+
+    /** Clears a token's request for the unmask grant; the token stays, without it. Any admin may, the asker too. */
+    public GrantDecision refuseUnmask(long id, String by) {
+        return decideUnmask(id, by, null, false);
+    }
+
+    private GrantDecision decideUnmask(long id, String by, String byKey, boolean approve) {
+        if (approve && byKey == null) {
+            return new GrantDecision(null, GrantProblem.NOT_A_PERSON);
+        }
+        return db.tx(c -> {
+            String asked;
+            String askedBy;
+            // a token that still works: revoked, expired or past the longest lifetime cannot be given it
+            try (PreparedStatement ps = c.prepareStatement("SELECT t.unmask_requested_key, t.unmask_requested_by "
+                + "FROM kilnmark.api_token t "
+                + "WHERE t.id = ? AND " + worksSql("t") + " FOR UPDATE")) {
+                ps.setLong(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        return new GrantDecision(null, GrantProblem.NOT_FOUND);
+                    }
+                    asked = rs.getString(1);
+                    askedBy = rs.getString(2);
+                }
+            }
+            if (asked == null) {
+                return new GrantDecision(null, GrantProblem.NOTHING_ASKED);
+            }
+            if (approve && asked.equals(byKey)) {
+                return new GrantDecision(null, GrantProblem.SAME_PERSON);
+            }
+            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.api_token SET unmask = ?, "
+                + "unmask_requested_by = NULL, unmask_requested_key = NULL, unmask_requested_at = NULL, "
+                + "unmask_approved_by = ?, unmask_approved_at = CASE WHEN ? THEN now() END WHERE id = ? RETURNING "
+                + COLUMNS)) {
+                ps.setBoolean(1, approve);
+                ps.setString(2, approve ? by : null);
+                ps.setBoolean(3, approve);
+                ps.setLong(4, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    rs.next();
+                    Token t = token(rs);
+                    LOG.infof("Unmask grant for API token %d (%s) %s by %s", t.id(), loggable(t.name()),
+                        approve ? "approved" : "refused", loggable(by));
+                    return new GrantDecision(t, null, askedBy);
                 }
             }
         });
@@ -258,18 +488,21 @@ public class ApiTokens {
             Caller caller;
             Instant lastUsed;
             Instant now;
-            try (PreparedStatement ps = c.prepareStatement("SELECT id, name, role, hash, expires_at, last_used_at, "
-                + "revoked_at, now(), unmask FROM kilnmark.api_token WHERE hash = ?")) {
+            try (PreparedStatement ps = c.prepareStatement("SELECT t.id, t.name, t.role, t.hash, t.expires_at, "
+                + "t.last_used_at, t.revoked_at, now(), t.unmask, t.created_by, t.created_at, " + worksSql("t")
+                + " FROM kilnmark.api_token t WHERE t.hash = ?")) {
                 ps.setBytes(1, wanted);
                 try (ResultSet rs = ps.executeQuery()) {
                     if (!rs.next() || !MessageDigest.isEqual(wanted, rs.getBytes(4))) {
                         return Optional.empty();
                     }
-                    Instant expires = Db.instant(rs.getTimestamp(5));
-                    now = Db.instant(rs.getTimestamp(8));
-                    if (rs.getTimestamp(7) != null || (expires != null && !expires.isAfter(now))) {
+                    // whether it works is the database's answer (worksSql), as for the admin count and notifications
+                    if (!rs.getBoolean(12)) {
                         return Optional.empty();
                     }
+                    Instant expires = expiry(rs.getString(10), Db.instant(rs.getTimestamp(11)),
+                        Db.instant(rs.getTimestamp(5)));
+                    now = Db.instant(rs.getTimestamp(8));
                     caller = new Caller(rs.getLong(1), rs.getString(2), AccessRole.parse(rs.getString(3)), expires,
                         rs.getBoolean(9));
                     lastUsed = Db.instant(rs.getTimestamp(6));
@@ -309,8 +542,15 @@ public class ApiTokens {
         return b.toString();
     }
 
-    void onStart(@Observes StartupEvent event) {
+    // Straight after Kilnmark's own database check and migrations (DatabaseTls, priority 1), before the
+    // mail and notification workers start: a bad longest lifetime stops the server before anything uses it.
+    void onStart(@Observes @jakarta.annotation.Priority(2) StartupEvent event) {
         AuthMode.check(config.auth().mode(), httpHost);
+        checkLimit(maxLifetime());
+        var cfg = org.eclipse.microprofile.config.ConfigProvider.getConfig();
+        // on, and with an address: Quarkus quietly turns a tenant without one off
+        checkApproval(unmaskApproval(), cfg.getOptionalValue("quarkus.oidc.tenant-enabled", Boolean.class).orElse(false)
+            && cfg.getOptionalValue("quarkus.oidc.auth-server-url", String.class).filter(s -> !s.isBlank()).isPresent());
         if (config.auth().mode() == AuthMode.OFF) {
             LOG.warnf("Sign-in is off (kilnmark.auth.mode=off): anyone who can reach %s is an admin. Remove "
                 + "KILNMARK_AUTH_MODE to sign in with API tokens.", httpHost);
@@ -430,9 +670,11 @@ public class ApiTokens {
         return changed;
     }
 
-    private static int usableAdmins(Connection c) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT count(*) FROM kilnmark.api_token WHERE role = 'admin' "
-            + "AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())");
+    private int usableAdmins(Connection c) throws SQLException {
+        // as sign-in judges them: a token past the longest lifetime is no way in, so the first-start
+        // token is written when it was the last admin
+        try (PreparedStatement ps = c.prepareStatement("SELECT count(*) FROM kilnmark.api_token t WHERE t.role = "
+            + "'admin' AND " + worksSql("t"));
              ResultSet rs = ps.executeQuery()) {
             rs.next();
             return rs.getInt(1);

@@ -8,6 +8,7 @@ All project documentation lives in this folder.
 - [Plan and scope](product/plan-and-scope.md): v0.1 scope, sprints, risks and open decisions
 - [Positioning and design partners](product/positioning-and-design-partners.md): who it is for and how to recruit early users
 - [Compliance](product/compliance.md): running Kilnmark in banks: DORA, NYDFS Part 500, US third-party risk, NIST 800-53, and what is missing
+- [SSDF self-assessment](product/ssdf-self-assessment.md): how Kilnmark is built against NIST's Secure Software Development Framework, task by task, with the evidence and the gaps
 - [Backlog](product/backlog.md): what is decided and not yet done, in order
 
 The live, editable versions of these three documents are in Claude; the copies here were exported
@@ -21,7 +22,11 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 - [Branding and appearance](guide/branding.md): themes, accent colours and density; the branding folder for an organisation's name, logo and connector logos
 - [Building and running a pipeline](guide/pipelines.md): the Pipelines page, YAML basics, checking as you type, saving versions, running, and reading a run
 - [Pipeline nodes and expressions](guide/pipeline-nodes.md): filter, compute, select, lookup, aggregate, union, dedupe, route and limit, and the expression language for conditions and computed columns
+- [Building and running a flow](guide/flows.md): flows that run pipelines in an order, connections and conditions, the diagram, running a flow and reading a run
+- [Installing database drivers](guide/drivers.md): the drivers Kilnmark ships, and registering one whose licence keeps it out of the release
+- [Backing up and restoring Kilnmark](guide/backup-and-restore.md): what to back up, the backup and restore scripts, what to check after a restore, and testing a restore
 - [The audit log](guide/audit-log.md): what is recorded, why it cannot be changed, sending it to a SIEM, and reading it
+- [Signing in, roles and tokens](guide/signing-in.md): API tokens and signing in with your organisation, the four roles and the unmask grant, token lifetime, the access review and two people for sensitive values
 - [Notifications and email alerts](guide/notifications.md): what can notify you, in the app and by email; choosing what you get; setting up email and team addresses
 
 ## Spikes
@@ -34,6 +39,8 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 - [Writing a connector](design/connectors.md): the connector interface, the reader and writer nodes, registering and testing
 - [Pipelines](design/pipelines.md): graphs of nodes, the YAML format, expressions, the node catalogue, running and recording
 - [Flows](design/flows.md): pipelines run in an order joined by connections (on success, on failure, always, or on a quality condition), conditions, how a flow runs and is recorded
+- [Parallel runs](design/parallel-runs.md): how much runs at once, worker slots, limits per source and per flow, and the for-each node
+- [Flow controls](design/flow-controls.md): nodes that check or wait for what a pipeline needs, and timeout, retries and priority on a node
 - [The assistant](design/assistant.md): a chat window that answers from knowledge domains, starting with the documentation
 - [Notifications](design/notifications.md): one event type, dedupe, masking per recipient, the email worker and the in-app feed's contract
 - [Supply chain](design/supply-chain.md): the SBOMs every release carries, vulnerability scanning in CI, and how releases are signed

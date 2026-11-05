@@ -1,0 +1,147 @@
+/*
+ * Kilnmark's look on Keycloak's sign-in pages: the colours and fonts of Kilnmark's own pages
+ * (ui/src/tokens.css), on Keycloak's PatternFly 5 login layout. Fonts: Inter and Manrope, SIL Open
+ * Font License 1.1 (fonts/OFL.txt).
+ */
+@font-face {
+  font-family: "Inter";
+  font-weight: 400;
+  font-display: swap;
+  src: url("../fonts/inter-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-weight: 500;
+  font-display: swap;
+  src: url("../fonts/inter-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-weight: 600;
+  font-display: swap;
+  src: url("../fonts/inter-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Manrope";
+  font-weight: 700;
+  font-display: swap;
+  src: url("../fonts/manrope-latin-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Manrope";
+  font-weight: 800;
+  font-display: swap;
+  src: url("../fonts/manrope-latin-800-normal.woff2") format("woff2");
+}
+
+:root {
+  --km-night: #141821;
+  --km-ink: #1b1f2a;
+  --km-muted: #5b6475;
+  --km-border: #e4e7ee;
+  --km-accent: #ea580c;
+  --km-accent-fill: #c2410c;
+  --km-accent-hover: #9a3412;
+  --km-amber: #c2620a;
+  --km-focus: #1d4ed8;
+
+  --keycloak-card-top-color: var(--km-accent);
+  --pf-v5-global--FontFamily--text: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --pf-v5-global--FontFamily--heading: "Manrope", "Inter", system-ui, sans-serif;
+  --pf-v5-global--link--Color: var(--km-accent-fill);
+  --pf-v5-global--link--Color--hover: var(--km-accent-hover);
+  --pf-v5-global--primary-color--100: var(--km-accent-fill);
+  --pf-v5-global--primary-color--200: var(--km-accent-hover);
+  --pf-v5-global--active-color--100: var(--km-accent-fill);
+  --pf-v5-c-button--m-primary--BackgroundColor: var(--km-accent-fill);
+  --pf-v5-c-button--m-primary--hover--BackgroundColor: var(--km-accent-hover);
+  --pf-v5-c-button--m-primary--focus--BackgroundColor: var(--km-accent-hover);
+  --pf-v5-c-button--m-primary--active--BackgroundColor: var(--km-accent-hover);
+}
+
+/* The page: Kilnmark's night blue, lit from the top corner as its home banner is. The glow fades
+   out within the first screen, so a longer page (setting up the code) continues without an edge. */
+.login-pf body,
+body#keycloak-bg {
+  background-color: var(--km-night);
+  background-image: radial-gradient(900px 600px at 12% -10%, rgb(234 88 12 / 28%), transparent 60%);
+  background-repeat: no-repeat;
+  min-height: 100%;
+  font-family: var(--pf-v5-global--FontFamily--text);
+}
+
+/* Kilnmark's name above the card: the logo tile and the word, as in Kilnmark's sidebar. */
+#kc-header-wrapper {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  font: 800 34px/1.1 var(--pf-v5-global--FontFamily--heading);
+  text-transform: none;
+  letter-spacing: -0.5px;
+  color: #ffffff !important;
+}
+
+#kc-header-wrapper::before {
+  content: "K";
+  display: inline-grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 13px;
+  background: linear-gradient(135deg, var(--km-accent), var(--km-amber));
+  color: #ffffff;
+  font: 800 26px/1 var(--pf-v5-global--FontFamily--heading);
+  letter-spacing: 0;
+  box-shadow: 0 8px 24px rgb(234 88 12 / 35%);
+}
+
+#kc-header {
+  text-align: center;
+}
+
+/* The card. */
+.pf-v5-c-login__main {
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 24px 64px rgb(0 0 0 / 35%), 0 2px 8px rgb(0 0 0 / 20%);
+}
+
+.pf-v5-c-login__main-header {
+  border-top: 4px solid transparent;
+  border-image: linear-gradient(90deg, var(--km-accent), var(--km-amber)) 1;
+}
+
+#kc-page-title {
+  font-family: var(--pf-v5-global--FontFamily--heading);
+  font-weight: 800;
+  letter-spacing: -0.3px;
+  color: var(--km-ink);
+}
+
+.pf-v5-c-form__label-text {
+  font-weight: 600;
+  color: var(--km-ink);
+}
+
+.pf-v5-c-form-control:focus-within {
+  --pf-v5-c-form-control--after--BorderBottomColor: var(--km-accent-fill);
+}
+
+.pf-v5-c-button.pf-m-primary {
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+:where(.pf-v5-c-button, a):focus-visible {
+  outline: 3px solid var(--km-focus);
+  outline-offset: 2px;
+}
+
+/* The one-time code set-up: the QR code on white, whatever the card. */
+.kc-qr-code img,
+#kc-totp-secret-qr-code {
+  border-radius: 12px;
+  border: 1px solid var(--km-border);
+  background: #ffffff;
+}

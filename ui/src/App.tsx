@@ -1,5 +1,5 @@
 import React, { lazy, Suspense, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { allows, api, ApiError, qualityApi, session, SIGNED_OUT, type Me } from "./api";
+import { allows, api, ApiError, markProviderSession, qualityApi, session, SIGNED_OUT, type Me } from "./api";
 import { go, href, useRoute } from "./router";
 import { HomePage } from "./pages/HomePage";
 import { SearchPage } from "./pages/SearchPage";
@@ -28,12 +28,16 @@ const TokensPage = page(() => import("./pages/TokensPage"), "TokensPage");
 const PipelinesPage = page(() => import("./pipelines/PipelinesPage"), "PipelinesPage");
 const PipelinePage = page(() => import("./pipelines/PipelinePage"), "PipelinePage");
 const PipelineRunPage = page(() => import("./pipelines/PipelineRunPage"), "PipelineRunPage");
+const FlowsPage = page(() => import("./flows/FlowsPage"), "FlowsPage");
+const FlowPage = page(() => import("./flows/FlowPage"), "FlowPage");
+const FlowRunPage = page(() => import("./flows/FlowRunPage"), "FlowRunPage");
 const RulesPage = page(() => import("./pages/RulesPage"), "RulesPage");
 const RelationshipsPage = page(() => import("./browse/RelationshipsPage"), "RelationshipsPage");
 const NotificationsPage = page(() => import("./pages/NotificationsPage"), "NotificationsPage");
 const EmailSettingsPage = page(() => import("./pages/EmailSettingsPage"), "EmailSettingsPage");
 const SentEmailsPage = page(() => import("./pages/SentEmailsPage"), "SentEmailsPage");
 const AuditLogPage = page(() => import("./pages/AuditLogPage"), "AuditLogPage");
+const AccessReviewPage = page(() => import("./pages/AccessReviewPage"), "AccessReviewPage");
 const DriversPage = page(() => import("./pages/DriversPage"), "DriversPage");
 const JdbcDriversPage = page(() => import("./pages/JdbcDriversPage"), "JdbcDriversPage");
 import { Icon } from "./components/icons";
@@ -59,7 +63,10 @@ export function App() {
       .me()
       .then(setMe)
       .catch((e) => {
-        if (!(e instanceof ApiError) || e.status !== 401) setNotice({ kind: "error", text: (e as Error).message });
+        // 401: not signed in; 403: a provider sign-in with no role, which the sign-in page explains
+        if (!(e instanceof ApiError) || (e.status !== 401 && e.status !== 403)) {
+          setNotice({ kind: "error", text: (e as Error).message });
+        }
       })
       .finally(() => setChecking(false));
   }, []);
@@ -73,11 +80,24 @@ export function App() {
     return () => window.removeEventListener(SIGNED_OUT, onSignedOut);
   }, []);
 
+  // A provider session ends with a 401 on any request; the API says so (SIGNED_OUT) only while it knows of one.
+  useEffect(() => {
+    markProviderSession(me?.via === "provider");
+  }, [me]);
+
   useEffect(() => {
     if (route.page === "signout" && me?.signInRequired) {
-      session.clear();
-      setMe(null);
-      setNotice({ kind: "info", text: "You have signed out." });
+      const done = () => {
+        session.clear();
+        setMe(null);
+        setNotice({ kind: "info", text: "You have signed out." });
+      };
+      if (me.via === "provider") {
+        markProviderSession(false);
+        api.signOutProvider().then(done, done);
+      } else {
+        done();
+      }
     }
   }, [route, me]);
 
@@ -346,6 +366,11 @@ function Shell({ me }: { me: Me }) {
             <PipelinePage key={route.name ?? "#new"} name={route.name} version={route.version} role={me.role} />
           )}
           {route.page === "pipeline-run" && <PipelineRunPage id={route.id} role={me.role} />}
+          {route.page === "flows" && <FlowsPage role={me.role} />}
+          {route.page === "flow" && (
+            <FlowPage key={route.name ?? "#new"} name={route.name} version={route.version} role={me.role} />
+          )}
+          {route.page === "flow-run" && <FlowRunPage key={route.id} id={route.id} role={me.role} />}
           {route.page === "docs" && <DocsPage doc={route.doc} section={route.section} />}
           {route.page === "notifications" && <NotificationsPage confirm={route.confirm} />}
           {(route.page === "email" || route.page === "email-log") &&
@@ -359,6 +384,12 @@ function Shell({ me }: { me: Me }) {
               <AuditLogPage />
             ) : (
               <NotAllowed title="Audit log">Only admins can read the audit log.</NotAllowed>
+            ))}
+          {route.page === "access-review" &&
+            (allows(me.role, "admin") ? (
+              <AccessReviewPage />
+            ) : (
+              <NotAllowed title="Access review">Only admins can review who has access.</NotAllowed>
             ))}
           {route.page === "drivers" &&
             (allows(me.role, "admin") ? (

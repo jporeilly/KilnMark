@@ -12,7 +12,7 @@
  */
 import { isMap, isScalar, isSeq, LineCounter, parseDocument, Scalar, type Document, type Pair, type YAMLMap } from "yaml";
 import type { NodeType } from "../../api";
-import { flowYaml, isBlockMap, isBlockSeq, Patch, scalarYaml } from "./patch.ts";
+import { flowYaml, isBlockMap, isBlockSeq, Patch, scalarYaml, writeLayoutBlock } from "./patch.ts";
 
 export type Catalogue = ReadonlyMap<string, NodeType>;
 export const catalogueOf = (types: NodeType[]): Catalogue => new Map(types.map((t) => [t.type, t]));
@@ -368,59 +368,7 @@ function writeInputs(ctx: Ctx, map: YAMLMap, links: InputLink[], ports: { inputs
 
 /** Writes positions in the layout block (creating it, last, if there is none) and drops `drop`. */
 function writeLayout(ctx: Ctx, positions: Record<string, Point>, drop: Iterable<string> = []) {
-  const { doc, p } = ctx;
-  const xy = (pt: Point) => ({ x: Math.round(pt.x), y: Math.round(pt.y) });
-  const pair = topPair(doc, LAYOUT);
-  const layout = pair?.value;
-  const dropped = new Set(drop);
-  if (pair && isBlockMap(layout) && layout.items.length > 0) {
-    const entries = layout.items as Pair[];
-    const fresh: string[] = [];
-    const indent = p.col((entries[0].key as unknown as { range: [number, number, number] }).range[0]);
-    for (const [id, pt] of Object.entries(positions)) {
-      if (dropped.has(id)) continue;
-      const e = entries.find((x) => isScalar(x.key) && String(x.key.value) === id);
-      if (e && e.value) {
-        const r = (e.value as unknown as { range: [number, number, number] }).range;
-        const padded = /^\{\s/.test(p.text.slice(r[0], r[1]));
-        p.replace(r[0], p.valueEnd(e), flowYaml(xy(pt), false, padded));
-      } else if (!e) {
-        fresh.push(`${" ".repeat(indent)}${scalarYaml(id)}: ${flowYaml(xy(pt))}${p.eol}`);
-      } else {
-        p.replace((e.key as unknown as { range: [number, number, number] }).range[0], p.valueEnd(e), `${scalarYaml(id)}: ${flowYaml(xy(pt))}`);
-      }
-    }
-    for (const id of dropped) p.remove(layout, id);
-    if (fresh.length) {
-      const end = p.pairEnd(entries[entries.length - 1]);
-      p.insert(end, (p.text[end - 1] === "\n" ? "" : p.eol) + fresh.join(""));
-    }
-    return;
-  }
-  const kept: Record<string, Point> = {};
-  if (pair && isMap(layout)) {
-    for (const e of layout.items as Pair[]) {
-      const id = scalarText(e.key);
-      const v = e.value;
-      if (id && isMap(v) && !dropped.has(id)) kept[id] = { x: Number(v.get("x")), y: Number(v.get("y")) };
-    }
-  }
-  for (const [id, pt] of Object.entries(positions)) if (!dropped.has(id)) kept[id] = pt;
-  const lines = Object.entries(kept).map(([id, pt]) => `  ${scalarYaml(id)}: ${flowYaml(xy(pt))}`);
-  if (pair) {
-    if (lines.length === 0) {
-      p.replace(p.lineStart((pair.key as unknown as { range: [number, number, number] }).range[0]), p.pairEnd(pair), "");
-      return;
-    }
-    const start = (pair.key as unknown as { range: [number, number, number] }).range[0];
-    p.replace(start, p.valueEnd(pair), `${LAYOUT}:${p.eol}${lines.join(p.eol)}`);
-    return;
-  }
-  if (lines.length === 0) return;
-  const top = doc.contents as YAMLMap & { range: [number, number, number] };
-  const end = top.range[1];
-  const lead = end > 0 && p.text[end - 1] !== "\n" ? p.eol : "";
-  p.insert(end, `${lead}${p.eol}#${LAYOUT_COMMENT}${p.eol}${LAYOUT}:${p.eol}${lines.join(p.eol)}${p.eol}`);
+  writeLayoutBlock(ctx.doc, ctx.p, positions, drop, LAYOUT_COMMENT);
 }
 
 /** The text of a new node: id, type and inputs, as the nodes around it are written. */

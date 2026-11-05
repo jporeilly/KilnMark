@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.kilnmark.server.Db;
 import io.kilnmark.server.auth.ApiTokenIdentityProvider;
+import io.kilnmark.server.auth.OidcIdentityAugmentor;
 import io.kilnmark.server.auth.ApiTokens;
 import io.kilnmark.server.sources.CommonSettings;
 import io.quarkus.security.identity.SecurityIdentity;
@@ -69,6 +70,8 @@ public class AuditLog {
     public static final String WRITING_CHANGED = "source.allow_writing";
     /** Allow SQL was turned on or off; detail: on, via. */
     public static final String SQL_CHANGED = "source.allow_sql";
+    /** Most runs at once was changed (ADR 0040); detail: before, after (null: no limit), via. */
+    public static final String MAX_RUNS_CHANGED = "source.max_runs";
     /** A flow's sql node started (ADR 0028); detail: source, statements, version. Target: flow/run/node. */
     public static final String FLOW_SQL = "flow.sql";
 
@@ -79,9 +82,34 @@ public class AuditLog {
     /** A request was refused for want of sign-in or a role; detail: method, status. Target: the path. */
     public static final String API_REFUSED = "api.refused";
 
+    /** Someone signed in with the identity provider (ADR 0036); detail: role, unmask. */
+    public static final String SIGN_IN = "auth.sign_in";
+    /** Someone signed in with the identity provider but was given no role; detail: reason. */
+    public static final String SIGN_IN_REFUSED = "auth.sign_in_refused";
+    /** Someone signed out of a provider sign-in. */
+    public static final String SIGN_OUT = "auth.sign_out";
+
+    /** A designer token's unmask grant waits for a second admin (ADR 0038); detail: name. */
+    public static final String UNMASK_REQUESTED = "unmask.requested";
+    /** A second admin approved a token's unmask grant; detail: name, asked by. */
+    public static final String UNMASK_APPROVED = "unmask.approved";
+    /** An admin refused a token's unmask grant; detail: name, asked by. */
+    public static final String UNMASK_REFUSED = "unmask.refused";
+
+    /** An admin downloaded the access review (ADR 0037); detail: format. */
+    public static final String ACCESS_REVIEW = "access.review";
+
+    /**
+     * The database was restored from a backup (ADR 0039), recorded at the next start from the note
+     * {@code restore.sh} leaves ({@link RestoreRecord}); detail: backup, takenAt, version,
+     * previousDatabase, keys.
+     */
+    public static final String DATABASE_RESTORED = "database.restored";
+
     /** Every kind of event, for the API's filter. */
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
-        SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED);
+        SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, MAX_RUNS_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
+        SIGN_OUT, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED);
 
     /** The most events one request returns. */
     public static final int MAX_LIMIT = 500;
@@ -114,6 +142,70 @@ public class AuditLog {
     /** One event as read back. */
     public record Event(long id, Instant at, String actor, Long tokenId, String action, String target,
                         Map<String, Object> detail) {
+    }
+
+    /**
+     * A person who has signed in with the identity provider and been given a role, as the audit log
+     * knows them (ADR 0037): when they last signed in, the role and grant their last sign-in with a
+     * role gave, and how many sign-ins gave them one. {@code refused} is the reason their latest
+     * sign-in was given no role, when it was; the role is cleared only when that reason is that none
+     * of their groups has one any more (a sign-in without MFA, say, does not take a role away).
+     */
+    public record ProviderAccess(String name, Instant lastSignIn, String role, boolean unmask, long signIns,
+                                 String refused) {
+    }
+
+    /** Everyone who has signed in with the identity provider and been given a role, most recent first. */
+    public List<ProviderAccess> providerAccess() {
+        return db.tx(c -> {
+            List<ProviderAccess> out = new ArrayList<>();
+            // every sign-in event, newest first per person: the latest says what happened last, the
+            // latest with a role says what their groups gave them
+            try (PreparedStatement ps = c.prepareStatement("SELECT actor, at, action, detail::text FROM "
+                + "kilnmark.audit_event WHERE action IN (?, ?) ORDER BY actor, at DESC")) {
+                ps.setString(1, SIGN_IN);
+                ps.setString(2, SIGN_IN_REFUSED);
+                try (ResultSet rs = ps.executeQuery()) {
+                    String actor = null;
+                    Instant last = null;
+                    String refused = null;
+                    Map<String, Object> given = null;
+                    long count = 0;
+                    while (true) {
+                        boolean more = rs.next();
+                        String next = more ? rs.getString(1) : null;
+                        if (actor != null && (!more || !actor.equals(next))) {
+                            if (given != null) {
+                                boolean gone = io.kilnmark.server.auth.OidcAccess.NO_GROUP.equals(refused);
+                                out.add(new ProviderAccess(actor, last, gone || given.get("role") == null ? null
+                                    : String.valueOf(given.get("role")), !gone && Boolean.TRUE.equals(given.get("unmask")),
+                                    count, refused));
+                            }
+                            actor = null;
+                        }
+                        if (!more) {
+                            break;
+                        }
+                        if (actor == null) {
+                            actor = next;
+                            last = Db.instant(rs.getTimestamp(2));
+                            refused = SIGN_IN_REFUSED.equals(rs.getString(3))
+                                ? String.valueOf(detail(rs.getString(4)).getOrDefault("reason", "")) : null;
+                            given = null;
+                            count = 0;
+                        }
+                        if (SIGN_IN.equals(rs.getString(3))) {
+                            count++;
+                            if (given == null) {
+                                given = detail(rs.getString(4));
+                            }
+                        }
+                    }
+                }
+            }
+            out.sort(java.util.Comparator.comparing(ProviderAccess::lastSignIn).reversed());
+            return out;
+        });
     }
 
     private final Db db;
@@ -200,7 +292,11 @@ public class AuditLog {
         }
         boolean keep = true;
         if (API_REFUSED.equals(action)) {
-            Integer skipped = refusalSkips(actor.tokenId() == null ? ANONYMOUS : "token " + actor.tokenId());
+            // Each token, each provider sign-in (its sso: name), and everyone not signed in together
+            String who = actor.tokenId() != null ? "token " + actor.tokenId()
+                : actor.name() != null && actor.name().startsWith(OidcIdentityAugmentor.PREFIX) ? actor.name()
+                : ANONYMOUS;
+            Integer skipped = refusalSkips(who);
             keep = skipped != null; // over this minute's share: the JSON line only, counted for the next row kept
             if (skipped != null && skipped > 0) {
                 Map<String, Object> more = new LinkedHashMap<>(detail == null ? Map.of() : detail);
@@ -339,9 +435,9 @@ public class AuditLog {
     }
 
     /**
-     * Records Allow writing and Allow SQL turned on or off between {@code before} (null for a new
-     * source) and {@code after}; {@code via} says how (the form, an import). A new source records a
-     * setting only when it is on.
+     * Records Allow writing and Allow SQL turned on or off, and Most runs at once changed, between
+     * {@code before} (null for a new source) and {@code after}; {@code via} says how (the form, an
+     * import). A new source records a setting only when it is on, or set.
      */
     public void sourceSettings(Actor actor, String source, Map<String, String> before, Map<String, String> after,
                                String via) {
@@ -354,6 +450,15 @@ public class AuditLog {
         boolean sqlAfter = CommonSettings.allowsSql(after);
         if (sqlBefore != sqlAfter) {
             record(actor, SQL_CHANGED, source, Map.of("on", sqlAfter, "via", via));
+        }
+        Integer runsBefore = before == null ? null : CommonSettings.maxRuns(before);
+        Integer runsAfter = CommonSettings.maxRuns(after);
+        if (!java.util.Objects.equals(runsBefore, runsAfter)) {
+            Map<String, Object> detail = new java.util.LinkedHashMap<>();
+            detail.put("before", runsBefore);
+            detail.put("after", runsAfter);
+            detail.put("via", via);
+            record(actor, MAX_RUNS_CHANGED, source, detail);
         }
     }
 

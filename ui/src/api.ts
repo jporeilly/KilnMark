@@ -8,13 +8,29 @@ export type AccessRole = "viewer" | "steward" | "designer" | "admin";
 
 /** Who is signed in. signInRequired is false when the server runs with sign-in turned off. */
 export type Me = {
+  /** What Kilnmark records them by: for a provider sign-in, the sso: name with the provider's ID. */
   name: string;
+  /** What the screen greets them by: their name at the provider, or the token's name. Older servers send none. */
+  displayName?: string;
   role: AccessRole;
   tokenId: number | null;
   expiresAt: string | null;
   signInRequired: boolean;
   /** Whether this token sees values of columns marked sensitive: designer tokens only (ADR 0027). */
   unmask: boolean;
+  /** How they signed in: an API token, the organisation's identity provider (ADR 0036), or sign-in is off. */
+  via: "token" | "provider" | "off";
+};
+
+/** Sign-in as the sign-in page needs it (ADR 0036). */
+export type AuthStatus = {
+  /** Whether sign-in with the organisation's identity provider is set up. */
+  provider: boolean;
+  providerName: string;
+  /** Whether this browser has a session with the provider. */
+  signedIn: boolean;
+  /** Why that session gives no role, or null. */
+  refusal: string | null;
 };
 
 export type ApiToken = {
@@ -29,6 +45,8 @@ export type ApiToken = {
   expiresAt: string | null;
   lastUsedAt: string | null;
   revokedAt: string | null;
+  /** Who asked for the unmask grant, while it waits for a second admin to approve it (ADR 0038). */
+  unmaskRequestedBy: string | null;
 };
 
 /** A token just created: `token` is shown this once. */
@@ -40,6 +58,8 @@ export type CreatedToken = {
   createdAt: string;
   expiresAt: string | null;
   token: string;
+  /** Set when the unmask grant waits for a second admin (ADR 0038). */
+  unmaskRequestedBy?: string | null;
 };
 
 const RANK: Record<AccessRole, number> = { viewer: 0, steward: 1, designer: 2, admin: 3 };
@@ -87,16 +107,41 @@ export const SIGNED_OUT = "kilnmark:signed-out";
 const NOT_ACCEPTED =
   "You have been signed out: your API token was not accepted. It may have expired or been revoked. Sign in again.";
 
+const SESSION_ENDED = "Your sign-in has ended. Sign in again.";
+
+/** Whether this tab is signed in with the identity provider (a session cookie), not a token. */
+let providerSession = false;
+export const markProviderSession = (on: boolean) => {
+  providerSession = on;
+};
+
+/**
+ * Every request says it comes from Kilnmark's own pages (X-Requested-With): the server refuses
+ * changes made with a provider session without it, and answers 499 rather than redirecting when
+ * the session has ended (ADR 0036).
+ */
 function headers(extra: Record<string, string> = {}, token = currentToken()): Record<string, string> {
-  return { Accept: "application/json", ...extra, ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+  return {
+    Accept: "application/json",
+    "X-Requested-With": "JavaScript",
+    ...extra,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
 }
 
-/** A 401 with a token means the token stopped working: drop it and return to sign-in. */
+/** A 401 with a token means the token stopped working; one in a provider session means it ended. Back to sign-in. */
 function signedOut(sentToken: boolean) {
-  if (!sentToken) return;
-  session.clear();
-  window.dispatchEvent(new CustomEvent(SIGNED_OUT, { detail: NOT_ACCEPTED }));
+  if (sentToken) {
+    session.clear();
+    window.dispatchEvent(new CustomEvent(SIGNED_OUT, { detail: NOT_ACCEPTED }));
+  } else if (providerSession) {
+    providerSession = false;
+    window.dispatchEvent(new CustomEvent(SIGNED_OUT, { detail: SESSION_ENDED }));
+  }
 }
+
+/** 401, or 499: the OIDC client's answer to a page's request once its session has ended. */
+const notSignedIn = (status: number) => status === 401 || status === 499;
 
 export type Run = {
   id: number;
@@ -373,8 +418,9 @@ export async function call<T>(path: string, init?: RequestInit, contentType = "a
   if ((response.status === 422 && body?.rows) || response.status === 204) {
     return body as T; // an import report listing what to fix
   }
-  if (response.status === 401) {
+  if (notSignedIn(response.status)) {
     signedOut(token != null);
+    if (response.status === 499) throw new ApiError(SESSION_ENDED, 401);
   }
   if (!response.ok) {
     throw new ApiError(body?.error ?? `The server answered ${response.status}`, response.status);
@@ -392,7 +438,7 @@ export async function callText(path: string, accept: string): Promise<string> {
     throw new ApiError("Cannot reach the Kilnmark server. Is it running?", 0);
   }
   const text = await response.text();
-  if (response.status === 401) signedOut(token != null);
+  if (notSignedIn(response.status)) signedOut(token != null);
   if (!response.ok) {
     let message = `The server answered ${response.status}`;
     try {
@@ -510,6 +556,9 @@ export type DriverRegistration = {
 
 export const api = {
   me: () => call<Me>("/api/v1/me"),
+  authStatus: () => call<AuthStatus>("/api/v1/auth/status"),
+  /** Ends this browser's session with the identity provider's sign-in. */
+  signOutProvider: () => call<void>("/api/v1/auth/sign-out", { method: "POST" }),
   signIn: async (token: string) => {
     const me = await checkToken(token);
     session.save(token);
@@ -519,6 +568,10 @@ export const api = {
   createToken: (t: { name: string; role: AccessRole; expiresAt: string | null; unmask?: boolean }) =>
     call<CreatedToken>("/api/v1/tokens", { method: "POST", body: JSON.stringify(t) }),
   revokeToken: (id: number) => call<null>(`/api/v1/tokens/${id}`, { method: "DELETE" }),
+  /** Gives a designer token the unmask grant it asked for: a second admin only (ADR 0038). */
+  approveUnmask: (id: number) => call<ApiToken>(`/api/v1/tokens/${id}/unmask/approve`, { method: "POST" }),
+  /** Refuses a designer token's request for the unmask grant; the token stays, without it. */
+  refuseUnmask: (id: number) => call<ApiToken>(`/api/v1/tokens/${id}/unmask/refuse`, { method: "POST" }),
   info: () => call<{ product: string; version: string; roles: string[] }>("/api/v1/info"),
   sources: () => call<Source[]>("/api/v1/sources"),
   connectors: () => call<Connector[]>("/api/v1/connectors"),
@@ -1507,6 +1560,155 @@ export const pipelinesApi = {
     call<NodePreview>("/api/v1/pipelines/preview", { method: "POST", body: JSON.stringify(p), signal }),
 };
 
+// ---- Flows (docs/design/flows.md) ----
+
+export type FlowProblem = { line: number; column: number; node: string | null; message: string };
+/**
+ * A parameter a flow declares. defaultVariable: its default is that server variable (${vars.name}),
+ * whose value is not shown. required: it has no default, so a run must give it.
+ */
+export type FlowParameter = {
+  name: string;
+  type: "text" | "number" | "boolean" | "text list" | "number list";
+  defaultValue: unknown;
+  defaultVariable: string | null;
+  required: boolean;
+  description: string | null;
+};
+export type FlowValidation = { valid: boolean; name: string | null; problems: FlowProblem[]; parameters: FlowParameter[] };
+export type FlowRunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type FlowRun = {
+  id: number;
+  flow: string;
+  version: number;
+  status: FlowRunStatus;
+  requestedBy: string;
+  requestedRole: string | null;
+  requestedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  cancelRequested: boolean;
+  /** In Kilnmark's words and the flow's own, never a pipeline's error. */
+  error: string | null;
+  /** The parameter values the run started with. */
+  parameters: Record<string, unknown> | null;
+  /** How many pipeline runs it has started (absent from older servers). */
+  pipelineRuns?: number;
+  /** The rows its pipeline runs wrote in all; null until one says. */
+  rowsWritten?: number | null;
+  /** The lowest measured quality score (0 to 1) among its pipeline runs; null when nothing was measured. */
+  qualityScore?: number | null;
+};
+export type FlowSummary = {
+  name: string;
+  displayName: string;
+  description: string | null;
+  latestVersion: number;
+  valid: boolean;
+  updatedBy: string;
+  updatedAt: string;
+  lastRun: FlowRun | null;
+};
+export type FlowVersionSummary = PipelineVersionSummary;
+export type FlowVersion = {
+  n: number;
+  yaml: string;
+  message: string | null;
+  author: string;
+  createdAt: string;
+  valid: boolean;
+  problems: FlowProblem[];
+  parameters: FlowParameter[];
+};
+export type FlowDetail = {
+  name: string;
+  displayName: string;
+  description: string | null;
+  latestVersion: number;
+  createdBy: string;
+  createdAt: string;
+  updatedBy: string;
+  updatedAt: string;
+  latest: FlowVersion | null;
+  lastRun: FlowRun | null;
+};
+export type FlowNodeStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
+/** One node's part in a flow run; pipelineRunId is the pipeline run a run-pipeline node started. */
+export type FlowNodeRun = {
+  node: string;
+  type: string;
+  position: number;
+  status: FlowNodeStatus;
+  startedAt: string | null;
+  finishedAt: string | null;
+  pipelineRunId: number | null;
+  pipeline: string | null;
+  message: string | null;
+  /**
+   * What it reported: status, score, quarantined_share, rows_written, duration_s; rows_affected for
+   * sql; items, succeeded and failed for for-each.
+   */
+  reported: Record<string, unknown> | null;
+  /** A for-each node's items, each with its pipeline run; absent for other nodes. */
+  items?: FlowItemRun[] | null;
+  /**
+   * The times of the pipeline run a run-pipeline node started: with the node's own times, how long
+   * it waited before asking for the run, how long the run was queued for a worker, and how long it ran.
+   */
+  pipelineRunTimes?: PipelineRunTimes | null;
+};
+/** When a pipeline run was asked for, taken by a worker (started) and finished; null until each happens. */
+export type PipelineRunTimes = { requestedAt: string | null; startedAt: string | null; finishedAt: string | null };
+/**
+ * One item of a for-each node in a run. `value` is null for viewers when the items came from a
+ * parameter of the run. `status` is pending before its run starts, skipped if the node ended without
+ * starting it, failed with no `pipelineRunId` if it could not be queued (the node's message says
+ * why), else its pipeline run's.
+ */
+export type FlowItemRun = {
+  item: number;
+  value: string | number | null;
+  status: FlowNodeStatus | "queued";
+  pipelineRunId: number | null;
+  /** When its pipeline run was asked for (absent from older servers). */
+  requestedAt?: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+export type FlowRunDetail = { run: FlowRun; nodes: FlowNodeRun[] };
+
+const flowPath = (name: string) => `/api/v1/flows/${encodeURIComponent(name)}`;
+
+export const flowsApi = {
+  list: () => call<FlowSummary[]>("/api/v1/flows"),
+  get: (name: string) => call<FlowDetail>(flowPath(name)),
+  /** The name is the YAML's. */
+  create: (p: { yaml: string; message?: string }) =>
+    call<FlowDetail>("/api/v1/flows", { method: "POST", body: JSON.stringify(p) }),
+  /** version: the latest version as read; the server refuses the save (409) if someone has saved another since. */
+  save: (name: string, p: { yaml: string; message: string }, version?: number) =>
+    call<FlowDetail>(flowPath(name), {
+      method: "PUT",
+      body: JSON.stringify(p),
+      headers: version ? { "If-Match": `"${version}"` } : undefined,
+    }),
+  validate: (yaml: string, name?: string) =>
+    call<FlowValidation>(name ? `${flowPath(name)}/validate` : "/api/v1/flows/validate", {
+      method: "POST",
+      body: JSON.stringify({ yaml }),
+    }),
+  versions: (name: string) => call<FlowVersionSummary[]>(`${flowPath(name)}/versions`),
+  version: (name: string, n: number) => call<FlowVersion>(`${flowPath(name)}/versions/${n}`),
+  run: (name: string, parameters: Record<string, unknown> = {}, version?: number) =>
+    call<FlowRun>(`${flowPath(name)}/runs`, {
+      method: "POST",
+      body: JSON.stringify({ version: version ?? null, parameters }),
+    }),
+  runs: (name: string) => call<FlowRun[]>(`${flowPath(name)}/runs?limit=50`),
+  runDetail: (id: number) => call<FlowRunDetail>(`/api/v1/flow-runs/${id}`),
+  cancel: (id: number) => call<FlowRun>(`/api/v1/flow-runs/${id}/cancel`, { method: "POST" }),
+};
+
 /**
  * A preview at a node: shaped as a source's preview (asset is "node.port"), plus whether these are
  * all the node's rows, how long it took, the columns whose values are hidden (made from columns
@@ -1668,6 +1870,37 @@ export const auditApi = {
     if (before != null) q.set("before", String(before));
     return call<{ events: AuditEvent[]; next: number | null }>(`/api/v1/audit?${q.toString()}`);
   },
+};
+
+/** One line of the access review (ADR 0037): an API token, or a person who signs in with the identity provider. */
+export type AccessReviewEntry = {
+  kind: "token" | "provider";
+  name: string;
+  role: AccessRole | null;
+  unmask: boolean;
+  status: string;
+  createdBy: string | null;
+  createdAt: string | null;
+  expiresAt: string | null;
+  /** For a token, its last use; for a person, their last sign-in. */
+  lastUsedAt: string | null;
+  signIns: number | null;
+};
+
+/** Settings › Access review: who can do what, for admins. */
+export type AccessReview = {
+  generatedAt: string;
+  /** The longest a token may last, in days; null when tokens may never expire. */
+  tokenMaxLifetimeDays: number | null;
+  entries: AccessReviewEntry[];
+};
+
+export const accessReviewApi = {
+  get: () => call<AccessReview>("/api/v1/access-review"),
+  /** The review as CSV, for keeping as evidence; each download is in the audit log. */
+  csv: () => callText("/api/v1/access-review?format=csv", "text/csv"),
+  /** The longest a new token may last, in days, or null for no limit. */
+  tokenPolicy: () => call<{ maxLifetimeDays: number | null; unmaskApproval: boolean }>("/api/v1/tokens/policy"),
 };
 
 /** Notification settings and, for admins, email: the feed is notificationsApi in src/notifications/api.ts. */

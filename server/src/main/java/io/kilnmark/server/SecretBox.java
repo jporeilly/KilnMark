@@ -79,7 +79,24 @@ public class SecretBox {
             c.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(TAG_BITS, box, 0, IV_BYTES));
             return new String(c.doFinal(box, IV_BYTES, box.length - IV_BYTES), StandardCharsets.UTF_8);
         } catch (GeneralSecurityException e) {
-            throw new IllegalStateException("Cannot decrypt a stored password: was the secret key changed?", e);
+            throw new WrongKey(e);
         }
     }
+
+    /**
+     * A stored value was sealed with another key than this server's: most often the database was
+     * restored without the keys volume from the same backup (ADR 0039). The API answers 409 with
+     * the message.
+     */
+    public static final class WrongKey extends IllegalStateException {
+        private static final long serialVersionUID = 1L;
+
+        WrongKey(Throwable cause) {
+            super(MESSAGE, cause);
+        }
+    }
+
+    /** What to do when a stored value cannot be opened, in words an admin can act on. */
+    public static final String MESSAGE = "A stored password cannot be opened with this server's key. If Kilnmark "
+        + "was restored, restore its keys from the same backup as the database; otherwise enter the password again.";
 }

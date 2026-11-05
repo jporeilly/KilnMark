@@ -1,6 +1,7 @@
 # 0014 Sign-in through OpenID Connect; Keycloak optional
 
-Status: Accepted (24 October 2026)
+Status: Accepted (24 October 2026). The Keycloak profile was built on 5 November 2026: see
+"Built" below.
 
 ## Decision
 
@@ -29,3 +30,34 @@ is optional rather than part of every install.
   trusted-data product will question.
 - **Authentik, Zitadel, Authelia:** lighter, but weaker at Active Directory federation, which
   on-prem customers most often need.
+
+## Built (5 November 2026)
+
+- **The `auth` profile** in the release's `compose.yaml`: Keycloak (pinned by version and digest),
+  its own PostgreSQL in the Kilnmark database image, with TLS, and a one-off `keycloak-setup`
+  service that runs `containers/keycloak/setup.sh` with Keycloak's admin tool. Nothing is set up by
+  a realm export: the script is short enough to read, safe to run again, and takes every secret
+  from `.env`, none with a default. Each is optional to compose, so Kilnmark starts without the
+  profile; without one, keycloak-db stops (PostgreSQL names its own setting) or keycloak-setup
+  stops and names the `.env` setting. Secrets never go on a command line: kcadm reads the admin
+  password from `KC_CLI_PASSWORD` and the others as JSON on its input. Each part (groups, flow,
+  its use, the client's claims, a person's password and groups) is checked and made on its own, so
+  a run that stopped half way is finished by the next.
+- **The realm `kilnmark`**: groups for the four roles and the unmask grant, the confidential client
+  `kilnmark` (its redirect URI and secret follow `.env` on every run), a groups claim, and its own
+  sign-in flow: the session cookie, or a password and then a one-time code, both required. Each
+  step carries the authentication method it is (`pwd`, `otp`) for 8 hours, so the ID token's `amr`
+  shows two kinds of factor and Kilnmark's MFA check (ADR 0036) passes. Without that age, Keycloak
+  leaves the methods out of `amr` altogether.
+- **First sign-in.** Setting up the code is a required action, not the code step, so the first
+  sign-in's `amr` holds only `pwd` and Kilnmark refuses it; the person signs in again, with the code.
+  We kept that over weakening the check.
+- **Addresses.** Browsers reach Keycloak at `KILNMARK_KEYCLOAK_URL`; Kilnmark reaches it inside the
+  stack (`http://keycloak:8080`), with Keycloak's back-channel address taken from the request, so
+  one issuer serves both. Keycloak serves plain HTTP, published on this machine only, for browsers
+  on it or a proxy on it that ends TLS (`KC_PROXY_HEADERS=xforwarded`); its admin realm gets
+  brute-force protection too. PKCE is not required of the client: Kilnmark does not send it yet.
+- **The look**: a login theme (`themes/kilnmark`) on Keycloak's own, changing only colours, fonts
+  (Inter and Manrope, OFL 1.1, with their licence) and words.
+- **Demonstration people**, only with `KILNMARK_KEYCLOAK_DEMO_PASSWORD`: five at `kilnmark.com`, one
+  per role.

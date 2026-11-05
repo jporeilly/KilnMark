@@ -70,7 +70,20 @@ tasks.register<Sync>("assembleRelease") {
     from("containers/release.env.example") { rename { ".env.example" } }
     from("containers") {
         into("containers")
-        exclude("compose.release.yaml", "release.env.example")
+        exclude("compose.release.yaml", "release.env.example", "backup.sh", "restore.sh", "launch/**")
+    }
+    // Backup and restore (ADR 0039), run from the release folder beside compose.yaml.
+    from("containers") {
+        include("backup.sh", "restore.sh")
+        filePermissions { unix("rwxr-xr-x") }
+    }
+    // Start and stop with one click, on Windows and Ubuntu (INSTALL.md, "Start and stop with one click").
+    from("containers/launch") {
+        exclude("*.sh")
+    }
+    from("containers/launch") {
+        include("*.sh")
+        filePermissions { unix("rwxr-xr-x") }
     }
     // The samples, as templates to read or add through the API (the server also bundles them).
     from("samples") {

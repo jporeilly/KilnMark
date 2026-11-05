@@ -58,17 +58,17 @@ const key = (el: Element, k: string) =>
 describe("the panel under the canvas", () => {
   test("its tabs follow the tabs pattern, in order, and switch on a click", async () => {
     await show(<Panel />);
-    expect(tabNames()).toEqual(["Settings", "Preview", "Run", "Suggestions", "Nodes", "Runs", "Versions"]);
+    expect(tabNames()).toEqual(["Settings", "Preview", "Run", "Suggestions", "Nodes", "History", "Versions"]);
     expect(host.querySelector('[role="tablist"]')?.getAttribute("aria-label")).toBe("Panels under the canvas");
     // One tab in the Tab order: the selected one.
     expect(tabs().map((t) => t.getAttribute("tabindex"))).toEqual(["0", "-1", "-1", "-1", "-1", "-1", "-1"]);
     expect(tabs().every((t) => t.getAttribute("aria-controls") === panel().id)).toBe(true);
     expect(panel().getAttribute("aria-labelledby")).toBe(tab("Settings").id);
 
-    await act(async () => tab("Runs").click());
-    expect(selectedTab().textContent).toBe("Runs");
-    expect(tab("Runs").getAttribute("tabindex")).toBe("0");
-    expect(panel().getAttribute("aria-labelledby")).toBe(tab("Runs").id);
+    await act(async () => tab("History").click());
+    expect(selectedTab().textContent).toBe("History");
+    expect(tab("History").getAttribute("tabindex")).toBe("0");
+    expect(panel().getAttribute("aria-labelledby")).toBe(tab("History").id);
     expect(panel().textContent).toBe("Showing runs");
   });
 
@@ -298,20 +298,20 @@ describe("the pipeline page's panel", () => {
     await show(page());
     await ready();
     // Nothing selected: only the pipeline's tabs, and Nodes shown.
-    expect(tabNames()).toEqual(["Nodes", "Run", "Suggestions", "Runs", "Versions"]);
+    expect(tabNames()).toEqual(["Nodes", "Run", "Suggestions", "History", "Versions"]);
     expect(selectedTab().textContent).toBe("Nodes");
     expect(host.querySelector(".cv-drawer")).toBeNull();
 
     const before = document.activeElement;
     await click(nodeEl("people"));
-    expect(tabNames()).toEqual(["Nodes", "Settings", "Preview", "Run", "Suggestions", "Runs", "Versions"]);
+    expect(tabNames()).toEqual(["Nodes", "Settings", "Preview", "Run", "Suggestions", "History", "Versions"]);
     expect(selectedTab().textContent).toBe("Settings");
     expect(panel().querySelector("h3")?.textContent).toBe("people");
     expect(document.activeElement).toBe(before);
     expect(panel().contains(document.activeElement)).toBe(false);
 
     // The arrow keys select too: from Runs, Right moves to the next node and shows its settings.
-    await act(async () => tab("Runs").click());
+    await act(async () => tab("History").click());
     nodeEl("people").focus();
     await key(nodeEl("people"), "ArrowRight");
     expect(selectedTab().textContent).toBe("Settings");
@@ -320,7 +320,7 @@ describe("the pipeline page's panel", () => {
     // Escape clears the selection: Settings and Preview go, Nodes is shown, the focus stays on the node.
     nodeEl("out").focus();
     await key(nodeEl("out"), "Escape");
-    expect(tabNames()).toEqual(["Nodes", "Run", "Suggestions", "Runs", "Versions"]);
+    expect(tabNames()).toEqual(["Nodes", "Run", "Suggestions", "History", "Versions"]);
     expect(selectedTab().textContent).toBe("Nodes");
     expect(document.activeElement).toBe(nodeEl("out"));
     expect(tabs().every((t) => t.getAttribute("aria-controls") === panel().id)).toBe(true);

@@ -13,7 +13,16 @@ export const ACTIONS: { value: string; label: string; tone: Tone }[] = [
   { value: "source.deleted", label: "Source deleted", tone: "warn" },
   { value: "source.allow_writing", label: "Allow writing changed", tone: "warn" },
   { value: "source.allow_sql", label: "Allow SQL changed", tone: "warn" },
+  { value: "source.max_runs", label: "Most runs at once changed", tone: "neutral" },
   { value: "flow.sql", label: "Flow ran SQL", tone: "warn" },
+  { value: "auth.sign_in", label: "Signed in", tone: "neutral" },
+  { value: "auth.sign_in_refused", label: "Sign-in given no role", tone: "bad" },
+  { value: "auth.sign_out", label: "Signed out", tone: "neutral" },
+  { value: "access.review", label: "Access review viewed", tone: "neutral" },
+  { value: "unmask.requested", label: "Sensitive values asked for", tone: "warn" },
+  { value: "unmask.approved", label: "Sensitive values approved", tone: "warn" },
+  { value: "unmask.refused", label: "Sensitive values refused", tone: "neutral" },
+  { value: "database.restored", label: "Database restored", tone: "warn" },
   { value: "api.request", label: "Request", tone: "neutral" },
   { value: "api.refused", label: "Request refused", tone: "bad" },
 ];
@@ -26,6 +35,10 @@ export function describe(e: AuditEvent): string {
   if (e.action === "source.allow_writing" || e.action === "source.allow_sql") {
     return `${d.on ? "Turned on" : "Turned off"}${d.via ? ` (${String(d.via)})` : ""}`;
   }
+  if (e.action === "source.max_runs") {
+    const limit = (v: unknown) => (v == null ? "no limit" : String(v));
+    return `From ${limit(d.before)} to ${limit(d.after)}${d.via ? ` (${String(d.via)})` : ""}`;
+  }
   if (e.action === "flow.sql") {
     const n = Number(d.statements ?? 0);
     return `${n} ${n === 1 ? "statement" : "statements"} on ${String(d.source ?? "")}, version ${String(d.version ?? "")}`;
@@ -35,6 +48,15 @@ export function describe(e: AuditEvent): string {
     if (d.unmask) parts.push("sees unmasked values");
     parts.push(d.expiresAt ? `expires ${formatTime(String(d.expiresAt))}` : "never expires");
     return `${d.name ? `${String(d.name)}: ` : ""}${parts.filter(Boolean).join(", ")}`;
+  }
+  if (e.action === "auth.sign_in") {
+    return `${String(d.role ?? "")}${d.unmask ? ", sees unmasked values" : ""}`;
+  }
+  if (e.action === "auth.sign_in_refused") {
+    return String(d.reason ?? "");
+  }
+  if (e.action === "database.restored") {
+    return `From ${String(d.backup ?? "a backup")}, taken ${d.takenAt ? formatTime(String(d.takenAt)) : "at an unknown time"}`;
   }
   if (e.action === "api.request" || e.action === "api.refused") {
     const call = `${String(d.method ?? "")} ${String(d.status ?? "")}`.trim();

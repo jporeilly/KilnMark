@@ -28,6 +28,9 @@ Direct dependencies:
   one `@font-face` per weight naming the package's file); Vite copies those five files into
   `dist/ui/assets`. The full licence text of both fonts is
   in `third-party-notices.txt` with the other packages.
+- The same five files also style Keycloak's sign-in page in the optional `auth` profile
+  (`containers/keycloak/themes/kilnmark/login/resources/fonts`), with both fonts' licence beside them
+  in `OFL.txt`.
 - Code and identifiers use the system's monospace font.
 
 ## Icons and logos

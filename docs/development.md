@@ -187,9 +187,9 @@ set `DOCKER_HOST` to the address `podman machine inspect` reports, and
 
 ## Sign in
 
-Every API call needs an API token except three public ones: `GET /api/v1/info`, the health
-checks under `/q/health`, and the API description at `/q/openapi` (it lists endpoints, never
-data). The token goes in a header:
+Every API call needs an API token, or a provider sign-in (below), except a few public ones:
+`GET /api/v1/info`, `GET /api/v1/auth/status`, the health checks under `/q/health`, and the API
+description at `/q/openapi` (it lists endpoints, never data). The token goes in a header:
 `Authorization: Bearer km_...`. The web UI asks for one on its sign-in page and keeps it only
 for that browser tab. A token has one role, and each role includes the ones before it:
 
@@ -238,6 +238,36 @@ curl -X POST http://localhost:8780/api/v1/tokens -H "Authorization: Bearer $KILN
 The response holds the token once; only its SHA-256 is stored. `DELETE /api/v1/tokens/{id}`
 revokes one at once.
 
+**Token lifetime and the access review** (ADR 0037). `kilnmark.auth.token-max-lifetime`
+(`KILNMARK_AUTH_TOKEN_MAX_LIFETIME`, for example `90d`; unset by default) is the longest an API
+token may last: new tokens must expire within it, and a token older than it stops working whatever
+its own expiry, except the one from `KILNMARK_ADMIN_TOKEN`. Check **Settings**, **Access review**
+before setting it: tokens already older stop at once. `GET /api/v1/tokens/policy` says the limit.
+`GET /api/v1/access-review` (admins; `?format=csv` for a spreadsheet) lists every token with its
+role, grant, status, expiry and last use, and everyone who has signed in with the identity provider
+with the role of their last sign-in; each view and download is an audit event. Set the limit on every
+Kilnmark process (api, worker, scheduler): each judges tokens, and notifications, by its own setting.
+
+**Two people for the unmask grant** (ADR 0038). `kilnmark.auth.unmask-approval=true`
+(`KILNMARK_AUTH_UNMASK_APPROVAL`, off by default; needs provider sign-in or the server does not
+start): only a person signed in with the provider may make a designer token asking for the grant,
+and it is made without it (`unmaskRequestedBy`); `POST /api/v1/tokens/{id}/unmask/approve` by
+another person signed in with the provider gives it (`unmaskApprovedBy`), compared by issuer and
+subject; tokens and the asker get 403. `.../refuse` clears the request.
+`GET /api/v1/tokens/policy` says whether approval is on. Audit events `unmask.requested`,
+`unmask.approved`, `unmask.refused`.
+
+**Sign-in with the identity provider** (ADR 0036). With Quarkus's OIDC client set up
+(`QUARKUS_OIDC_TENANT_ENABLED=true`, `QUARKUS_OIDC_AUTH_SERVER_URL`, `QUARKUS_OIDC_CLIENT_ID`,
+`QUARKUS_OIDC_CREDENTIALS_SECRET`; INSTALL.md says how), the sign-in page offers **Sign in with**
+the provider, through `/api/v1/auth/login`. Roles come from `kilnmark.auth.oidc.<role>-groups`,
+the unmask grant from `unmask-groups` (designers only); MFA is required (`require-mfa`, from the
+ID token's `amr` or `acr`), and a sign-in lasts at most `max-session` (8 hours). Requests that
+change something with the session cookie must carry `X-Requested-With: JavaScript`, as the web UI
+does. Token sign-in is unchanged and tried first: a request without credentials gets 401, never a
+redirect. `GET /api/v1/auth/status` (open) says whether a provider is set up and why a sign-in has
+no role; `POST /api/v1/auth/sign-out` ends the session.
+
 **Lab use only:** `KILNMARK_AUTH_MODE=off` turns sign-in off: anyone who can reach the server
 is an admin, and no tokens can be created. The server only starts this way when it listens on a
 loopback address (`QUARKUS_HTTP_HOST=127.0.0.1`), and logs a warning on every start. The setting
@@ -253,7 +283,8 @@ worker is running, scans stay `queued`.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `kilnmark.worker.concurrency` (`KILNMARK_WORKER_CONCURRENCY`) | `2` | Scans one worker runs at the same time |
+| `kilnmark.worker.concurrency` (`KILNMARK_WORKER_CONCURRENCY`) | `2` | Jobs (scans, quality checks and pipeline runs) one worker runs at the same time: its slots |
+| `kilnmark.worker.flows` (`KILNMARK_WORKER_FLOWS`) | `8` | Flows one worker watches at the same time; they hold no slot, but a database connection each |
 | `kilnmark.worker.poll-interval` | `5s` | How often to look for jobs when no notification arrives |
 | `kilnmark.worker.heartbeat-interval` | `10s` | How often a running job reports that it is alive |
 | `kilnmark.worker.stale-after` | `2m` | A running job silent this long, whose worker is gone, is recovered |
@@ -264,7 +295,22 @@ Pipeline runs are jobs of kind `pipeline`, tried once (they hold a lock of their
 Flow runs are jobs of kind `flow` (docs/design/flows.md), also tried once; a flow only decides which
 pipeline runs next, so its job holds **no** worker slot: the pipeline runs it queues need the slots, and
 a flow holding one could fill every slot while waiting for runs that never start. "Job" is this queue;
-what orchestrates pipelines is called a flow.
+what orchestrates pipelines is called a flow. How to size the slots and flows against the database's
+connections is in [INSTALL.md](../INSTALL.md#sizing-the-workers).
+
+**Source limits** (ADR 0040, docs/design/parallel-runs.md). A source's `max_runs` caps the pipeline
+runs and flow `sql` nodes using it at once. Before a pipeline run starts, its worker takes one place
+on each limited source the version reads or writes: an advisory lock keyed from
+`kilnmark:source-place:<source id>:<k>`, for `k` below the limit, on the job's own lease connection,
+sources in id order, all or nothing. If one is full the run stays queued with a note saying which
+source it waits for, and its job goes back in the queue for 5 s without using its attempt
+(`ScanService.Outcome.WAITING`). A flow's `sql` node takes its place on the flow job's lease and
+waits there, tried again on each look at the flow. Places are given back when the lease closes, by
+PostgreSQL if the worker dies. The lease counts the places it holds itself, since advisory locks
+nest within one session. The queue hands out due jobs oldest first, and a lease that held places
+makes the waiting pipeline jobs due at once when it lets them go, so a waiting run is not overtaken
+by later ones. A pipeline job whose run has not started is never failed: recovery and errors put it
+back without using its attempt.
 
 Workers wake at once on a PostgreSQL notification and poll as a fallback. A source has at most
 one scan waiting or running: asking for another returns the one in progress. While a worker scans
@@ -485,6 +531,7 @@ listed by `GET /api/v1/common-settings`:
 | `keep_samples` | `true` (the default) keeps sample rows and example values; `false` keeps shapes and statistics only |
 | `sample_rows` | Rows sampled per table or file for profiling, 0 to 10,000; empty for the server's setting |
 | `table_sample_above_rows` | Databases: tables above this many rows (at least 1000) are profiled from a sample |
+| `max_runs` | Most runs at once: pipeline runs and flow `sql` nodes that may use the source at the same time, 1 to 100; empty for no limit (ADR 0040) |
 
 Each has a kind (text, choice, boolean or number) that a save checks, as for connector settings.
 
@@ -885,6 +932,29 @@ Latin subset only, so nothing loads from the internet.
 Icons are Tabler Icons, named in one place (`ui/src/components/icons.tsx`); products get letter
 tiles (`ConnectorTile.tsx`), never vendor logos. The build also writes the UI packages' licences
 to `dist/ui/third-party-notices.txt` ([third-party UI software](legal/third-party-ui.md)).
+
+### Pictures in the guides
+
+The guides' diagrams and screenshots are in `docs/guide/images`, shown in the app's documentation and
+on GitHub alike: `![what it shows](images/name.svg)`. The app shows only pictures from that folder
+(bundled with the UI), and any other image as its description, so a guide never loads anything from
+elsewhere. The app's security policy allows no inline styles, so the diagrams are SVG drawn with
+presentation attributes only (no `<style>`, no `style=""`), on white, so they read the same in
+every theme.
+
+The README's pictures are in `docs/images` instead: everything in `docs/guide/images` is bundled
+with the UI, and the README's are for GitHub only. They are taken at twice the screen's pixels, so
+they stay sharp at GitHub's width.
+
+- **Diagrams** are drawn by `docs/guide/images/diagrams.mjs`, with plain Node and no packages:
+  `node docs/guide/images/diagrams.mjs` writes every `.svg` beside it. Each diagram is a few lines
+  of cards, lanes, arrows and icons, in the house colours: one colour per kind of thing (people,
+  scripts, Kilnmark, a grant), green for what succeeds, red and dashed for what fails or is
+  refused. Change the script and run it again; never edit an SVG by hand. Keep a diagram 760
+  wide and let it grow down: the guide's column shows it at about nine tenths.
+- **Screenshots** come from a running Kilnmark with the sample data only: no lab source names,
+  no real people or tokens, the header cropped off, the light theme, 1200 pixels wide.
+- Give every picture a description that says what it shows, for people who cannot see it.
 
 ## Rules
 

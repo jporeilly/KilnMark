@@ -7,6 +7,109 @@ details.
 
 ### What's new
 
+- **Start and stop Kilnmark with one click**, on Windows 11 and Ubuntu. The release folder has
+  `start-kilnmark` and `stop-kilnmark` scripts for each, and `create-shortcut` puts **Kilnmark**
+  and **Stop Kilnmark** on the desktop and in the Start or applications menu, with Kilnmark's
+  icon. Starting waits until Kilnmark answers, then opens it in the browser; with
+  `COMPOSE_PROFILES=auth` in `.env`, Keycloak starts and stops with it. Stopping keeps every bit of
+  data. (INSTALL.md, "Start and stop with one click")
+
+- **Keycloak for organisations with no identity provider** (ADR 0014). An optional compose profile,
+  `auth`, starts Keycloak beside Kilnmark and sets it up: a `kilnmark` realm with a group for each
+  role and for seeing sensitive values, the client Kilnmark signs in with, a sign-in of a password
+  and a one-time code (so Kilnmark's MFA check passes), and a sign-in page in Kilnmark's colours
+  and fonts. For demonstrations, five example people at `kilnmark.com`, one per role. Every secret
+  comes from `.env`, none with a default. (INSTALL.md, "Keycloak, if you have no identity provider";
+  [Signing in](docs/guide/signing-in.md#keycloak-if-you-have-no-identity-provider))
+
+- **Run one pipeline for each item, several at once** (ADR 0040). A flow's new `for-each` node runs
+  a pipeline once for each item of a list (regions, files, years), written in the flow or given as
+  a list parameter when it runs, with up to `max_parallel` of them at once. Every item runs; the
+  node fails if any did, and conditions can read how many succeeded and failed. The run page lists
+  each item with a link to its pipeline run. A flow's own `max_parallel` caps how many of its nodes
+  run at once. ([Running one pipeline for each item](docs/guide/flows.md#running-one-pipeline-for-each-item))
+
+- **Flow pages read like pipeline pages.** A flow run's page now opens with a **Summary** as a
+  pipeline run's does: status, version, who started it, its times, its nodes by how they stand, the
+  pipeline runs it asked for, the rows they wrote and the lowest quality among them. Then
+  **Where each node spent its time**: wall-clock time, most nodes at once, the longest node and the
+  time its pipeline runs were queued for a worker, and a bar per node split into working, queued
+  for a worker and waiting, all on the run's scale. A flow's page puts Diagram and YAML on tabs, with
+  the pipeline page's panel under them: **Nodes** lists every node, what it runs after and how it
+  went in the latest run; **Settings** changes the chosen node's settings (its pipeline, version,
+  notice, wait and so on) or connection without touching the YAML by hand; then **Run**,
+  **History** and **Versions**. Its history gives how long each run took and the rows it wrote. On
+  pipeline and flow pages alike, the tab once called Runs is now **History**, so it is not mistaken
+  for **Run**. The flow run API adds these totals and each pipeline run's times.
+  ([Reading a run](docs/guide/flows.md#reading-a-run))
+
+- **A limit on runs per source, and more workers** (ADR 0040). A source can set **Most runs at
+  once** (1 to 100), a cap its administrators can agree to: pipeline runs and flow `sql` nodes
+  beyond it wait their turn, oldest first, saying which source they wait for, and neither fail nor
+  use up an attempt. It counts runs, not database sessions: a run may open a few connections, and
+  previews, scans and quality checks are not counted. Each change is in the audit
+  log. Workers watch `KILNMARK_WORKER_FLOWS` flows at once (8), and INSTALL.md says how to size the
+  slots against the database's connections and how to add a worker-only process.
+  ([Sources that take a few runs at a time](docs/guide/pipelines.md#sources-that-take-a-few-runs-at-a-time))
+
+- **Pictures in the guides, and a guide to signing in.** The guides now have diagrams of how things
+  work (a pipeline run, a quality gate, choosing a write mode, a rule's cycle, how notifications
+  reach you, where audit events go, what the Ask panel sends, a restore's steps) and screenshots of
+  the pages they describe, in the app's documentation and on GitHub. A new guide,
+  [Signing in, roles and tokens](docs/guide/signing-in.md), explains API tokens, signing in with
+  your organisation, the four roles and the unmask grant, token lifetime, the access review and two
+  people for sensitive values. Page descriptions and the guides' text now use the page's full
+  width. The notifications guide now lists flow
+  events too, and **Settings › Notifications** shows each event's description on its own line again.
+
+- **See a flow, and watch it run.** A flow's page draws it on a tab beside the YAML: a box per node and an
+  arrow per connection, labelled with when it is taken, following the text as you type. A run's
+  page draws the same diagram with each node's status as the run goes, and a run chart: a bar per
+  node on one time line, a skipped node hatched, each bar opening the pipeline run it started.
+  ([Building and running a flow](docs/guide/flows.md#the-diagram))
+
+- **Change a flow on its diagram.** Designers add nodes, connect them (by dragging from one node to
+  another, or with the form in the panel's Nodes tab), change when a connection is taken, remove nodes and
+  connections, and move nodes, with Undo. Each change is written into the YAML at once, touching
+  only the lines it must; a connection that would make a loop or repeat one is refused, saying why.
+  Moved nodes stay where you put them, in a `layout:` block; **Lay out again** goes back to the
+  diagram's own layout. ([Changing the flow on the diagram](docs/guide/flows.md#changing-the-flow-on-the-diagram))
+
+- **How Kilnmark is built, for buyers who ask** ([SSDF self-assessment](docs/product/ssdf-self-assessment.md)):
+  each task of NIST's Secure Software Development Framework, with where the evidence is and what is
+  still missing, for a federal attestation or a bank's due diligence. The build tool's download is
+  now checked against its published checksum, and every CI action is pinned to an exact commit.
+
+- **Backup and restore** (ADR 0039). `./backup.sh` in the release folder saves the database and the
+  keys that open stored source passwords, as two files to keep apart; `./restore.sh` puts them back,
+  on the same machine or a new one. It restores into a database of its own before touching the
+  running one, keeps what it replaces to go back to, and the audit log (and your SIEM) shows the
+  restore. The runbook,
+  [Backing up and restoring Kilnmark](docs/guide/backup-and-restore.md), covers scheduling, what to
+  check after a restore (tokens revoked since the backup work again), and a quarterly restore
+  test. A database restored without its keys is now named in the log at start, and testing a
+  source says what to do instead of failing with a server error.
+
+- **Two people for sensitive values** (ADR 0038). With sign-in through your identity provider and
+  `KILNMARK_UNMASK_APPROVAL=true`, a designer token asked to see values of columns marked sensitive
+  is made without, and a second person approves or refuses it under **API tokens**; the asker, under
+  any name, and tokens cannot approve. Every step is in the audit log, and the access review shows
+  who approved.
+
+- **Access review, and a longest token lifetime** (ADR 0037). **Settings**, **Access review** lists
+  who can do what: every API token with its role, whether it sees sensitive values, its expiry and
+  last use, and everyone who signs in with your identity provider, with the role of their last
+  sign-in. Download it as CSV for your auditors; each download is in the audit log. Set
+  `KILNMARK_TOKEN_MAX_LIFETIME` (for example `90d`) and every new token must expire within it, while
+  older tokens stop working: check the review first.
+
+- **Sign in with your organisation's identity provider** (ADR 0036). Entra ID, Okta, Ping, ADFS,
+  Keycloak or any OpenID Connect provider: the sign-in page offers **Sign in with** it, roles come
+  from the provider's groups as the settings map them, and only designers in an unmask group see
+  sensitive values. A second factor is required, a sign-in lasts at most 8 hours, and every sign-in
+  is in the audit log. API tokens keep working for scripts. INSTALL.md, "Sign in with your
+  identity provider".
+
 - **Designers, and who sees sensitive values.** A designer role sits between steward and admin:
   designers build pipelines, flows and sources, and stewards run them. Only designers see values of
   columns marked sensitive; admins see them masked, as everyone else does, and a designer token can
@@ -22,6 +125,11 @@ details.
   only designers whose token sees unmasked values write one (ADR 0028). The new sample
   `sample-sql-before-and-after` shows one.
 
+- **Flows in the app.** A new **Flows** page, after Pipelines, lists every flow. Designers write a
+  flow's YAML on its page, checked as they type, and save it with every version; stewards run it,
+  giving values for its parameters, and cancel runs. A run's page shows each node's status, time and
+  message, with a link to the pipeline run it started. The flow canvas comes later.
+
 - **The audit log.** Every change made through the API, every request refused, and the changes
   that decide who sees sensitive values and what reaches a source are recorded, can never be changed
   or deleted, and can be sent to a SIEM. Admins read it under Settings, Audit log (ADR 0029).
@@ -31,6 +139,56 @@ details.
 - **The release key** is in place: `config/release/cosign.pub` is the public half of the key that
   signs every file of a release from now on. Check a release with it as INSTALL.md, "Check a
   release", says.
+- **People are greeted by name.** Someone signed in through the identity provider now shows as their
+  name there ("Alex Morgan"), with their initials, in the top bar and on Home, rather than as
+  `sso:<name> (<ID>)`. The audit log, usage and "created by" still record the `sso:` name, which the
+  user menu also shows. `GET /api/v1/me` adds `displayName` (ADR 0036).
+- **New pipeline and New flow** are the same height as the Add samples button beside them.
+
+- **Parallel runs in flows** (ADR 0040, docs/design/flows.md section 8). A flow's top-level
+  `max_parallel` (1 to 50) holds ready nodes back, in the order written, while that many run; `stop`
+  nodes never wait. The `for-each` node takes `pipeline`, `version`, `items` (1 to 500 texts or
+  numbers, or a text list or number list parameter of up to 200), `as`, `with` and `max_parallel` (4
+  by default); saving checks that the pipeline takes `as` as one value of the items' kind, and, when
+  items run at once, that each writes its own asset (`${<as>}` in every write's target), since a run
+  waiting for another writing its asset fails after 30 seconds. Each item is an ordinary pipeline
+  run with `flow_item` set (migration V31, which moves the unique index to the flow run, node and
+  item); the items of one node are the one exception to a pipeline having at most one run queued or
+  running, so Run now on that pipeline is refused while they run. An item that cannot be queued
+  counts as failed. Cancelling one item's run cancels the flow. It reports `items`, `succeeded` and
+  `failed`. `GET /api/v1/flow-runs/{id}` lists a for-each
+  node's `items`, each with its value (withheld from viewers when it came from the run's values),
+  status and pipeline run. The diagram and the add-node form know the new type; the sample
+  `sample-for-each-region` shows it.
+
+- **Parallel runs, P1, P2 and P5** (ADR 0040, docs/design/parallel-runs.md). `kilnmark.worker.flows`
+  (`KILNMARK_WORKER_FLOWS`, 8) replaces the fixed eight flows a worker watched;
+  `kilnmark.worker.concurrency` is documented as jobs (scans, quality checks, pipeline runs), not
+  scans. A source's `max_runs` (a common setting, in `settings` in the API, 1 to 100 or empty) caps
+  the pipeline runs and flow `sql` nodes using it. A run takes one place on each limited source its
+  version reads or writes before it starts: advisory locks on its job's lease connection, sources
+  in id order, all or nothing. A run on a full source stays queued with the note "Waiting for a
+  free place on source <name>", and its job goes back in the queue for 5 seconds without using its
+  attempt; a `sql` node waits inside its flow. Places are freed when the run ends, or by PostgreSQL
+  when a worker dies. Scans and quality checks do not count. A change of the limit is the audit
+  event `source.max_runs`, with what it was and is. A test runs two workers in one process against
+  one queue: every run runs once, both workers' slots are used, and a source limit holds across
+  both. INSTALL.md gains "Sizing the workers" (`concurrency × 3 + flows + 6` connections per
+  process) and "A second worker".
+
+- **The flows API** (docs/design/flows.md, F3): `GET/POST /api/v1/flows`, `POST
+  /api/v1/flows/validate`, `GET/PUT /api/v1/flows/{name}` (the ETag is the latest version; a `PUT`
+  with an older `If-Match` is refused with 409), `GET .../versions` and `.../versions/{n}`, `POST
+  .../{name}/validate`, `POST` and `GET .../{name}/runs` (with `parameters`), `GET
+  /api/v1/flow-runs/{id}` (the run with every node of its version, each with its status, times,
+  message, what it reported and the pipeline run it started) and `POST
+  /api/v1/flow-runs/{id}/cancel`. Viewers read, designers save, stewards run and cancel. Viewers do
+  not see the values a run started with, nor node messages quoting them, since they can hold server
+  variables. Saving
+  passes the caller's unmask grant, so a flow with a `sql` node is saved only by a designer whose
+  token sees unmasked values (ADR 0028). There is no delete yet. User guide: "Building and running a
+  flow".
+
 - **The allowed-hosts list sees the S3 hosts requests really reach** (ADR 0035). The AWS SDK works
   the host out, as for a read, and nothing is sent: usually with the bucket in it
   (`mybucket.storage.example.com`, `mybucket.s3.eu-west-2.amazonaws.com`) unless `path_style` is

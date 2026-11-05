@@ -14,6 +14,8 @@ export type Route =
   | { page: "email-log" }
   // The audit log, for admins
   | { page: "audit" }
+  // Who can do what: tokens and provider sign-ins, for admins (ADR 0037)
+  | { page: "access-review" }
   // Drivers the customer installs, for admins
   | { page: "drivers" }
   // JDBC drivers admins register for the generic JDBC connector
@@ -32,7 +34,11 @@ export type Route =
   // Pipelines: the list, one pipeline (a new one when name is null), and one run
   | { page: "pipelines" }
   | { page: "pipeline"; name: string | null; version: number | null }
-  | { page: "pipeline-run"; id: number };
+  | { page: "pipeline-run"; id: number }
+  // Flows: the list, one flow (a new one when name is null), and one run
+  | { page: "flows" }
+  | { page: "flow"; name: string | null; version: number | null }
+  | { page: "flow-run"; id: number };
 
 /** A path part decoded, or as it is when it is not valid percent-encoding. */
 function decode(part: string): string {
@@ -56,6 +62,7 @@ export function parse(hash: string): Route {
   if (path === "/settings/email") return { page: "email" };
   if (path === "/settings/email/sent") return { page: "email-log" };
   if (path === "/settings/audit") return { page: "audit" };
+  if (path === "/settings/access-review") return { page: "access-review" };
   if (path === "/settings/drivers") return { page: "drivers" };
   if (path === "/settings/jdbc-drivers") return { page: "jdbc-drivers" };
   if (path === "/quality/rules") return { page: "rules", urn: params.get("urn") ?? "" };
@@ -88,6 +95,16 @@ export function parse(hash: string): Route {
     const id = Number(path.slice("/pipeline-runs/".length));
     if (Number.isInteger(id) && id > 0) return { page: "pipeline-run", id };
   }
+  if (path === "/flows") return { page: "flows" };
+  if (path === "/flows/new") return { page: "flow", name: null, version: null };
+  if (path.startsWith("/flows/")) {
+    const v = Number(params.get("version"));
+    return { page: "flow", name: decode(path.slice("/flows/".length)), version: Number.isInteger(v) && v > 0 ? v : null };
+  }
+  if (path.startsWith("/flow-runs/")) {
+    const id = Number(path.slice("/flow-runs/".length));
+    if (Number.isInteger(id) && id > 0) return { page: "flow-run", id };
+  }
   if (path === "/relationships") return { page: "relationships", status: params.get("status") ?? "proposed" };
   return { page: "home" };
 }
@@ -108,6 +125,7 @@ export const href = {
   email: () => "#/settings/email",
   emailLog: () => "#/settings/email/sent",
   audit: () => "#/settings/audit",
+  accessReview: () => "#/settings/access-review",
   drivers: () => "#/settings/drivers",
   jdbcDrivers: () => "#/settings/jdbc-drivers",
   rules: (urn?: string) => (urn ? `#/quality/rules?urn=${encodeURIComponent(urn)}` : "#/quality/rules"),
@@ -130,6 +148,11 @@ export const href = {
   pipeline: (name: string, version?: number) =>
     `#/pipelines/${encodeURIComponent(name)}${version ? `?version=${version}` : ""}`,
   pipelineRun: (id: number) => `#/pipeline-runs/${id}`,
+  flows: () => "#/flows",
+  newFlow: () => "#/flows/new",
+  /** A flow; with a version, that saved version is shown read-only. */
+  flow: (name: string, version?: number) => `#/flows/${encodeURIComponent(name)}${version ? `?version=${version}` : ""}`,
+  flowRun: (id: number) => `#/flow-runs/${id}`,
   relationships: (status = "proposed") => `#/relationships?status=${encodeURIComponent(status)}`,
 };
 

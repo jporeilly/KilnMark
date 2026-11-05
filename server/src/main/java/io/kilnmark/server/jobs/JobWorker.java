@@ -43,6 +43,8 @@ public class JobWorker {
     private static final Logger LOG = Logger.getLogger(JobWorker.class);
     private static final Duration RECOVER_EVERY = Duration.ofSeconds(30);
     private static final Duration LOCKED_RETRY = Duration.ofSeconds(30);
+    /** How long a run waiting for a free place on a source stays back in the queue (ADR 0040). */
+    static final Duration PLACE_RETRY = Duration.ofSeconds(5);
     /** After the shutdown timeout, how long cancelled scans get to wind down. */
     static final int CANCEL_GRACE_SECONDS = 15;
 
@@ -116,11 +118,13 @@ public class JobWorker {
         workerId = host + ":" + ProcessHandle.current().pid() + ":" + HexFormat.of().formatHex(suffix);
         int concurrency = Math.max(1, config.worker().concurrency());
         slots = new Semaphore(concurrency);
+        int flowCount = Math.max(1, config.worker().flows());
+        flowSlots = new Semaphore(flowCount);
         recover();
         Thread.ofVirtual().name("kilnmark-job-heartbeat").start(this::beat);
         listener = Thread.ofVirtual().name("kilnmark-job-listener").start(this::listen);
         poller = Thread.ofVirtual().name("kilnmark-job-poller").start(this::poll);
-        LOG.infof("Worker %s started: up to %d jobs at a time", workerId, concurrency);
+        LOG.infof("Worker %s started: up to %d jobs and %d flows at a time", workerId, concurrency, flowCount);
     }
 
     private void recover() {
@@ -141,9 +145,8 @@ public class JobWorker {
         }
     }
 
-    /** Flows one worker watches at the same time; they hold no worker slot (see {@link #poll}). */
-    static final int MAX_FLOWS = 8;
-    private final java.util.concurrent.Semaphore flowSlots = new java.util.concurrent.Semaphore(MAX_FLOWS);
+    /** Flows this worker watches at once ({@code kilnmark.worker.flows}); they hold no slot (see {@link #poll}). */
+    private Semaphore flowSlots;
 
     private void poll() {
         Duration every = config.worker().pollInterval();
@@ -269,7 +272,8 @@ public class JobWorker {
     /**
      * Runs a pipeline or flow job while holding its own lock (no source lock: runs of a pipeline may read
      * sources being scanned). A pipeline job is tried once; a run stopped by shutdown is marked
-     * failed rather than repeated, since its writes may have begun.
+     * failed rather than repeated, since its writes may have begun. A run waiting for a free place on
+     * a source ({@link ScanService.Outcome#WAITING}) goes back in the queue without using that attempt.
      */
     private void executeLocked(JobQueue.Job job, String what, LockedRun body) {
         Optional<JobQueue.ScanLease> lease;
@@ -285,10 +289,13 @@ public class JobWorker {
         }
         AtomicBoolean cancelled = new AtomicBoolean();
         running.put(job.id(), new Execution(job, lease.get(), cancelled));
+        boolean waiting = false;
         try {
             ScanService.Result result = body.run(job.id(), lease.get(), cancelled::get);
             if (lost.remove(job.id()) != null) {
                 LOG.warnf("%s job %d lost its lock while running", what, job.id());
+            } else if (result.outcome() == ScanService.Outcome.WAITING) {
+                waiting = true; // put back once the lease, and with it the job's lock, is given up
             } else {
                 queue.complete(job, result.note());
             }
@@ -303,6 +310,16 @@ public class JobWorker {
             running.remove(job.id());
             lease.get().close();
             lost.remove(job.id());
+        }
+        if (waiting) {
+            // A source it uses is full: back in the queue for a few seconds, without using its one attempt.
+            try {
+                queue.release(job, PLACE_RETRY, null);
+            } catch (RuntimeException e) {
+                // Still running in the queue, never started: recovery puts it back (JobQueue.recoverStale).
+                LOG.warnf("Could not put waiting %s job %d back in the queue; recovery will", what.toLowerCase(),
+                    job.id());
+            }
         }
     }
 

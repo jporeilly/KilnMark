@@ -177,6 +177,8 @@ the rule goes live.
 
 ## Running rules and reading results
 
+![A rule's cycle: suggested or written, tried, saved with thresholds, run after every scan; a pass sets the score, a warning or failure opens a task and notifies](images/quality-rule-cycle.svg)
+
 Rules run:
 
 - **after every scan** of the asset's source;

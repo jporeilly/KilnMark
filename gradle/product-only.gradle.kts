@@ -149,11 +149,16 @@ class ProductOnly(private val root: java.io.File, allowFile: java.io.File) {
     /** A name that holds a secret: a password, secret or token. */
     private val secretName = "[A-Za-z0-9_]*(?:PASSWORD|SECRET|TOKEN)[A-Za-z0-9_]*"
 
+    /** Names that match secretName but hold no secret: each a setting about secrets, named here on purpose. */
+    private val notSecrets = setOf(
+        "KILNMARK_TOKEN_MAX_LIFETIME", // how long API tokens may last, a duration (ADR 0037)
+    )
+
     /** compose.yaml: no default for a secret's variable, and no secret written into the file. */
     private fun secretDefaults(path: String, text: String) {
         text.lines().forEachIndexed { i, raw ->
             val line = raw.substringBefore(" #").let { if (it.trimStart().startsWith("#")) "" else it }
-            Regex("\\$\\{($secretName)(:?[-=])").findAll(line).forEach { m ->
+            Regex("\\$\\{($secretName)(:?[-=])").findAll(line).filter { it.groupValues[1] !in notSecrets }.forEach { m ->
                 problems += "$path:${i + 1}: secrets: \"${m.groupValues[1]}\" has a default (${m.groupValues[2]}); " +
                     "require it with \${${m.groupValues[1]}:?message} or let Kilnmark generate it"
             }

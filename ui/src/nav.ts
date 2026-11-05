@@ -60,6 +60,15 @@ export const NAV: NavItem[] = [
     tint: "mint",
     current: (r) => (r.page === "pipelines" ? "page" : r.page === "pipeline" || r.page === "pipeline-run" ? "true" : undefined),
   },
+  // Flows run pipelines in an order, so they come right after them.
+  {
+    id: "flows",
+    label: "Flows",
+    href: href.flows(),
+    icon: "flows",
+    tint: "sky",
+    current: (r) => (r.page === "flows" ? "page" : r.page === "flow" || r.page === "flow-run" ? "true" : undefined),
+  },
   { id: "issues", label: "Issues", href: href.issues(), icon: "issues", tint: "red", current: on("issues"), badge: "issues" },
   {
     id: "whats-new",

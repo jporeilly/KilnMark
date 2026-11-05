@@ -110,7 +110,7 @@ The built-in connectors declare:
 | SQL Server | as PostgreSQL; `trust_server_certificate` BOOLEAN (false); `isolation` CHOICE (`read-uncommitted`, `snapshot`, `read-committed`; default `read-uncommitted`) |
 | Folder | `path`, `encoding`, `delimiter` TEXT; `recursive` BOOLEAN (true); `header` BOOLEAN (true); `keep_text` BOOLEAN (true); `read_text_on_demand` BOOLEAN (false) |
 | S3 | `endpoint` URL; `region`, `bucket`, `prefix`, `access_key_id`, `encoding`, `delimiter` TEXT; `path_style` BOOLEAN (false); `header`, `keep_text`, `read_text_on_demand` as for folders |
-| Every source | `description`, `include`, `exclude` TEXT; `ai_egress` CHOICE; `allow_writing` BOOLEAN (false); `keep_samples` BOOLEAN (true); `sample_rows` NUMBER (0 to 10,000); `table_sample_above_rows` NUMBER (databases) |
+| Every source | `description`, `include`, `exclude` TEXT; `ai_egress` CHOICE; `allow_writing` BOOLEAN (false); `keep_samples` BOOLEAN (true); `sample_rows` NUMBER (0 to 10,000); `table_sample_above_rows` NUMBER (databases); `max_runs` NUMBER (1 to 100, ADR 0040) |
 
 ## The reader node
 

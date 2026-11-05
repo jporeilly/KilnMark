@@ -52,6 +52,16 @@ public class ApiTokenMechanism implements HttpAuthenticationMechanism {
             HttpSecurityUtils.setRoutingContextAttribute(new ApiTokenRequest(token), context));
     }
 
+    /**
+     * Tried before the identity provider's sign-in (ADR 0036), so a request without credentials is
+     * answered 401 with this challenge, as scripts expect, never redirected to the provider; the
+     * provider's own endpoint, {@code /api/v1/auth/login}, asks for its sign-in explicitly.
+     */
+    @Override
+    public int getPriority() {
+        return DEFAULT_PRIORITY + 100;
+    }
+
     @Override
     public Uni<ChallengeData> getChallenge(RoutingContext context) {
         return Uni.createFrom().item(new ChallengeData(401, "WWW-Authenticate", CHALLENGE));

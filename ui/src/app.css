@@ -81,7 +81,6 @@ a:hover {
   font-size: var(--km-text-lg);
   color: var(--km-muted);
   margin: 4px 0 20px;
-  max-width: 75ch;
 }
 
 .muted {
@@ -2280,6 +2279,13 @@ a.km-stat--link:hover {
   margin: 4px 8px 6px;
 }
 
+/* The sso: name Kilnmark records them by, under the name it greets them by. */
+.km-popover-recorded {
+  display: block;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .km-popover-row {
   padding: 4px 8px 8px;
   border-bottom: 1px solid var(--km-divider);
@@ -2512,6 +2518,17 @@ a.km-stat--link:hover {
 
 .signin h1 {
   margin-bottom: 16px;
+}
+
+/* Sign in with the identity provider above, the API token form below (ADR 0036). */
+.signin .form .km-button {
+  align-self: flex-start;
+}
+
+.signin-or {
+  margin: 24px 0 12px;
+  font-size: 1rem;
+  color: var(--km-ink-soft);
 }
 
 .new-token {
@@ -4323,6 +4340,8 @@ h1.with-tile {
 .km-note > :first-child {
   justify-self: start;
   margin-top: 2px; /* lines the chip up with the title's first line */
+}
+
 /* ---- Notifications (settings, email, sent log): layout only, colours from the tokens above ---- */
 .choice-hint {
   display: block;

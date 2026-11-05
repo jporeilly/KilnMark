@@ -323,6 +323,104 @@ class FlowDefinitionTest {
         assertTrue(FlowDefinition.parse(sameId).problems().stream().anyMatch(p -> p.message().contains("used twice")));
     }
 
+    // ---- max_parallel and for-each (ADR 0040) ----
+
+    static final String FAN = """
+        kilnmark: flow/v1
+        name: per-region
+        max_parallel: 3
+        parameters:
+          regions: { type: text list, default: [EMEA, APAC] }
+          years: { type: number list, default: [2025] }
+          label: { type: text, default: nightly }
+        nodes:
+          - id: regions
+            type: for-each
+            pipeline: sales-by-region
+            items: [EMEA, APAC, AMER]
+            as: region
+            with: { label: "${label}" }
+            max_parallel: 2
+          - id: years
+            type: for-each
+            pipeline: sales-by-year
+            version: 2
+            items: "${years}"
+            as: year
+          - id: tell
+            type: notify
+            title: "${regions.succeeded} of ${regions.items} regions"
+        connections:
+          - { from: regions, to: years, when: "regions.failed = 0" }
+          - { from: years, to: tell }
+        """;
+
+    @Test
+    void readsMaxParallelAndAForEachNode() {
+        FlowDefinition.Parsed p = FlowDefinition.parse(FAN);
+        assertTrue(p.valid(), p.problems().toString());
+        FlowDefinition d = p.definition();
+        assertEquals(3, d.maxParallel());
+        assertEquals(null, FlowDefinition.parse(GOOD).definition().maxParallel(), "no limit when left out");
+        FlowDefinition.Node regions = d.node("regions");
+        assertEquals("sales-by-region", regions.pipeline());
+        assertEquals(List.of("EMEA", "APAC", "AMER"), regions.each().items());
+        assertEquals("region", regions.each().as());
+        assertEquals(2, regions.each().maxParallel());
+        assertEquals(Map.of("label", "${label}"), regions.with());
+        FlowDefinition.Node years = d.node("years");
+        assertEquals(2, years.version());
+        assertEquals("years", years.each().itemsParameter());
+        assertEquals(FlowDefinition.DEFAULT_ITEMS_AT_ONCE, years.each().maxParallel(), "4 when left out");
+        assertEquals(List.of(2025.0, 2026.0), years.each().itemsIn(Map.of("years", List.of(2025.0, 2026.0))));
+        assertEquals(List.of("EMEA", "APAC", "AMER"), regions.each().itemsIn(Map.of()));
+        assertEquals(FlowCondition.Type.NUMBER, FlowDefinition.nodeValueType(d, "regions.failed"));
+        assertEquals(null, FlowDefinition.nodeValueType(d, "regions.rows_written"));
+        assertEquals(List.of(1.0, 2.5), FlowDefinition.parse(FAN.replace("[EMEA, APAC, AMER]", "[1, 2.5]")).definition()
+            .node("regions").each().items(), "numbers are read as numbers");
+        assertEquals(List.of("007"), FlowDefinition.parse(FAN.replace("[EMEA, APAC, AMER]", "[\"007\"]")).definition()
+            .node("regions").each().items(), "text keeps its text");
+    }
+
+    @Test
+    void checksMaxParallelAndAForEachNode() {
+        assertTrue(firstProblem(FAN.replace("max_parallel: 3", "max_parallel: 0"))
+            .contains("max_parallel is how many of the flow's nodes run at once: a whole number from 1 to 50"));
+        assertTrue(firstProblem(FAN.replace("max_parallel: 3", "max_parallel: 51")).contains("from 1 to 50"));
+        assertTrue(firstProblem(FAN.replace("max_parallel: 3", "max_parallel: lots")).contains("from 1 to 50"));
+        assertTrue(firstProblem(FAN.replace("    max_parallel: 2", "    max_parallel: 60"))
+            .contains("max_parallel is how many items run at once"));
+        assertTrue(firstProblem(FAN.replace("    as: region\n", "")).contains("needs as: the pipeline parameter"));
+        assertTrue(firstProblem(FAN.replace("    pipeline: sales-by-region\n", "")).contains("needs a pipeline"));
+        assertTrue(firstProblem(FAN.replace("    items: [EMEA, APAC, AMER]\n", "")).contains("needs items"));
+        assertTrue(firstProblem(FAN.replace("[EMEA, APAC, AMER]", "[]")).contains("a list of 1 to 500 values"));
+        String many = "[" + String.join(", ", java.util.Collections.nCopies(501, "x")) + "]";
+        assertTrue(firstProblem(FAN.replace("[EMEA, APAC, AMER]", many)).contains("a list of 1 to 500 values"));
+        assertTrue(firstProblem(FAN.replace("[EMEA, APAC, AMER]", "[EMEA, 2]")).contains("all texts or all numbers"));
+        assertTrue(firstProblem(FAN.replace("[EMEA, APAC, AMER]", "[EMEA, true]")).contains("one value: text or a number"));
+        assertTrue(firstProblem(FAN.replace("[EMEA, APAC, AMER]", "[EMEA, [a]]")).contains("one value: text or a number"));
+        assertTrue(firstProblem(FAN.replace("[EMEA, APAC, AMER]", "[\"${label}\"]")).contains("${...} is not read"));
+        assertTrue(firstProblem(FAN.replace("[EMEA, APAC, AMER]", "EMEA")).contains("items is a list of the values"));
+        assertTrue(firstProblem(FAN.replace("[EMEA, APAC, AMER]", "\"${label}\""))
+            .contains("items names label, which is not a list parameter of the flow"));
+        assertTrue(firstProblem(FAN.replace("[EMEA, APAC, AMER]", "\"${regoins}\"")).contains("regions"),
+            "suggests the closest name");
+        assertTrue(firstProblem(FAN.replace("as: region", "as: Region!")).contains("as is the name of the pipeline"));
+        assertTrue(firstProblem(FAN.replace("{ label: \"${label}\" }", "{ region: EMEA }"))
+            .contains("fills region with each item, so with: cannot give it a value too"));
+        assertTrue(firstProblem(FAN.replace("    as: year\n", "    as: year\n    statements: [x]\n"))
+            .contains("has no setting 'statements'"));
+        // It reports items, succeeded and failed, nothing a pipeline run reports.
+        List<Problem> score = FlowDefinition.parse(FAN.replace("regions.failed = 0", "regions.score >= good")).problems();
+        assertTrue(score.stream().anyMatch(x -> x.message().contains("Connection from regions")
+            && x.message().contains("regions.score")), score.toString());
+        assertTrue(firstProblem(FAN.replace("${regions.items}", "${regions.rows_written}"))
+            .contains("a for-each node items, succeeded and failed"));
+        assertTrue(FlowDefinition.parse(FAN.replace("max_parallel: 3", "maxparallel: 3")).problems().stream()
+            .anyMatch(x -> x.message().contains("did you mean 'max_parallel'")
+                || x.message().contains("max_parallel")), "the top-level key is known");
+    }
+
     @Test
     void refusesAnythingThatIsNotAFlow() {
         assertTrue(firstProblem("").contains("starts with kilnmark"));

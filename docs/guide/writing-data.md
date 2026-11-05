@@ -32,6 +32,8 @@ so `Billing.Customers` and `billing.customers` are different tables in PostgreSQ
 
 ### Modes
 
+![Choosing a mode: create for a new table; for one that exists, append to add rows, replace to swap them all, upsert to update rows by key](images/write-modes.svg)
+
 | Mode | The table | What happens |
 | --- | --- | --- |
 | `create` | must not exist | Kilnmark creates it from the input's columns and fills it |

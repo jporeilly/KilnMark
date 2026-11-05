@@ -18,11 +18,20 @@ it (behind a proxy, as its forwarding settings say).
 | --- | --- | --- |
 | Token created (`token.created`) | An API token was made | Its name, role, whether it sees unmasked values, when it expires |
 | Token revoked (`token.revoked`) | A token was revoked | Its name and role |
+| Signed in (`auth.sign_in`) | Someone signed in with your organisation's identity provider | The role their groups gave them, and whether they see unmasked values |
+| Sign-in given no role (`auth.sign_in_refused`) | Someone signed in with the provider but was given no role | Why: no second factor, or none of their groups has a role |
+| Signed out (`auth.sign_out`) | Someone signed out of a provider sign-in | |
+| Access review (`access.review`) | An admin viewed or downloaded the access review (Settings, Access review) | Its format and how many entries it had |
+| Sensitive values asked for (`unmask.requested`) | A designer token was made to see sensitive values, which waits for a second admin | The token's name |
+| Sensitive values approved (`unmask.approved`) | A second admin let a designer token see sensitive values | The token's name |
+| Sensitive values refused (`unmask.refused`) | An admin refused a designer token seeing sensitive values; it sees them masked | The token's name |
+| Database restored (`database.restored`) | Kilnmark's database was restored from a backup with `restore.sh` ([Backing up and restoring Kilnmark](backup-and-restore.md)), recorded at the first start after it. Events after the backup's time are in your SIEM and the kept database, not in the restored log | The backup, when it was taken, its Kilnmark version, the previous database's name, and whether the keys were restored |
 | Column marked sensitive (`mark.set`) | A column was marked | The column |
 | Sensitive mark cleared (`mark.cleared`) | A mark was cleared: the column's values are no longer masked | The column |
 | Source deleted (`source.deleted`) | A source and what was recorded about it were deleted | Its assets and runs, and whether it had marks (deleting it cleared them) |
 | Allow writing changed (`source.allow_writing`) | Allow writing turned on or off | On or off, and how: in the form, or by an import |
 | Allow SQL changed (`source.allow_sql`) | Allow SQL turned on or off | On or off, and how |
+| Most runs at once changed (`source.max_runs`) | A source's limit on runs at once was set, changed or removed ([Sources that take a few runs at a time](pipelines.md#sources-that-take-a-few-runs-at-a-time)) | What it was and is (empty: no limit), and how: in the form, or by an import |
 | Flow ran SQL (`flow.sql`) | A flow's sql node started, as the person who started the flow; the event is on `flow/run/node` | The source, how many statements, and the flow's version. Never the statements themselves, which can hold values: they are in that version of the flow |
 | Request (`api.request`) | Any request that may change something (`POST`, `PUT`, `PATCH`, `DELETE`) and succeeded. Some of these only read, such as previews and dry runs | The method, status and the caller's address; the event is on the request's path |
 | Request refused (`api.refused`) | A request refused for want of a role (403), or for want of sign-in when it would have changed something (401) | The method, status and address. In the table, refusals are kept at most 30 a minute for each token, and for everyone not signed in together; the next one kept says how many were not. The JSON line has every one |
@@ -52,6 +61,8 @@ at least the five years some regulators ask for.
 
 ## Sending it to your SIEM
 
+![Where an audit event goes: a row in Kilnmark's database that is only ever added to, shown under Settings › Audit log, and a JSON line your SIEM can collect](images/audit-log-flow.svg)
+
 Every event is also written, one JSON object a line, to the log category `kilnmark.audit`:
 
 ```json
@@ -70,6 +81,8 @@ KILNMARK_AUDIT_SYSLOG_PROTOCOL=tcp      # or udp, ssl-tcp
 Or collect the container's own output, where the same lines appear, and filter on the category.
 
 ## Reading it
+
+![Settings › Audit log: newest events first, each with when, who (and which token), what, on what, and its details](images/audit-log-page.png)
 
 The page shows the newest events first, a hundred at a time; **Show older events** loads the next
 hundred. **Show** narrows it to one kind of event. Through the API, `action` filters, `limit` sets

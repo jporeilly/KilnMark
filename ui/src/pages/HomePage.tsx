@@ -178,7 +178,7 @@ export function HomePage({ me }: { me: Me }) {
       <section className="km-hero" aria-labelledby="hello-h">
         <div className="km-hero-text">
           <h1 id="hello-h" tabIndex={-1}>
-            {greeting()}, {me.name}
+            {greeting()}, {me.displayName || me.name}
           </h1>
           <p>{summary.length ? summary.join(" · ") : "Loading what changed…"}</p>
         </div>
