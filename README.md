@@ -67,7 +67,7 @@ To install on a clean machine, see [INSTALL.md](INSTALL.md); for everything else
 | `sidecar-python/` | AI sidecar (from v0.4) |
 | `containers/` | PostgreSQL and server images (Containerfiles) |
 | `lab/` | Reference lab with synthetic data, for development, tests and demos only: never shipped |
-| `samples/` | Example pipelines and flows, one idea each, sorted by what they show. They ship as templates, naming their sources by placeholders (`crm-db`, `shop-db`, `files`): **Add samples** on the Pipelines page maps them to your sources (or **Add the starter pack** creates synthetic sample tables for them, from `samples/data`), `lab.sh samples` to the lab's |
+| `samples/` | Example pipelines and flows, one idea each, sorted by what they show. They ship as templates, naming their sources by placeholders (`crm-db`, `shop-db`, `files`): **Add samples** in the Library maps them to your sources and keeps them there, apart from your own pipelines (or **Add the starter pack** creates synthetic sample tables for them, from `samples/data`), `lab.sh samples` to the lab's |
 | `pipelines/` | Built-in pipeline definitions |
 | `tests/regression/` | End-to-end suite against the lab |
 | `docs/` | All documentation |

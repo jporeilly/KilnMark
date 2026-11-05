@@ -34,9 +34,9 @@ On Windows and macOS, start the Podman machine once per boot: `podman machine st
 4. Open http://localhost:8780 and sign in with the admin token from `.env`. Under **API tokens**,
    make a permanent admin token for yourself and keep it safe.
 5. Add a source under **Sources**: nothing is scanned until you do.
-6. To try the samples, small pipelines that show one idea each, choose **Add samples** on the
-   **Pipelines** page. **Add the starter pack** creates Kilnmark's sample tables in a database and
-   schema you pick, and adds every sample reading them; it needs a database and a file source that
+6. To try the samples, small pipelines that show one idea each, open the **Library** and
+   choose **Add samples**: they stay in the Library, apart from your own pipelines. **Add the
+   starter pack** creates Kilnmark's sample tables in a database and schema you pick, and adds every sample reading them; it needs a database and a file source that
    allow writing (an admin turns that on under **Sources**). Or pick your own sources for the
    placeholders the samples use (`crm-db`, `shop-db`, `files`). See
    [samples/README.md](samples/README.md). The samples are also in the release's `samples` folder.

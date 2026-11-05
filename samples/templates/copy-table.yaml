@@ -1,0 +1,21 @@
+# Template: copy a table from one database to another (a Kilnmark template).
+# Replace each <...> with your own: the source to read, its table, and a database that allows
+# writing. Choose the mode: create makes the table once, replace swaps every row on each run.
+kilnmark: pipeline/v1
+name: template-copy-table
+description: One table copied from one database to another.
+
+nodes:
+  - id: rows
+    type: read
+    source: <your source database>
+    asset: <schema.table>
+    # columns: [id, name, updated_at]   # only these columns, in this order
+    # where: "status = 'active'"        # only these rows, filtered by the database
+
+  - id: copy
+    type: write
+    input: rows
+    source: <a database that allows writing>
+    table: <schema.table>
+    mode: replace             # create | append | replace | upsert (with key)

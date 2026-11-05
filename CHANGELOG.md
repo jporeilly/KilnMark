@@ -12,7 +12,14 @@ details.
   workers, a worker takes the highest priority first, then the one queued first; a source's limit
   and `max_parallel` still hold. Set it on the node's Settings tab.
   ([Choosing which runs start first](docs/guide/flows.md#choosing-which-runs-start-first))
-
+- **A Library of samples and templates** (ADR 0043). **Library**, in the navigation, holds what
+  ships with Kilnmark, apart from your own work. **Samples**: Add samples and the starter pack moved
+  here from the Pipelines page, and added samples stay here, so the Pipelines and Flows pages show
+  only your team's own development and production work. The sample flows are now added too, after
+  the pipelines they run. **Templates**: five starting points (copy a table, load a file, a quality
+  gate, an incremental load by key, and a flow running pipelines in order); **Use this template**
+  opens one in the editor as a new pipeline or flow of your own. **From a template** on the
+  Pipelines and Flows pages opens them. ([The Library](docs/guide/library.md))
 - **Stop a flow node that takes too long** (ADR 0041). A `run-pipeline`, `for-each` or `sql` node
   can say how long its work may take (`timeout: 2h`, at most 7 days). Past it, the pipeline run is
   cancelled or the statement rolled back, and the node fails, saying so, so a `failure` connection
@@ -158,7 +165,13 @@ details.
   The diagram's Settings tab has a **Priority** choice, and a node's summary says a high or low one.
   Upgrading: building the new index briefly holds up the job queue while it reads `job`, which
   keeps every job ever queued; the column's check is validated without holding it up.
-
+- **The Library** (ADR 0043). Migration V32 adds `library` to `pipeline` and `flow`: `sample` for
+  one added from the samples, set by the server, never by the YAML; samples added before are marked
+  by their fixed names, never by a pattern. `GET /api/v1/pipelines`, `/flows` and each one's detail
+  give `library`. `POST /api/v1/samples` adds the sample flows after their pipelines, skipping one
+  whose pipelines are not all there. `GET /api/v1/templates` lists the templates in
+  `samples/templates`, with their YAML, for any signed-in person, even with the samples turned off.
+  `#/pipelines/new?template=<file>` and `#/flows/new?template=<file>` open one in the editor.
 - **The release key** is in place: `config/release/cosign.pub` is the public half of the key that
   signs every file of a release from now on. Check a release with it as INSTALL.md, "Check a
   release", says.

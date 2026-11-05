@@ -6,7 +6,7 @@ its `samples` folder. They write only under `samples/` in the file storage they 
 
 ## The starter pack
 
-The quickest way to try them: on the **Pipelines** page, choose **Add samples**, then under
+The quickest way to try them: in the **Library**, on the **Samples** tab, choose **Add samples**, then under
 **Starter pack** pick a database and a schema in it, and a file source for what the samples write
 (both must allow writing), and choose **Add the starter pack**. Kilnmark then:
 
@@ -55,9 +55,17 @@ A placeholder you do not map skips the samples that use it. Each sample is check
 Kilnmark has scanned of your sources, so scan them first: a table a sample reads that the scan did
 not find saves it as a draft, with problems saying what is missing. Open it and change what it reads.
 
+## Templates
+
+`templates/` holds templates: pipelines and flows to start your own from, such as copying a table,
+loading a file, a quality gate, an incremental load and running pipelines in order. They are not
+samples: they have `<...>` where your own source, table or pipeline goes, and they are never added
+as they are. In Kilnmark, open the **Library**, **Templates**, and choose **Use this template**: it
+opens in the editor as a new pipeline or flow of your own. `GET /api/v1/templates` lists them.
+
 ## Adding them with your own sources
 
-- **In Kilnmark:** on the **Pipelines** page, choose **Add samples** (stewards and admins), and under
+- **In Kilnmark:** in the **Library**, on the **Samples** tab, choose **Add samples** (designers and admins), and under
   **Or choose your own sources** pick one of your saved sources for each placeholder, and choose
   **Add samples**. Once the sample tables have been created, the dialog offers to read them. Through
   the API:

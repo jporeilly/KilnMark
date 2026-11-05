@@ -33,11 +33,14 @@ export type Route =
   | { page: "relationships"; status: string }
   // Pipelines: the list, one pipeline (a new one when name is null), and one run
   | { page: "pipelines" }
-  | { page: "pipeline"; name: string | null; version: number | null }
+  /** template: a template's file (samples/templates/...) a new pipeline starts from. */
+  | { page: "pipeline"; name: string | null; version: number | null; template?: string | null }
   | { page: "pipeline-run"; id: number }
   // Flows: the list, one flow (a new one when name is null), and one run
   | { page: "flows" }
-  | { page: "flow"; name: string | null; version: number | null }
+  | { page: "flow"; name: string | null; version: number | null; template?: string | null }
+  /** The library of samples and templates (ADR 0043), on one of its two tabs. */
+  | { page: "library"; tab: "samples" | "templates" }
   | { page: "flow-run"; id: number };
 
 /** A path part decoded, or as it is when it is not valid percent-encoding. */
@@ -82,7 +85,7 @@ export function parse(hash: string): Route {
     return { page: "docs", doc: doc ?? null, section: section ?? null };
   }
   if (path === "/pipelines") return { page: "pipelines" };
-  if (path === "/pipelines/new") return { page: "pipeline", name: null, version: null };
+  if (path === "/pipelines/new") return { page: "pipeline", name: null, version: null, template: params.get("template") };
   if (path.startsWith("/pipelines/")) {
     const v = Number(params.get("version"));
     return {
@@ -96,7 +99,8 @@ export function parse(hash: string): Route {
     if (Number.isInteger(id) && id > 0) return { page: "pipeline-run", id };
   }
   if (path === "/flows") return { page: "flows" };
-  if (path === "/flows/new") return { page: "flow", name: null, version: null };
+  if (path === "/flows/new") return { page: "flow", name: null, version: null, template: params.get("template") };
+  if (path === "/library") return { page: "library", tab: params.get("tab") === "templates" ? "templates" : "samples" };
   if (path.startsWith("/flows/")) {
     const v = Number(params.get("version"));
     return { page: "flow", name: decode(path.slice("/flows/".length)), version: Number.isInteger(v) && v > 0 ? v : null };
@@ -143,13 +147,16 @@ export const href = {
   /** A diagram of one asset and the assets related to it. */
   neighbours: (urn: string) => `#/browse?asset=${encodeURIComponent(urn)}`,
   pipelines: () => "#/pipelines",
-  newPipeline: () => "#/pipelines/new",
+  /** A new pipeline; with a template's file, starting from that template. */
+  newPipeline: (template?: string) => `#/pipelines/new${template ? `?template=${encodeURIComponent(template)}` : ""}`,
   /** A pipeline; with a version, that saved version is shown read-only. */
   pipeline: (name: string, version?: number) =>
     `#/pipelines/${encodeURIComponent(name)}${version ? `?version=${version}` : ""}`,
   pipelineRun: (id: number) => `#/pipeline-runs/${id}`,
   flows: () => "#/flows",
-  newFlow: () => "#/flows/new",
+  newFlow: (template?: string) => `#/flows/new${template ? `?template=${encodeURIComponent(template)}` : ""}`,
+  /** The library of samples and templates. */
+  library: (tab?: "samples" | "templates") => (tab === "templates" ? "#/library?tab=templates" : "#/library"),
   /** A flow; with a version, that saved version is shown read-only. */
   flow: (name: string, version?: number) => `#/flows/${encodeURIComponent(name)}${version ? `?version=${version}` : ""}`,
   flowRun: (id: number) => `#/flow-runs/${id}`,
