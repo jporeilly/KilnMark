@@ -8,6 +8,16 @@ here="$(dirname "$(readlink -f "$0")")"
 apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 mkdir -p "$apps"
 
+# The folder as a .desktop value: a backslash doubled. In Exec, inside its quotes, also " ` $ and \
+# escaped once more, and % doubled, as the Desktop Entry spec asks.
+value() { printf '%s' "${1//\\/\\\\}"; }
+exec_arg() {
+  local s="$1"
+  s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//\`/\\\`}"; s="${s//\$/\\\$}"
+  s="${s//\\/\\\\}"; s="${s//%/%%}"
+  printf '"%s"' "$s"
+}
+
 # One menu entry: its file, name, description and the script it runs, in a terminal for progress.
 entry() {
   cat > "$1" <<EOF
@@ -16,9 +26,9 @@ Type=Application
 Version=1.0
 Name=$2
 Comment=$3
-Exec="$here/$4"
-Path=$here
-Icon=$here/kilnmark.png
+Exec=$(exec_arg "$here/$4")
+Path=$(value "$here")
+Icon=$(value "$here/kilnmark.png")
 Terminal=true
 Categories=Development;
 EOF

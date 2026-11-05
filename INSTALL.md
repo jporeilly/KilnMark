@@ -226,8 +226,9 @@ of its own, or only Active Directory or LDAP (which Keycloak can read). It is a 
    settings (`kilnmark-viewers`, `kilnmark-stewards`, `kilnmark-designers`, `kilnmark-admins`,
    `kilnmark-sensitive-data`).
 3. Start it: `podman compose --profile auth up -d`. To have Keycloak start and stop with Kilnmark
-   on every plain `podman compose up -d` and `down`, also set `COMPOSE_PROFILES=auth` in `.env`
-   (Docker Compose and podman-compose both read it). The `keycloak-setup` service waits for Keycloak,
+   on every plain `podman compose up -d` and `down`, also set `COMPOSE_PROFILES=auth` in `.env`.
+   Docker Compose and recent podman-compose read it; an older podman-compose (as in Ubuntu 24.04)
+   may not, so there add `--profile auth` yourself. The one-click scripts (below) always do. The `keycloak-setup` service waits for Keycloak,
    then makes the `kilnmark` realm: those groups, the client Kilnmark signs in with, a sign-in of a
    password and a one-time code, and Kilnmark's sign-in page. `podman compose logs keycloak-setup`
    says what it did. Run it again after changing `KILNMARK_URL` or the client secret:
