@@ -50,6 +50,8 @@ merges, are in `build.gradle.kts`, with the reasons in ADR 0042.
 
 ### Dependency verification
 
+Where this and Error Prone sit in a build is drawn in [Supply chain](design/supply-chain.md#what-the-build-checks).
+
 Gradle checks every file it downloads (libraries, plug-ins, build tools and their POMs) against
 `gradle/verification-metadata.xml`: a sha256 checksum for each, and for those that are signed,
 a signature from a key in `gradle/verification-keyring.keys`. A file whose checksum differs, or

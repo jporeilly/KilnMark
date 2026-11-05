@@ -149,16 +149,16 @@ details.
   327 warnings. Fixed: two conditional expressions in `QualityPredictor` that unboxed a null (a text
   column profiled without blanks; a group-by of an unknown row count); `LocalFileStore.create` taking
   `a/` as a file `a` (now refused before any folder is made); a confirmation mail sent with `submit`,
-  whose errors were lost (now `execute`); `WriteSql` making its own subclasses in static fields, which
+  whose errors were lost (now `execute`, with every error caught and logged); `WriteSql` making its own subclasses in static fields, which
   can deadlock two threads (the instances moved into the subclasses); `toLowerCase()`, `toUpperCase()`
   and `getBytes()` without a locale or character set; identity comparisons of values; an unused
-  longest table name read from every generic JDBC driver; `Thread.interrupted()` calls that did
-  nothing. `FlowDefinition`, `FlowService` and `JobQueue` are left out until the flow-controls change
-  merges. `gradle/verification-metadata.xml` holds the sha256 of each of the 1,622 files the build
+  longest table name read from every generic JDBC driver; `Thread.interrupted()` calls now say why
+  they clear the status. `FlowDefinition`, its test, `FlowService` and `JobQueue` are left out until
+  the flow-controls change merges. `gradle/verification-metadata.xml` holds the sha256 of each of the 1,622 files the build
   downloads, and Gradle checks signatures against 130 trusted keys in
   `gradle/verification-keyring.keys`, never a key server. `./gradlew resolveAllDependencies`
   resolves every configuration, for writing the metadata (docs/development.md, "Dependency
-  verification"). CI validates the Gradle wrapper's jar.
+  verification"). CI validates the Gradle wrapper's jar before every job that runs Gradle.
 
 - **The release key** is in place: `config/release/cosign.pub` is the public half of the key that
   signs every file of a release from now on. Check a release with it as INSTALL.md, "Check a

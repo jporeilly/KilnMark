@@ -25,9 +25,11 @@ Last reviewed: 5 November 2026 (after #86-#93 merged).
    (ADR 0038, #82), backup and restore with a runbook (ADR 0039, #83), the SSDF
    self-assessment (#84), the bundled Keycloak for customers without an identity provider
    (ADR 0014, #93), and static analysis with dependency verification (ADR 0042). Next:
-   - the SSDF gaps: build provenance, a threat model, base images pinned by digest; the rest of the evidence pack when a customer's due diligence asks; a full export in
+   - the SSDF gaps: build provenance, a threat model, base images pinned by digest, a security
+     analyser; the rest of the evidence pack when a customer's due diligence asks; a full export in
      open formats, for exit;
-   - Generic JDBC drivers in a process of their own (ADR 0030, decision 5);
+   - Generic JDBC drivers in a process of their own (ADR 0030, decision 5); new table names
+     checked against the driver's longest table name, not its longest column name (ADR 0042);
    - change approval and environments;
    - `KILNMARK_DB_PASSWORD` in the dev compose, a JDBC `socketTimeout`, masking on the run quality
      view, a metric for preview slots;

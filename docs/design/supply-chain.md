@@ -34,7 +34,25 @@ APIs, so it gets a pull request of its own, written by a person with the code ch
 
 ## What the build checks
 
-[ADR 0042](../adr/0042-static-analysis-and-dependency-verification.md):
+[ADR 0042](../adr/0042-static-analysis-and-dependency-verification.md). Where each check sits in a
+build, in CI or on a developer's machine; any "no" stops the build:
+
+```mermaid
+flowchart TD
+  C["Checkout"] --> W{"gradle-wrapper.jar one Gradle published?<br/>(CI: wrapper-validation)"}
+  W -- no --> X(["Build fails"])
+  W -- yes --> D{"Gradle distribution matches<br/>distributionSha256Sum?"}
+  D -- no --> X
+  D -- yes --> R["Gradle resolves plug-ins, libraries and build tools"]
+  R --> V{"Each file listed in verification-metadata.xml,<br/>its sha256 the same, and its signature<br/>from a trusted key when it is signed?"}
+  V -- no --> X
+  V -- yes --> J["javac compiles main and test code"]
+  J --> E{"Error Prone finds nothing?<br/>(-Werror: warnings count)"}
+  E -- no --> X
+  E -- yes --> T["Tests, licence check, release checks"]
+  T --> S["Supply chain workflow: SBOMs scanned by Trivy"]
+  N["npm ci: each UI package checked<br/>against package-lock.json"] --> T
+```
 
 - **Every library the build downloads** is checked against `gradle/verification-metadata.xml`:
   its sha256 checksum, and its signature when it is signed (the signers' keys are in

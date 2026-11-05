@@ -1073,6 +1073,7 @@ public class PipelineService {
     }
 
     /** Runs the pipeline run behind job {@code jobId}; called by a worker. */
+    @SuppressWarnings("InterruptedInCatchBlock") // the status is cleared on purpose: see the comment where
     public ScanService.Result execute(long jobId, JobQueue.ScanLease lease, BooleanSupplier shutdown) {
         // Runs left by a stopped worker are marked failed by the workers' periodic recovery, not here:
         // a run waiting for a place comes through here every few seconds.
@@ -1255,7 +1256,9 @@ public class PipelineService {
             finished(run.pipeline(), id, o.status(), score, threshold, lowest == null ? null : lowest.node());
             LOG.infof("Run %d of pipeline %s: %s", id, run.pipeline(), o.status());
         } catch (InterruptedException e) {
-            // The interrupt status is already clear here, so the run's record can be written.
+            // Cleared so the run's record can be written. Today it is already clear here, but that
+            // depends on how the wait was interrupted.
+            var _ = Thread.interrupted();
             if (!ran && c != null && c.graph() != null) {
                 PipelineExecution.closeNodes(c.graph());
             }
@@ -1416,6 +1419,7 @@ public class PipelineService {
      * finished run of kind 'pipeline' on the written source; then its lineage from the assets read
      * upstream. Never throws: the run has already succeeded, so problems become notes.
      */
+    @SuppressWarnings("InterruptedInCatchBlock") // the status is cleared on purpose: see the comment where
     private boolean register(PipelineExecution.WriteTarget w, Long rows, List<MetadataEvent> events, boolean profiled,
                              PipelineCompilerPort.Compilation c, RunContext context, ArrayNode notes,
                              JobQueue.ScanLease lease, BooleanSupplier shutdown) {
@@ -1434,6 +1438,7 @@ public class PipelineService {
                 locked = JobQueue.waitFor(() -> lease.tryLockSource(s.id()), config.pipelines().waitForTarget(),
                     shutdown);
             } catch (InterruptedException e) {
+                var _ = Thread.interrupted(); // cleared for the database calls below, however it was set
                 locked = false; // stopping: leave the catalogue to the next scan
             }
             if (!locked) {

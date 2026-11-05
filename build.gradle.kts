@@ -146,7 +146,8 @@ allprojects {
         notCompatibleWithConfigurationCache("reads the module's configurations as it runs")
         val resolvable = provider { configurations.filter { it.isCanBeResolved } }
         doLast {
-            resolvable.get().forEach { it.incoming.artifactView { lenient(true) }.files.files }
+            // not lenient: a configuration that cannot be resolved fails the task, rather than leaving gaps
+            resolvable.get().forEach { it.incoming.files.files }
         }
     }
 }

@@ -275,8 +275,8 @@ class QualityPredictorTest {
             .node("either", "filter", Map.of("condition", "id > 900 or email is null"), "people")
             .node("odd", "filter", Map.of("condition", "upper(name) like 'A%'"), "people")
             .write("a", "early").write("b", "either").write("c", "odd"));
-        assertEquals((float) Math.round(1000 * (249.0 / 999) * 0.9), rows(r, "early", "out"), 1);
-        assertEquals((float) Math.round(1000 * (1 - (1 - 99.0 / 999 - 1e-12) * 0.9)), rows(r, "either", "out"), 2);
+        assertEquals((double) Math.round(1000 * (249.0 / 999) * 0.9), rows(r, "early", "out"), 1);
+        assertEquals((double) Math.round(1000 * (1 - (1 - 99.0 / 999 - 1e-12) * 0.9)), rows(r, "either", "out"), 2);
         assertNull(rows(r, "odd", "out"), "a condition it cannot read is unknown");
     }
 
@@ -603,6 +603,19 @@ class QualityPredictorTest {
             .write("a", "ten").write("b", "odd"));
         assertEquals(500L, rows(r, "ten", "out"));
         assertNull(rows(r, "odd", "out"), "no match among the common values of a number column is no answer");
+    }
+
+    @Test
+    void groupingBySeveralColumnsOneWithEmptyValuesIsNoAnswer() {
+        // Once threw: with the number of groups unknown, the empty group's share was unboxed into a
+        // double (found by static analysis, ADR 0042).
+        QualityPredictor.Result r = predict(scored(), new P().read("orders", ORDERS, List.of(col("score", "float64"),
+                col("n", "int64")))
+            .node("by", "aggregate", Map.of("group_by", List.of("score", "n")), "orders").write("a", "by"));
+        assertNull(rows(r, "by", "out"), "how many groups several columns make is not known");
+        String unknown = r.output("a").unknown().toString();
+        assertTrue(unknown.contains("how many groups by makes from several columns"), unknown);
+        assertFalse(unknown.contains("what by does to its rows"), "the node is predicted, not given up: " + unknown);
     }
 
     @Test

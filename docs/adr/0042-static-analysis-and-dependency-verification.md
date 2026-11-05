@@ -79,15 +79,18 @@ Not chosen:
    regenerate it, so its monthly Gradle pull request fails until someone runs the command on its
    branch and pushes the result; the reviewer then sees each new checksum in the diff.
 9. **CI checks the Gradle wrapper's jar** against Gradle's published checksums (the
-   `wrapper-validation` action, pinned to a commit), so a changed `gradle-wrapper.jar` cannot run.
+   `wrapper-validation` action, pinned to a commit) before every job that runs Gradle: build,
+   heavy-databases, the supply-chain scan and the release. A changed `gradle-wrapper.jar` fails
+   there before it runs. Not covered: a JDK the build downloads for itself where none is installed
+   (a Gradle toolchain, not a dependency), and the spikes, built only on request.
 
 ## Consequences
 
 - Error Prone's first full run found 5 errors and 327 warnings, of 49 kinds. Fixed among them: two
   conditional expressions in quality prediction that unboxed a null and would have thrown (a text
   column profiled without a count of blanks; a group-by whose row count is unknown); a write path
-  ending in `/` that wrote the folder before it as a file; a mail sent with `submit`, whose failures
-  were lost; a superclass that made its own subclasses, which can deadlock two threads loading them
+  ending in `/` that wrote the folder before it as a file; a confirmation mail whose failures could
+  escape the server's log; a superclass that made its own subclasses, which can deadlock two threads loading them
   at once; `toLowerCase()` and `getBytes()` without a locale or character set; and identity
   comparisons where values were meant. The pull request that added Error Prone lists what was
   fixed and what was suppressed.
@@ -97,5 +100,9 @@ Not chosen:
 - Compiling takes longer: Error Prone reads every file it compiles.
 - Every dependency change also touches `gradle/verification-metadata.xml`. That is the point: a
   library cannot change under the build without a reviewed diff.
-- The SSDF self-assessment marks PW.7.2, RV.1.2 and PW.4.4 met, and PO.3.2 nearer: base images are
+- The SSDF self-assessment marks PW.7.2 and PW.4.4 met. RV.1.2 stays partly met, since Error
+  Prone looks for bugs in general and is no security analyser; PO.3.2 too, since base images are
   still pinned by tag.
+- Generic JDBC checks a new table's name against the driver's longest column name, not its longest
+  table name, which it read and never used (Error Prone found the unused field; it is removed). Using
+  the table limit is in the backlog.

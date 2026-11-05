@@ -233,13 +233,17 @@ public class MailService {
             return;
         }
         sends.execute(() -> {
-            MailMessages.Mail mail = new MailMessages(settings, ZoneId.systemDefault(), e -> Exposure.NONE)
-                .confirmation(code);
+            // Everything inside the one try: an error escaping here would reach the thread's default
+            // handler, which prints a stack trace outside the server's log.
             try {
-                mailer.send(server, address, mail);
-                store.log(address, subscriberId, "confirm", List.of(), mail.subject(), "sent", 1, null);
-            } catch (SmtpMailer.Failure f) {
-                store.log(address, subscriberId, "confirm", List.of(), mail.subject(), "failed", 1, f.getMessage());
+                MailMessages.Mail mail = new MailMessages(settings, ZoneId.systemDefault(), e -> Exposure.NONE)
+                    .confirmation(code);
+                try {
+                    mailer.send(server, address, mail);
+                    store.log(address, subscriberId, "confirm", List.of(), mail.subject(), "sent", 1, null);
+                } catch (SmtpMailer.Failure f) {
+                    store.log(address, subscriberId, "confirm", List.of(), mail.subject(), "failed", 1, f.getMessage());
+                }
             } catch (RuntimeException e) {
                 LOG.warnf("Could not send a confirmation email (subscriber %d): %s", subscriberId, e.getMessage());
             }
