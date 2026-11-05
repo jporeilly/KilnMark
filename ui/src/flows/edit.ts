@@ -17,7 +17,7 @@ import { kindOf, readFlowGraph, type FlowGraph, type Point } from "./graph";
 export type { Change };
 
 /** The node types the canvas adds, in the order it offers them. */
-export const NODE_TYPES = ["run-pipeline", "for-each", "check-source", "notify", "wait", "sql", "stop"] as const;
+export const NODE_TYPES = ["run-pipeline", "for-each", "check-source", "wait-for", "notify", "wait", "sql", "stop"] as const;
 
 /** Whether a node of this type runs a saved pipeline, so the canvas asks which. */
 export const runsPipeline = (type: string) => type === "run-pipeline" || type === "for-each";
@@ -153,6 +153,7 @@ function startingSettings(type: NodeTypeName, pipeline: string | undefined): [st
       return [["status", "failed"]];
     case "sql":
     case "check-source":
+    case "wait-for":
       // The source is the designer's to choose; the checks ask for it.
       return [];
   }

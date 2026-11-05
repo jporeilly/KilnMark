@@ -51,8 +51,21 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
     public static final String FOR_EACH = "for-each";
     /** The node type that checks a source can be reached and holds named tables or files (ADR 0041). */
     public static final String CHECK_SOURCE = "check-source";
+    /** The node type that waits until a file has arrived or a query is true (ADR 0041). */
+    public static final String WAIT_FOR = "wait-for";
     /** The node types this version knows. */
-    public static final List<String> TYPES = List.of(RUN_PIPELINE, FOR_EACH, STOP, NOTIFY, WAIT, SQL, CHECK_SOURCE);
+    public static final List<String> TYPES = List.of(RUN_PIPELINE, FOR_EACH, STOP, NOTIFY, WAIT, SQL, CHECK_SOURCE,
+        WAIT_FOR);
+    /** How often a wait-for node checks, when it does not say. */
+    public static final Duration DEFAULT_EVERY = Duration.ofMinutes(5);
+    /** The least and most time between a wait-for node's checks. */
+    public static final Duration MIN_EVERY = Duration.ofSeconds(30);
+    public static final Duration MAX_EVERY = Duration.ofHours(1);
+    /** How long a wait-for node waits, when it does not say, and the most it may. */
+    public static final Duration DEFAULT_WAIT_FOR = Duration.ofHours(1);
+    public static final Duration MAX_WAIT_FOR = Duration.ofHours(24);
+    /** The most files a wait-for node may ask for. */
+    public static final int MAX_AT_LEAST = 10_000;
     /** Most tables and files, together, a check-source node names. */
     public static final int MAX_CHECKED = 50;
     /** The most of a flow's nodes, or of a for-each node's items, that may run at once. */
@@ -90,6 +103,10 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         "duration_s", FlowCondition.Type.NUMBER);
     /** What a sql node reports, for conditions, besides {@code status}: the rows its statements changed. */
     public static final Map<String, FlowCondition.Type> SQL_VALUES = Map.of("rows_affected", FlowCondition.Type.NUMBER);
+    /** What a wait-for node reports, for conditions, besides {@code status}: what it found, and how long it waited. */
+    public static final Map<String, FlowCondition.Type> WAIT_FOR_VALUES = Map.of(
+        "found", FlowCondition.Type.NUMBER,
+        "waited_s", FlowCondition.Type.NUMBER);
     /** What a check-source node reports, for conditions, besides {@code status}: the tables and files not there. */
     public static final Map<String, FlowCondition.Type> CHECK_VALUES = Map.of("missing", FlowCondition.Type.NUMBER);
     /** What a for-each node reports, for conditions, besides {@code status}: how many items, and how they ended. */
@@ -114,7 +131,8 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         NOTIFY, Set.of("severity", "title", "message"),
         WAIT, Set.of("for"),
         SQL, Set.of("source", "statements", "timeout"),
-        CHECK_SOURCE, Set.of("source", "tables", "files", "timeout"));
+        CHECK_SOURCE, Set.of("source", "tables", "files", "timeout"),
+        WAIT_FOR, Set.of("source", "file", "at_least", "query", "every", "timeout"));
     static final Set<String> CONNECTION_KEYS = Set.of("from", "to", "when");
     private static final Pattern DURATION = Pattern.compile("(\\d{1,6})\\s*(s|m|h)");
     /** A timeout also takes days: 7d is the most. */
@@ -133,16 +151,27 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
      * may take before it is stopped and the node fails (ADR 0041), or null for no limit.
      * {@code priority} is the priority of the pipeline runs a run-pipeline or for-each node queues:
      * 1 high, 0 normal (the default), -1 low (ADR 0041). A {@link #CHECK_SOURCE} node has
-     * {@code source} and {@code check}: the tables and files it looks for.
+     * {@code source} and {@code check}: the tables and files it looks for. A {@link #WAIT_FOR} node
+     * has {@code source}, {@code until} (what it waits for, and how often it looks) and
+     * {@code timeout}: how long it waits before it gives up.
      */
     public record Node(String id, String type, String pipeline, Integer version, String status, String message,
                        Position position, Map<String, Position> keys, Map<String, Object> with, String severity,
                        String title, Duration waitFor, String source, List<String> statements, Each each,
-                       Duration timeout, int priority, Check check) {
+                       Duration timeout, int priority, Check check, Until until) {
 
         public Node {
             with = with == null ? Map.of() : java.util.Collections.unmodifiableMap(new LinkedHashMap<>(with));
             statements = statements == null ? List.of() : List.copyOf(statements);
+        }
+
+        /** A node that waits for nothing. */
+        public Node(String id, String type, String pipeline, Integer version, String status, String message,
+                    Position position, Map<String, Position> keys, Map<String, Object> with, String severity,
+                    String title, Duration waitFor, String source, List<String> statements, Each each,
+                    Duration timeout, int priority, Check check) {
+            this(id, type, pipeline, version, status, message, position, keys, with, severity, title, waitFor, source,
+                statements, each, timeout, priority, check, null);
         }
 
         /** A node that checks nothing. */
@@ -194,6 +223,15 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         public Position at(String key) {
             return keys.getOrDefault(key, position);
         }
+    }
+
+    /**
+     * What a wait-for node waits for, and how often it looks: {@code file}, a pattern below a file or
+     * object-store source's folder ({@code *} and {@code ?} in its last part only), until at least
+     * {@code atLeast} files match; or {@code query}, as written, a SELECT whose first value is true.
+     * Exactly one of the two is set.
+     */
+    public record Until(String file, int atLeast, String query, Duration every) {
     }
 
     /**
@@ -518,6 +556,9 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         if (type.equals(CHECK_SOURCE)) {
             return checkSourceNode(id, m, keys, timeout, problems);
         }
+        if (type.equals(WAIT_FOR)) {
+            return waitForNode(id, m, keys, problems);
+        }
         if (type.equals(WAIT)) {
             YamlReader.Entry f = m.entries().get("for");
             Duration d = null;
@@ -759,6 +800,105 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
             null, null, timeout, 0, new Check(tables, files));
     }
 
+    /**
+     * A wait-for node: its source, a file pattern (with {@code at_least}) or a query, how often it
+     * looks ({@code every}) and how long it waits ({@code timeout}). The query is written as it is,
+     * never with ${...}; whether it is one read-only SELECT, and whether the source may run it, is for
+     * the server to check (ADR 0028).
+     */
+    private static Node waitForNode(String id, YamlReader.Mapping m, Map<String, Position> keys, List<Problem> problems) {
+        YamlReader.Entry src = m.entries().get("source");
+        String source = null;
+        if (src == null) {
+            problems.add(Problem.at(m.position(), id, "Node " + id + " needs a source: the saved source it waits on"));
+        } else {
+            source = text(src, "source", problems);
+        }
+        YamlReader.Entry f = m.entries().get("file");
+        YamlReader.Entry q = m.entries().get("query");
+        String file = null;
+        String query = null;
+        if ((f == null) == (q == null)) {
+            problems.add(Problem.at(m.position(), id, "Node " + id + " waits for one thing: a file (file: "
+                + "\"incoming/orders-*.csv\") or a query that becomes true (query: \"select ...\"), not both"));
+        } else if (f != null) {
+            file = text(f, "file", problems);
+            String why = file == null ? null : filePatternProblem(file);
+            if (why != null) {
+                problems.add(Problem.at(f.value().position(), id, why));
+                file = null;
+            }
+        } else {
+            query = text(q, "query", problems);
+            if (query != null && query.length() > MAX_STATEMENT) {
+                problems.add(Problem.at(q.value().position(), id, "query is at most "
+                    + String.format("%,d", MAX_STATEMENT) + " characters"));
+                query = null;
+            } else if (query != null && query.contains("${")) {
+                problems.add(Problem.at(q.value().position(), id, "A query runs as written: ${...} cannot be used in "
+                    + "it, as a value put into it could change what it does"));
+                query = null;
+            }
+        }
+        int atLeast = 1;
+        YamlReader.Entry a = m.entries().get("at_least");
+        if (a != null) {
+            if (f == null) {
+                problems.add(Problem.at(a.keyPosition(), id, "at_least is for a file: how many must match"));
+            } else if (a.value().value() instanceof Integer n && n >= 1 && n <= MAX_AT_LEAST) {
+                atLeast = n;
+            } else {
+                problems.add(Problem.at(a.value().position(), id, "at_least is how many files must match: a whole "
+                    + "number from 1 to " + String.format("%,d", MAX_AT_LEAST)));
+            }
+        }
+        Duration every = between(m.entries().get("every"), MIN_EVERY, MAX_EVERY, DEFAULT_EVERY, "every is how often "
+            + "it looks: 30s to 1h, such as 5m", id, problems);
+        Duration timeout = between(m.entries().get("timeout"), Duration.ofSeconds(1), MAX_WAIT_FOR, DEFAULT_WAIT_FOR,
+            "timeout is how long it waits before it gives up: up to 24h, such as 2h", id, problems);
+        return new Node(id, WAIT_FOR, null, null, null, null, m.position(), keys, Map.of(), null, null, null, source,
+            null, null, timeout, 0, null, new Until(file, atLeast, query, every));
+    }
+
+    /** A time from {@code min} to {@code max}, or {@code fallback} when not written (or wrong, saying so). */
+    private static Duration between(YamlReader.Entry e, Duration min, Duration max, Duration fallback, String what,
+                                    String id, List<Problem> problems) {
+        if (e == null) {
+            return fallback;
+        }
+        Duration d = duration(e);
+        if (d == null || d.compareTo(min) < 0 || d.compareTo(max) > 0) {
+            problems.add(Problem.at(e.value().position(), id, what));
+            return fallback;
+        }
+        return d;
+    }
+
+    /**
+     * What is wrong with a wait-for node's file pattern, or null: a path below the source's folder,
+     * {@code *} and {@code ?} only in its last part, never {@code ..}, a leading {@code /} or ${...}.
+     */
+    static String filePatternProblem(String pattern) {
+        String p = pattern.strip();
+        if (p.isEmpty() || p.startsWith("/") || p.contains("\\") || p.length() > 1_000) {
+            return "file is a path below the source's folder, such as incoming/orders-*.csv";
+        }
+        if (p.contains("${")) {
+            return "file is written as it is: ${...} cannot be used in it";
+        }
+        int slash = p.lastIndexOf('/');
+        String folder = slash < 0 ? "" : p.substring(0, slash);
+        if (folder.contains("*") || folder.contains("?")) {
+            return "file may use * and ? only in the file's name, not in its folders: incoming/orders-*.csv";
+        }
+        for (String part : p.split("/")) {
+            if (part.isEmpty() || part.equals(".") || part.equals("..")) {
+                return "file is a path below the source's folder, with no empty, . or .. parts";
+            }
+        }
+        return null;
+    }
+
     /** A check-source node's list of names: each one line of text, written once, with no ${...}. */
     private static List<String> names(YamlReader.Entry e, String key, String what, String id, List<Problem> problems) {
         List<String> out = new ArrayList<>();
@@ -989,7 +1129,8 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
     /** What a node of this type reports besides its status, for conditions and ${node.field}. */
     public static Map<String, FlowCondition.Type> reports(String type) {
         return RUN_PIPELINE.equals(type) ? PIPELINE_VALUES : SQL.equals(type) ? SQL_VALUES
-            : FOR_EACH.equals(type) ? FOR_EACH_VALUES : CHECK_SOURCE.equals(type) ? CHECK_VALUES : Map.of();
+            : FOR_EACH.equals(type) ? FOR_EACH_VALUES : CHECK_SOURCE.equals(type) ? CHECK_VALUES
+            : WAIT_FOR.equals(type) ? WAIT_FOR_VALUES : Map.of();
     }
 
     /**
@@ -1064,8 +1205,8 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
                         : nodeValueType(def, name) == null
                             ? " names " + name + ", which " + other + " does not report: a node reports status, a "
                                 + "run-pipeline node score, quarantined_share, rows_written and duration_s, a "
-                                + "for-each node items, succeeded and failed, a sql node rows_affected, and a check-source node "
-                                + "missing"
+                                + "for-each node items, succeeded and failed, a sql node rows_affected, a check-source node "
+                                + "missing, and a wait-for node found and waited_s"
                             : null;
                     if (why != null) {
                         problems.add(Problem.at(n.position(), n.id(), "Node " + n.id() + why));

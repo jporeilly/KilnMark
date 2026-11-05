@@ -564,4 +564,60 @@ class FlowDefinitionTest {
         assertTrue(firstProblem(CHECK.replace("ready.missing = 0", "ready.rows_written = 0"))
             .contains("rows_written"));
     }
+
+    // ---- wait-for (ADR 0041) ----
+
+    static final String WAITS = """
+        kilnmark: flow/v1
+        name: wait-then-load
+        nodes:
+          - id: arrived
+            type: wait-for
+            source: landing
+            file: "incoming/orders-*.csv"
+            at_least: 2
+            every: 2m
+            timeout: 3h
+          - id: loaded
+            type: wait-for
+            source: warehouse
+            query: "select max(loaded_at) > now() - interval '1 hour' from etl.batches"
+          - id: tell
+            type: notify
+            title: "Found ${arrived.found} after ${arrived.waited_s}s"
+        connections:
+          - { from: arrived, to: loaded }
+          - { from: loaded, to: tell, when: "loaded.found = 1" }
+        """;
+
+    @Test
+    void readsAWaitForNode() {
+        FlowDefinition.Parsed p = FlowDefinition.parse(WAITS);
+        assertTrue(p.valid(), p.problems().toString());
+        FlowDefinition.Node arrived = p.definition().node("arrived");
+        assertEquals(new FlowDefinition.Until("incoming/orders-*.csv", 2, null, Duration.ofMinutes(2)), arrived.until());
+        assertEquals(Duration.ofHours(3), arrived.timeout());
+        FlowDefinition.Node loaded = p.definition().node("loaded");
+        assertEquals(Duration.ofMinutes(5), loaded.until().every(), "every 5 minutes by default");
+        assertEquals(Duration.ofHours(1), loaded.timeout(), "an hour by default");
+        assertTrue(loaded.until().query().startsWith("select max(loaded_at)"));
+        assertEquals(FlowCondition.Type.NUMBER, FlowDefinition.nodeValueType(p.definition(), "arrived.waited_s"));
+    }
+
+    @Test
+    void checksAWaitForNode() {
+        String file = "    file: \"incoming/orders-*.csv\"\n";
+        assertTrue(firstProblem(WAITS.replace(file, "")).contains("waits for one thing"));
+        assertTrue(firstProblem(WAITS.replace(file, file + "    query: \"select true\"\n")).contains("waits for one thing"));
+        assertTrue(firstProblem(WAITS.replace("incoming/orders-*.csv", "in*/orders.csv")).contains("only in the file's name"));
+        assertTrue(firstProblem(WAITS.replace("incoming/orders-*.csv", "../orders.csv")).contains("no empty, . or .. parts"));
+        assertTrue(firstProblem(WAITS.replace("incoming/orders-*.csv", "/etc/orders.csv")).contains("a path below"));
+        assertTrue(firstProblem(WAITS.replace("every: 2m", "every: 10s")).contains("every is how often it looks: 30s to 1h"));
+        assertTrue(firstProblem(WAITS.replace("timeout: 3h", "timeout: 25h")).contains("up to 24h"));
+        assertTrue(firstProblem(WAITS.replace("at_least: 2", "at_least: 0")).contains("a whole number from 1"));
+        assertTrue(firstProblem(WAITS.replace("from etl.batches", "from ${t}")).contains("${...} cannot be used"));
+        assertTrue(firstProblem(WAITS.replace("    query: \"select max(", "    at_least: 1\n    query: \"select max("))
+            .contains("at_least is for a file"));
+        assertTrue(firstProblem(WAITS.replace("    every: 2m\n", "    priority: high\n")).contains("has no setting 'priority'"));
+    }
 }
