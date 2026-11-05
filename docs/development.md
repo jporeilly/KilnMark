@@ -231,6 +231,12 @@ Then:
 2. Commit `cosign.pub` as `config/release/cosign.pub`, through a pull request as usual.
 3. Keep `cosign.key` and its password offline and apart. Never commit `cosign.key`.
 
+On a tag the release runs where CI runs: on the local runner when `KILNMARK_RUNNER` names it (see
+"CI on a local runner"). It then builds, signs with the real key, pushes the images and drafts the
+release there too, but leaves out the install rehearsal, which runs only on GitHub's runners (it
+makes system accounts with `sudo` and starts Kilnmark on its usual ports, which the local machine's
+own install uses). The rehearsal is run on every pull request that changes what it covers.
+
 Without them a tag fails at the **Key** step, saying what is missing. A changed key is a new
 `cosign.pub`, announced in the next release's changelog.
 
@@ -336,8 +342,11 @@ names a Linux path (`/srv/...`, `/run/...`), or Git Bash rewrites it to a Window
   modules' tests start their containers at once through Podman's API, and some starts fail.
 - The `build` job tags the PostgreSQL image it builds `kilnmark-postgres:dev`, the same tag a local
   `podman compose up --build` uses: after a CI run, that image is the pull request's.
-- It runs one job at a time, so a pull request's three jobs run one after the other (about 25
-  minutes). Each heavy-databases job starts SQL Server, MySQL, MariaDB and Oracle containers in the
+- Each runner runs one job at a time, so on one runner a pull request's three jobs run one after
+  the other (about 25 minutes). For more at once, run another with its own base folder, mounted at
+  the same path inside and out: `-e RUNNER_BASE=/srv/gh-runner-2 -e RUNNER_NAME=pc-kilnmark-linux-2
+  -v /srv/gh-runner-2:/srv/gh-runner-2`, with its own token in `/srv/gh-runner-2/token`. The
+  owner's PC runs two. Each heavy-databases job starts SQL Server, MySQL, MariaDB and Oracle containers in the
   machine; give it the memory (the machine has 24 GB on the owner's PC).
 - To remove it: `podman rm -f kilnmark-ci-runner`, delete it under the repository's Settings,
   Actions, Runners, and delete `/srv/gh-runner`.
@@ -1102,6 +1111,12 @@ Latin subset only, so nothing loads from the internet.
 Icons are Tabler Icons, named in one place (`ui/src/components/icons.tsx`); products get letter
 tiles (`ConnectorTile.tsx`), never vendor logos. The build also writes the UI packages' licences
 to `dist/ui/third-party-notices.txt` ([third-party UI software](legal/third-party-ui.md)).
+
+### Formatting
+
+The UI's code is not kept by a formatter: most files would change under Prettier at any line width.
+Keep a change in the file's own style (lines up to about 120 characters), and never run a formatter
+over a whole file you are only changing in part, since the diff then hides the change.
 
 ### Pictures in the guides
 

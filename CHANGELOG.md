@@ -19,6 +19,17 @@ details.
   each database's dialect; connection settings on tabs; and operations that change a database,
   behind a per-source Allow changes switch, previewed, confirmed and audited, with a second
   person's approval on production sources. Nothing is built yet; ADR 0045 amends ADR 0028.
+
+### Details
+
+- **Release images signed on the local runner**: `release.yml` signs the digest the registry
+  stores for each image, read back by tag after the push. On a Podman engine the digest recorded
+  locally is not the registry's, and signing it failed, which stopped the 0.0.10 release.
+
+## 0.0.10 (5 November 2026)
+
+### What's new
+
 - **Install, start, upgrade and back up Kilnmark with one script**: `kilnmark.sh` on Linux,
   `kilnmark.cmd` on Windows. On Linux, `sudo kilnmark.sh prepare` first makes the `kilnmark`
   service account that runs it, and `/opt/kilnmark` its own. `install` checks the machine, makes an install root (`/opt/kilnmark`
@@ -193,6 +204,10 @@ details.
   or deleted, and can be sent to a SIEM. Admins read it under Settings, Audit log (ADR 0029).
 
 ### Details
+
+- **Releases on the local runner**: on a tag, `release.yml` runs where `KILNMARK_RUNNER` says, as CI
+  does; on a self-hosted runner it builds, signs, pushes the images and drafts the release, and
+  leaves the install rehearsal to GitHub's runners. The runner image adds `gh`.
 
 - **CI on a local runner**: the `build`, `heavy-databases` and `scan` jobs run where the repository
   variable `KILNMARK_RUNNER` says, GitHub's runners when it is empty. `ci/local-runner` builds a Linux
