@@ -34,8 +34,10 @@ RUN chmod 755 /opt/entrypoint.sh
 # the Podman machine can (its containers, and through WSL the Windows user's files), so a separate
 # user would add nothing. Run only the owner's own commits on it (docs/development.md).
 # Ryuk removes a job's test containers when the job ends, even a cancelled one, so they do not pile
-# up in the shared engine. It mounts the engine's socket by its path in the machine.
+# up in the shared engine. It mounts the engine's socket by its path in the machine, and runs
+# privileged, so its image is pinned by digest (Ryuk 0.14.0).
 ENV RUNNER_ALLOW_RUNASROOT=1 \
     TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED=true \
-    TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/run/podman/podman.sock
+    TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/run/podman/podman.sock \
+    TESTCONTAINERS_RYUK_CONTAINER_IMAGE=docker.io/testcontainers/ryuk@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0
 ENTRYPOINT ["/opt/entrypoint.sh"]

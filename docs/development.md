@@ -256,14 +256,19 @@ flowchart LR
 - to use the local runner: `gh variable set KILNMARK_RUNNER --body '["self-hosted","kilnmark-linux"]'`;
 - to go back to GitHub's runners: `gh variable delete KILNMARK_RUNNER`.
 
-Dependabot's pull requests always run on GitHub's runners, whatever the variable says: their code
-comes from outside, and a dependency's install scripts must not run on our own machine. While
-GitHub's runners are unavailable they wait. Checks report as usual on the pull request, and a pull
-request merges only with them green, as always.
+Only the owner's own work runs on it: a run started by the repository's owner, and for a pull
+request, one the owner opened from a branch that is not Dependabot's. Everything else, Dependabot's
+pull requests included (even after the owner updates or reopens one), stays on GitHub's runners and
+waits while they are unavailable. Once a Dependabot pull request is merged, the push to `main` runs
+on the local runner like any other: its dependencies are then part of every local build anyway.
+Checks report as usual on the pull request, and a pull request merges only with them green, as
+always.
 
 **Deleting the variable is not an off-switch.** A workflow can name the runner's label itself; the
-runner takes such a job as long as it runs. To stop it taking jobs, stop it:
-`podman stop kilnmark-ci-runner`.
+runner takes such a job as long as it runs (only a collaborator can push such a workflow, and the
+owner is the only one). To stop it taking jobs, stop it: `podman stop kilnmark-ci-runner`. No
+other self-hosted runner should stay online: one on Windows would run a job on the host itself,
+without a container.
 
 **Setting the runner up**, once, on a machine with Podman (a rootful machine, as Kilnmark's own).
 The commands are for bash; in Git Bash put `MSYS_NO_PATHCONV=1` before each `podman` command that
@@ -313,13 +318,15 @@ names a Linux path (`/srv/...`, `/run/...`), or Git Bash rewrites it to a Window
   mounts any path in the machine: every other container and volume in it (on the owner's PC, the
   other projects' too) and, through WSL's mount of the Windows drives, the Windows user's files
   (`/mnt/c/Users/...`: SSH keys, git and gh credentials, every project's `.env`). That is why only
-  the owner's own commits run on it (Dependabot's never, fork pull requests are off in this private
-  repository) and why it must never serve a public repository. A runner on a Podman machine of its
+  the owner's own work runs on it (Dependabot's pull requests stay on GitHub's runners, fork pull
+  requests are off in this private repository) and why it must never serve a public repository. A runner on a Podman machine of its
   own, without the Windows drives mounted, would contain it; that is on the backlog.
 - **It keeps state between jobs**, unlike GitHub's runners: the JDK and Node in `_work/_tool`,
   Gradle's caches, images in the engine. A job could change what later jobs use, which is a second
-  reason to run only the owner's commits on it. Recreate it (`podman rm -f`, delete
-  `/srv/gh-runner/_work`, `podman run` again) after anything suspicious. A runner that starts
+  reason to run only the owner's work on it. After anything suspicious, start again from nothing: a
+  job can also copy the runner's credentials (`/srv/gh-runner/runner/.credentials*`) and run a copy
+  of the runner elsewhere, so delete the runner under Settings, Actions, Runners, then `podman rm
+  -f kilnmark-ci-runner`, delete `/srv/gh-runner` and set it up again with a new token. A runner that starts
   afresh for each job ("ephemeral") would remove this; it needs a token to register each time, so
   it is not set up here.
 - Testcontainers' Ryuk removes a job's test containers when the job ends, even a cancelled one, so

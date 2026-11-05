@@ -7,6 +7,8 @@
 set -euo pipefail
 home=/srv/gh-runner/runner
 mkdir -p "$home"
+# Whatever an earlier start (or an earlier, self-updating runner) left is replaced, not mixed in.
+rm -rf "$home/bin" "$home/externals"
 tar -xzf /opt/actions-runner.tar.gz -C "$home"
 cd "$home"
 if [ ! -f .runner ]; then
