@@ -22,6 +22,7 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 - [Branding and appearance](guide/branding.md): themes, accent colours and density; the branding folder for an organisation's name, logo and connector logos
 - [Building and running a pipeline](guide/pipelines.md): the Pipelines page, YAML basics, checking as you type, saving versions, running, and reading a run
 - [Pipeline nodes and expressions](guide/pipeline-nodes.md): filter, compute, select, lookup, aggregate, union, dedupe, route and limit, and the expression language for conditions and computed columns
+- [The Library: samples and templates](guide/library.md): the samples, kept apart from your own pipelines and flows; the starter pack; templates to start your own from
 - [Building and running a flow](guide/flows.md): flows that run pipelines in an order, connections and conditions, the diagram, running a flow and reading a run
 - [Installing database drivers](guide/drivers.md): the drivers Kilnmark ships, and registering one whose licence keeps it out of the release
 - [Backing up and restoring Kilnmark](guide/backup-and-restore.md): what to back up, the backup and restore scripts, what to check after a restore, and testing a restore

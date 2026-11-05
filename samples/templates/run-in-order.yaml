@@ -1,0 +1,23 @@
+# Template: run pipelines one after another, then say so (a Kilnmark template).
+# Replace each <...> with one of your pipelines. The second starts only when the first has
+# succeeded; the notice reports how many rows the second wrote. Add a schedule, or run it by hand.
+kilnmark: flow/v1
+name: template-run-in-order
+description: Two pipelines in order, then a notice.
+
+nodes:
+  - id: first
+    type: run-pipeline
+    pipeline: <your first pipeline>
+
+  - id: second
+    type: run-pipeline
+    pipeline: <your second pipeline>
+
+  - id: done
+    type: notify
+    title: "${second.rows_written} rows written"
+
+connections:
+  - { from: first, to: second }
+  - { from: second, to: done }

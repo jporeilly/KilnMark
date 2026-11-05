@@ -258,15 +258,22 @@ type Field = {
 const PIPELINE: Field = { key: "pipeline", label: "Pipeline", kind: "text", pipeline: true };
 const VERSION: Field = { key: "version", label: "Version", kind: "number", hint: "Blank runs the latest saved version." };
 const MESSAGE: Field = { key: "message", label: "Message", kind: "text", long: true, most: 2000 };
+const TIMEOUT: Field = {
+  key: "timeout",
+  label: "Timeout",
+  kind: "text",
+  hint: "Stopped and failed past it: 30m, 2h, 1d. Blank for none.",
+};
 
 /** The settings of each node type the Settings tab offers, as the server reads them (docs/design/flows.md). */
 const FIELDS: Record<string, Field[]> = {
-  "run-pipeline": [PIPELINE, VERSION],
+  "run-pipeline": [PIPELINE, VERSION, TIMEOUT],
   "for-each": [
     PIPELINE,
     VERSION,
     { key: "as", label: "Parameter each item fills", kind: "text", hint: "One of the pipeline's parameters." },
     { key: "max_parallel", label: "Items at once", kind: "number", hint: "4 when blank, 50 at most." },
+    { ...TIMEOUT, hint: "For each item's run: 30m, 2h, 1d. Blank for none." },
   ],
   notify: [
     {
@@ -296,7 +303,10 @@ const FIELDS: Record<string, Field[]> = {
     },
     MESSAGE,
   ],
-  sql: [{ key: "source", label: "Source", kind: "text", hint: "A PostgreSQL source with Allow SQL on." }],
+  sql: [
+    { key: "source", label: "Source", kind: "text", hint: "A PostgreSQL source with Allow SQL on." },
+    { ...TIMEOUT, hint: "Rolled back past it: 30m, 2h, 1d. Blank for none." },
+  ],
 };
 
 /** What each type keeps in the YAML only. */

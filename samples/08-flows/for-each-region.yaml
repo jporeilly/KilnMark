@@ -1,9 +1,10 @@
 # Flow: one pipeline for each region, several at once (a Kilnmark sample).
 # Runs sample-server-variable once for each region, giving it the region as its parameter, so each
 # run writes its own file (gold_customers_EMEA.csv, ...). Two run at once; the third starts when one
-# ends. Then a notice says how many succeeded, if none failed.
-# Look for: a for-each node (items, as, max_parallel), the flow's own max_parallel, and a condition
-# on what the for-each node reports (regions.failed).
+# ends. Each region's run may take 30 minutes before it is stopped and counts as failed. Then a
+# notice says how many succeeded, if none failed.
+# Look for: a for-each node (items, as, max_parallel, timeout), the flow's own max_parallel, and a
+# condition on what the for-each node reports (regions.failed).
 kilnmark: flow/v1
 name: sample-for-each-region
 description: Gold customers, one file for each region.
@@ -16,6 +17,7 @@ nodes:
     items: [EMEA, APAC, AMER]
     as: region
     max_parallel: 2
+    timeout: 30m
 
   - id: done
     type: notify
