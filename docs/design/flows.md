@@ -30,6 +30,7 @@ nodes:
     type: run-pipeline
     pipeline: demo-customers-clean
     version: 3                 # optional; the pipeline's latest when left out
+    timeout: 2h                # optional: stopped, and failed, past it (flow-controls.md, C3)
   - id: spend
     type: run-pipeline
     pipeline: demo-customer-spend

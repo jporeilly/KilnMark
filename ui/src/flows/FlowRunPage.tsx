@@ -15,18 +15,29 @@ import { FlowRunChart } from "./FlowRunChart";
 import { FlowRunFacts, FlowTimeSpent, took } from "./FlowRunSummary";
 import { readFlowGraph, TYPE_WORDS, type FlowGraphResult } from "./graph";
 import { FlowStatus } from "./RunFlow";
-import { reportedWords } from "./runFacts";
+import { reportedWords, timedOut, timedOutItems } from "./runFacts";
 import "../pipelines/pipelines.css";
 
 const FlowDiagram = lazy(() => import("./FlowDiagram"));
 
 const LOOK_MS = 2000;
 
+/** Said beside the status of a node, or an item, that took longer than its timeout and was stopped. */
+function TimedOut() {
+  return (
+    <>
+      {" "}
+      <span className="badge badge-failed">Timed out</span>
+    </>
+  );
+}
+
 /**
  * A for-each node's items: each value with its status and a link to its pipeline run. Open while
  * there are few; with many, closed until asked for. A value withheld from viewers is said as such.
+ * An item whose run took longer than the node's timeout is marked as timed out.
  */
-function ItemRuns({ node, items }: { node: string; items: FlowItemRun[] }) {
+function ItemRuns({ node, items, late }: { node: string; items: FlowItemRun[]; late: Set<number> }) {
   return (
     <details className="small fr-items" open={items.length <= 10}>
       <summary>
@@ -37,6 +48,7 @@ function ItemRuns({ node, items }: { node: string; items: FlowItemRun[] }) {
           <li key={i.item}>
             {i.value == null ? <span className="muted">Item {i.item + 1}</span> : <span className="mono">{String(i.value)}</span>}{" "}
             <FlowStatus status={i.status} />
+            {late.has(i.item) && i.status !== "succeeded" && <TimedOut />}
             {i.pipelineRunId != null ? (
               <>
                 {" "}
@@ -248,13 +260,14 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
                     </th>
                     <td>
                       <FlowStatus status={n.status} />
+                      {timedOut(n) && <TimedOut />}
                     </td>
                     <td>{n.startedAt ? formatTime(n.startedAt) : "–"}</td>
                     <td>{took(n.startedAt, n.finishedAt, now)}</td>
                     <td>
                       {progress && <div>{progress}.</div>}
                       {said || (!progress && <span className="muted">–</span>)}
-                      {progress && n.items && <ItemRuns node={n.node} items={n.items} />}
+                      {progress && n.items && <ItemRuns node={n.node} items={n.items} late={timedOutItems(n)} />}
                       {n.pipelineRunId != null && (
                         <div className="small">
                           <a href={href.pipelineRun(n.pipelineRunId)}>Pipeline run {n.pipelineRunId}</a>

@@ -9,8 +9,9 @@ Last reviewed: 5 November 2026 (after #86-#93 merged).
 ## Now
 
 1. **Flow controls** ([ADR 0041](../adr/0041-flow-nodes-for-resources-and-control.md),
-   docs/design/flow-controls.md; owner, 5 November 2026): a node's `timeout`, a flow's `priority`,
-   the `check-source` and `wait-for` nodes, then a node's `retries`, in that order.
+   docs/design/flow-controls.md; owner, 5 November 2026): a node's `timeout` (built, C3), then a
+   flow's `priority`, the `check-source` and `wait-for` nodes, then a node's `retries`, in that
+   order.
 
 ## Next
 

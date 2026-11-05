@@ -450,6 +450,48 @@ class FlowSqlNodeTest {
 
     @Test
     @Order(13)
+    void aSqlNodePastItsTimeoutIsStoppedAndRollsBack() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fsql-slow
+            nodes:
+              - id: slow
+                type: sql
+                source: fsql-db
+                timeout: 1s
+                statements:
+                  - INSERT INTO fsql.target VALUES (400)
+                  - INSERT INTO fsql.target VALUES (401)
+              - { id: tell, type: notify, title: "slow took too long" }
+            connections:
+              - { from: slow, to: tell, when: failure }
+            """);
+        long run;
+        FlowStore.Run done;
+        try (Connection hold = DriverManager.getConnection(url, user, password)) {
+            // Another session holds the table, so the node's first statement waits on it past its timeout.
+            hold.setAutoCommit(false);
+            try (Statement s = hold.createStatement()) {
+                s.execute("LOCK TABLE fsql.target IN ACCESS EXCLUSIVE MODE");
+            }
+            run = start("fsql-slow");
+            done = finished(run);
+            hold.rollback();
+        }
+        // The failure was handled, so the flow succeeds; the node failed, saying why, not cancelled.
+        assertEquals("succeeded", done.status(), done.error());
+        FlowStore.NodeRun slow = node(run, "slow");
+        assertEquals("failed", slow.status(), slow.message());
+        assertEquals("Took longer than 1s and was stopped; nothing was changed, as its statements run in one "
+            + "transaction", slow.message());
+        assertTrue(slow.reported().replace(" ", "").contains("\"timed_out\":true"), slow.reported());
+        assertEquals("succeeded", node(run, "tell").status());
+        assertTrue(Duration.between(slow.startedAt(), slow.finishedAt()).toMillis() >= 1000, "it ran its second");
+        assertEquals(0, count("SELECT count(*) FROM fsql.target WHERE id IN (400, 401)"));
+    }
+
+    @Test
+    @Order(14)
     void cleanUp() throws Exception {
         superuser("DROP SCHEMA fsql CASCADE", "DROP OWNED BY " + WRITER, "DROP OWNED BY fsql_maker",
             "DROP OWNED BY fsql_replica", "DROP ROLE fsql_maker", "DROP ROLE fsql_replica");
