@@ -454,7 +454,7 @@ final class QualityPredictor {
             case "limit" -> Map.of("out", limit(s, in));
             case "gate" -> gate(plan, s, in, predicted);
             case "write" -> {
-                predicted.add(write(plan, s, in));
+                predicted.add(write(s, in));
                 yield Map.of();
             }
             default -> {
@@ -522,7 +522,7 @@ final class QualityPredictor {
         e.key = f.primaryKey();
         long limit = ReadNodeFactory.rowLimit(s.config());
         if (limit > 0) {
-            e.rows = e.rows == null ? null : Math.min(e.rows, limit);
+            e.rows = e.rows == null ? null : Math.min(e.rows, (double) limit);
             e.assumptions.add("the first " + countWords(limit) + " rows of " + s.id() + " are like the rest");
         }
         return e;
@@ -541,7 +541,9 @@ final class QualityPredictor {
         double rows = x.rows();
         double values = Math.max(0, x.values());
         c.nulls = Math.max(0, x.nulls()) / rows;
-        c.blanks = x.has("blanks") ? Math.max(0, x.get("blanks")) / rows : (c.text() ? null : 0.0);
+        // Boxed on purpose: with a double in one branch, the null would be unboxed and throw.
+        c.blanks = x.has("blanks") ? Double.valueOf(Math.max(0, x.get("blanks")) / rows)
+            : c.text() ? null : Double.valueOf(0.0);
         if (values <= 0) {
             return c;
         }
@@ -616,6 +618,7 @@ final class QualityPredictor {
          * what it keeps and sets aside; otherwise the rows kept have the column filled, and nothing more
          * is known of its values.
          */
+        @SuppressWarnings("ArgumentSelectionDefectChecker") // swaps kept and rejected on purpose, as above
         Selection not() {
             if (nullShare == null) {
                 return new Selection(null, null, Map.of(), Map.of(), unknown != null ? unknown
@@ -1903,7 +1906,8 @@ final class QualityPredictor {
             out.changed = true;
             if (c != null && c.nulls != null) {
                 // One group for the empty values: a share of the groups only when their number is known.
-                out.nulls = c.nulls == 0 ? 0.0 : e.rows != null ? 1 / e.rows : null;
+                // Boxed on purpose: with a double in one branch, the null would be unboxed and throw.
+                out.nulls = c.nulls == 0 ? Double.valueOf(0.0) : e.rows != null ? Double.valueOf(1 / e.rows) : null;
                 out.blanks = out.blanks == null ? null : Math.min(out.blanks, e.rows == null ? 1 : 1 / e.rows);
             }
             out.top = null;
@@ -2093,7 +2097,7 @@ final class QualityPredictor {
             }
         }
         if (n >= 0) {
-            e.rows = e.rows == null ? null : Math.min(e.rows, n);
+            e.rows = e.rows == null ? null : Math.min(e.rows, (double) n);
             e.assumptions.add("the first " + countWords(n) + " rows are like the rest");
         }
         return e;
@@ -2439,7 +2443,7 @@ final class QualityPredictor {
 
     // ---- write: the predicted score of what reaches it ----
 
-    private Predicted write(Plan plan, PlanNode s, Est in) {
+    private Predicted write(PlanNode s, Est in) {
         String urn = WriteNodeFactory.urn(s.config());
         List<String> key = WriteNodeFactory.key(s.config());
         RunQuality.Score score = score(in, urn, key == null ? List.of() : key);

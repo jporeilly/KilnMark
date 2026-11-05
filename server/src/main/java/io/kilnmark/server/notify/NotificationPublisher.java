@@ -164,13 +164,13 @@ public class NotificationPublisher {
     /** After a scan: a failed scan is told once until a scan of the source succeeds again. */
     public void scanFinished(String source, long runId, String status, String runDetail) {
         try {
-            scanFinishedNow(source, runId, status, runDetail);
+            scanFinishedNow(source, status, runDetail);
         } catch (RuntimeException ex) {
             LOG.warnf(ex, "Could not tell of an event (%s)", "scanFinished");
         }
     }
 
-    private void scanFinishedNow(String source, long runId, String status, String runDetail) {
+    private void scanFinishedNow(String source, String status, String runDetail) {
         String key = "scan:" + source;
         if ("failed".equals(status)) {
             // The run's own words can name hosts and users and quote the data: for stewards and admins

@@ -50,7 +50,7 @@ class AuditLogTest {
         JsonPath created = events(AuditLog.TOKEN_CREATED);
         Map<String, Object> e = created.getMap("events.find { it.target == 'token " + token + "' }");
         assertNotNull(e, created.prettify());
-        assertEquals(Boolean.TRUE, created.get("events.find { it.target == 'token " + token + "' }.detail.unmask"));
+        assertEquals(true, created.get("events.find { it.target == 'token " + token + "' }.detail.unmask"));
         assertEquals("designer", created.get("events.find { it.target == 'token " + token + "' }.detail.role"));
         assertFalse(created.prettify().contains("km_"), "the token's secret is never recorded");
 
@@ -68,13 +68,13 @@ class AuditLogTest {
         admin().contentType(ContentType.JSON).body(Map.of("name", "audited-files", "kind", "files", "settings",
             Map.of("path", dir.toString(), "allow_writing", "true"))).post("/api/v1/sources").then().statusCode(201);
         JsonPath writing = events(AuditLog.WRITING_CHANGED);
-        assertEquals(Boolean.TRUE, writing.get("events.find { it.target == 'audited-files' }.detail.on"),
+        assertEquals(true, writing.get("events.find { it.target == 'audited-files' }.detail.on"),
             writing.prettify());
         assertEquals("form", writing.get("events.find { it.target == 'audited-files' }.detail.via"));
 
         admin().delete("/api/v1/sources/audited-files").then().statusCode(200);
         JsonPath deleted = events(AuditLog.SOURCE_DELETED);
-        assertEquals(Boolean.FALSE, deleted.get("events.find { it.target == 'audited-files' }.detail.marked"),
+        assertEquals(false, deleted.get("events.find { it.target == 'audited-files' }.detail.marked"),
             deleted.prettify());
     }
 

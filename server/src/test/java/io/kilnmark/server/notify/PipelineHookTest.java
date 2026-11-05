@@ -18,7 +18,7 @@ class PipelineHookTest {
     @Vetoed // not a second bean: the parent's scope annotation is @Inherited
     static final class Fake extends NotificationPublisher {
         final List<NotificationEvent> fired = new ArrayList<>();
-        final List<String> cleared = new ArrayList<>();
+        final List<String> clearedKeys = new ArrayList<>();
 
         @Override
         public void publish(NotificationEvent e) {
@@ -27,7 +27,7 @@ class PipelineHookTest {
 
         @Override
         public void clear(String key) {
-            cleared.add(key);
+            clearedKeys.add(key);
         }
     }
 
@@ -45,7 +45,7 @@ class PipelineHookTest {
         assertNull(e.subjectUrn());
         p.pipelineRunFinished("nightly-load", 43, "succeeded", null, null, "#/pipeline-runs/43");
         assertEquals(1, p.fired.size(), "a success tells nothing on its own");
-        assertEquals(List.of("pipeline:nightly-load"), p.cleared, "but ends the streak");
+        assertEquals(List.of("pipeline:nightly-load"), p.clearedKeys, "but ends the streak");
     }
 
     @Test

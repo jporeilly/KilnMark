@@ -508,7 +508,7 @@ public class ModelDiscovery implements AutoCloseable {
             long size = meta.path("size").asLong(0);
             long params = meta.path("n_params").asLong(0);
             String type = lm.path("type").asText("");
-            boolean embedding = type.equals("embeddings") || type.isEmpty() && looksLikeEmbedding(id, null, List.of());
+            boolean embedding = type.equals("embeddings") || (type.isEmpty() && looksLikeEmbedding(id, null, List.of()));
             String state = lm.path("state").asText("");
             Integer context = positive(lm.path("max_context_length"));
             if (context == null) {
@@ -606,7 +606,7 @@ public class ModelDiscovery implements AutoCloseable {
         if (why != Why.REFUSED && why != Why.TIMEOUT) {
             return null;
         }
-        if (hostName || !loopback && c.kind() == Kind.UNKNOWN) {
+        if (hostName || (!loopback && c.kind() == Kind.UNKNOWN)) {
             return switch (kind) {
                 case OLLAMA -> OLLAMA_HOST_ADVICE;
                 case LM_STUDIO -> LM_STUDIO_ADVICE;

@@ -43,6 +43,7 @@ class DriversApiTest {
     private HttpServer maven;
     private final AtomicReference<byte[]> served = new AtomicReference<>();
 
+    @SuppressWarnings("AddressSelection") // the loopback address written out, not a host name to look up
     @BeforeAll
     void startMaven() throws Exception {
         maven = HttpServer.create(new InetSocketAddress("127.0.0.1", 47393), 0);

@@ -1,3 +1,5 @@
+import net.ltgt.gradle.errorprone.errorprone
+
 // Kilnmark root build.
 // All build output goes to /dist: one folder per module under dist/build,
 // and the assembled release under dist/release.
@@ -7,6 +9,8 @@ plugins {
     id("com.github.jk1.dependency-license-report") version "3.1.4" apply false
     // A CycloneDX SBOM of what the server ships, with every release (docs/design/supply-chain.md).
     id("org.cyclonedx.bom") version "3.5.1" apply false
+    // Static analysis of the Java code, inside the compiler (ADR 0042).
+    alias(libs.plugins.errorprone) apply false
 }
 
 val distDir = layout.projectDirectory.dir("dist")
@@ -17,6 +21,7 @@ subprojects {
     layout.buildDirectory.set(rootProject.layout.projectDirectory.dir("dist/build/${project.name}"))
 
     apply(plugin = "java")
+    apply(plugin = "net.ltgt.errorprone")
 
     extensions.configure<JavaPluginExtension> {
         toolchain.languageVersion.set(JavaLanguageVersion.of(25))
@@ -28,12 +33,40 @@ subprojects {
         "testImplementation"(platform(rootProject.libs.junit.bom))
         "testImplementation"(rootProject.libs.junit.jupiter)
         "testRuntimeOnly"(rootProject.libs.junit.launcher)
+        "errorprone"(rootProject.libs.errorprone.core)
+        "compileOnly"(rootProject.libs.checker.qual)
+        "testCompileOnly"(rootProject.libs.checker.qual)
     }
 
     tasks.withType<JavaCompile>().configureEach {
         options.encoding = "UTF-8"
         options.release.set(25)
         options.compilerArgs.addAll(listOf("-Xlint:all,-classfile,-processing", "-Werror"))
+        // Error Prone runs inside every compile, main and test (ADR 0042). With -Werror above, its
+        // warnings fail the build as its errors do: fix the code, or suppress the one place with
+        // @SuppressWarnings("CheckName") and a comment saying why.
+        options.errorprone {
+            disableWarningsInGeneratedCode.set(true)
+            // Off for the whole build, each for the reason ADR 0042 gives: style, or read and found sound.
+            disable(
+                "StringConcatToTextBlock",
+                "RefactorSwitch",
+                "StatementSwitchToExpressionSwitch",
+                "AssignmentExpression",
+                "BadInstanceof",
+                "InlineFormatString",
+                "NonApiType",
+                "StringSplitter",
+                "ArrayRecordComponent",
+            )
+            // Until the flow-controls change merges: it rewrites these files, so they are fixed after
+            // it rather than under it (ADR 0042). Take this out then.
+            excludedPaths.set(".*[/\\\\](FlowDefinition|FlowDefinitionTest|FlowService|JobQueue)\\.java$")
+            // -PepPatch=Check1,Check2 applies those checks' suggested fixes to the sources (docs/development.md).
+            providers.gradleProperty("epPatch").orNull?.let {
+                errorproneArgs.addAll("-XepPatchChecks:" + it, "-XepPatchLocation:IN_PLACE")
+            }
+        }
     }
 
     tasks.withType<Test>().configureEach {
@@ -101,6 +134,21 @@ tasks.register<Sync>("assembleRelease") {
     from(distDir.dir("ui")) {
         include("third-party-notices.txt")
         rename { "THIRD-PARTY-NOTICES-UI.txt" }
+    }
+}
+
+// resolveAllDependencies: resolves every dependency any module can use, so one run writes the checksum
+// of each into gradle/verification-metadata.xml (docs/development.md, "Dependency verification").
+allprojects {
+    tasks.register("resolveAllDependencies") {
+        group = "help"
+        description = "Resolves every resolvable configuration of this module (for dependency verification)."
+        notCompatibleWithConfigurationCache("reads the module's configurations as it runs")
+        val resolvable = provider { configurations.filter { it.isCanBeResolved } }
+        doLast {
+            // not lenient: a configuration that cannot be resolved fails the task, rather than leaving gaps
+            resolvable.get().forEach { it.incoming.files.files }
+        }
     }
 }
 

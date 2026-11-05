@@ -318,10 +318,10 @@ final class Parser {
                 return new Node.Literal(Type.NULL, null, t.pos());
             }
             case "true" -> {
-                return new Node.Literal(Type.BOOLEAN, Boolean.TRUE, t.pos());
+                return new Node.Literal(Type.BOOLEAN, true, t.pos());
             }
             case "false" -> {
-                return new Node.Literal(Type.BOOLEAN, Boolean.FALSE, t.pos());
+                return new Node.Literal(Type.BOOLEAN, false, t.pos());
             }
             case "date" -> {
                 Token s = next();

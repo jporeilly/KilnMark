@@ -22,6 +22,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import org.apache.arrow.vector.types.pojo.Schema;
@@ -422,7 +423,7 @@ class GenericJdbcConnectorTest {
         assertEquals(2, h2.connector().containers(reader).stream().filter(c -> c.name().equals("CRM")).findFirst()
             .orElseThrow().count());
         assertEquals(List.of("customers:table", "customer_names:view"), h2.connector().assets(reader, "CRM").stream()
-            .map(a -> a.name().toLowerCase() + ":" + a.kind()).toList());
+            .map(a -> a.name().toLowerCase(Locale.ROOT) + ":" + a.kind()).toList());
     }
 
     @Test
@@ -582,7 +583,7 @@ class GenericJdbcConnectorTest {
         assertEquals("SALES.all_kinds", h2.connector().writtenAssetPath(writer,
             options("sales.all_kinds", "append", Map.of())), "the schema as the database spells it");
         Rows.Collected back = read(reader, "SALES.all_kinds", 0);
-        back.rows.sort(java.util.Comparator.comparing(row -> ((Number) row.get(0)).longValue()));
+        back.rows.sort(java.util.Comparator.comparingLong(row -> ((Number) row.get(0)).longValue()));
         assertEquals(rows.size(), back.rows.size());
         for (int i = 0; i < rows.size(); i++) {
             for (int col = 0; col < rows.get(i).length; col++) {

@@ -140,7 +140,7 @@ class AiProfilesTest {
         assertEquals("found", found.getString("servers[0].outcome"));
         assertEquals(fake.baseUrl(), found.getString("servers[0].baseUrl"));
         assertTrue(found.getList("servers[0].models.name").contains("fake-chat"));
-        assertEquals(Boolean.TRUE, found.getBoolean("servers[0].models.find { it.name == 'fake-embed-64' }.embedding"));
+        assertEquals(true, found.getBoolean("servers[0].models.find { it.name == 'fake-embed-64' }.embedding"));
         assertEquals("unknown", found.getString("servers[0].models[0].gpu"));
         admin().contentType(ContentType.JSON).body(Map.of("baseUrl", "http://169.254.169.254/"))
             .post("/api/v1/ai/discover").then().statusCode(200).body("servers[0].outcome", equalTo("refused"));

@@ -408,7 +408,7 @@ final class ParquetEncoder implements RowEncoder {
         }
 
         long buffered() {
-            return chunk.size() + values.size();
+            return (long) chunk.size() + values.size();
         }
 
         void add(org.apache.arrow.vector.FieldVector v, int n) throws IOException {
@@ -424,6 +424,7 @@ final class ParquetEncoder implements RowEncoder {
             }
         }
 
+        @SuppressWarnings("JavaLocalDateTimeGetNano") // whole seconds and the nanoseconds within one, added
         private void encode(Object value) {
             switch (column.kind()) {
                 case BOOLEAN -> {

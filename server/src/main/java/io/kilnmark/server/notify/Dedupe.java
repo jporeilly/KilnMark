@@ -18,6 +18,8 @@ public final class Dedupe {
     }
 
     /**
+     * What to do with an event.
+     *
      * @param send     whether to mail the event
      * @param severity the severity to mail it at (a recovery takes its failure's)
      * @param next     the state to keep; null to keep none

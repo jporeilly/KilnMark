@@ -295,7 +295,7 @@ public class ModelHosts {
 
     /** An IPv4 dotted quad or an IPv6 address (no brackets). */
     static boolean isIpLiteral(String host) {
-        return host.matches("\\d{1,3}(\\.\\d{1,3}){3}") || host.contains(":") && host.matches("[0-9a-f:.%]+");
+        return host.matches("\\d{1,3}(\\.\\d{1,3}){3}") || (host.contains(":") && host.matches("[0-9a-f:.%]+"));
     }
 
     /**

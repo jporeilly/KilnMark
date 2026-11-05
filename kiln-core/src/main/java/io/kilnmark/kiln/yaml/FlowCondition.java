@@ -3,6 +3,7 @@ package io.kilnmark.kiln.yaml;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.function.Function;
 
@@ -91,7 +92,7 @@ public final class FlowCondition {
                     + "and / or");
             }
             if (n.type() != Type.BOOLEAN) {
-                r.fail(null, "A condition must be a comparison or true / false, not a " + n.type().name().toLowerCase()
+                r.fail(null, "A condition must be a comparison or true / false, not a " + n.type().name().toLowerCase(Locale.ROOT)
                     + " on its own");
             }
         } catch (Stop stop) {
@@ -180,12 +181,12 @@ public final class FlowCondition {
                 if (Boolean.FALSE.equals(a) || Boolean.FALSE.equals(b)) {
                     return false;
                 }
-                return a == null || b == null ? null : Boolean.TRUE;
+                return (a == null || b == null) ? null : Boolean.TRUE;
             }
             if (Boolean.TRUE.equals(a) || Boolean.TRUE.equals(b)) {
                 return true;
             }
-            return a == null || b == null ? null : Boolean.FALSE;
+            return (a == null || b == null) ? null : Boolean.FALSE;
         }
     }
 
@@ -387,8 +388,8 @@ public final class FlowCondition {
 
         private void check(Token op, Expr l, Expr r) {
             if (l.type() != r.type()) {
-                fail(op, "Cannot compare a " + l.type().name().toLowerCase() + " with a "
-                    + r.type().name().toLowerCase() + ": " + describe(l) + " " + op.text + " " + describe(r));
+                fail(op, "Cannot compare a " + l.type().name().toLowerCase(Locale.ROOT) + " with a "
+                    + r.type().name().toLowerCase(Locale.ROOT) + ": " + describe(l) + " " + op.text + " " + describe(r));
             }
             if (l.type() != Type.NUMBER && l.type() != Type.TEXT && !op.text.equals("=") && !op.text.equals("!=")) {
                 fail(op, "True / false values compare only with = and !=");
@@ -431,11 +432,11 @@ public final class FlowCondition {
         }
 
         private Expr wordOperand(Token t) {
-            switch (t.text.toLowerCase()) {
+            switch (t.text.toLowerCase(Locale.ROOT)) {
                 case "true":
-                    return new Literal(Boolean.TRUE, Type.BOOLEAN);
+                    return new Literal(true, Type.BOOLEAN);
                 case "false":
-                    return new Literal(Boolean.FALSE, Type.BOOLEAN);
+                    return new Literal(false, Type.BOOLEAN);
                 case "good":
                     return new Literal(0.95, Type.NUMBER);
                 case "fair":

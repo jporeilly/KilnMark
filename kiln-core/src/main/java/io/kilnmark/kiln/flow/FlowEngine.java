@@ -3,6 +3,7 @@ package io.kilnmark.kiln.flow;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -132,7 +133,7 @@ public final class FlowEngine {
             return null;
         }
         if (field.equals("status")) {
-            return s.name().toLowerCase();
+            return s.name().toLowerCase(Locale.ROOT);
         }
         return results.getOrDefault(node, Map.of()).get(field);
     }

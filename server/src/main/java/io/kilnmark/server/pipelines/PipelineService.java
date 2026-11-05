@@ -734,7 +734,9 @@ public class PipelineService {
      * the points were merged.
      */
     public PipelineViews.RunSeries series(long id, long after) {
-        store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No pipeline run " + id));
+        if (store.run(id).isEmpty()) {
+            throw fail(Response.Status.NOT_FOUND, "No pipeline run " + id);
+        }
         PipelineStore.Series s = store.series(id, Math.max(-1, after));
         List<PipelineViews.SeriesPoint> points = s.points().stream()
             .map(p -> new PipelineViews.SeriesPoint(p.t(), tree(p.rates()), tree(p.fills()))).toList();
@@ -1092,6 +1094,7 @@ public class PipelineService {
     }
 
     /** Runs the pipeline run behind job {@code jobId}; called by a worker. */
+    @SuppressWarnings("InterruptedInCatchBlock") // the status is cleared on purpose: see the comment where
     public ScanService.Result execute(long jobId, JobQueue.ScanLease lease, BooleanSupplier shutdown) {
         // Runs left by a stopped worker are marked failed by the workers' periodic recovery, not here:
         // a run waiting for a place comes through here every few seconds.
@@ -1274,7 +1277,9 @@ public class PipelineService {
             finished(run.pipeline(), id, o.status(), score, threshold, lowest == null ? null : lowest.node());
             LOG.infof("Run %d of pipeline %s: %s", id, run.pipeline(), o.status());
         } catch (InterruptedException e) {
-            Thread.interrupted(); // cleared so the run's record can be written
+            // Cleared so the run's record can be written. Today it is already clear here, but that
+            // depends on how the wait was interrupted.
+            var _ = Thread.interrupted();
             if (!ran && c != null && c.graph() != null) {
                 PipelineExecution.closeNodes(c.graph());
             }
@@ -1435,6 +1440,7 @@ public class PipelineService {
      * finished run of kind 'pipeline' on the written source; then its lineage from the assets read
      * upstream. Never throws: the run has already succeeded, so problems become notes.
      */
+    @SuppressWarnings("InterruptedInCatchBlock") // the status is cleared on purpose: see the comment where
     private boolean register(PipelineExecution.WriteTarget w, Long rows, List<MetadataEvent> events, boolean profiled,
                              PipelineCompilerPort.Compilation c, RunContext context, ArrayNode notes,
                              JobQueue.ScanLease lease, BooleanSupplier shutdown) {
@@ -1453,8 +1459,8 @@ public class PipelineService {
                 locked = JobQueue.waitFor(() -> lease.tryLockSource(s.id()), config.pipelines().waitForTarget(),
                     shutdown);
             } catch (InterruptedException e) {
-                Thread.interrupted();
-                locked = false;
+                var _ = Thread.interrupted(); // cleared for the database calls below, however it was set
+                locked = false; // stopping: leave the catalogue to the next scan
             }
             if (!locked) {
                 note(notes, w.node() + ": a scan of " + w.source() + " was running, so " + w.target() + " is not in "
@@ -1702,7 +1708,7 @@ public class PipelineService {
         List<MetadataEvent> mine = reported(events, w.urn());
         MetadataEvent schema = mine.stream().filter(e -> e.kind() == MetadataEvent.Kind.SCHEMA).findFirst().orElse(null);
         boolean appended = mine.stream().anyMatch(e -> e.kind() == MetadataEvent.Kind.ROW_COUNT
-            && "true".equals(e.attributes().get("appended"))) || schema == null && !w.wholeTarget();
+            && "true".equals(e.attributes().get("appended"))) || (schema == null && !w.wholeTarget());
         if (appended && known != null) {
             // Rows added to a table the catalogue knows: keep what its last scan found.
             graph.saveAsset(s.id(), recordRun, new Records.Asset(w.urn(), known.kind(), known.container(), known.name(),
