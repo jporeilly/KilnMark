@@ -82,9 +82,9 @@ may do, and exactly what in ADR 0028 changes and what stays.
   and the quoting of a name are the same whether a pipeline creates the table or a person copies
   the statement. Names are always quoted and schema-qualified.
 - **Types.** A column's type is the dialect's type for its kind (`JdbcColumn.Kind`), from the
-  dialect's own list. A column whose type has no kind (a range, `hierarchyid`, an enum) is listed
-  under "left out", never copied as the catalogue spells it: a type's name is text from the
-  database and can carry anything.
+  dialect's own list. A column whose type has no kind (a range, `hierarchyid`, an enum) is written
+  as text and listed under "left out or changed", never copied as the catalogue spells it: a
+  type's name is text from the database and can carry anything.
 - **No values.** The generator writes names, types, nulls, keys and plain indexes. It never copies
   a default, a check, a comment, a partition bound, a generated column's expression, an index on an
   expression or a partial index's condition: they can quote values, and they are each database's
