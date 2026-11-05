@@ -175,25 +175,32 @@ secrets, and refuses to start, naming the missing one, while either is unset or 
 
 The key that encrypts stored source passwords is not a setting: the server generates it on first
 start in the `keys` volume. `.env.example` lists every variable, with the required ones empty and a
-comment on how to make each. On the server, from the release folder:
+comment on how to make each. The control script's `install` writes `.env` with new values for both
+(INSTALL.md, "A. Install a release"; ADR 0044); by hand, from a release folder:
 
 ```
 cp .env.example .env && chmod 600 .env    # then fill in .env
-podman compose up -d --build              # or: docker compose up -d --build
+podman compose build                      # or load the offline images file, or pull them
+podman compose up -d                      # or: docker compose ...
 ```
 
 Without the values, compose stops before starting anything, for example
 `required variable KILNMARK_DB_PASSWORD is missing a value: Set KILNMARK_DB_PASSWORD to a strong
-password before starting Kilnmark (see .env.example)`. It builds
-`localhost/kilnmark-postgres:<version>` and `localhost/kilnmark-server:<version>` (the server image
-from the release's `server` folder, through the Containerfile's `APP_DIR` argument) and starts
-them. Optional settings: `KILNMARK_PORT`, `KILNMARK_DB_PORT` (the database is published on this
-machine only; Kilnmark reaches it inside the stack), `KILNMARK_SOURCES_HOST_MAP` and
-`KILNMARK_VAR_<NAME>`, which sets the server variable `<name>` as text when the server starts, unless
-it is set already (see the guide's "Parameters and server variables"). Nothing is
-scanned until a source is added. For folder sources, uncomment the
-example volume and mount the customer's folder at `/srv/files`; there is no default folder. The
-AI profiles work as described in [AI models](#ai-models).
+password before starting Kilnmark (see .env.example)`. The images are
+`ghcr.io/jporeilly/kilnmark-postgres:<version>` and `ghcr.io/jporeilly/kilnmark-server:<version>`:
+the release workflow builds them from the release folder (the server image from its `server`
+folder, through the Containerfile's `APP_DIR` argument), signs them and publishes them, and saves
+them as `kilnmark-<version>-images.tar.gz`; `build` makes the same locally. Optional settings:
+`KILNMARK_PORT`, `KILNMARK_DB_PORT` (the database is published on this machine only; Kilnmark
+reaches it inside the stack), `KILNMARK_SOURCES_HOST_MAP` and `KILNMARK_VAR_<NAME>`, which sets the
+server variable `<name>` as text when the server starts, unless it is set already (see the guide's
+"Parameters and server variables"). Nothing is scanned until a source is added. For folder sources,
+uncomment the example volume and mount the customer's folder at `/srv/files`; there is no default
+folder. The AI profiles work as described in [AI models](#ai-models).
+
+On a developer machine, the source checkout's `compose.yaml` already uses the project name
+`kilnmark`: try a release there with `KILNMARK_PROJECT=kmtry` and other ports (INSTALL.md, "The
+control script"), so its volumes stay apart.
 
 `release` also runs `checkProductOnly`, which fails the build if the release folder, Kilnmark's own
 jars, the UI bundle or the bundled guides name the lab (any `lab-<name>`, `labadmin`, a path into

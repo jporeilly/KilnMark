@@ -7,6 +7,31 @@ details.
 
 ### What's new
 
+- **Install, start, upgrade and back up Kilnmark with one script**: `kilnmark.sh` on Linux,
+  `kilnmark.cmd` on Windows. On Linux, `sudo kilnmark.sh prepare` first makes the `kilnmark`
+  service account that runs it, and `/opt/kilnmark` its own. `install` checks the machine, makes an install root (`/opt/kilnmark`
+  or `C:\Kilnmark`) with new secrets readable by you only, gets the images and starts Kilnmark;
+  `up`, `down`, `status`, `logs`, `backup`, `restore`, `upgrade` and the rest follow (INSTALL.md,
+  "A. Install a release"; ADR 0044). Backup and restore now work on Windows too.
+- **Signed images, and an install without internet access.** The images are built once, by the
+  release, pinned to exact base images, signed with the release key and published on
+  `ghcr.io/jporeilly`; each release also has them as a signed file to load offline.
+- **Flow nodes look like pipeline nodes.** On a flow's diagram, each node is now a card as on a
+  pipeline's canvas: its type with an icon, its id, what it does, and `in` and `out` connectors.
+  Connections run in square steps from one node's `out` to the next one's `in`, never from a
+  corner, and the diagram fits every connection, even one that runs round the others.
+  ([The diagram](docs/guide/flows.md#the-diagram))
+- **Run timelines, nested as the run went** (docs/guide/flows.md, docs/guide/pipelines.md). A flow
+  run's page has a **Run timeline** in place of the run chart: the flow, then each node, each node
+  opening into its pipeline run's nodes, and a `for-each` node into its items, each with its value,
+  every bar on one time line with how long it took at its end. One sentence sums up the run, and
+  choosing any row shows everything recorded about it. A pipeline run's page shows the same
+  timeline again, with the chosen node's details.
+- **Choose which runs start first** (ADR 0041). A `run-pipeline` or `for-each` node can say its
+  `priority`: `high`, `normal` (the default) or `low`. When more runs wait than there are free
+  workers, a worker takes the highest priority first, then the one queued first; a source's limit
+  and `max_parallel` still hold. Set it on the node's Settings tab.
+  ([Choosing which runs start first](docs/guide/flows.md#choosing-which-runs-start-first))
 - **Every build checks its code and its parts** (ADR 0042). The Java code is read for known kinds of
   bug as it compiles, and a finding stops the build; the first run found and fixed two places where
   quality prediction could fail on a column with an unknown count, and a file write to a path ending
@@ -157,6 +182,47 @@ details.
 
 ### Details
 
+- **The control script** (ADR 0044). One install root per site holds `versions/<version>/`,
+  `config/.env` (written by `install` with a new database password and admin token, `600`, never
+  overwritten), `certs/https`, `backups` and `logs`. Every command logs what it said and exits
+  non-zero on failure; none prints a secret. Downloads, the offline images file and pulled images
+  are checked with cosign against the `cosign.pub` the release now carries (`--skip-verify` to go
+  on without, recorded in the log). `upgrade` backs up first, starts the new version beside the old
+  one, and points back to the old one if it does not answer. `start-kilnmark` and `stop-kilnmark`
+  now run the control script. The Windows script is Windows PowerShell 5.1, through
+  `kilnmark.cmd`.
+- **The compose project is always `kilnmark`** (`name:` in compose.yaml, and `-p`), so volumes
+  keep their names from one version's folder to the next; `KILNMARK_PROJECT` names another for a
+  second install on one machine. **A 0.0.9 install moves over by backup and restore**: its project
+  was named after its folder (INSTALL.md, "From 0.0.9").
+- **Every long-running service restarts by itself** (`restart: always`; `down` removes them); with rootless
+  Podman, install turns on the `podman-restart` user service.
+- **Images from the release, not built on site.** compose.yaml names
+  `ghcr.io/jporeilly/kilnmark-server` and `-postgres` at the release's version; the base images
+  are pinned by digest. The release workflow builds them, writes `kilnmark-<version>-images.tar.gz`
+  and `-keycloak-images.tar.gz`, signs them with the other files, and on a tag pushes the images
+  and signs them by digest. Its rehearsal on pull requests installs the release with `kilnmark.sh`
+  from the offline file and backs up, restores, stops, starts and purges it.
+- **HTTPS certificates** go in `certs/https` (or the folder `KILNMARK_CERTS_DIR` names), which
+  compose.yaml now always mounts read-only; a release folder run by hand has an empty `tls` folder.
+- **Flow diagram cards** (docs/design/flows.md, F4a). `FlowDiagram` draws a node with the pipeline
+  canvas's `.cv-node` styles (the icon square in the node type's tint) and `in`/`out` ring
+  connectors; a node's run status is in its foot. A laid-out connection is drawn in rounded square
+  steps from connector to connector through dagre's route (`route.ts`: `steps` turns only in the
+  gaps between columns, and brackets a second connection between the same two nodes round its label;
+  `roundedPath`), its bends in those gaps and its label moved to the connectors' height; connections
+  between nodes placed by hand still bow apart. Two unseen 1-pixel points at the corners of the
+  routes let fitting the view take in a route round the outside. The hint under the Nodes tab says
+  to drag from a node's out connector.
+- **A flow node's `priority`** (ADR 0041, amended; docs/design/flow-controls.md, C5). `run-pipeline`
+  and `for-each` nodes take `priority: high | normal | low` (any case), checked when saved; `sql`
+  and the other types refuse it, since a sql node never waits in the job queue. Migration V33 adds
+  `job.priority` (smallint, -1 to 1, default 0) and rebuilds `job_ready_idx` as `(priority DESC, id)`;
+  `JobQueue.claim` takes the due job of highest priority, then the first queued. The pipeline runs a
+  node queues, and each of a for-each node's items, carry its priority; everything else is normal.
+  The diagram's Settings tab has a **Priority** choice, and a node's summary says a high or low one.
+  Upgrading: building the new index briefly holds up the job queue while it reads `job`, which
+  keeps every job ever queued; the column's check is validated without holding it up.
 - **Static analysis and dependency verification** (ADR 0042; SSDF PW.7.2, RV.1.2, PW.4.4). Error
   Prone 2.51 runs in every Java compile, main and test, and `-Werror` makes its warnings fail the
   build; nine checks are off for the whole build, each with its reason in the ADR, and suppressions

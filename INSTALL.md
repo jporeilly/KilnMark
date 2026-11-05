@@ -11,73 +11,170 @@ Two ways to install, from a clean machine. Details, options and troubleshooting 
 
 | Tool | Version | For |
 | --- | --- | --- |
-| Podman (Podman Desktop with a WSL 2 machine on Windows), or Docker | Podman 5 or later | PostgreSQL and the server, in containers: A and B |
+| Podman (Podman Desktop with a WSL 2 machine on Windows), or Docker | Podman 5 or later; Docker with Compose v2 | PostgreSQL and the server, in containers: A and B |
+| cosign | 3.0 or later | A: checking the download and the images (`winget install Sigstore.Cosign` on Windows) |
 | Git | any recent | B |
 | Java | 17 or later on the `PATH` | B: it starts the Gradle wrapper, which downloads the JDK 25 the build needs |
 | Node.js | 22.12 or later | B: the web UI |
 | Python 3 | any recent | B on macOS or Linux: `lab/lab.sh samples` and `pipelines` |
 
-On Windows and macOS, start the Podman machine once per boot: `podman machine start`.
+Kilnmark wants 4 GB of memory for its containers (5 GB with Keycloak) and 10 GB of disk for images,
+data and backups. On Windows, give the Podman machine or Docker Desktop that much; Podman starts its
+machine itself when the control script needs it.
 
 ## A. Install a release
 
-1. Get the release folder, `kilnmark-<version>`: built with `./gradlew release` (B, step 5), it
-   lands in `dist/release/kilnmark-<version>`. Copy that folder to the machine.
-2. In the folder, make the settings file from its example: `cp .env.example .env` (and
-   `chmod 600 .env` on Linux). Fill in the two secrets; nothing ships with a default, and
-   Kilnmark refuses to start without them:
-   - `KILNMARK_DB_PASSWORD`: a long random value, for example `openssl rand -base64 32`.
-   - `KILNMARK_ADMIN_TOKEN`: `km_` and at least 43 letters, digits, `-` or `_`, for example
-     `km_$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')`.
-3. Start it: `podman compose up -d --build` (or `docker compose up -d --build`). This builds the
-   database and server images and starts them.
-4. Open http://localhost:8780 and sign in with the admin token from `.env`. Under **API tokens**,
-   make a permanent admin token for yourself and keep it safe.
-5. Add a source under **Sources**: nothing is scanned until you do.
-6. To try the samples, small pipelines that show one idea each, open the **Library** and
-   choose **Add samples**: they stay in the Library, apart from your own pipelines. **Add the
-   starter pack** creates Kilnmark's sample tables in a database and schema you pick, and adds every sample reading them; it needs a database and a file source that
-   allow writing (an admin turns that on under **Sources**). Or pick your own sources for the
-   placeholders the samples use (`crm-db`, `shop-db`, `files`). See
-   [samples/README.md](samples/README.md). The samples are also in the release's `samples` folder.
+A release is `kilnmark-<version>.tar.gz` (or `.zip`). It ships with
+`kilnmark-<version>-images.tar.gz`, the images for a machine without internet access, and a
+`.sigstore.json` signature beside each file. The images are also at `ghcr.io/jporeilly`.
+
+1. **Check the download** before unpacking it (below, "Check a release").
+2. **On Linux, prepare the machine once**, from the unpacked folder:
+   `sudo ./kilnmark.sh prepare`. It:
+   - makes the `kilnmark` account that runs Kilnmark (`--user` names another). The account has no
+     password and you reach it with `sudo -iu kilnmark`;
+   - gives the account the container engine: rootless Podman's id ranges and lingering, so its
+     containers start at boot, or the `docker` group with `--engine docker` (that group can act as
+     root on the machine: prefer rootless Podman where that matters);
+   - makes `/opt/kilnmark` (`--root` for another) the account's own, and places the release in it.
+     It makes a new folder only, and refuses one that exists; later versions arrive by `upgrade`.
+
+   Everything after this runs as that account, never as root. On Windows, Kilnmark runs as your own
+   account, and there is no prepare.
+3. **Install**, with the control script's `install`:
+
+   | | Linux (as the kilnmark account) | Windows |
+   | --- | --- | --- |
+   | Online | `sudo -iu kilnmark /opt/kilnmark/versions/<version>/kilnmark.sh install` | `kilnmark.cmd install`, from the unpacked folder |
+   | Offline | the same, with `--offline /opt/kilnmark/downloads/kilnmark-<version>-images.tar.gz` (copy the file and its `.sigstore.json` there, owned by kilnmark) | `kilnmark.cmd install -Offline ..\kilnmark-<version>-images.tar.gz` |
+
+   Install:
+   - checks the prerequisites and reports every problem at once, with its fix;
+   - makes the install root (`/opt/kilnmark` or `C:\Kilnmark`; another with `--root` or `-Root`,
+     a folder without spaces);
+   - copies the release into it;
+   - writes `config/.env` with a new database password and admin token. Only your account can
+     read it, and nothing ships with a default. An existing `.env` is kept as it is;
+   - gets the images: it loads the offline file or pulls them, checking their signatures, or
+     builds them with `--build`;
+   - starts Kilnmark and waits until it answers.
+
+   With `--auth` (`-Auth`), install also turns on Keycloak with new secrets (below). To use other ports, set them first, for example
+   `KILNMARK_PORT=9780 ./kilnmark.sh install`.
+4. **Open** http://localhost:8780 and sign in with the admin token: it is `KILNMARK_ADMIN_TOKEN` in
+   `config/.env`. Under **API tokens**, make a permanent admin token for yourself and keep it safe.
+5. **Add a source** under **Sources**: nothing is scanned until you do.
+6. **To try the samples**, small pipelines that each show one idea, open the **Library** and choose
+   **Add samples**: they stay in the Library, apart from your own pipelines.
+   - **Add the starter pack** creates Kilnmark's sample tables in a database and schema you
+     pick, and adds every sample reading them. It needs a database source and a file source that
+     allow writing (an admin turns that on under **Sources**).
+   - Or pick your own sources for the placeholders the samples use (`crm-db`, `shop-db`,
+     `files`).
+
+   See [samples/README.md](samples/README.md). The samples are also in the release's `samples`
+   folder.
+7. **Schedule a daily backup**: `kilnmark.sh backup` (`kilnmark.cmd backup`), from cron or Task
+   Scheduler (below, "Back up and restore").
+
+The install root after that ([ADR 0044](docs/adr/0044-installing-with-one-control-script.md)):
+
+```
+kilnmark/                  /opt/kilnmark or C:\Kilnmark
+  kilnmark.sh | kilnmark.cmd, kilnmark.ps1, start-/stop-kilnmark, create-shortcut
+  versions/<version>/      the release, never edited; current (Linux) or current.txt names the one that runs
+  config/.env              this site's settings and secrets (yours only)
+  config/.env.example      every setting, with what it does
+  certs/https/             server.crt and server.key, for HTTPS on Kilnmark itself
+  downloads/               (Linux) where to put images files and upgrades for the kilnmark account
+  backups/                 one folder per backup
+  logs/                    what each install, start, upgrade and backup said
+```
+
+Kilnmark's data is in the compose project's volumes (`kilnmark_pgdata`, `kilnmark_keys`, and
+`kilnmark_keycloak-pgdata` with Keycloak), not in the root. Every long-running container restarts
+by itself after a reboot: on Linux with rootless Podman, prepare turns on lingering for the
+kilnmark account and install turns on its `podman-restart` service. On Linux, run each command
+below as that account: `sudo -iu kilnmark /opt/kilnmark/kilnmark.sh <command>`.
+
+Below, `.env` means `config/.env` in the install root. After changing it, apply the change with
+`kilnmark.sh up` (`kilnmark.cmd up`), which recreates what changed. A `compose` command below runs
+from the install root as `podman compose -p kilnmark --env-file config/.env -f current/compose.yaml`
+(or `docker compose`), which is what the control script runs.
+
+### The control script
+
+Run it from the install root (on Linux, as the kilnmark account). Run with no command, it starts
+Kilnmark. On Windows, options are
+written `-Offline`, `-Root`, `-SkipVerify` and so on.
+
+| Command | What it does |
+| --- | --- |
+| `prepare` | Linux, once, with sudo: makes the kilnmark account and the install root (above) |
+| `up` | Starts Kilnmark (and Keycloak when `.env` turns on the `auth` profile), waits until it answers, and opens it in the browser |
+| `down` | Stops it. Every volume, so all data, is kept |
+| `restart [service]` | Restarts everything, or one service |
+| `status` | Version, containers, health, and the last backup |
+| `logs [service] [-f]` | The last 200 lines of the logs, or follows them |
+| `check` | Checks the prerequisites, and lists settings in the version's `.env.example` that your `.env` does not mention. Changes nothing |
+| `verify FILE` | Checks a downloaded file against its signature |
+| `load-images FILE` | Checks and loads an offline images file |
+| `pull` | Pulls this version's images and checks their signatures |
+| `build` | Builds the images from the release's `containers` folder instead |
+| `backup [DIR]` | Backs up the database and the keys, into `backups` by default |
+| `restore BACKUP --yes` | Puts Kilnmark back to a backup |
+| `upgrade ARCHIVE [--offline IMAGES]` | Checks the new release, backs up, puts it beside this one, and starts it. If the new version does not answer, the old one is current again, and the script says how to restore |
+| `uninstall [--purge]` | Stops Kilnmark. `--purge` also deletes its volumes and images, once you type `DELETE` |
+
+Every command writes what it said to `logs`, and ends with a failure code when it fails, so it can
+be scheduled. No command prints a secret. Without cosign, `install`, `upgrade`, `load-images` and
+`pull` refuse to go on unless given `--skip-verify` (`-SkipVerify`), which the log records.
+
+A second Kilnmark on the same machine, or one beside a source checkout that already uses the
+project name `kilnmark`, needs its own project, root and ports:
+`KILNMARK_PROJECT=kilnmark2 KILNMARK_PORT=9780 KILNMARK_HTTPS_PORT=9443 KILNMARK_DB_PORT=9442
+./kilnmark.sh install --root /opt/kilnmark2`, with `KILNMARK_PROJECT` set again for every later
+command.
+
+**From 0.0.9:** a 0.0.9 folder's compose project was named after its folder. Back it up with that
+folder's `./backup.sh`, install this version, then `kilnmark.sh restore <that backup> --yes`.
 
 ### Start and stop with one click
 
-After the first start (step 3), Kilnmark can start and stop from a shortcut, on Windows 11 and on
-Ubuntu (or any desktop that reads `.desktop` files). Starting runs `podman compose up -d` (or
-Docker's), starts the Podman machine on Windows if it is not running, waits until Kilnmark answers
-(and Keycloak, when `.env` says `COMPOSE_PROFILES=auth`), then opens Kilnmark in the browser at
-`KILNMARK_URL`. Stopping runs `down`: the containers stop, and every volume, so all data, is kept.
+After install, Kilnmark can start and stop from a shortcut, on Windows 11 and on Ubuntu (or any
+desktop that reads `.desktop` files). The shortcuts run the control script's `up` and `down`.
 
 | | Windows 11 | Ubuntu |
 | --- | --- | --- |
-| Make the shortcuts, once | `powershell -ExecutionPolicy Bypass -File .\create-shortcut.ps1` | `./create-shortcut.sh` |
+| Make the shortcuts, once, in the install root | `powershell -ExecutionPolicy Bypass -File .\create-shortcut.ps1` | `./create-shortcut.sh` |
 | They go | on the desktop and in the Start menu | in the applications menu and on the desktop |
-| Start, without a shortcut | `start-kilnmark.cmd` | `./start-kilnmark.sh` |
-| Stop | `stop-kilnmark.cmd` | `./stop-kilnmark.sh` |
 
 On Ubuntu with Docker, your user must be in the `docker` group, so the shortcut needs no `sudo`.
-If something goes wrong, the window stays open saying what, and which logs to look at. Run the
-shortcut maker again after moving the folder.
+If something goes wrong, the window stays open and says what, and which logs to look at. To have
+Kilnmark start when you sign in to Windows, put the Kilnmark shortcut in `shell:startup`.
 
 ### Check a release
 
-A release from GitHub comes as `kilnmark-<version>.tar.gz` or `.zip`, two SBOMs, `SHA256SUMS`, and
-a `.sigstore.json` signature beside each. Check the one you downloaded before unpacking it, with
-[cosign](https://docs.sigstore.dev/cosign/system_config/installation/) 3.0 or later (earlier versions
-cannot read the signatures) and Kilnmark's public key
-(`cosign.pub`, from the release's owner or `config/release/cosign.pub` in the repository):
+Check each file you downloaded before unpacking or loading it. Use
+[cosign](https://docs.sigstore.dev/cosign/system_config/installation/) 3.0 or later (earlier
+versions cannot read the signatures) and Kilnmark's public key: `cosign.pub`, from the release's
+owner or `config/release/cosign.pub` in the repository.
 
 ```
 cosign verify-blob --key cosign.pub --insecure-ignore-tlog=true \
   --bundle kilnmark-<version>.tar.gz.sigstore.json kilnmark-<version>.tar.gz
 ```
 
-`Verified OK` means the file is the one Kilnmark signed. (The signatures are deliberately kept off
-Sigstore's public log, which is what `--insecure-ignore-tlog` acknowledges; the key is the proof.)
-`sha256sum -c SHA256SUMS --ignore-missing` checks the files against the signed list of checksums.
-The SBOMs, `kilnmark-<version>-server.cdx.json` and `-ui.cdx.json` (also in the release's `sbom`
-folder), list every library and package it contains, for your own scanners.
+`Verified OK` means the file is the one Kilnmark signed. The signatures are deliberately kept off
+Sigstore's public log, which is what `--insecure-ignore-tlog` acknowledges; the key is the proof.
+
+- `sha256sum -c SHA256SUMS --ignore-missing` checks the files against the signed list of checksums.
+- The SBOMs, `kilnmark-<version>-server.cdx.json` and `-ui.cdx.json` (also in the release's `sbom`
+  folder), list every library and package it contains, for your own scanners.
+- Once Kilnmark is installed, the control script checks the offline images file and later
+  upgrades itself, with the `cosign.pub` the release carries.
+- Pulled images are signed by digest:
+  `cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/jporeilly/kilnmark-server@sha256:...`
 
 ### Kilnmark's own database
 
@@ -159,8 +256,9 @@ Kilnmark should be reached over HTTPS only. Either:
   behind it, reachable only from the proxy, and set `KILNMARK_HTTP_HSTS=always` in `.env` so
   browsers are told to keep to HTTPS.
 - **Kilnmark ends TLS itself.** Put the certificate (with its chain) and its private key, as PEM
-  files, in a `tls` folder beside `compose.yaml`; uncomment the `./tls` volume in `compose.yaml`;
-  and set in `.env`:
+  files, as `server.crt` and `server.key` in `certs/https` in the install root (the folder
+  `KILNMARK_CERTS_DIR` names; a release folder run by hand uses its `tls` folder), readable by the
+  container; and set in `.env`:
 
   ```
   KILNMARK_TLS_CERT_FILE=/etc/kilnmark/tls/server.crt
@@ -195,7 +293,7 @@ scripts.
    `KILNMARK_OIDC_VIEWER_GROUPS`, `..._STEWARD_GROUPS`, `..._DESIGNER_GROUPS`, `..._ADMIN_GROUPS`.
    Designers in `KILNMARK_OIDC_UNMASK_GROUPS` see values of columns marked sensitive. A person in
    none of them signs in with no role, and is told so.
-4. Restart: `podman compose up -d`. The sign-in page now shows **Sign in with** your provider.
+4. Apply it: `kilnmark.sh up`. The sign-in page now shows **Sign in with** your provider.
 
 Kilnmark requires a second factor: the provider must say so in the ID token's `amr` (`mfa`, or two
 methods of two kinds, such as a password and a one-time code; one method alone, or two of one kind,
@@ -225,8 +323,9 @@ of its own, or only Active Directory or LDAP (which Keycloak can read). It is a 
    a new `KILNMARK_OIDC_CLIENT_SECRET`, `KILNMARK_OIDC_PROVIDER_NAME=Keycloak`, and the five group
    settings (`kilnmark-viewers`, `kilnmark-stewards`, `kilnmark-designers`, `kilnmark-admins`,
    `kilnmark-sensitive-data`).
-3. Start it: `podman compose --profile auth up -d`. To have Keycloak start and stop with Kilnmark
-   on every plain `podman compose up -d` and `down`, also set `COMPOSE_PROFILES=auth` in `.env`.
+3. Start it: set `COMPOSE_PROFILES=auth` in `.env` and run `kilnmark.sh up`, which then starts and
+   stops Keycloak with Kilnmark. (`kilnmark.sh install --auth` does steps 1 to 3 for you, with new
+   secrets.) By hand, `podman compose --profile auth up -d`.
    Docker Compose and recent podman-compose read it; an older podman-compose (as in Ubuntu 24.04)
    may not, so there add `--profile auth` yourself. The one-click scripts (below) always do. The `keycloak-setup` service waits for Keycloak,
    then makes the `kilnmark` realm: those groups, the client Kilnmark signs in with, a sign-in of a
@@ -256,7 +355,7 @@ machine only. For other machines, put a proxy on this machine that ends TLS in f
 `KILNMARK_KEYCLOAK_URL` and `KILNMARK_URL` to their `https://` addresses, and run `keycloak-setup`
 again (above).
 
-`backup.sh` backs up Kilnmark, not Keycloak. Back Keycloak's database up beside it:
+`kilnmark.sh backup` backs up Kilnmark, not Keycloak. Back Keycloak's database up beside it:
 `podman compose --profile auth exec -T keycloak-db pg_dump -U keycloak -Fc keycloak > keycloak.dump`.
 Keycloak keeps compressed copies of its pages: after changing the theme in
 `containers/keycloak/themes`, recreate it
@@ -293,13 +392,15 @@ approves membership of the unmask group at the provider
 
 ### Back up and restore
 
-From the release folder, while Kilnmark runs, `./backup.sh /path/to/backups` writes a new folder
-holding the database and the keys that open stored source passwords. Keep the keys file apart from
-the database dumps. `./restore.sh /path/to/backups/kilnmark-<time>` puts both back on this or a new
-machine. Schedule a daily backup, back up before every upgrade, and test a restore every quarter:
-the runbook, with what to check after a restore, is
+While Kilnmark runs, `kilnmark.sh backup` (`kilnmark.cmd backup`) writes a new folder in `backups`
+(or the folder you name) holding the database and the keys that open stored source passwords. Keep
+the keys file apart from the database dumps. `kilnmark.sh restore backups/kilnmark-<time> --yes`
+puts both back, on this machine or a new one, and the same backup restores on Linux or Windows.
+Schedule a daily backup, back up before every upgrade (`upgrade` does), and test a restore every
+quarter: the runbook, with what to check after a restore, is
 [Backing up and restoring Kilnmark](docs/guide/backup-and-restore.md)
-([ADR 0039](docs/adr/0039-backup-and-restore.md)).
+([ADR 0039](docs/adr/0039-backup-and-restore.md)). The release folder's `backup.sh` and `restore.sh`
+are what the control script runs on Linux.
 
 ## B. From source, with the reference lab and the samples
 

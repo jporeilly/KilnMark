@@ -55,7 +55,7 @@ for f in $files; do
 done
 taken=$(sed -n 's/^taken_at=//p' "$src/backup.txt")
 from=$(sed -n 's/^kilnmark_version=//p' "$src/backup.txt")
-here=$(sed -n 's/^ *image: localhost\/kilnmark-server:\(.*\)$/\1/p' compose.yaml | head -n 1)
+here=$(sed -n 's/^ *image: .*\/kilnmark-server:\(.*\)$/\1/p' compose.yaml | head -n 1)
 if [ -z "$from" ] || [ -z "$here" ]; then
   echo "Cannot tell the backup's Kilnmark version, or this release's (its image line in compose.yaml). Nothing was changed." >&2
   exit 1

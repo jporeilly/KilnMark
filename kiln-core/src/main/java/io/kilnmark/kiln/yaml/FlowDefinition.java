@@ -69,6 +69,13 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
     public static final Duration MAX_TIMEOUT = Duration.ofDays(7);
     /** The node types that take a {@code timeout}. */
     public static final Set<String> TIMED = Set.of(RUN_PIPELINE, FOR_EACH, SQL);
+    /**
+     * The node types that take a {@code priority}: those whose work is a job on the queue. A sql node
+     * runs on its flow's own watcher, never queued, so a priority would order nothing.
+     */
+    public static final Set<String> PRIORITISED = Set.of(RUN_PIPELINE, FOR_EACH);
+    /** A node's {@code priority} as written, and as the job queue stores it: higher is taken first (ADR 0041). */
+    public static final Map<String, Integer> PRIORITIES = Map.of("high", 1, "normal", 0, "low", -1);
     static final int MAX_TITLE = 200;
     static final int MAX_MESSAGE = 2_000;
     /** What a node that runs a pipeline reports, for conditions, besides {@code status}. */
@@ -95,8 +102,8 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         "max_parallel", "nodes", "connections", "layout");
     static final Set<String> NODE_KEYS = Set.of("id", "type");
     static final Map<String, Set<String>> TYPE_KEYS = Map.of(
-        RUN_PIPELINE, Set.of("pipeline", "version", "with", "timeout"),
-        FOR_EACH, Set.of("pipeline", "version", "items", "as", "with", "max_parallel", "timeout"),
+        RUN_PIPELINE, Set.of("pipeline", "version", "with", "timeout", "priority"),
+        FOR_EACH, Set.of("pipeline", "version", "items", "as", "with", "max_parallel", "timeout", "priority"),
         STOP, Set.of("status", "message"),
         NOTIFY, Set.of("severity", "title", "message"),
         WAIT, Set.of("for"),
@@ -117,15 +124,26 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
      * node, and {@code each}: its items, the parameter each fills, and how many run at once.
      * {@code timeout} is how long a run-pipeline or sql node's run, or each of a for-each node's items,
      * may take before it is stopped and the node fails (ADR 0041), or null for no limit.
+     * {@code priority} is the priority of the pipeline runs a run-pipeline or for-each node queues:
+     * 1 high, 0 normal (the default), -1 low (ADR 0041).
      */
     public record Node(String id, String type, String pipeline, Integer version, String status, String message,
                        Position position, Map<String, Position> keys, Map<String, Object> with, String severity,
                        String title, Duration waitFor, String source, List<String> statements, Each each,
-                       Duration timeout) {
+                       Duration timeout, int priority) {
 
         public Node {
             with = with == null ? Map.of() : java.util.Collections.unmodifiableMap(new LinkedHashMap<>(with));
             statements = statements == null ? List.of() : List.copyOf(statements);
+        }
+
+        /** A node of normal priority. */
+        public Node(String id, String type, String pipeline, Integer version, String status, String message,
+                    Position position, Map<String, Position> keys, Map<String, Object> with, String severity,
+                    String title, Duration waitFor, String source, List<String> statements, Each each,
+                    Duration timeout) {
+            this(id, type, pipeline, version, status, message, position, keys, with, severity, title, waitFor, source,
+                statements, each, timeout, 0);
         }
 
         /** A node with no timeout. */
@@ -433,6 +451,7 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
             }
         }
         Duration timeout = TIMED.contains(type) ? timeout(m.entries().get("timeout"), id, problems) : null;
+        int priority = PRIORITISED.contains(type) ? priority(m.entries().get("priority"), id, problems) : 0;
         if (type.equals(RUN_PIPELINE) || type.equals(FOR_EACH)) {
             YamlReader.Entry p = m.entries().get("pipeline");
             String pipeline = null;
@@ -459,7 +478,7 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
             Map<String, Object> with = with(m.entries().get("with"), id, names, problems);
             Each each = type.equals(FOR_EACH) ? each(id, m, with, declared, problems) : null;
             return new Node(id, type, pipeline, version, null, null, m.position(), keys, with, null, null, null, null,
-                null, each, timeout);
+                null, each, timeout, priority);
         }
         if (type.equals(NOTIFY)) {
             return notifyNode(id, m, keys, names, problems);
@@ -680,6 +699,25 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         }
         return new Node(id, SQL, null, null, null, null, m.position(), keys, Map.of(), null, null, null, source,
             statements, null, timeout);
+    }
+
+    /**
+     * A node's {@code priority}: high, normal or low, in any case, as the queue stores it (1, 0, -1);
+     * normal when it is not written, or is wrong (with a problem saying so).
+     */
+    private static int priority(YamlReader.Entry e, String id, List<Problem> problems) {
+        if (e == null) {
+            return 0;
+        }
+        String word = e.value() instanceof YamlReader.Scalar sc && sc.value() instanceof String t
+            ? t.strip().toLowerCase(java.util.Locale.ROOT) : null;
+        Integer level = word == null ? null : PRIORITIES.get(word);
+        if (level == null) {
+            problems.add(Problem.at(e.value().position(), id, "priority is high, normal or low: which of the runs "
+                + "waiting for a worker starts first"));
+            return 0;
+        }
+        return level;
     }
 
     /**

@@ -761,7 +761,7 @@ main:has(.pl-wide) {
 /* ---- A run's timeline (RunTimeline): one bar per node, on a shared time axis ---- */
 
 .pl-tl-chart {
-  --pl-tl-name: 11rem;
+  --pl-tl-name: 17rem;
   display: grid;
   gap: 4px;
 }
@@ -800,8 +800,9 @@ main:has(.pl-wide) {
 .pl-tl-track {
   position: relative;
   height: 22px;
+  margin-right: 64px;
   border-radius: var(--km-radius-xs);
-  background: var(--km-surface-2);
+  cursor: pointer;
 }
 
 .pl-tl-axis .pl-tl-track {
@@ -830,50 +831,46 @@ main:has(.pl-wide) {
   position: absolute;
   top: 0;
   bottom: 0;
-  border-left: 1px solid var(--km-divider);
+  border-left: 1px dashed var(--km-border-control);
 }
 
-/* Waiting for its first row: a light, hatched band; rows moving: the solid accent bar. */
+/* One rounded bar per node: lighter while it waits for its first row, solid while rows move. */
 .pl-tl-wait,
 .pl-tl-bar {
   box-sizing: border-box;
   position: absolute;
-  top: 4px;
-  bottom: 4px;
-  min-width: 2px;
-  border-radius: 3px;
+  top: 5px;
+  bottom: 5px;
+  min-width: 3px;
 }
 
 .pl-tl-wait {
-  background: repeating-linear-gradient(135deg, var(--km-accent-tint) 0 4px, transparent 4px 8px);
-  border: 1px solid var(--km-accent);
-  opacity: 0.85;
+  border-radius: 6px 0 0 6px;
+  background: color-mix(in srgb, var(--km-accent-blue) 22%, var(--km-surface));
 }
 
 .pl-tl-bar {
-  background: var(--km-accent-fill);
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--km-accent-blue) 55%, var(--km-surface));
+}
+
+/* A part that is the whole bar: no rows came (waiting only), or rows came at once (no waiting). */
+.pl-tl-wait.is-alone,
+.pl-tl-bar.is-alone {
+  border-radius: 6px;
+}
+
+.pl-tl-row.is-chosen .pl-tl-bar {
+  background: var(--km-accent-blue-fill);
 }
 
 .pl-tl-bar.is-failed {
-  background: repeating-linear-gradient(135deg, var(--km-bad) 0 5px, var(--km-tint-red-bg) 5px 8px);
+  background: var(--km-bad);
 }
 
 .pl-tl-bar.is-running,
 .pl-tl-wait.is-running {
   border-right: 3px dotted var(--km-ink);
-}
-
-.pl-tl-tick {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  margin-left: -1px;
-  background: var(--km-ink-strong);
-}
-
-.pl-tl-tick.is-last {
-  background: var(--km-ink);
 }
 
 .pl-tl-none {
@@ -905,12 +902,11 @@ main:has(.pl-wide) {
 }
 
 .pl-tl-key-wait {
-  background: repeating-linear-gradient(135deg, var(--km-accent-tint) 0 4px, transparent 4px 8px);
-  border: 1px solid var(--km-accent);
+  background: color-mix(in srgb, var(--km-accent-blue) 22%, var(--km-surface));
 }
 
 .pl-tl-key-bar {
-  background: var(--km-accent-fill);
+  background: color-mix(in srgb, var(--km-accent-blue) 55%, var(--km-surface));
 }
 
 .pl-tl .pl-tl-key .pl-tl-key-tick {
@@ -1054,42 +1050,13 @@ main:has(.pl-wide) {
   margin-bottom: 8px;
 }
 
+/* On the critical path: the bar in the accent colour; nothing else changes. */
 .pl-tl-bar.is-critical {
-  outline: 2px dashed var(--km-ink-strong);
-  outline-offset: 1px;
-  background-image: repeating-linear-gradient(90deg, transparent 0 10px, rgb(255 255 255 / 0.35) 10px 12px);
-}
-
-.pl-tl-row.is-critical .pl-tl-node {
-  font-weight: 700;
-  text-decoration: underline dashed;
-  text-underline-offset: 3px;
-}
-
-.pl-tl-key .pl-tl-key-critical {
-  border: 2px dashed var(--km-ink-strong);
   background: var(--km-accent-fill);
 }
 
-.pl-tl-mark {
-  position: absolute;
-  top: 1px;
-  transform: translateX(-100%);
-  padding-right: 2px;
-  white-space: nowrap;
-  z-index: 1;
-}
-
-.pl-tl-mark .km-chip {
-  font-size: var(--km-text-xs);
-  line-height: 1.4;
-  padding-block: 0;
-}
-
-/* A bar ending near the start: its marker sits after its end, so it stays inside the chart. */
-.pl-tl-mark.is-after {
-  transform: none;
-  padding: 0 0 0 4px;
+.pl-tl-key .pl-tl-key-critical {
+  background: var(--km-accent-fill);
 }
 
 /* ---- Where each node spent its time (RunTimeSpent): a 100% bar per node, each part its own pattern ---- */
@@ -1352,4 +1319,129 @@ main:has(.pl-wide) {
   .pl-rt-line path {
     stroke: CanvasText;
   }
+}
+
+/* ---- Shared by the pipeline and flow run timelines: the sentence, durations, the chosen row, details ---- */
+
+.run-sentence {
+  margin: 0 0 12px;
+}
+
+.run-name {
+  max-width: 100%;
+  min-height: 0;
+  text-decoration: none;
+  padding: 2px 4px;
+  border: 0;
+  background: none;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[aria-current="true"].run-name {
+  font-weight: 700;
+}
+
+.run-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid var(--km-accent-blue-ink);
+  border-radius: 2px;
+}
+
+.run-dot--run {
+  border-color: var(--km-accent-purple-ink);
+  transform: rotate(45deg);
+}
+
+.run-took {
+  position: absolute;
+  top: 3px;
+  margin-left: 8px;
+  white-space: nowrap;
+  font-size: var(--km-text-xs);
+  color: var(--km-muted);
+}
+
+/* The gridlines pass behind a time, never through it. */
+.run-took {
+  z-index: 1;
+  padding: 0 4px;
+  background: var(--km-surface);
+}
+
+.pl-tl-row.is-chosen .run-took,
+.ft-chosen .run-took {
+  background: var(--km-surface-2);
+}
+
+/* Near the right edge, a time with its quality goes before the bar's end instead. */
+.run-took.is-before {
+  margin-left: 0;
+  padding-right: 8px;
+  transform: translateX(-100%);
+}
+
+.pl-tl-quality.is-good {
+  color: var(--km-good);
+}
+
+.pl-tl-quality.is-warn,
+.pl-tl-quality.is-orange {
+  color: var(--km-warn);
+}
+
+.pl-tl-quality.is-bad {
+  color: var(--km-bad);
+}
+
+.pl-tl-row.is-chosen {
+  background: var(--km-surface-2);
+  border-radius: 6px;
+}
+
+.pl-tl-run {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--km-accent-purple) 40%, var(--km-surface));
+}
+
+.pl-tl-row.is-chosen .pl-tl-run {
+  background: var(--km-accent-purple-fill);
+}
+
+.pl-tl-run.is-running {
+  border-right: 3px dotted var(--km-ink);
+}
+
+.run-details {
+  margin-top: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--km-border);
+  border-radius: 8px;
+}
+
+.run-details h3 {
+  margin: 0 0 8px;
+}
+
+.run-details dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px 24px;
+  margin: 0;
+}
+
+.run-details dt {
+  font-size: 12px;
+  color: var(--km-muted);
+}
+
+.run-details dd {
+  margin: 0;
 }

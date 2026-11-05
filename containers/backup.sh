@@ -58,7 +58,7 @@ if ! tar -tf "$dir/kilnmark-keys.tar" | grep -q 'secret\.key$'; then
   echo "Note: no source password is stored yet, so the keys volume holds no key."
 fi
 
-version=$(sed -n 's/^ *image: localhost\/kilnmark-server:\(.*\)$/\1/p' compose.yaml | head -n 1)
+version=$(sed -n 's/^ *image: .*\/kilnmark-server:\(.*\)$/\1/p' compose.yaml | head -n 1)
 {
   echo "taken_at=$taken"
   echo "kilnmark_version=$version"

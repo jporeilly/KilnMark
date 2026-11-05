@@ -1,24 +1,29 @@
 # Kilnmark @VERSION@: PostgreSQL and the Kilnmark server, two containers on one Linux VM.
-# Works with Podman and Docker. From this folder:
-#   podman compose up -d --build          (or: docker compose up -d --build)
-# If your compose tool cannot build (podman-compose on Windows, for example), build the two images
-# by hand, then start without --build:
-#   podman build -t localhost/kilnmark-postgres:@VERSION@ -f containers/postgres/Containerfile containers/postgres
-#   podman build -t localhost/kilnmark-server:@VERSION@ --build-arg APP_DIR=server -f containers/server/Containerfile .
-#   podman compose up -d
-# Then open http://localhost:8780 and sign in with your admin token.
+# Works with Podman and Docker. Start, stop and look after it with the control script beside this
+# file (INSTALL.md, "A. Install a release"):
+#   ./kilnmark.sh install        (Windows: kilnmark.cmd install)
+# which gets the images (loaded from the offline images file, pulled, or built), makes .env with new
+# secrets, and starts everything. By hand, from this folder with a .env beside it:
+#   podman compose up -d          (or: docker compose up -d)
+# The images are ghcr.io/jporeilly/kilnmark-server and -postgres, tag @VERSION@: pulled, loaded from
+# kilnmark-@VERSION@-images.tar.gz, or built from containers/ (podman compose build).
 #
-# Before the first start, set the required secrets: copy .env.example to .env beside this file and
-# fill it in (or set them as environment variables). Nothing here has a default password or token:
-# without them, compose stops with a message naming the missing one.
+# Nothing here has a default password or token: compose stops with a message naming a missing one.
 #   KILNMARK_DB_PASSWORD   required: password of Kilnmark's database, and of its PostgreSQL owner
 #   KILNMARK_ADMIN_TOKEN   required: Kilnmark's admin API token
 #   KILNMARK_PORT          optional: the port Kilnmark is published on (8780)
 #   KILNMARK_DB_PORT       optional: the port its database is published on, on this machine only (5442)
+#   KILNMARK_CERTS_DIR     optional: the folder holding server.crt and server.key for HTTPS (./tls)
 # The key that encrypts stored source passwords is generated on first start, in the keys volume.
+#
+# The project is always called kilnmark, whatever this folder is called, so its volumes keep their
+# names from one version's folder to the next.
+name: kilnmark
+
 services:
   postgres:
-    image: localhost/kilnmark-postgres:@VERSION@
+    image: ghcr.io/jporeilly/kilnmark-postgres:@VERSION@
+    restart: always   # back after a reboot (down removes the containers, so a stop stays a stop)
     build:
       context: containers/postgres
       dockerfile: Containerfile
@@ -39,7 +44,8 @@ services:
       - "127.0.0.1:${KILNMARK_DB_PORT:-5442}:5432"
 
   kilnmark:
-    image: localhost/kilnmark-server:@VERSION@
+    image: ghcr.io/jporeilly/kilnmark-server:@VERSION@
+    restart: always   # back after a reboot (down removes the containers, so a stop stays a stop)
     build:
       context: .
       dockerfile: containers/server/Containerfile
@@ -101,8 +107,9 @@ services:
       # (Documentation, "Branding and appearance"). Kilnmark reads /etc/kilnmark/branding; without
       # it, Kilnmark's own name and letter tiles are shown.
       # - ./branding:/etc/kilnmark/branding:ro,Z
-      # Certificate and key for HTTPS (INSTALL.md, "HTTPS"), read-only.
-      # - ./tls:/etc/kilnmark/tls:ro,Z
+      # Certificate and key for HTTPS (INSTALL.md, "HTTPS"), read-only. Empty, Kilnmark serves plain
+      # HTTP; it reads them only when KILNMARK_TLS_CERT_FILE and KILNMARK_TLS_KEY_FILE are set.
+      - ${KILNMARK_CERTS_DIR:-./tls}:/etc/kilnmark/tls:ro,Z
     depends_on:
       postgres:
         condition: service_healthy
@@ -134,7 +141,8 @@ services:
   # Its secrets have no defaults: while one is missing, keycloak-db or keycloak-setup stops and says
   # which. They are optional to compose itself, so Kilnmark starts the same without this profile.
   keycloak-db:
-    image: localhost/kilnmark-postgres:@VERSION@
+    image: ghcr.io/jporeilly/kilnmark-postgres:@VERSION@
+    restart: always   # back after a reboot (down removes the containers, so a stop stays a stop)
     profiles: ["auth"]
     environment:
       POSTGRES_DB: keycloak
@@ -149,6 +157,7 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.8.1@sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332
+    restart: always   # back after a reboot (down removes the containers, so a stop stays a stop)
     profiles: ["auth"]
     command: ["start"]
     environment:
@@ -222,6 +231,7 @@ services:
   # context size of 512 in Kilnmark: it then sizes asset text to fit (1.5 characters per token).
   ai:
     image: ghcr.io/ggml-org/llama.cpp:server-b11429@sha256:2f8ebc2dde83c4bd7e5c6d61efa57965e0d5a79d29802c246c4593740d9c04c1
+    restart: always   # back after a reboot (down removes the containers, so a stop stays a stop)
     profiles: ["ai"]
     command: ["-m", "/models/${KILNMARK_AI_CHAT_MODEL:-qwen2.5-1.5b-instruct-q4_k_m.gguf}",
               "--alias", "${KILNMARK_AI_CHAT_ALIAS:-qwen2.5-1.5b-instruct}",
@@ -234,6 +244,7 @@ services:
 
   ai-cuda:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda-b11429@sha256:883915ea20a4b350e98f7284098f4d400c21e9b366e248d397cd42d90602a84c
+    restart: always   # back after a reboot (down removes the containers, so a stop stays a stop)
     profiles: ["ai-cuda"]
     command: ["-m", "/models/${KILNMARK_AI_CHAT_MODEL:-qwen2.5-1.5b-instruct-q4_k_m.gguf}",
               "--alias", "${KILNMARK_AI_CHAT_ALIAS:-qwen2.5-1.5b-instruct}",
@@ -255,6 +266,7 @@ services:
   # Embeddings are small and fast on a CPU, so one service serves both profiles.
   ai-embed:
     image: ghcr.io/ggml-org/llama.cpp:server-b11429@sha256:2f8ebc2dde83c4bd7e5c6d61efa57965e0d5a79d29802c246c4593740d9c04c1
+    restart: always   # back after a reboot (down removes the containers, so a stop stays a stop)
     profiles: ["ai", "ai-cuda"]
     command: ["-m", "/models/${KILNMARK_AI_EMBED_MODEL:-bge-small-en-v1.5-q8_0.gguf}",
               "--alias", "${KILNMARK_AI_EMBED_ALIAS:-bge-small-en-v1.5}",

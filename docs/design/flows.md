@@ -3,7 +3,8 @@
 Status: design, 29 October 2026. Round 4. Slices F1 (the engine, storage and the service) and F2
 (parameters passed to pipelines, server variables, notify and wait nodes) are built, and so are the
 `sql` node (ADR 0028, 2 November 2026), F3, the API and the pages (3 November 2026), F4a, the
-diagram and the run chart, and F4b, editing on the diagram (4 November 2026). A flow's
+diagram and the run chart (since replaced by the nested run timeline, below), and F4b, editing on
+the diagram (4 November 2026). A flow's
 `max_parallel` and the `for-each` node (ADR 0040, slices P3 and P4 of parallel-runs.md) are built
 (4 November 2026; section 8). ADR 0026 records the decision.
 
@@ -237,18 +238,20 @@ moves the unique index to `(flow_run_id, flow_node, coalesce(flow_item, -1))`.
   Library (ADR 0043).
 - **F4a, built.** `FlowDiagram` (ui/src/flows): the flow read from its YAML on the page
   (`readFlowGraph`, which reads only what it draws; the server's check says whether it is valid),
-  nodes as boxes with what each does, connections as labelled arrows (solid on success, red dashed
-  on failure, dotted always, amber with the condition's text), laid out left to right by dagre
-  with room made for each label and each connection drawn along the route dagre found, so none
-  crosses a node it does not join; `when` is read as the server reads it, in any case. The wheel
+  nodes as cards drawn as a pipeline's are (canvas.css `.cv-node`: type and icon, id, what it
+  does, and `in` and `out` connectors), connections as labelled arrows from `out` to `in` (solid on
+  success, red dashed on failure, dotted always, amber with the condition's text), laid out left to
+  right by dagre with room made for each label, each connection drawn in square steps through the
+  route dagre found (`route.ts`, `steps`), turning only in the gaps between columns, so none
+  crosses a node it does not join (dagre routes from a box's middle, so its bends in those gaps,
+  and the labels, move down to the connectors' height; a second connection between the same two
+  nodes is bracketed round its label at its own height); two unseen points at the routes' corners
+  make fitting the view take in a route that runs round the outside; `when` is read as the server reads it, in any case. The wheel
   scrolls the page, zoom is by buttons or pinch, and a list under it says every connection in
   words. On the flow page it
   follows the text 400 ms after typing stops, keeping the last flow it could read. On the run page
   the same diagram carries each node's status (in words and its outline), laid out once per
-  version, and `FlowRunChart` draws the run: a bar per node from the run's start (`flowChart`),
-  with its status beside it, running bars striped and growing to now (never ending before they
-  start, whatever the browser's clock), a skipped row hatched, a bar that started a pipeline run
-  linking to it. Built on its own rather than on the
+  version, and the run timeline (`FlowRunTimeline`, below) draws the run, nested as it went. Built on its own rather than on the
   pipeline run's timeline: a flow node has no rows or ports.
 - **F4b, built.** Editing on the diagram, for designers on the flow page. Every change is a
   function of `edit.ts` (text in, text out, refused rather than guessed), written as a patch of the
@@ -435,3 +438,14 @@ hands it out; holding it there keeps the engine's states true and lets kiln-core
   "Runs a pipeline for each item" and "sales-by-region for each of 3 items" (or "for each of
   regions"); the add-node form offers it with a pipeline, starting with `items: []` for the designer
   to fill.
+
+## The run timeline (5 November 2026)
+
+The flow run page's **Run timeline** replaced the run chart. It nests the run as it ran: the flow,
+each node, a `for-each` node's items, and under a node or item that ran a pipeline, that pipeline
+run's nodes. `ui/src/flows/runTree.ts` builds the rows (pure, unit tested): a pipeline run's nodes
+are placed from when that run started (its own times measured from its worker's start), so they
+sit inside their parent's bar. The page reads a pipeline run (`GET /api/v1/pipeline-runs/{id}`)
+only when its row is open: every node's run at first, an item's when it is opened, and again while
+it runs. Choosing a row shows what was recorded about it; nothing new is stored or sent. The
+pipeline run page's timeline has the same look (docs/design/pipelines.md).

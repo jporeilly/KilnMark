@@ -803,6 +803,16 @@ status changes.
   smaller lookup, a faster target) and the run gets faster; speeding up the others does little.
   **Show where each node spent its time as a table** gives the same in words. While the run goes
   this is drawn from its latest progress.
+- **Run timeline:** the run on one time line, as a Gantt chart. One sentence says when it started,
+  how long it took and how it ended. The run's own row comes first, then a bar per node from its
+  start to its end, lighter while it waits for its first row, so nodes working at the same time
+  overlap; its time is at the end of its bar, and a gate's verdict
+  or a write's quality beside it. **Show the critical path** colours the bars of the nodes that held the run's
+  end back (it is off at first, to keep the chart plain). **Choose a row** for everything recorded about that node below the chart: its type, how
+  it ended, its start, first row, last row and end, its share of the run, rows in and out, peak
+  memory, quality and error. **Show the timeline as a table** gives the same as figures.
+
+  ![The Run timeline panel of a pipeline run: the run's row, then customers, check, clean and aside, each bar lighter while it waits for its first row, with its time and the gate's or write's quality after it in words, and the details of the chosen node check below: a gate that finished, first row at 117 ms, 240 rows in and out, quarantined 10](images/pipeline-run-timeline.png)
 - **Rows per second through the run:** a line per node of the rows it handled each second, from
   the snapshots taken every two seconds, with its peak at the right. Under it, an amber band shows
   how full its output queue was (**Held up**: the taller and stronger, the fuller; full means the

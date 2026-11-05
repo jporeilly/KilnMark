@@ -1,7 +1,8 @@
 # PostgreSQL 18 with Apache AGE (graph) and pgvector (embeddings).
 # The official image already includes the PostgreSQL apt repository that ships both extensions.
 # Image names are fully qualified so Podman never has to guess a registry.
-FROM docker.io/library/postgres:18
+# Pinned by digest, so every build starts from the same layers; Dependabot moves the digest.
+FROM docker.io/library/postgres:18@sha256:bd5dfa494a5a259704365813dbfa5fa6b3e69be7348d43b547f540c730478583
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends postgresql-18-age postgresql-18-pgvector \
