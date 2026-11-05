@@ -4,6 +4,7 @@ import static io.kilnmark.server.Tokens.admin;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
@@ -217,6 +218,36 @@ class JobQueueTest {
             }
         }
         assertEquals(mine, runs, "every job this test queued was claimed");
+    }
+
+    @Test
+    void aJobOfHigherPriorityIsClaimedFirstThenTheOneQueuedFirst() throws Exception {
+        // Queued low, normal, normal, high (ADR 0041): claimed high, the two normal in the order queued, low.
+        long low = queue.queueScan(unreachable("prio-low"));
+        long normalFirst = queue.queueScan(unreachable("prio-normal-1"));
+        long normalSecond = queue.queueScan(unreachable("prio-normal-2"));
+        long high = queue.queueScan(unreachable("prio-high"));
+        sql("UPDATE kilnmark.job SET priority = -1 WHERE (payload ->> 'runId')::bigint = " + low);
+        sql("UPDATE kilnmark.job SET priority = 1 WHERE (payload ->> 'runId')::bigint = " + high);
+        Set<Long> ours = Set.of(low, normalFirst, normalSecond, high);
+        List<Long> order = new ArrayList<>();
+        List<JobQueue.Job> claimed = new ArrayList<>();
+        try {
+            for (Optional<JobQueue.Job> j = queue.claim("prio-worker"); j.isPresent(); j = queue.claim("prio-worker")) {
+                claimed.add(j.get());
+                if (ours.contains(j.get().runId())) {
+                    order.add(j.get().runId());
+                }
+            }
+        } finally {
+            for (JobQueue.Job j : claimed) {
+                queue.release(j, Duration.ZERO, null);
+            }
+        }
+        assertEquals(List.of(high, normalFirst, normalSecond, low), order);
+        // A priority is one of three.
+        assertThrows(java.sql.SQLException.class, () -> sql("UPDATE kilnmark.job SET priority = 2 "
+            + "WHERE (payload ->> 'runId')::bigint = " + high));
     }
 
     @Test

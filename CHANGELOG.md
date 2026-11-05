@@ -7,6 +7,11 @@ details.
 
 ### What's new
 
+- **Choose which runs start first** (ADR 0041). A `run-pipeline` or `for-each` node can say its
+  `priority`: `high`, `normal` (the default) or `low`. When more runs wait than there are free
+  workers, a worker takes the highest priority first, then the one queued first; a source's limit
+  and `max_parallel` still hold. Set it on the node's Settings tab.
+  ([Choosing which runs start first](docs/guide/flows.md#choosing-which-runs-start-first))
 - **Every build checks its code and its parts** (ADR 0042). The Java code is read for known kinds of
   bug as it compiles, and a finding stops the build; the first run found and fixed two places where
   quality prediction could fail on a column with an unknown count, and a file write to a path ending
@@ -157,6 +162,15 @@ details.
 
 ### Details
 
+- **A flow node's `priority`** (ADR 0041, amended; docs/design/flow-controls.md, C5). `run-pipeline`
+  and `for-each` nodes take `priority: high | normal | low` (any case), checked when saved; `sql`
+  and the other types refuse it, since a sql node never waits in the job queue. Migration V33 adds
+  `job.priority` (smallint, -1 to 1, default 0) and rebuilds `job_ready_idx` as `(priority DESC, id)`;
+  `JobQueue.claim` takes the due job of highest priority, then the first queued. The pipeline runs a
+  node queues, and each of a for-each node's items, carry its priority; everything else is normal.
+  The diagram's Settings tab has a **Priority** choice, and a node's summary says a high or low one.
+  Upgrading: building the new index briefly holds up the job queue while it reads `job`, which
+  keeps every job ever queued; the column's check is validated without holding it up.
 - **Static analysis and dependency verification** (ADR 0042; SSDF PW.7.2, RV.1.2, PW.4.4). Error
   Prone 2.51 runs in every Java compile, main and test, and `-Werror` makes its warnings fail the
   build; nine checks are off for the whole build, each with its reason in the ADR, and suppressions

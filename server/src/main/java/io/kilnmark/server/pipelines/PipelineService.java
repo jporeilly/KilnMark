@@ -599,10 +599,21 @@ public class PipelineService {
     public PipelineStore.Run queueRunForFlow(String name, Integer version, String by, AccessRole role,
                                              long flowRunId, String flowNode, Integer flowItem,
                                              Map<String, Object> parameters, Map<String, Object> variables) {
+        return queueRunForFlow(name, version, by, role, flowRunId, flowNode, flowItem, parameters, variables, 0);
+    }
+
+    /**
+     * As {@link #queueRunForFlow(String, Integer, String, AccessRole, long, String, Integer, Map, Map)},
+     * at the node's {@code priority} (ADR 0041: 1 high, 0 normal, -1 low).
+     */
+    public PipelineStore.Run queueRunForFlow(String name, Integer version, String by, AccessRole role,
+                                             long flowRunId, String flowNode, Integer flowItem,
+                                             Map<String, Object> parameters, Map<String, Object> variables,
+                                             int priority) {
         RunnableVersion checked = runnableVersion(name, version, parameters, variables);
         int n = checked.version();
         PipelineStore.Run run = store.queueRun(name, n, by, role.id(), flowRunId, flowNode, flowItem,
-            writeJson(checked.parameters()), writeJson(variables));
+            writeJson(checked.parameters()), writeJson(variables), priority);
         LOG.infof("Run %d of pipeline %s (version %d) queued by %s for node %s%s of flow run %d", run.id(), name, n,
             by, flowNode, flowItem == null ? "" : ", item " + flowItem, flowRunId);
         return run;
