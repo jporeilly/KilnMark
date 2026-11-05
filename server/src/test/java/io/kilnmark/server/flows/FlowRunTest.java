@@ -1229,27 +1229,53 @@ class FlowRunTest {
                 pipeline: fl-param
                 items: [ra, rb]
                 as: suffix
-                max_parallel: 1
+                max_parallel: 2
                 timeout: 3s
                 retries: 1
                 retry_delay: 10s
             """);
         HoldingGraphRunner.hold = true;
         FlowStore.Run run = start("fl-each-retry", Map.of());
-        await("the first item to be stopped", () -> node(run.id(), "each"),
-            n -> n != null && n.message() != null && n.message().contains("to try again"));
+        // Both items run at once and are held past their timeout: each is tried again while the other's run is listed.
+        FlowStore.NodeRun waiting = await("both items to wait to try again", () -> node(run.id(), "each"),
+            n -> n != null && n.message() != null && n.message().contains("2 to try again"));
+        assertTrue(waiting.reported().replace(" ", "").contains("\"retrying_items\":[0,1]"), waiting.reported());
+        assertEquals(List.of("pending", "pending"), flows.runDetail(run.id(), true).nodes().get(0).items().stream()
+            .map(FlowViews.ItemRunView::status).toList(), "waiting for their next try");
         HoldingGraphRunner.hold = false;
         waitForFlow(run.id(), "succeeded");
         FlowStore.NodeRun each = node(run.id(), "each");
         assertEquals("2 of 2 items succeeded", each.message());
         assertFalse(each.reported().contains("timed_out_items"), each.reported());
         List<PipelineStore.Try> tries = pipelineStore.flowTries(run.id(), "each");
-        assertEquals(List.of("0:0:cancelled", "0:1:succeeded", "1:0:succeeded"), tries.stream()
+        assertEquals(List.of("0:0:cancelled", "0:1:succeeded", "1:0:cancelled", "1:1:succeeded"), tries.stream()
             .map(t -> t.item() + ":" + t.number() + ":" + t.run().status()).toList());
         FlowViews.NodeRunView view = flows.runDetail(run.id(), true).nodes().get(0);
         assertEquals(List.of("succeeded", "succeeded"), view.items().stream().map(FlowViews.ItemRunView::status).toList(),
             "an item is as its last try ended");
-        assertEquals(3, view.tries().size());
+        assertEquals(4, view.tries().size());
+    }
+
+    @Test
+    @Order(34)
+    void aPersonsCancelIsNeverTriedAgain() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fl-retry-cancel
+            nodes:
+              - { id: load, type: run-pipeline, pipeline: fl-copy, retries: 2, retry_delay: 10s }
+            """);
+        HoldingGraphRunner.hold = true;
+        FlowStore.Run run = start("fl-retry-cancel", Map.of());
+        PipelineStore.Run pr = await("the pipeline run to start", () -> pipelineStore.flowNodeRun(run.id(), "load"),
+            r -> r.isPresent() && "running".equals(r.get().status())).orElseThrow();
+        as(designer).post("/api/v1/pipeline-runs/" + pr.id() + "/cancel").then().statusCode(200);
+        await("the run to be cancelled", () -> pipelineStore.run(pr.id()).orElseThrow().status(), "cancelled"::equals);
+        HoldingGraphRunner.hold = false;
+        FlowStore.Run done = waitForFlow(run.id(), "cancelled");
+        assertEquals("cancelled", node(run.id(), "load").status());
+        assertEquals(1, pipelineStore.flowTries(run.id(), "load").size(), "no second try");
+        assertNotNull(done);
     }
 
     @Test

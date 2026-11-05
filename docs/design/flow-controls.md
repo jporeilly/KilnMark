@@ -176,9 +176,7 @@ flowchart TD
   A{"How did the try end?"} -- "cancelled by a person<br/>or the flow" --> N(["Never retried"])
   A -- "failed or timed out" --> B{"Node type"}
   B -- sql --> Y(["Retried: its transaction<br/>was rolled back"])
-  B -- "run-pipeline or<br/>a for-each item" --> C{"Did any write begin?"}
-  C -- no --> Y2(["Retried"])
-  C -- yes --> D{"Every write in the version<br/>replace or upsert?"}
+  B -- "run-pipeline or<br/>a for-each item" --> D{"Every write in the version<br/>replace or upsert?"}
   D -- yes --> Y3(["Retried: writing again<br/>gives the same result"])
   D -- no --> N2(["Not retried. The flow is<br/>refused when saved"])
 ```
@@ -188,14 +186,26 @@ flowchart TD
   is refused; any other node type refuses both keys.
 - **Pipelines.** Checked when saved: every `write` node of the pipeline's version uses `replace`
   or `upsert`, or the flow is refused, naming the write node ("retries need writes that replace or
-  upsert: write-orders appends"). At run time a failed run is also retried when it failed before any
-  write began, whatever its modes. A cancelled run (by a person, or the flow) is never retried.
-- **SQL.** A `sql` node runs in one transaction, rolled back on failure, so it may always be
-  retried.
+  upsert: write-orders appends"). At run time the version the failed run used is checked again. A
+  cancelled run (by a person, or the flow) is never retried.
+- **SQL.** A `sql` node runs in one transaction, rolled back on failure, so it may be retried,
+  unless the commit itself failed (below).
 - **Checked when saved** (`FlowService.unsafeWrite`): a write whose mode is set by a parameter
   counts as unsafe, since it is not known until the run. **At run time** (`mayRetry`) the check is
-  made again against the version the failed run used, unless no write had begun
-  (`PipelineStore.writeBegan`: no write node took a row).
+  made again against the version the failed run used, always. The "no write began" exception above
+  was dropped in review: a run cancelled, lost with its worker, or failed in the engine records no
+  write statistics, so it cannot be told from one that wrote nothing.
+- **Only the watcher's own timeout cancel is retried.** A try counts as timed out for retrying only
+  when this watcher asked for the cancel (`timedOut` and `cancelAsked`). A cancelled run found by a
+  worker that took the flow over, or a person's cancel close to the timeout, is not retried: the
+  first is still marked timed out, the second ends the node cancelled.
+- **SQL in doubt.** A failure of `commit()` itself returns an outcome `inDoubt`: never retried, as
+  the database may have committed. Statement failures and refusals are retried (a refusal will
+  fail again; harmless, as nothing ran).
+- A for-each try again that finds the pipeline busy waits at most `queue_timeout`, as a first try
+  does; giving up (or the flow stopping) fails the items still waiting. The node's row lists those
+  items under `retrying_items` while it runs, and the run page shows them **pending**.
+- `flowTotals` counts every try's pipeline run and rows written: the rows were written.
 - Each try is a new pipeline run linked to `(flow run, node, item, try)`; `pipeline_run.flow_try`
   (0 for the first), migration V35, with the unique index on all four so each try starts once. The
   node's row and `flowNodeRun`/`flowItemRun(s)` give the latest try; a worker that takes a flow over
@@ -211,8 +221,7 @@ flowchart TD
   conditions never read. `GET /api/v1/flow-runs/{id}` returns each node's `tries`
   (`[{item, number, pipelineRunId, status, startedAt, finishedAt}]`, number from 1) when any was a
   try again, and the run page lists them under **Tries** in the node's or item's details.
-- Not covered by a test: a takeover mid-wait (it needs a second worker), and a person cancelling a
-  try (covered by the cancel rule shared with C3).
+- Not covered by a test: a takeover mid-wait (it needs a second worker), and a commit in doubt.
 
 ## C5. `priority` (built)
 

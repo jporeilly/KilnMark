@@ -203,7 +203,7 @@ A `run-pipeline`, `for-each` or `sql` node may be tried again when it fails, wit
 for failures that pass on their own: a database restarting, a network drop, a lock held a little too
 long.
 
-![How a node is tried again: each try is a pipeline run of its own. If it succeeds, the node succeeds. If a person or the flow cancelled it, it is never tried again. If it failed or timed out and it has tries left, and trying again is safe, the node waits its retry_delay, doubled before each try, then tries again; otherwise it fails, saying after how many tries. Safe means a sql node always, as its failed try was rolled back, and a pipeline only if its writes replace or upsert, or no write had begun. A for-each node tries each failed item on its own.](images/flow-retries.svg)
+![How a node is tried again: each try is a pipeline run of its own. If it succeeds, the node succeeds. If a person or the flow cancelled it, it is never tried again. If it failed or timed out and it has tries left, and trying again is safe, the node waits its retry_delay, doubled before each try, then tries again; otherwise it fails, saying after how many tries. Safe means a sql node whose statements failed, as they were rolled back, and a pipeline only if its writes replace or upsert; a sql commit that failed is never tried again. A for-each node tries each failed item on its own.](images/flow-retries.svg)
 
 ```yaml
 nodes:
@@ -237,13 +237,19 @@ nodes:
 - **Trying again must not write twice.** A pipeline that appends, or creates its target, would write
   its rows a second time. So saving a flow refuses `retries` on a node whose pipeline has a `write`
   node that does not `replace` or `upsert`, naming it ("... must replace or upsert: out appends").
-  When the run happens, the version the run used is checked again; a run that failed before any write
-  took a row may be tried again whatever its modes. A `sql` node's statements run in one transaction
-  that a failure rolls back, so it may always be tried again.
+  Before each try again, the version the failed run used is checked once more, as a node with no
+  `version` runs the latest, which may have changed since: if it now appends, the node fails.
+- **A `sql` node** is tried again after its statements fail, as its transaction was rolled back. If
+  the commit itself fails (the connection dropped as it committed), whether anything changed is not
+  known, so it is never tried again: the node fails and says to check first.
 - **Each try is a pipeline run of its own.** The node shows its last try. On the run's page, choose
   the node (or a for-each item) in the timeline to see **Tries**: each try, how it ended, and a link
   to its pipeline run. A for-each item counts as its last try ended, and the node tries each failed
-  item on its own while the others go on.
+  item on its own while the others go on; an item waiting for its next try shows **Pending**. The
+  run's totals (pipeline runs, rows written) count every try.
+- An item waiting for its next try counts as failed if the node stops early: the flow is cancelled,
+  or it gave up waiting for another run of its pipeline (the flow's `queue_timeout`, which a try
+  again waits for too).
 - On the diagram, choose the node and set **Tries again** and **Wait before trying again** on its
   Settings tab.
 

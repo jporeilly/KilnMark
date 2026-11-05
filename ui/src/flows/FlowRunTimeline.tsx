@@ -240,7 +240,6 @@ export function FlowRunTimeline({ detail, now }: { detail: FlowRunDetail; now: n
   );
 }
 
-/** Everything recorded about the chosen row, in words. */
 /** Each try of a node or item that was tried again (ADR 0041): its number, how it ended and its run. */
 function Tries({ tries }: { tries: FlowTry[] }) {
   return (
@@ -255,6 +254,7 @@ function Tries({ tries }: { tries: FlowTry[] }) {
   );
 }
 
+/** Everything recorded about the chosen row, in words. */
 function RowDetails({ row: r, detail }: { row: TreeRow; detail: FlowRunDetail }) {
   const facts: [string, ReactNode][] = [];
   const span = r.start != null && r.end != null ? took(r.end - r.start) : r.live ? "still running" : "–";

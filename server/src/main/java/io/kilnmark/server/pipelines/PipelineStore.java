@@ -625,22 +625,6 @@ public class PipelineStore {
     }
 
     /**
-     * Whether any write of a run had begun: a write node that took a row (ADR 0041). A run that ended
-     * before any did changed nothing a write would, so it may be tried again whatever its write modes.
-     */
-    public boolean writeBegan(long runId) {
-        return db.tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement("SELECT EXISTS (SELECT 1 FROM kilnmark.pipeline_node_run "
-                + "WHERE run_id = ? AND type = 'write' AND (first_row_at IS NOT NULL OR coalesce(rows_in, 0) > 0))")) {
-                ps.setLong(1, runId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    return rs.next() && rs.getBoolean(1);
-                }
-            }
-        });
-    }
-
-    /**
      * What the pipeline runs of one flow run came to: how many it asked for, the rows they wrote in all
      * (null when none has said yet) and the lowest quality score among them (null when none was
      * measured). Each run's score is already the lowest of what it wrote.

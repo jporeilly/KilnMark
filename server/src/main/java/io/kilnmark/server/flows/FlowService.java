@@ -725,14 +725,16 @@ public class FlowService {
         Set<Integer> notStarted = indexes(s, NOT_STARTED);
         // An item stopped for its timeout counts as failed, as the node counts it, though its run was cancelled.
         Set<Integer> timedOut = indexes(s, TIMED_OUT_ITEMS);
+        // An item waiting to be tried again shows pending: its next try has not started (ADR 0041).
+        Set<Integer> retrying = s != null && "running".equals(s.status()) ? indexes(s, RETRYING_ITEMS) : Set.of();
         List<FlowViews.ItemRunView> out = new ArrayList<>();
         int count = Math.max(list.size(), runs.isEmpty() ? 0 : runs.lastKey() + 1);
         for (int i = 0; i < count; i++) {
             PipelineStore.Run pr = runs.get(i);
             Object value = show && i < list.size() ? list.get(i) : null;
             String unrun = notStarted.contains(i) ? "failed" : ended ? "skipped" : "pending";
-            out.add(pr == null
-                ? new FlowViews.ItemRunView(i, value, unrun, null, null, null, null)
+            out.add(pr == null || retrying.contains(i)
+                ? new FlowViews.ItemRunView(i, value, pr == null ? unrun : "pending", null, null, null, null)
                 : new FlowViews.ItemRunView(i, value, timedOut.contains(i) && pr.finished()
                     && !"succeeded".equals(pr.status()) ? "failed" : pr.status(), pr.id(), pr.requestedAt(),
                     pr.startedAt(), pr.finishedAt()));
@@ -755,6 +757,8 @@ public class FlowService {
 
     /** Where a run-pipeline or sql node's row says it took longer than its timeout and was stopped (ADR 0041). */
     static final String TIMED_OUT = "timed_out";
+    /** Where a running for-each node's row lists the items waiting to be tried again (ADR 0041). */
+    static final String RETRYING_ITEMS = "retrying_items";
     /** Where a for-each node's row lists the items whose runs took longer than its timeout and were stopped. */
     static final String TIMED_OUT_ITEMS = "timed_out_items";
     private static final Map<String, Object> TIMED_OUT_RECORD = Map.of(TIMED_OUT, true);
@@ -1291,12 +1295,23 @@ public class FlowService {
                         s.priority(), t);
                     fan.retryAt.remove(i);
                     fan.runs.put(i, queued.id());
+                    fan.waitingSince = null;
                 } catch (PipelineStore.Busy busy) {
-                    return; // tried again at the next look, once the pipeline's other run ends
+                    // Another run of the pipeline is queued or running: as for a first try, it waits only so long.
+                    Instant since = fan.waitingSince == null ? (fan.waitingSince = Instant.now()) : fan.waitingSince;
+                    if (Duration.between(since, Instant.now()).compareTo(def.queueTimeout()) > 0) {
+                        fan.stopping = true;
+                        fan.problem = "Waited " + pretty(def.queueTimeout()) + " for " + s.pipeline() + " to finish its "
+                            + "current run, and gave up";
+                    }
+                    return;
                 } catch (IllegalArgumentException | WebApplicationException e) {
                     fan.retryAt.remove(i);
                     fan.ended.put(i, "failed");
                     fan.notStarted.add(i);
+                    if (fan.problem == null) {
+                        fan.problem = "Item " + (i + 1) + " could not be tried again; " + s.pipeline() + "'s page says why";
+                    }
                 }
             }
             while (!fan.stopping && fan.next < fan.items.size() && fan.running().size() < s.each().maxParallel()) {
@@ -1361,13 +1376,12 @@ public class FlowService {
         }
 
         /**
-         * Whether a failed pipeline run may be tried again: no write had begun, or every write of the
-         * version it ran replaces or upserts, so a second try writes the same rows (ADR 0041).
+         * Whether a failed pipeline run may be tried again: every write of the version it ran replaces or
+         * upserts, so a second try writes the same rows (ADR 0041). Checked again here, as the latest
+         * version may have changed since the flow was saved. Whether a write had begun is not asked: a
+         * run stopped or lost mid-write records none.
          */
         private boolean mayRetry(PipelineStore.Run pr) {
-            if (!pipelineStore.writeBegan(pr.id())) {
-                return true;
-            }
             return pipelineStore.version(pr.pipeline(), pr.version())
                 .map(v -> unsafeWrite(PipelineDefinition.parse(v.yaml()).definition()) == null).orElse(false);
         }
@@ -1375,7 +1389,7 @@ public class FlowService {
         /** "Try 1 of 4 failed; trying again in 1m": what a node waiting to be tried again says. */
         private String tryingAgain(FlowDefinition.Node s, int next) {
             return "Try " + next + " of " + (s.retries() + 1) + " failed; trying again in "
-                + pretty(s.retry().before(next));
+                + FlowDefinition.written(s.retry().before(next));
         }
 
         /** Records that an item's run took longer than the node's timeout; the node's message names the first. */
@@ -1420,13 +1434,17 @@ public class FlowService {
             if (!fan.timedOut.isEmpty()) {
                 out.put(TIMED_OUT_ITEMS, List.copyOf(fan.timedOut));
             }
+            if (!fan.retryAt.isEmpty()) {
+                out.put(RETRYING_ITEMS, List.copyOf(fan.retryAt.keySet()));
+            }
             return out;
         }
 
         /** Saves the node's message when it changes. */
         private void say(FlowDefinition def, Fan fan, String message) {
-            if (!message.equals(fan.said)) {
-                fan.said = message;
+            String key = message + fan.retryAt.keySet();
+            if (!key.equals(fan.said)) {
+                fan.said = key;
                 save(def, fan.node.id(), "running", null, null, message, recorded(fan, Map.of()));
             }
         }
@@ -1451,7 +1469,8 @@ public class FlowService {
             if (stopped) {
                 fan.stopping = true;
             }
-            for (Map.Entry<Integer, Long> e : fan.runs.entrySet()) {
+            // A copy: an item tried again leaves runs while they are looked through.
+            for (Map.Entry<Integer, Long> e : new ArrayList<>(fan.runs.entrySet())) {
                 if (fan.ended.containsKey(e.getKey())) {
                     continue;
                 }
@@ -1460,13 +1479,14 @@ public class FlowService {
                     fan.ended.put(e.getKey(), "failed");
                 } else if (pr.get().finished()) {
                     String status = pr.get().status();
+                    // Only a run this watcher stopped for its timeout is tried again, never a cancel it did not ask for.
+                    boolean ownTimeout = fan.timedOut.contains(e.getKey()) && fan.cancelAsked.contains(e.getKey());
                     if (!status.equals("succeeded") && !fan.cancelAsked.contains(e.getKey())
                         && ranPast(fan.node.timeout(), pr.get())) {
                         timeOutItem(fan, e.getKey()); // found again after the worker running the flow changed
                     }
                     if (!status.equals("succeeded") && !stopped && !fan.byHand
-                        && (status.equals("failed") || fan.timedOut.contains(e.getKey()))
-                        && retryItem(fan, e.getKey(), pr.get())) {
+                        && (status.equals("failed") || ownTimeout) && retryItem(fan, e.getKey(), pr.get())) {
                         continue;
                     }
                     if (fan.timedOut.contains(e.getKey())) {
@@ -1814,7 +1834,7 @@ public class FlowService {
             boolean late = !o.succeeded() && timedOut.contains(node);
             boolean stopped = !late && control != null && control.stopped();
             int t = tries.getOrDefault(node, 0);
-            if (!o.succeeded() && !stopped && !cancelling && !engine.halted() && t < s.retries()) {
+            if (!o.succeeded() && !stopped && !o.inDoubt() && !cancelling && !engine.halted() && t < s.retries()) {
                 // Its statements run in one transaction, so a failed try changed nothing: it may be tried again.
                 tries.put(node, t + 1);
                 retryAt.put(node, Instant.now().plus(s.retry().before(t + 1)));
@@ -1953,7 +1973,8 @@ public class FlowService {
                 if (Duration.between(since, Instant.now()).compareTo(def.queueTimeout()) > 0) {
                     waitingSince.remove(s.id());
                     end(def, engine, s.id(), FlowEngine.State.FAILED, null, "Waited " + pretty(def.queueTimeout())
-                        + " for " + s.pipeline() + " to finish its current run, and gave up", Map.of());
+                        + " for " + s.pipeline() + " to finish its current run, and gave up" + afterTries(s.id()),
+                        Map.of(), triesRecord(s.id()));
                 } else if (first) {
                     save(def, s.id(), "running", null, null, "Waiting for " + s.pipeline()
                         + " to finish its current run", Map.of());
@@ -1961,7 +1982,7 @@ public class FlowService {
             } catch (IllegalArgumentException e) {
                 // The flow's own values were wrong for the pipeline: the flow's words, never the data's.
                 end(def, engine, s.id(), FlowEngine.State.FAILED, null, "The pipeline " + s.pipeline()
-                    + " could not be run with these values: " + e.getMessage(), Map.of());
+                    + " could not be run with these values: " + e.getMessage(), Map.of(), triesRecord(s.id()));
             } catch (WebApplicationException e) {
                 boolean refused = e.getResponse().getStatus() == Response.Status.CONFLICT.getStatusCode();
                 if (refused && (!s.with().isEmpty() || !pipelineParameters(s).isEmpty())) {
@@ -1969,12 +1990,12 @@ public class FlowService {
                     // on the pipeline's page with them.
                     end(def, engine, s.id(), FlowEngine.State.FAILED, null, "The pipeline " + s.pipeline()
                         + " has problems with these values (" + valuesText(engine, def, s) + "); check it with them "
-                        + "on its page", Map.of());
+                        + "on its page", Map.of(), triesRecord(s.id()));
                     return;
                 }
                 // Why can name sources and fields the flow's readers may not see: the pipeline's own page says.
                 end(def, engine, s.id(), FlowEngine.State.FAILED, null, "The pipeline " + s.pipeline()
-                    + " could not be run; its page says why", Map.of());
+                    + " could not be run; its page says why", Map.of(), triesRecord(s.id()));
             }
         }
 
@@ -2060,10 +2081,12 @@ public class FlowService {
                 reported.put("duration_s", r.durationSeconds());
             });
             String status = pr.get().status();
+            // Only a run this watcher stopped for its timeout is tried again, never a cancel it did not ask for.
+            boolean ownTimeout = timedOut.contains(node) && cancelAsked.contains(node);
             boolean late = !status.equals("succeeded") && (timedOut.contains(node)
                 || (!cancelAsked.contains(node) && ranPast(s.timeout(), pr.get())));
             int t = tries.getOrDefault(node, 0);
-            if ((late || status.equals("failed")) && !cancelling && !engine.halted() && t < s.retries()
+            if ((ownTimeout || status.equals("failed")) && !status.equals("succeeded") && !cancelling && !engine.halted() && t < s.retries()
                 && mayRetry(pr.get())) {
                 // Tried again (ADR 0041): never after a cancel by a person or the flow.
                 tries.put(node, t + 1);

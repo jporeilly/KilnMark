@@ -601,7 +601,10 @@ class FlowSqlNodeTest {
               - { id: loaded, type: wait-for, source: fsql-db, query: "select false", every: 30s, timeout: 1h }
             """);
         long run = start("fsql-wait-cancel");
-        await("the first look", () -> node(run, "loaded").message(), m -> m != null && m.contains("Not yet true"));
+        // Before a worker takes the flow, the node has no row yet.
+        await("the first look", () -> flows.nodeRuns(run).stream().filter(n -> n.nodeId().equals("loaded"))
+            .map(FlowStore.NodeRun::message).filter(java.util.Objects::nonNull).findFirst().orElse(null),
+            m -> m != null && m.contains("Not yet true"));
         long asked = System.nanoTime();
         flows.cancel(run, "tester", AccessRole.STEWARD);
         FlowStore.Run done = finished(run);
