@@ -232,7 +232,8 @@ moves the unique index to `(flow_run_id, flow_node, coalesce(flow_item, -1))`.
   flow page with the YAML editor, checked as it is typed, Run now with a dialog for parameter values,
   and a run page listing each node's status, time and message, linked to the pipeline run it
   started. No delete: a flow's runs and the pipeline runs they started stay linked, and deleting
-  waits until what that means is decided. The sample flows are not yet added by Add samples.
+  waits until what that means is decided. The sample flows are added by Add samples, after the pipelines they run, and listed in the
+  Library (ADR 0043).
 - **F4a, built.** `FlowDiagram` (ui/src/flows): the flow read from its YAML on the page
   (`readFlowGraph`, which reads only what it draws; the server's check says whether it is valid),
   nodes as boxes with what each does, connections as labelled arrows (solid on success, red dashed

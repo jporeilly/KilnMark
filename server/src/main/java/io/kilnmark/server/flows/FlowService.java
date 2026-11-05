@@ -545,7 +545,7 @@ public class FlowService {
             .filter(s -> s.lastRun() != null).map(s -> s.lastRun().id()).toList());
         return all.stream().map(s -> new FlowViews.FlowSummary(s.flow().name(), s.flow().displayName(),
             s.flow().description(), s.flow().latestVersion(), s.valid(), s.flow().updatedBy(), s.flow().updatedAt(),
-            s.lastRun() == null ? null : view(s.lastRun(), values, totals))).toList();
+            s.lastRun() == null ? null : view(s.lastRun(), values, totals), s.flow().library())).toList();
     }
 
     /** A flow with its latest version and latest run; 404 when there is none. {@code values} as for list. */
@@ -554,7 +554,7 @@ public class FlowService {
         List<FlowStore.Run> last = store.runs(name, 1);
         return new FlowViews.FlowDetail(f.name(), f.displayName(), f.description(), f.latestVersion(), f.createdBy(),
             f.createdAt(), f.updatedBy(), f.updatedAt(), versionDetail(name, f.latestVersion()),
-            last.isEmpty() ? null : view(last.get(0), values));
+            last.isEmpty() ? null : view(last.get(0), values), f.library());
     }
 
     /** Every version of a flow, newest first; 404 when there is no such flow. */

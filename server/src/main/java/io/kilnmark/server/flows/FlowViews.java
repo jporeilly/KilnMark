@@ -60,9 +60,12 @@ public final class FlowViews {
                              Long rowsWritten, Double qualityScore) {
     }
 
-    /** A flow in the list. {@code valid} is whether its latest version can run. */
+    /**
+     * A flow in the list. {@code valid} is whether its latest version can run; {@code library} is
+     * {@code sample} for one added from the samples, shown in the Library (ADR 0043), else null.
+     */
     public record FlowSummary(String name, String displayName, String description, int latestVersion, boolean valid,
-                              String updatedBy, Instant updatedAt, RunSummary lastRun) {
+                              String updatedBy, Instant updatedAt, RunSummary lastRun, String library) {
     }
 
     public record VersionSummary(int n, String message, String author, Instant createdAt, boolean valid,
@@ -76,7 +79,7 @@ public final class FlowViews {
     /** A flow with its latest version. Its ETag is the latest version's number. */
     public record FlowDetail(String name, String displayName, String description, int latestVersion,
                              String createdBy, Instant createdAt, String updatedBy, Instant updatedAt,
-                             VersionDetail latest, RunSummary lastRun) {
+                             VersionDetail latest, RunSummary lastRun, String library) {
     }
 
     /**

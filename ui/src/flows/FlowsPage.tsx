@@ -6,12 +6,17 @@ import { docHref } from "../docs/links";
 import { FlowRunStatus, RunFlowButton } from "./RunFlow";
 import "../pipelines/pipelines.css";
 
-/** Every flow: what it does, its latest version, its last run; Run now for stewards, New flow for designers. */
+/**
+ * A team's own flows: what each does, its latest version, its last run; Run now for stewards, New
+ * flow for designers. Samples added from the Library are listed there, not here (ADR 0043).
+ */
 export function FlowsPage({ role }: { role: AccessRole }) {
   useTitle("Flows");
   const steward = allows(role, "steward");
   const designer = allows(role, "designer");
-  const [flows, setFlows] = useState<FlowSummary[] | null>(null);
+  const [all, setAll] = useState<FlowSummary[] | null>(null);
+  const flows = all?.filter((f) => !f.library) ?? null;
+  const samples = all?.filter((f) => f.library).length ?? 0;
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
 
@@ -19,7 +24,7 @@ export function FlowsPage({ role }: { role: AccessRole }) {
     flowsApi
       .list()
       .then((f) => {
-        setFlows(f);
+        setAll(f);
         setError(null);
       })
       .catch((e: Error) => setError(e.message));
@@ -41,6 +46,9 @@ export function FlowsPage({ role }: { role: AccessRole }) {
         <h1 tabIndex={-1}>Flows</h1>
         {designer && (
           <div className="pl-head-actions">
+            <a className="km-button" href={href.library("templates")}>
+              From a template
+            </a>
             <a className="pl-link-button" href={href.newFlow()}>
               New flow
             </a>
@@ -67,7 +75,8 @@ export function FlowsPage({ role }: { role: AccessRole }) {
             No flows yet.{" "}
             {designer ? (
               <>
-                Choose <strong>New flow</strong> to start from a template that runs one of your pipelines.
+                Choose <strong>New flow</strong> to start from one of your pipelines, or{" "}
+                <strong>From a template</strong> to run pipelines one after another.
               </>
             ) : (
               "Designers add them."
@@ -136,6 +145,12 @@ export function FlowsPage({ role }: { role: AccessRole }) {
           </div>
         )}
       </section>
+      <p className="hint">
+        {samples > 0
+          ? `${samples} sample ${samples === 1 ? "flow is" : "flows are"} in the `
+          : "Sample flows, and templates to start from, are in the "}
+        <a href={href.library()}>Library</a>, apart from your own.
+      </p>
       {!designer && (
         <p className="hint">
           {steward

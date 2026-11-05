@@ -453,6 +453,30 @@ function svg(name, height, title, sub, body) {
   svg("signin-checks", 260, "A sign-in gets a role only if all three checks pass", "", b);
 }
 
+// ---- The Library: samples stay apart, templates become your own ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 188, y3 = 300;
+  const b =
+    lane(y1, 96, "Samples", C.orange) +
+    card(X[0], y1 + 30, W, { n: "1", color: C.orange, title: "Add samples", sub: "in the Library, Samples tab" }) +
+    card(X[1], y1 + 30, W, { n: "2", color: C.orange, title: "Marked as samples", sub: "they run like any other" }) +
+    card(X[2], y1 + 30, W, { icon: "book", color: C.orange, strong: true, title: "Listed in the Library", sub: "with their last runs" }) +
+    arrow([[X[0] + W, y1 + 58], [X[1] - 2, y1 + 58]], C.orange) +
+    arrow([[X[1] + W, y1 + 58], [X[2] - 2, y1 + 58]], C.orange) +
+    lane(y2, 96, "Templates", C.green) +
+    card(X[0], y2 + 30, W, { n: "1", color: C.green, title: "Use this template", sub: "in the Library, Templates tab" }) +
+    card(X[1], y2 + 30, W, { n: "2", color: C.green, title: "Opens in the editor", sub: "name it; fill in each <…>" }) +
+    card(X[2], y2 + 30, W, { n: "3", color: C.green, title: "Save it", sub: "now yours, not marked" }) +
+    arrow([[X[0] + W, y2 + 58], [X[1] - 2, y2 + 58]], C.green) +
+    arrow([[X[1] + W, y2 + 58], [X[2] - 2, y2 + 58]], C.green) +
+    lane(y3, 96, "Your own work", C.blue) +
+    card(X[1], y3 + 30, W + 236, { icon: "play", color: C.blue, strong: true, title: "The Pipelines and Flows pages", sub: "only your team's own development and production work" }) +
+    arrow([[X[2] + W / 2, y2 + 86], [X[2] + W / 2, y3 + 28]], C.blue) +
+    foot(412, "book", "A sample never shows on the Pipelines or Flows page, and using a template never changes it.");
+  svg("library", 462, "The Library keeps samples apart from your own work", "Samples stay in the Library; a template, once saved, becomes one of your own", b);
+}
+
 // ---- Signing in: two people for sensitive values ----
 {
   const y = 108;

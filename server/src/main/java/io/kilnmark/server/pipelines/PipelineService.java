@@ -386,7 +386,8 @@ public class PipelineService {
         prepare(all.stream().map(PipelineStore.Summary::lastRun).toList(), sights);
         return all.stream().map(s -> new PipelineViews.PipelineSummary(s.pipeline().name(),
             s.pipeline().displayName(), s.pipeline().description(), s.pipeline().latestVersion(), s.valid(),
-            s.pipeline().updatedBy(), s.pipeline().updatedAt(), summary(s.lastRun(), sights))).toList();
+            s.pipeline().updatedBy(), s.pipeline().updatedAt(), summary(s.lastRun(), sights), s.pipeline().library()))
+            .toList();
     }
 
     private PipelineStore.Pipeline find(String name) {
@@ -403,7 +404,8 @@ public class PipelineService {
     private PipelineViews.PipelineDetail detail(PipelineStore.Pipeline p, PipelineStore.Version v,
                                                 PipelineStore.Run last, Sights sights) {
         return new PipelineViews.PipelineDetail(p.name(), p.displayName(), p.description(), p.latestVersion(),
-            p.createdBy(), p.createdAt(), p.updatedBy(), p.updatedAt(), v == null ? null : version(v), summary(last, sights));
+            p.createdBy(), p.createdAt(), p.updatedBy(), p.updatedAt(), v == null ? null : version(v), summary(last, sights),
+            p.library());
     }
 
     private PipelineViews.VersionDetail version(PipelineStore.Version v) {

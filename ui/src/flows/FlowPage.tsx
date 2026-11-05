@@ -14,6 +14,7 @@ import {
   type FlowValidation,
   type FlowVersion,
   type FlowVersionSummary,
+  samplesApi,
 } from "../api";
 import { go, href } from "../router";
 import { useTitle } from "../components/useTitle";
@@ -55,10 +56,20 @@ const FLOW_DOCK_KEY = "kilnmark.flow.panel";
  * caret to its line in the YAML) and saving. The YAML is checked a moment after each change.
  * Designers save it with a message, and can change the flow on its diagram and in the panel: each
  * change there is a change to the YAML, which stays the one record. Stewards run the saved version,
- * with a dialog for its parameters. With name null, a new flow from a starter; with a version, that
- * saved version, read-only.
+ * with a dialog for its parameters. With name null, a new flow from a starter or from a Library
+ * template ({@code template}, its file); with a version, that saved version, read-only.
  */
-export function FlowPage({ name, version, role }: { name: string | null; version: number | null; role: AccessRole }) {
+export function FlowPage({
+  name,
+  version,
+  role,
+  template,
+}: {
+  name: string | null;
+  version: number | null;
+  role: AccessRole;
+  template?: string | null;
+}) {
   const steward = allows(role, "steward");
   const designer = allows(role, "designer");
   const isNew = name == null;
@@ -165,12 +176,36 @@ export function FlowPage({ name, version, role }: { name: string | null; version
     loadLists();
   }, [load, loadLists]);
 
+  // A new flow from a Library template: its YAML, named my-flow, with its <...> gaps for the check
+  // to point at until they are filled in.
+  const [fromTemplate, setFromTemplate] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isNew || !template) return;
+    let live = true;
+    samplesApi
+      .templates()
+      .then((all) => {
+        const t = all.find((x) => x.file === template && x.type === "flow");
+        if (!live) return;
+        if (!t) {
+          setFromTemplate(`There is no flow template ${template}: starting from the usual one.`);
+          return;
+        }
+        setYaml(t.yaml.replace(/^name:.*$/m, "name: my-flow"));
+        setFromTemplate(`Started from the template ${t.description ?? t.name} Replace each <…> with your own.`);
+      })
+      .catch((e: Error) => live && setFromTemplate(`The template could not be read: ${e.message}`));
+    return () => {
+      live = false;
+    };
+  }, [isNew, template]);
+
   // A new flow's starter runs one of the person's pipelines once they are known, unless the YAML
   // has been changed by then.
   useEffect(() => {
-    if (!isNew || !pipelines || pipelines.length === 0) return;
+    if (!isNew || template || !pipelines || pipelines.length === 0) return;
     setYaml((y) => (y === starterFlow() ? starterFlow(pipelines[0]) : y));
-  }, [isNew, pipelines]);
+  }, [isNew, pipelines, template]);
 
   // Keep the runs table current while a run is queued or running. Only the lists: reloading the
   // flow would replace text being edited, and take in someone else's save without the conflict.
@@ -450,6 +485,7 @@ export function FlowPage({ name, version, role }: { name: string | null; version
           {name && <a href={href.flow(name)}>Back to the latest version</a>}
         </p>
       )}
+      {fromTemplate && <p className="hint">{fromTemplate}</p>}
       <p role="status" className="notice">
         {notice}
       </p>

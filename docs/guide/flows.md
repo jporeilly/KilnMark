@@ -299,6 +299,4 @@ runs it started that are still going are cancelled. What they had already writte
 
 - Changing a node's settings on the diagram: for now, change them in the YAML.
 - Deleting a flow.
-- Adding the sample flows from **Add samples**: for now, copy one from `samples/08-flows` into a
-  new flow.
 - Running flows on a schedule.
