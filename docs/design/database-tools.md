@@ -43,7 +43,11 @@ adds no new view of values, so `SightsUseTest` needs no new delegate. Two calls 
 | `GET /api/v1/sources/{name}/explore?asset=schema.table` | `{path, kind, columns, primaryKey, foreignKeys, referencedBy, indexes, estimatedRows}` |
 | `GET /api/v1/sources/{name}/explore/count?asset=schema.table` | `{rows}`: `SELECT COUNT(*)`, within people's check time limit |
 
-A source whose connector does not explore (files, object stores) answers 404.
+A source whose connector does not explore (files, object stores) answers 404. A table in one of
+the database's own schemas (`information_schema`, `pg_catalog`, MySQL's `performance_schema`,
+`sys` and `mysql`, SQL Server's `sys`, Oracle-maintained schemas) is refused by Explore, Count
+exactly and the source's preview even when it is named: MySQL's `performance_schema` keeps other
+sessions' statements with their values.
 
 **Engine.** `Connector` gains `explores()`, `explore(source, path, timeout)` (a
 `connect.TableDetail`) and `countRows(source, path, timeout)`; the defaults refuse. `JdbcConnector`
@@ -65,7 +69,9 @@ Estimates reuse each connector's `estimateRowsSql`, which the scan's sampling al
 | Generic JDBC | none; its Explore shows the columns and primary key the scan reads, no keys, indexes or count |
 
 `countRows` is `SELECT COUNT(*) FROM` the schema and table, quoted by the connector's `quote`, with
-`setQueryTimeout`. The connection is set read-only in a transaction that is rolled back (enforced
+`setQueryTimeout`, and only for an ordinary table kept in the database (`localTableSql` for each
+database: no view, no foreign, federated, linked or external table, no table with children or a
+foreign partition). The connection is set read-only in a transaction that is rolled back (enforced
 by PostgreSQL, MySQL and Oracle, a hint on SQL Server), and every call runs through
 `SourceChecks.forPerson`, so Explore shares people's time limit and concurrency cap. A source's
 allowed hosts (`checkHosts`) are checked first, as for every live call.
@@ -216,7 +222,9 @@ statements, a plan of another source, replaying a run); a name that breaks out o
 renamed, dropped and re-created, or swapped between plan and run; approving one's own plan through
 a second token or a changed name; a plan made with a token and approved by its owner; a mark set by a new source, a
 save or an import, or forged in Kilnmark's database; a second source over a production database; a
-copy restored from production that a host name later points at; an operation on Kilnmark's
+copy restored from production that a host name later points at, or a proxy or pooler in front of
+production; a mark made over TLS without verification; a SQL Server system database or a shipped
+table; `foreign_key_checks` turned off in a URL; an operation on Kilnmark's
 own database; Allow changes on through an import; a plan made when Allow changes was on, run after
 it was turned off; a value in a failure's message (a duplicate key in a unique index); a type name
 or index expression from the catalogue reaching a statement; retargeting a source (URL, database,

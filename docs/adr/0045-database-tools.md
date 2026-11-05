@@ -172,6 +172,11 @@ operations**; what they do not cover is said in point 12.
      `is_remote_data_archive_enabled = 0`; never a synonym.
    - Oracle: a table in `ALL_OBJECTS` of type `TABLE`, not in `ALL_EXTERNAL_TABLES` and with no
      external (hybrid) partition; never a synonym.
+   Never a table the database or an extension ships: PostgreSQL tables an extension owns
+   (`pg_depend` type `e`), SQL Server tables with `is_ms_shipped = 1`. A SQL Server source must name
+   its database, and `master`, `msdb`, `model`, `tempdb` and `distribution` are refused, as a MySQL
+   or MariaDB source without a database is. On MySQL and MariaDB the operation's connection sets
+   `foreign_key_checks = 1` itself, whatever the URL says, so a table others depend on is refused.
    **Count exactly** in Explore follows the same list, so it never runs a full count on another
    server through a foreign or linked table; such a table shows the estimate only. A column's length, precision and scale are whole numbers within the dialect's ranges,
    never text. `DROP` and `TRUNCATE` never cascade
@@ -237,7 +242,18 @@ operations**; what they do not cover is said in point 12.
      - SQL Server: `service_broker_guid` and `create_date` of the database (a restore resets it),
        `DB_NAME()` and `SERVERPROPERTY('MachineName')`;
      - MySQL: `@@server_uuid` and `@@hostname`;
-     - Oracle: `DBID`, `CON_DBID` and `RESETLOGS_TIME`.
+     - Oracle: `DBID`, `CON_DBID`, `RESETLOGS_TIME`, `DB_UNIQUE_NAME`, `INSTANCE_NAME` and
+       `SYS_CONTEXT('USERENV', 'SERVER_HOST')`;
+     - and on every database, the **server's TLS certificate**: a source can be marked only over
+       TLS that verifies the certificate and the host name (PostgreSQL `sslmode=verify-full`, SQL
+       Server `encrypt=true` without `trustServerCertificate`, and the like, ADR 0034), and the mark
+       holds the certificate's fingerprint. A database reports its other identity values about
+       itself, and a copy, a proxy or a pooler can make them match; a certificate it cannot fake
+       without the production server's private key.
+     Any identity part that is empty (PostgreSQL's address over a Unix socket behind a pooler, say)
+     refuses the mark. The identity is read for marking as for a run: on a connection whose
+     PostgreSQL `search_path` is `pg_catalog` alone, with every catalogue name qualified, so a URL's
+     settings cannot put made-up values in a mark.
      MariaDB has no id a copy does not share (its host name, port, folder and server id are often
      the same on every replica), so MariaDB sources cannot be marked: every operation on them needs
      a second person. A source whose identity cannot be read cannot be marked; the guide says which
@@ -248,9 +264,13 @@ operations**; what they do not cover is said in point 12.
      removes the mark. An operation runs without approval only when the mark's seal holds and the
      identity read **on the run's own connection** is the one the mark holds; a failover to another
      instance, a restore, an upgrade that makes a new identity, a renamed database or a DNS change to
-     another instance therefore makes approval needed again, and the page says why.
+     another instance, or another certificate, therefore makes approval needed again, and the page
+     says why. What remains is a copy that also carries production's certificate and private key,
+     reached under a name that certificate covers: two admins marked it, and the guide says not to
+     mark a copy that shares production's keys.
    - **Who marks.** An admin asks and **another admin approves, both signed in with the identity
-     provider**, compared by issuer and subject as for the unmask grant (ADR 0038); an API token can
+     provider**, each shown the host name, the address it resolved to, the certificate's subject and
+     the database's name, not only opaque ids, compared by issuer and subject as for the unmask grant (ADR 0038); an API token can
      neither ask nor approve, and without the identity provider nothing can be marked. Asking,
      approving, refusing and removing a mark are audit events (`source.not_production`). Removing a
      mark takes one admin: it only adds approval.
@@ -282,7 +302,9 @@ operations**; what they do not cover is said in point 12.
    (PostgreSQL `CONCURRENTLY`, MySQL `ALGORITHM=INPLACE, LOCK=NONE`, Oracle `ONLINE`, SQL Server
    `ONLINE = ON` on editions that have it) it is offered as a choice, run outside a transaction.
 9. **Never Kilnmark's own database.** Kilnmark's own database is PostgreSQL. It holds an instance
-   marker: a table `kilnmark.instance` with a random id made when Kilnmark first starts. Before an
+   marker: a table `instance`, in the schema Kilnmark's migrations use (`kilnmark`, or what
+   `quarkus.flyway.default-schema` is set to; the check reads the setting), with a random id made
+   when Kilnmark first starts. Before an
    operation on a PostgreSQL source, at planning and again on the run's connection, Kilnmark asks
    the source's database whether such a table exists, from `pg_class` and `pg_namespace`, which
    every login can read. If it exists and its id is Kilnmark's, or its id cannot be read, the
