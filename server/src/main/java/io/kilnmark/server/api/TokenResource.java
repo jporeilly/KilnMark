@@ -4,11 +4,14 @@ import java.net.URI;
 import java.time.Instant;
 import java.util.List;
 
+import org.eclipse.microprofile.jwt.JsonWebToken;
+
 import io.kilnmark.server.KilnmarkConfig;
 import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.auth.ApiTokenIdentityProvider;
 import io.kilnmark.server.auth.ApiTokens;
 import io.kilnmark.server.auth.AuthMode;
+import io.kilnmark.server.auth.OidcIdentityAugmentor;
 import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.Consumes;
@@ -47,7 +50,10 @@ public class TokenResource {
         this.config = config;
     }
 
-    /** The token in use: its name and role. The web UI uses this to sign in. */
+    /**
+     * Who is signed in: the name Kilnmark records them by, the name to greet them by, and their role.
+     * The web UI uses this to sign in.
+     */
     @GET
     @Path("me")
     @RolesAllowed(AccessRole.VIEWER_ROLE)
@@ -56,10 +62,12 @@ public class TokenResource {
         Long id = identity.getAttribute(ApiTokenIdentityProvider.TOKEN_ID);
         Instant expires = identity.getAttribute(ApiTokenIdentityProvider.EXPIRES_AT);
         boolean off = config.auth().mode() == AuthMode.OFF;
-        String via = off ? "off" : io.kilnmark.server.auth.OidcIdentityAugmentor.fromProvider(identity) ? "provider"
-            : "token";
-        return new Views.Me(identity.getPrincipal().getName(), role.id(), id == null || id == 0 ? null : id, expires,
-            !off, identity.hasRole(AccessRole.UNMASK_GRANT), via);
+        boolean provider = !off && OidcIdentityAugmentor.fromProvider(identity);
+        String via = off ? "off" : provider ? "provider" : "token";
+        String name = identity.getPrincipal().getName();
+        String shown = provider ? OidcIdentityAugmentor.displayName((JsonWebToken) identity.getPrincipal()) : name;
+        return new Views.Me(name, shown, role.id(), id == null || id == 0 ? null : id, expires, !off,
+            identity.hasRole(AccessRole.UNMASK_GRANT), via);
     }
 
     /** Creates a token and returns it this once; only its hash is kept. */
