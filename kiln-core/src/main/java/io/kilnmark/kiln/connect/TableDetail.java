@@ -8,6 +8,8 @@ import java.util.List;
  * Names and types only: no value of the table, and never the text of a default or a check.
  *
  * @param path          the table's path, as the catalogue spells it ({@code schema.table})
+ * @param schema        its schema (or database, for MySQL and MariaDB), as the catalogue spells it
+ * @param table         its name, as the catalogue spells it
  * @param kind          {@code table}, {@code view} and the like, as {@link AssetInfo#kind()}
  * @param columns       in the table's order
  * @param primaryKey    the primary key's columns in key order; empty when it has none
@@ -16,7 +18,8 @@ import java.util.List;
  * @param indexes       the table's indexes, its primary key's included
  * @param estimatedRows the database's estimate of the number of rows, or null when it has none
  */
-public record TableDetail(String path, String kind, List<Column> columns, List<String> primaryKey,
+public record TableDetail(String path, String schema, String table, String kind, List<Column> columns,
+                          List<String> primaryKey,
                           List<ForeignKey> foreignKeys, List<ForeignKey> referencedBy, List<Index> indexes,
                           Long estimatedRows) {
 
