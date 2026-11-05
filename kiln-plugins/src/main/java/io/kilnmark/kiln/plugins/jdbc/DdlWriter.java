@@ -32,20 +32,22 @@ public final class DdlWriter {
 
     /** The databases the generator writes for. */
     public enum Dialect {
-        POSTGRESQL("postgresql", "PostgreSQL", 1000),
-        SQLSERVER("sqlserver", "SQL Server", 38),
-        MYSQL("mysql", "MySQL", 65),
-        MARIADB("mariadb", "MariaDB", 65),
-        ORACLE("oracle", "Oracle", 38);
+        POSTGRESQL("postgresql", "PostgreSQL", 1000, 1000),
+        SQLSERVER("sqlserver", "SQL Server", 38, 38),
+        MYSQL("mysql", "MySQL", 65, 30),
+        MARIADB("mariadb", "MariaDB", 65, 30),
+        ORACLE("oracle", "Oracle", 38, 38);
 
         private final String kind;
         private final String label;
         private final int maxPrecision;
+        private final int maxScale;
 
-        Dialect(String kind, String label, int maxPrecision) {
+        Dialect(String kind, String label, int maxPrecision, int maxScale) {
             this.kind = kind;
             this.label = label;
             this.maxPrecision = maxPrecision;
+            this.maxScale = maxScale;
         }
 
         /** The source kind of this database. */
@@ -61,6 +63,11 @@ public final class DdlWriter {
         /** The most digits a decimal column keeps. */
         public int maxPrecision() {
             return maxPrecision;
+        }
+
+        /** The most digits after the point a decimal column keeps (MySQL and MariaDB: 30). */
+        public int maxScale() {
+            return maxScale;
         }
 
         /** The dialect of a source kind, or empty for a kind with none (Generic JDBC, files). */
@@ -153,11 +160,13 @@ public final class DdlWriter {
         List<String> leftOut = new ArrayList<>();
         checkNames(schema, table);
         Set<String> names = new HashSet<>();
+        Set<String> written = new HashSet<>();
         List<String> parts = new ArrayList<>();
         for (Column c : columns) {
             checkName(c.name());
-            if (!names.add(c.name())) {
-                throw new ConnectorException("Two columns are called " + c.name() + ".");
+            // two names the target stores alike (id and ID, written for Oracle) would be one column
+            if (!names.add(c.name()) || !written.add(name(c.name(), false))) {
+                throw new ConnectorException("Two columns are called " + c.name() + " in " + dialect.label() + ".");
             }
             parts.add(column(c, false, leftOut));
         }
@@ -199,7 +208,7 @@ public final class DdlWriter {
             }
             String add = dialect == Dialect.SQLSERVER || dialect == Dialect.ORACLE ? " ADD " : " ADD COLUMN ";
             out.add("ALTER TABLE " + qualified(schema, table) + add + column(c, true, leftOut));
-            if (!c.nullable()) {
+            if (!c.nullable() && dialect != Dialect.MYSQL && dialect != Dialect.MARIADB) {
                 leftOut.add("A column that allows no nulls and has no default cannot be added to a table that "
                     + "already has rows: " + c.name() + " needs the table to be empty.");
             }
@@ -292,16 +301,17 @@ public final class DdlWriter {
                     return "NUMBER";
                 default:
                     int p = dialect.maxPrecision();
-                    int s = Math.min(Math.max(scale, 10), p / 2);
+                    int s = Math.min(Math.min(Math.max(scale, 10), p / 2), dialect.maxScale());
                     leftOut.add(c.name() + " has no precision of its own; " + dialect.label() + " needs one, so it is "
                         + "written with " + p + " digits, " + s + " after the point.");
                     precision = p;
                     scale = s;
             }
         }
-        if (precision > dialect.maxPrecision() || scale > precision) {
+        if (precision > dialect.maxPrecision() || scale > precision || scale > dialect.maxScale()) {
             throw new ConnectorException("The column " + c.name() + " needs a precision from 1 to "
-                + dialect.maxPrecision() + " on " + dialect.label() + ", and a scale no larger than it.");
+                + dialect.maxPrecision() + " on " + dialect.label() + ", and a scale no larger than it or "
+                + dialect.maxScale() + ".");
         }
         return sql.columnType(new WriteColumn(c.name(), JdbcColumn.Kind.DECIMAL, precision, scale, null), 0);
     }

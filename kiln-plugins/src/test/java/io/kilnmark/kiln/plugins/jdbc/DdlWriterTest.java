@@ -124,6 +124,11 @@ class DdlWriterTest {
             List.of(new Column("d", Kind.DECIMAL, 0, 60, 2, true))), "SQL Server keeps 38 digits");
         assertTrue(DdlWriter.of(Dialect.MYSQL).addColumns("s", "t", List.of(new Column("d", Kind.DECIMAL, 0, 60, 2, true)))
             .statements().get(0).contains("decimal(60,2)"), "MySQL keeps 65");
+        assertThrows(ConnectorException.class, () -> DdlWriter.of(Dialect.MYSQL).addColumns("s", "t",
+            List.of(new Column("d", Kind.DECIMAL, 0, 40, 35, true))), "MySQL keeps 30 after the point");
+        assertThrows(ConnectorException.class, () -> DdlWriter.of(Dialect.ORACLE, Dialect.POSTGRESQL).createTable("s", "t",
+            List.of(new Column("id", Kind.INT32, 0, 0, 0, true), new Column("ID", Kind.INT32, 0, 0, 0, true)), List.of(),
+            List.of()), "id and ID are one column in Oracle");
         assertThrows(ConnectorException.class, () -> pg.addColumns("s", "t",
             List.of(new Column("a", Kind.INT32, 0, 0, 0, true), new Column("A", Kind.INT32, 0, 0, 0, true))));
         assertThrows(ConnectorException.class, () -> pg.dropTable("s", "x".repeat(64)));

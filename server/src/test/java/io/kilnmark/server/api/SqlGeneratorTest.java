@@ -72,6 +72,12 @@ class SqlGeneratorTest {
         assertTrue(m.sql().get(0).contains("`id` varchar(768) NOT NULL"), m.sql().get(0));
         assertTrue(String.join(" ", m.leftOut()).contains("cannot build on text"), m.leftOut().toString());
 
+        TableDetail longKey = new TableDetail("s.t", "s", "t", "table", List.of(
+            new TableDetail.Column("code", 1, "varchar", 5000, null, false, false, false, "text")),
+            List.of("code"), List.of(), List.of(), List.of(), null);
+        String ss = SqlGenerator.generate(ask("create-table"), longKey, Dialect.SQLSERVER, Dialect.POSTGRESQL).sql().get(0);
+        assertTrue(ss.contains("[code] nvarchar(450) NOT NULL"), "a long key column gets a length SQL Server can index: " + ss);
+
         TableDetail parted = new TableDetail("s.p", "s", "p", "partitioned table", ORDERS.columns(), List.of(), List.of(),
             List.of(), List.of(), null);
         assertThrows(IllegalArgumentException.class, () -> SqlGenerator.generate(ask("truncate"), parted,

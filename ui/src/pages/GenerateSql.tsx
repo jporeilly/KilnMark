@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { api, type GeneratedSql, type SqlStatement, type TableDetail } from "../api";
 import { Button } from "../components/ui";
 
@@ -72,19 +72,22 @@ export function GenerateSql({ source, sourceKind, detail }: { source: string; so
   // An answer belongs to the choices it was made for: any change clears it, so Save never pairs
   // one statement's file name with another's SQL.
   useEffect(() => {
+    asked.current++;
     setResult(null);
     setCopied(false);
   }, [statement, dialect, colName, colKind, colLength, colPrecision, colScale, colNullable, indexName, indexColumns, unique, dropIndex]);
   const whole = (v: string) => (v.trim() === "" ? null : Number(v));
 
+  // the choices a Generate was made for; an answer for older choices is dropped
+  const asked = useRef(0);
   const generate = async () => {
+    const mine = ++asked.current;
     setBusy(true);
     setError(null);
     setResult(null);
     setCopied(false);
     try {
-      setResult(
-        await api.generateSql(source, {
+      const answer = await api.generateSql(source, {
           statement,
           asset: detail.path,
           dialect: dialect || null,
@@ -107,10 +110,10 @@ export function GenerateSql({ source, sourceKind, detail }: { source: string; so
               : statement === "drop-index"
                 ? { name: dropIndex, columns: null, unique: null }
                 : null,
-        }),
-      );
+        });
+      if (mine === asked.current) setResult(answer);
     } catch (e) {
-      setError((e as Error).message);
+      if (mine === asked.current) setError((e as Error).message);
     } finally {
       setBusy(false);
     }

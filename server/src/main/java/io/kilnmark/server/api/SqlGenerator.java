@@ -168,15 +168,12 @@ final class SqlGenerator {
             }
             Integer size = c.size() == null || c.size() <= 0 || c.size() >= 1_000_000 ? null : c.size();
             int length = kind == JdbcColumn.Kind.TEXT && TEXT_TYPES.contains(type) && size != null ? size : 0;
-            if (kind == JdbcColumn.Kind.TEXT && keyed.contains(c.name()) && keyText > 0) {
-                if (length == 0) {
-                    leftOut.add(c.name() + " is in a key or an index, which " + d.label() + " cannot build on text "
-                        + "without a length, so it is written with " + keyText + " characters.");
-                    length = keyText;
-                } else if (length > keyText) {
-                    leftOut.add(c.name() + " (" + length + " characters) may be too long for a key or an index in "
-                        + d.label() + "; check it.");
-                }
+            if (kind == JdbcColumn.Kind.TEXT && keyed.contains(c.name()) && keyText > 0
+                && (length == 0 || length > keyText)) {
+                leftOut.add(c.name() + (length == 0 ? "" : " (" + length + " characters)") + " is in a key or an index, "
+                    + "which " + d.label() + " cannot build on text " + (length == 0 ? "without a length" : "that long")
+                    + ", so it is written with " + keyText + " characters: longer values will not fit.");
+                length = keyText;
             }
             int precision = 0;
             int scale = 0;
@@ -185,7 +182,17 @@ final class SqlGenerator {
                 precision = size == null || size > d.maxPrecision() ? 0 : size;
                 scale = c.scale() == null ? 0 : Math.max(0, c.scale());
                 if (precision > 0 && scale > precision) {
+                    leftOut.add(c.name() + " keeps more digits after the point (" + scale + ") than in all (" + precision
+                        + "), which " + d.label() + " does not allow; it is written with " + precision + " after the point.");
                     scale = precision;
+                }
+                if (scale > d.maxScale()) {
+                    leftOut.add(c.name() + " keeps " + scale + " digits after the point; " + d.label() + " keeps at most "
+                        + d.maxScale() + ", so it is written with " + d.maxScale() + ".");
+                    scale = d.maxScale();
+                    if (precision > 0 && precision < scale) {
+                        precision = scale;
+                    }
                 }
                 if (size != null && size > d.maxPrecision()) {
                     leftOut.add(c.name() + " keeps " + size + " digits, more than " + d.label() + " keeps in a decimal "

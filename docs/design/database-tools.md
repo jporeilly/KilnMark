@@ -109,8 +109,9 @@ each dialect's `WriteSql` so types and quoting are the write node's own. A table
 maps each column to a `JdbcColumn.Kind` with the scan's own mapping, then to the target dialect's
 type with `columnType`; a column whose type has no kind (a PostgreSQL range, SQL Server
 `hierarchyid`, an enum) is written as text and listed in `leftOut`, never copied as its type's
-name. Decimals use each database's limits (PostgreSQL 1,000 digits, MySQL 65, SQL Server and
-Oracle 38) and its unconstrained decimal where it has one; text in a key or index gets a length
+name. Decimals use each database's limits (PostgreSQL 1,000 digits, MySQL and MariaDB 65 with
+at most 30 after the point, SQL Server and Oracle 38) and its unconstrained decimal where it has
+one; text in a key or index gets a length
 where the database needs one. Names read from the same database are kept as stored; typed names,
 and all names when writing for another database, go through `storedName`. Primary keys become a
 `PRIMARY KEY` clause; plain indexes become `CREATE INDEX` statements after the table; indexes on
