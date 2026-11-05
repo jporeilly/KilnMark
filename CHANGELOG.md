@@ -136,6 +136,12 @@ details.
 
 ### Details
 
+- **People are greeted by name.** Someone signed in through the identity provider now shows as their
+  name there ("Alex Morgan"), with their initials, in the top bar and on Home, rather than as
+  `sso:<name> (<ID>)`. The audit log, usage and "created by" still record the `sso:` name, which the
+  user menu also shows. `GET /api/v1/me` adds `displayName` (ADR 0036).
+- **New pipeline and New flow** are the same height as the Add samples button beside them.
+
 - **Parallel runs in flows** (ADR 0040, docs/design/flows.md section 8). A flow's top-level
   `max_parallel` (1 to 50) holds ready nodes back, in the order written, while that many run; `stop`
   nodes never wait. The `for-each` node takes `pipeline`, `version`, `items` (1 to 500 texts or

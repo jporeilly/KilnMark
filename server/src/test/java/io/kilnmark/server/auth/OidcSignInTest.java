@@ -189,7 +189,24 @@ class OidcSignInTest {
     @Test
     void aProviderSignInIsNamedSoNoOneElseCanBeMistakenForIt() {
         Map<String, String> s = signIn(idToken("anonymous", List.of("km-admins"), List.of("mfa"), Instant.now()));
-        given().cookies(s).get("/api/v1/me").then().statusCode(200).body("name", equalTo("sso:anonymous"));
+        given().cookies(s).get("/api/v1/me").then().statusCode(200).body("name", equalTo("sso:anonymous"))
+            .body("displayName", equalTo("anonymous"));
+    }
+
+    /**
+     * The screen greets a person by their name at the provider, while Kilnmark records them by the
+     * sso: name with the provider's ID, as before.
+     */
+    @Test
+    void thePersonIsGreetedByTheirNameAtTheProvider() {
+        var claims = Jwt.issuer(ISSUER).audience("kilnmark").subject("7fa04543-0000").preferredUserName(
+            "alex.morgan@example.com").claim("name", "Alex Morgan").issuedAt(Instant.now())
+            .expiresIn(Duration.ofMinutes(5)).claim("groups", List.of("km-admins"))
+            .claim("auth_time", Instant.now().getEpochSecond()).claim("amr", List.of("pwd", "mfa"));
+        Map<String, String> s = signIn(claims.jws().keyId("1").sign("privateKey.jwk"));
+        given().cookies(s).get("/api/v1/me").then().statusCode(200)
+            .body("displayName", equalTo("Alex Morgan"))
+            .body("name", equalTo("sso:alex.morgan@example.com (7fa04543-0000)"));
     }
 
     /**

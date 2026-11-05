@@ -97,8 +97,11 @@ of the same kind, is not enough. Without it: no role, and the reason shown.
 provider. Kilnmark asks the provider to make them sign in again after that, and refuses an older
 sign-in if the provider does not.
 
-**In the records**, a person shows as `sso:` plus their name and the provider's fixed ID for them,
-for example `sso:ada (3f2a…)`, so a chosen display name cannot pass for anyone else.
+**On screen**, Kilnmark greets a person by their name at the provider, for example "Alex
+Morgan", with their initials in the top bar. **In the records** (the audit log, usage, "created
+by"), they show as `sso:` plus their user name and the provider's fixed ID for them, for example
+`sso:alex.morgan@kilnmark.com (3f2a…)`, so a chosen display name cannot pass for anyone else. The
+menu under their name shows both.
 
 **Taking access away** is done at the provider: remove them from the group, and their next sign-in
 gives them no role.
