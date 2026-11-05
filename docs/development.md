@@ -1112,6 +1112,12 @@ Icons are Tabler Icons, named in one place (`ui/src/components/icons.tsx`); prod
 tiles (`ConnectorTile.tsx`), never vendor logos. The build also writes the UI packages' licences
 to `dist/ui/third-party-notices.txt` ([third-party UI software](legal/third-party-ui.md)).
 
+### Formatting
+
+The UI's code is not kept by a formatter: most files would change under Prettier at any line width.
+Keep a change in the file's own style (lines up to about 120 characters), and never run a formatter
+over a whole file you are only changing in part, since the diff then hides the change.
+
 ### Pictures in the guides
 
 The guides' diagrams and screenshots are in `docs/guide/images`, shown in the app's documentation and
