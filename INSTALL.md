@@ -206,7 +206,9 @@ of its own, or only Active Directory or LDAP (which Keycloak can read). It is a 
    a new `KILNMARK_OIDC_CLIENT_SECRET`, `KILNMARK_OIDC_PROVIDER_NAME=Keycloak`, and the five group
    settings (`kilnmark-viewers`, `kilnmark-stewards`, `kilnmark-designers`, `kilnmark-admins`,
    `kilnmark-sensitive-data`).
-3. Start it: `podman compose --profile auth up -d`. The `keycloak-setup` service waits for Keycloak,
+3. Start it: `podman compose --profile auth up -d`. To have Keycloak start and stop with Kilnmark
+   on every plain `podman compose up -d` and `down`, also set `COMPOSE_PROFILES=auth` in `.env`
+   (Docker Compose and podman-compose both read it). The `keycloak-setup` service waits for Keycloak,
    then makes the `kilnmark` realm: those groups, the client Kilnmark signs in with, a sign-in of a
    password and a one-time code, and Kilnmark's sign-in page. `podman compose logs keycloak-setup`
    says what it did. Run it again after changing `KILNMARK_URL` or the client secret:
