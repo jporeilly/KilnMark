@@ -384,6 +384,19 @@ public class PipelineStore {
      */
     public Run queueRun(String name, int version, String by, String role, Long flowRunId, String flowNode,
                         Integer flowItem, String parameters, String variables) {
+        return queueRun(name, version, by, role, flowRunId, flowNode, flowItem, parameters, variables, 0);
+    }
+
+    /**
+     * As {@link #queueRun(String, int, String, String, Long, String, Integer, String, String)}, with the
+     * job's {@code priority} (ADR 0041): 1 high, 0 normal, -1 low. A worker takes the job with the
+     * highest priority among those due first.
+     */
+    public Run queueRun(String name, int version, String by, String role, Long flowRunId, String flowNode,
+                        Integer flowItem, String parameters, String variables, int priority) {
+        if (priority < -1 || priority > 1) {
+            throw new IllegalArgumentException("A priority is 1 (high), 0 (normal) or -1 (low)");
+        }
         if (flowItem != null && (flowRunId == null || flowNode == null || flowItem < 0)) {
             throw new IllegalArgumentException("An item's run belongs to a flow run and node");
         }
@@ -437,9 +450,10 @@ public class PipelineStore {
                     id = rs.getLong(1);
                 }
             }
-            try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.job (kind, payload, max_attempts) "
-                + "VALUES ('" + JOB_KIND + "', jsonb_build_object('pipelineRunId', ?::bigint), 1)")) {
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.job (kind, payload, max_attempts, "
+                + "priority) VALUES ('" + JOB_KIND + "', jsonb_build_object('pipelineRunId', ?::bigint), 1, ?)")) {
                 ps.setLong(1, id);
+                ps.setShort(2, (short) priority);
                 ps.executeUpdate();
             }
             try (PreparedStatement ps = c.prepareStatement("NOTIFY " + JobQueue.CHANNEL)) {

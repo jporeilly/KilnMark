@@ -7,6 +7,12 @@ details.
 
 ### What's new
 
+- **Choose which runs start first** (ADR 0041). A `run-pipeline` or `for-each` node can say its
+  `priority`: `high`, `normal` (the default) or `low`. When more runs wait than there are free
+  workers, a worker takes the highest priority first, then the one queued first; a source's limit
+  and `max_parallel` still hold. Set it on the node's Settings tab.
+  ([Choosing which runs start first](docs/guide/flows.md#choosing-which-runs-start-first))
+
 - **Stop a flow node that takes too long** (ADR 0041). A `run-pipeline`, `for-each` or `sql` node
   can say how long its work may take (`timeout: 2h`, at most 7 days). Past it, the pipeline run is
   cancelled or the statement rolled back, and the node fails, saying so, so a `failure` connection
@@ -142,6 +148,16 @@ details.
   or deleted, and can be sent to a SIEM. Admins read it under Settings, Audit log (ADR 0029).
 
 ### Details
+
+- **A flow node's `priority`** (ADR 0041, amended; docs/design/flow-controls.md, C5). `run-pipeline`
+  and `for-each` nodes take `priority: high | normal | low` (any case), checked when saved; `sql`
+  and the other types refuse it, since a sql node never waits in the job queue. Migration V33 adds
+  `job.priority` (smallint, -1 to 1, default 0) and rebuilds `job_ready_idx` as `(priority DESC, id)`;
+  `JobQueue.claim` takes the due job of highest priority, then the first queued. The pipeline runs a
+  node queues, and each of a for-each node's items, carry its priority; everything else is normal.
+  The diagram's Settings tab has a **Priority** choice, and a node's summary says a high or low one.
+  Upgrading: building the new index briefly holds up the job queue while it reads `job`, which
+  keeps every job ever queued; the column's check is validated without holding it up.
 
 - **The release key** is in place: `config/release/cosign.pub` is the public half of the key that
   signs every file of a release from now on. Check a release with it as INSTALL.md, "Check a

@@ -470,4 +470,37 @@ class FlowDefinitionTest {
         assertEquals("45s", FlowDefinition.written(Duration.ofSeconds(45)));
         assertEquals("2m", FlowDefinition.written(Duration.ofSeconds(120)));
     }
+
+    // ---- priority (ADR 0041) ----
+
+    @Test
+    void readsAPriorityOnNodesThatQueuePipelineRuns() {
+        String load = "    pipeline: orders-load\n";
+        FlowDefinition.Parsed high = FlowDefinition.parse(SQL.replace(load, load + "    priority: high\n"));
+        assertTrue(high.valid(), high.problems().toString());
+        assertEquals(1, high.definition().node("load").priority());
+        assertEquals(-1, FlowDefinition.parse(SQL.replace(load, load + "    priority: LOW\n")).definition().node("load")
+            .priority(), "in any case");
+        assertEquals(0, FlowDefinition.parse(SQL.replace(load, load + "    priority: normal\n")).definition()
+            .node("load").priority());
+        assertEquals(0, FlowDefinition.parse(SQL).definition().node("load").priority(), "normal unless written");
+        FlowDefinition.Parsed each = FlowDefinition.parse(FAN.replace("    max_parallel: 2\n",
+            "    max_parallel: 2\n    priority: high\n"));
+        assertTrue(each.valid(), each.problems().toString());
+        assertEquals(1, each.definition().node("regions").priority());
+    }
+
+    @Test
+    void checksAPriority() {
+        String load = "    pipeline: orders-load\n";
+        for (String bad : List.of("urgent", "1", "[high]", "\"\"")) {
+            assertTrue(firstProblem(SQL.replace(load, load + "    priority: " + bad + "\n"))
+                .contains("priority is high, normal or low"), bad);
+        }
+        // A sql node runs on its flow's watcher, never queued: a priority would order nothing.
+        assertTrue(firstProblem(SQL.replace("    source: warehouse\n", "    source: warehouse\n    priority: high\n"))
+            .contains("has no setting 'priority'"));
+        assertTrue(firstProblem(SQL.replace("    title: \"Emptied", "    priority: high\n    title: \"Emptied"))
+            .contains("has no setting 'priority'"));
+    }
 }

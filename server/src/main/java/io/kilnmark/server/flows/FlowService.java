@@ -1157,7 +1157,8 @@ public class FlowService {
                 }
                 try {
                     PipelineStore.Run queued = pipelines.queueRunForFlow(s.pipeline(), s.version(), run.requestedBy(),
-                        role, run.id(), s.id(), i, itemValues(engine, def, s, fan.items.get(i)), runVariables);
+                        role, run.id(), s.id(), i, itemValues(engine, def, s, fan.items.get(i)), runVariables,
+                        s.priority());
                     fan.runs.put(i, queued.id());
                     fan.next++;
                     fan.waitingSince = null;
@@ -1555,7 +1556,7 @@ public class FlowService {
             }
             try {
                 PipelineStore.Run queued = pipelines.queueRunForFlow(s.pipeline(), s.version(), run.requestedBy(), role,
-                    run.id(), s.id(), withValues(engine, def, s), runVariables);
+                    run.id(), s.id(), null, withValues(engine, def, s), runVariables, s.priority());
                 pipelineRuns.put(s.id(), queued.id());
                 waitingSince.remove(s.id());
                 save(def, s.id(), "running", queued.id(), null, null, Map.of());

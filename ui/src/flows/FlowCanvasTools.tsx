@@ -265,15 +265,28 @@ const TIMEOUT: Field = {
   hint: "Stopped and failed past it: 30m, 2h, 1d. Blank for none.",
 };
 
+/** Which of the runs waiting for a worker starts first (ADR 0041); normal when left out. */
+const PRIORITY: Field = {
+  key: "priority",
+  label: "Priority",
+  kind: "word",
+  choices: [
+    ["normal", "Normal"],
+    ["high", "High"],
+    ["low", "Low"],
+  ],
+};
+
 /** The settings of each node type the Settings tab offers, as the server reads them (docs/design/flows.md). */
 const FIELDS: Record<string, Field[]> = {
-  "run-pipeline": [PIPELINE, VERSION, TIMEOUT],
+  "run-pipeline": [PIPELINE, VERSION, TIMEOUT, PRIORITY],
   "for-each": [
     PIPELINE,
     VERSION,
     { key: "as", label: "Parameter each item fills", kind: "text", hint: "One of the pipeline's parameters." },
     { key: "max_parallel", label: "Items at once", kind: "number", hint: "4 when blank, 50 at most." },
     { ...TIMEOUT, hint: "For each item's run: 30m, 2h, 1d. Blank for none." },
+    PRIORITY,
   ],
   notify: [
     {
@@ -317,7 +330,13 @@ const IN_THE_YAML: Record<string, string> = {
 };
 
 /** A field's value as the form starts it: as written, or the server's default for a word. */
-const startOf = (f: Field, node: FlowGraphNode) => node.settings[f.key] ?? f.choices?.[0][0] ?? "";
+const startOf = (f: Field, node: FlowGraphNode) => {
+  const written = node.settings[f.key];
+  if (written === undefined) return f.choices?.[0][0] ?? "";
+  // The server reads a word in any case (priority: LOW): shown as the choice it is.
+  const choice = f.choices?.find(([c]) => c === written.trim().toLowerCase());
+  return choice ? choice[0] : written;
+};
 
 function NodeSettings({
   node,

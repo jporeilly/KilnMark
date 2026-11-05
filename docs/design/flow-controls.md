@@ -8,7 +8,7 @@ How a node with all five runs, start to end:
 
 ```mermaid
 flowchart TD
-  A["Node ready"] --> P{"Queued by priority:<br/>high, normal, low"}
+  A["Node ready"] --> P{"Queued by priority:<br/>high, normal, low<br/>(run-pipeline, for-each)"}
   P --> S["A worker slot and its sources'<br/>places are free: the run starts"]
   S --> T{"Ended within<br/>its timeout?"}
   T -- "no" --> X["Cancelled: took too long"]
@@ -144,13 +144,24 @@ flowchart TD
   (0 for the first). The run page lists every try with its link; the node's status is its last
   try's.
 
-## C5. `priority` (planned)
+## C5. `priority` (built)
 
-- On `run-pipeline`, `for-each` and `sql`: `high`, `normal` (default), `low`, stored on the job as
-  1, 0 or -1 (`job.priority`).
-- `JobQueue.claim` orders by `priority DESC, run_after, id`. Jobs waiting for a source's place go
-  back with a later `run_after`, so they do not hold the head of the queue.
-- A person's **Run now** of a pipeline is `normal`.
+- On `run-pipeline` and `for-each` (each item's run): `high`, `normal` (default), `low`, in any case,
+  stored on the job as 1, 0 or -1 (`job.priority`, migration V33, smallint checked to -1..1). Not on
+  `sql`: a sql node runs on its flow's watcher, never as a job, so a priority would order nothing;
+  saving refuses it there, and on every other type (ADR 0041, amended).
+- `JobQueue.claim` orders the due jobs by `priority DESC, id`, on the index `job_ready_idx (priority
+  DESC, id) WHERE status = 'queued'`. Not `run_after`: since ADR 0040 a run put back to wait for a
+  source's place keeps its turn among runs of its priority (first queued, not first due).
+- Scans, quality checks, flow runs and a person's **Run now** of a pipeline are `normal` (the column's
+  default). Priority chooses only among jobs that may start: a source's limit and a flow's or
+  for-each node's `max_parallel` still hold, and a low job runs whenever nothing higher is due. It
+  is strict: no ageing, so a steady stream of due high jobs holds lower ones back.
+- V33 adds the check `NOT VALID` and validates it after, so only building the index holds up the
+  queue while it reads `job` (which keeps every job ever queued). V32 is the samples library's
+  (#98); whichever of the two merges second renumbers if it must, as Flyway refuses an older one.
+- The diagram's Settings tab offers it for the two node types, and a node's summary says "high
+  priority" or "low priority".
 
 ## Order of work
 

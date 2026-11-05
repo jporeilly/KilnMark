@@ -977,4 +977,44 @@ class FlowRunTest {
             .map(FlowViews.ItemRunView::status).toList());
         assertEquals("cancelled", item(run.id(), "each", 0).status());
     }
+
+    // ---- priority (ADR 0041) ----
+
+    /** The priority of the job that runs a pipeline run: 1 high, 0 normal, -1 low. */
+    private long jobPriority(long pipelineRunId) {
+        return count("SELECT priority FROM kilnmark.job WHERE kind = 'pipeline' AND (payload ->> 'pipelineRunId')::bigint = ?",
+            pipelineRunId);
+    }
+
+    @Test
+    @Order(22)
+    void aNodesPriorityIsItsPipelineRunsJobs() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fl-priority
+            nodes:
+              - { id: urgent, type: run-pipeline, pipeline: fl-copy, priority: high }
+              - { id: plain, type: run-pipeline, pipeline: fl-gated }
+              - id: later
+                type: for-each
+                pipeline: fl-param
+                items: [pa, pb]
+                as: suffix
+                priority: Low
+            connections:
+              - { from: urgent, to: plain }
+              - { from: plain, to: later }
+            """);
+        FlowStore.Run run = start("fl-priority", Map.of());
+        waitForFlow(run.id(), "succeeded");
+        assertEquals(1, jobPriority(node(run.id(), "urgent").pipelineRunId()), "high");
+        assertEquals(0, jobPriority(node(run.id(), "plain").pipelineRunId()), "normal when not written");
+        assertEquals(-1, jobPriority(item(run.id(), "later", 0).id()), "each item's run, low");
+        assertEquals(-1, jobPriority(item(run.id(), "later", 1).id()));
+        // A person's Run now is normal.
+        long direct = as(designer).post("/api/v1/pipelines/fl-copy/runs").then().statusCode(202).extract().jsonPath()
+            .getLong("id");
+        assertEquals(0, jobPriority(direct));
+        await("the direct run to end", () -> pipelineStore.run(direct).orElseThrow().finished(), Boolean::booleanValue);
+    }
 }

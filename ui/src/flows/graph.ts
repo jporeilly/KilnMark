@@ -34,6 +34,12 @@ const text = (v: unknown): string | null => {
   return typeof v === "string" || typeof v === "number" || typeof v === "boolean" ? String(v) : null;
 };
 
+/** A node's priority in words, when it is not normal: ", high priority" (ADR 0041). */
+export function priorityWords(priority: string | null | undefined): string {
+  const word = priority?.trim().toLowerCase();
+  return word === "high" || word === "low" ? `, ${word} priority` : "";
+}
+
 /** What a node does, in a few words: its pipeline, notice, wait, source or how it ends the flow. */
 function summaryOf(type: string, node: { get: (k: string) => unknown }): string {
   const get = (k: string) => text(node.get(k));
@@ -41,17 +47,18 @@ function summaryOf(type: string, node: { get: (k: string) => unknown }): string 
     case "run-pipeline": {
       const pipeline = get("pipeline") ?? "a pipeline";
       const version = get("version");
-      return version ? `${pipeline}, version ${version}` : pipeline;
+      return (version ? `${pipeline}, version ${version}` : pipeline) + priorityWords(get("priority"));
     }
     case "for-each": {
       const pipeline = get("pipeline") ?? "a pipeline";
+      const priority = priorityWords(get("priority"));
       const items = node.get("items");
       if (isSeq(items)) {
         const n = items.items.length;
-        return `${pipeline} for each of ${n} ${n === 1 ? "item" : "items"}`;
+        return `${pipeline} for each of ${n} ${n === 1 ? "item" : "items"}${priority}`;
       }
       const from = get("items")?.trim().match(/^\$\{\s*([a-z][a-z0-9_]*)\s*\}$/);
-      return from ? `${pipeline} for each of ${from[1]}` : `${pipeline} for each item`;
+      return (from ? `${pipeline} for each of ${from[1]}` : `${pipeline} for each item`) + priority;
     }
     case "notify":
       return get("title") ?? "Sends a notice";
