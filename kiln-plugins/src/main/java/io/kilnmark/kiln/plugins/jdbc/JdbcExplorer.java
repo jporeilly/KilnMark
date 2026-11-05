@@ -158,7 +158,7 @@ final class JdbcExplorer {
         // name), the first unique index over exactly the key's columns
         String pkIndex = null;
         if (!primaryKey.columns().isEmpty()) {
-            if (primaryKey.name() != null && cols.containsKey(primaryKey.name())) {
+            if (primaryKey.name() != null && cols.containsKey(primaryKey.name()) && unique.get(primaryKey.name())) {
                 pkIndex = primaryKey.name();
             } else {
                 for (Map.Entry<String, Map<Integer, String>> e : cols.entrySet()) {
