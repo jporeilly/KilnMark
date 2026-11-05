@@ -28,11 +28,17 @@ run timelines).
    two image packages on GitHub's registry public (ADR 0044).
 5. **The control script on Ubuntu with Podman 5**, and installing by pulling images from the
    registry: neither has been run yet (ADR 0044).
-6. **The owner's install at `C:\Kilnmark`** moved onto the new layout (INSTALL.md, "From 0.0.9").
+6. **A Windows install rehearsal in CI** (owner, 5 November 2026): a job that installs Kilnmark on
+   Windows 11 with `kilnmark.ps1` and runs it through start, check, backup, restore, upgrade and
+   uninstall, as the release rehearsal does on Linux (ADR 0044). It runs on GitHub's
+   `windows-latest`, a clean Windows each time; if GitHub's runners stay unavailable, on a Windows
+   self-hosted runner inside a VM (Hyper-V or Windows Sandbox), never on the owner's own desktop,
+   where jobs would run on the host itself.
+7. **The owner's install at `C:\Kilnmark`** moved onto the new layout (INSTALL.md, "From 0.0.9").
 
 ## 3. Product
 
-7. **Database tools** (owner, 5 November 2026): on a source, **Explore** (live schemas, tables,
+8. **Database tools** (owner, 5 November 2026): on a source, **Explore** (live schemas, tables,
    columns, keys and indexes, a masked preview of rows); a SQL generator (`CREATE TABLE`, `ALTER`,
    `CREATE INDEX` and `DROP` in each database's dialect); connection settings as tabs (General,
    Advanced, Options, Pooling, Partitioning); and operations that change a database, which the
@@ -40,12 +46,12 @@ run timelines).
    designers and admins only, a preview of every statement, typing the table's name to confirm a
    drop or truncate, an audit event for each, and a second person's approval on production
    sources. An ADR amending ADR 0028 comes first.
-8. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
+9. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
    pre-run checks, flags on slow pipelines. Run tools on the MCP server fold in here (parked item
    in Plan & Scope).
-9. **Connectors** (brief of 28 October): SFTP/FTP, SMB, Azure Blob, REST; Snowflake, Vertica and
+10. **Connectors** (brief of 28 October): SFTP/FTP, SMB, Azure Blob, REST; Snowflake, Vertica and
    Exasol as connectors of their own, with the SQL that moves files refused (ADR 0030).
-10. **Templates of a team's own** ("save as template", after the Library's, ADR 0043), and
+11. **Templates of a team's own** ("save as template", after the Library's, ADR 0043), and
     comparing a pipeline's or flow's versions; then v0.1.0.
 
 ## 4. Hardening, as customers ask
@@ -59,19 +65,22 @@ sources (ADR 0034), OIDC sign-in with MFA (ADR 0036, #78), access reviews and to
 #83), the SSDF self-assessment (#84), the bundled Keycloak (ADR 0014, #93), static analysis with
 dependency verification (ADR 0042, #99) and signed images with an offline install (ADR 0044, #102).
 
-11. **The SSDF gaps**: build provenance, a threat model, a security analyser; the rest of the
+12. **The SSDF gaps**: build provenance, a threat model, a security analyser; the rest of the
     evidence pack when a customer's due diligence asks.
-12. **Change approval and environments**, which also gives database tools their second person.
-13. **Generic JDBC drivers in a process of their own** (ADR 0030, decision 5); new table names
+13. **Change approval and environments**, which also gives database tools their second person.
+14. **Generic JDBC drivers in a process of their own** (ADR 0030, decision 5); new table names
     checked against the driver's longest table name, not its longest column name (ADR 0042).
-14. **Small items**: a JDBC `socketTimeout`, masking on the run quality view, a metric for preview
+15. **Small items**: a JDBC `socketTimeout`, masking on the run quality view, a metric for preview
     slots, `KILNMARK_DB_PASSWORD` in the dev compose.
-15. **Audit events** for data read with the unmask grant, and for MCP refusals (ADR 0029).
-16. **A full export in open formats** (for exit), and a FIPS mode when a federal customer needs it.
+16. **Audit events** for data read with the unmask grant, and for MCP refusals (ADR 0029).
+17. **A full export in open formats** (for exit), and a FIPS mode when a federal customer needs it.
 
 ## 5. Housekeeping
 
-17. **The server tests on Windows**: Testcontainers cannot reach Podman from the tool shell, so
+18. **The local CI runner on a Podman machine of its own**, without the Windows drives mounted,
+    starting afresh for each job (ephemeral), and its PostgreSQL image under a CI-only tag
+    (docs/development.md, "CI on a local runner"; review of #111).
+19. **The server tests on Windows**: Testcontainers cannot reach Podman from the tool shell, so
     server tests run only in CI there.
 
 ## Owner's items
