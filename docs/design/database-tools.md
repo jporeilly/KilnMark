@@ -185,7 +185,7 @@ HMAC over all of these with the key that seals source passwords), `requested_by`
 SQLSTATE or code; never the database's text). The seal covers the plan's id, source, maker, fields,
 statements, target, identity, fingerprint and expiry; `approval_seal` covers the id, the seal, the
 approver and the time. Both are HMACs with a key derived (HKDF) from the key that seals source
-passwords. Checks in the table: approved and refused are never both set. `instance` holds one
+passwords. Checks in the table: approved and refused are never both set. `kilnmark_instance_marker` holds one
 random id, made at first start, for the own-database check. `source_mark` holds each source's
 Not production mark: the connection hash, the identity (database id and instance), who asked and
 who approved, when, and its seal.
@@ -232,7 +232,8 @@ it was turned off; a value in a failure's message (a duplicate key in a unique i
 or index expression from the catalogue reaching a statement; retargeting a source (URL, database,
 a driver property) after Allow changes was turned on; another database on the same MySQL server; a
 plan's maker or approval changed in Kilnmark's own database; DNS or a failover moving the run's
-connection to another database; a foreign, federated or merge table, or a parent with foreign
+connection to another database; a Not production request whose source is pointed elsewhere
+between asking and approving; another Kilnmark installation's database; a foreign, federated or merge table, or a parent with foreign
 children; a table in a logical-replication publication; a trigger or event trigger that fires on
 the operation; an extension that passes DDL on (Citus and the like); a `search_path` set in the URL; a run state reset in Kilnmark's own database.
 
