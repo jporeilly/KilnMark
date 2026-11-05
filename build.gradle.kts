@@ -59,9 +59,6 @@ subprojects {
                 "StringSplitter",
                 "ArrayRecordComponent",
             )
-            // Until the flow-controls change merges: it rewrites these files, so they are fixed after
-            // it rather than under it (ADR 0042). Take this out then.
-            excludedPaths.set(".*[/\\\\](FlowDefinition|FlowDefinitionTest|FlowService|JobQueue)\\.java$")
             // -PepPatch=Check1,Check2 applies those checks' suggested fixes to the sources (docs/development.md).
             providers.gradleProperty("epPatch").orNull?.let {
                 errorproneArgs.addAll("-XepPatchChecks:" + it, "-XepPatchLocation:IN_PLACE")

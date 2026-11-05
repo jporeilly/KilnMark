@@ -239,7 +239,7 @@ public class JobQueue {
                 try (ResultSet rs = ps.executeQuery()) {
                     rs.next();
                     if (rs.getBoolean(1)) {
-                        ScanLease lease = new ScanLease(c, lockClass, key, rs.getInt(2));
+                        ScanLease lease = new ScanLease(c, key, rs.getInt(2));
                         c = null;
                         return Optional.of(lease);
                     }
@@ -266,7 +266,6 @@ public class JobQueue {
      */
     public static final class ScanLease implements AutoCloseable {
         private final Connection c;
-        private final int lockClass;
         private final long sourceId;
         private final int backendPid;
         /** Source places held on this connection: advisory locks nest within a session, so they are counted here. */
@@ -276,9 +275,8 @@ public class JobQueue {
         private boolean closed;
 
         /** {@code sourceId} is the lock's key: a source id, or a pipeline job's id. */
-        ScanLease(Connection c, int lockClass, long sourceId, int backendPid) {
+        ScanLease(Connection c, long sourceId, int backendPid) {
             this.c = c;
-            this.lockClass = lockClass;
             this.sourceId = sourceId;
             this.backendPid = backendPid;
         }

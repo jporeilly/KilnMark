@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
@@ -427,7 +428,7 @@ class FlowDefinitionTest {
         assertTrue(firstProblem("- a\n- b").contains("starts with kilnmark"));
         assertTrue(firstProblem("kilnmark: flow/v1\nname: f\nnodes: []").contains("at least one node"));
         assertTrue(firstProblem("kilnmark: flow/v1\nnodes:\n  - {id: a, type: stop}").contains("needs a name"));
-        assertTrue(firstProblem("kilnmark: flow/v1\nname: f\nnodes:\n  - &x {id: a, type: stop}").toLowerCase()
+        assertTrue(firstProblem("kilnmark: flow/v1\nname: f\nnodes:\n  - &x {id: a, type: stop}").toLowerCase(Locale.ROOT)
             .contains("anchor"));
     }
 
@@ -468,7 +469,7 @@ class FlowDefinitionTest {
         assertEquals("90m", FlowDefinition.written(Duration.ofMinutes(90)));
         assertEquals("1d", FlowDefinition.written(Duration.ofHours(24)));
         assertEquals("45s", FlowDefinition.written(Duration.ofSeconds(45)));
-        assertEquals("2m", FlowDefinition.written(Duration.ofSeconds(120)));
+        assertEquals("2m", FlowDefinition.written(Duration.ofMinutes(2)));
     }
 
     // ---- priority (ADR 0041) ----
@@ -633,7 +634,7 @@ class FlowDefinitionTest {
         assertEquals(3, n.retries());
         assertEquals(Duration.ofSeconds(30), n.retry().before(1));
         assertEquals(Duration.ofSeconds(60), n.retry().before(2), "doubled each time");
-        assertEquals(Duration.ofSeconds(120), n.retry().before(3));
+        assertEquals(Duration.ofMinutes(2), n.retry().before(3));
         assertEquals(1, p.definition().node("empty").retries());
         assertEquals(FlowDefinition.DEFAULT_RETRY_DELAY, p.definition().node("empty").retry().delay(), "1m unless written");
         assertEquals(0, FlowDefinition.parse(SQL).definition().node("load").retries(), "none unless written");

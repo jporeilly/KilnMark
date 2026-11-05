@@ -200,6 +200,11 @@ details.
 
 ### Details
 
+- **Error Prone checks the flow files too** (ADR 0042, decision 5). `FlowDefinition`, its test,
+  `FlowService` and `JobQueue` are no longer left out. What it found is fixed: case changes now
+  name `Locale.ROOT`, so a server in a Turkish locale reads `PRIORITY: HIGH` and the like as
+  written; a nested class is static; unused parameters and a field are gone.
+
 - **The `wait-for` flow node** (ADR 0041, docs/design/flow-controls.md, C2). It takes `source` and
   either `file` (a pattern with `*` and `?` in its last part; `at_least`, 1 by default) or `query`,
   plus `every` (30s to 1h, 5m) and `timeout` (up to 24h, 1h). It looks at once, then every `every`,
