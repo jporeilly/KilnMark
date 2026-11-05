@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { formatNumber, pipelinesApi, type FlowRunDetail, type PipelineRunDetail } from "../api";
 import { Icon } from "../components/icons";
 import { href } from "../router";
@@ -143,8 +143,22 @@ export function FlowRunTimeline({ detail, now }: { detail: FlowRunDetail; now: n
             const words = treeRowWords(r, took);
             const icon = rowIcon(r);
             const isOpen = open.has(r.id);
+            // What an open row with no rows under it says, on a line of its own under it.
+            const runFailed = r.loading && r.pipelineRunId != null && failed.has(r.pipelineRunId);
+            const note = !isOpen
+              ? null
+              : runFailed
+                ? "failed"
+                : r.loading
+                  ? "Loading its pipeline run…"
+                  : r.waiting
+                    ? "Its pipeline run is waiting to start."
+                    : r.untimed
+                      ? "Its pipeline run's nodes were not timed."
+                      : null;
             return (
-              <li key={r.id} className={`ft-row${r.id === selected.id ? " ft-chosen" : ""}`}>
+              <Fragment key={r.id}>
+              <li className={`ft-row${r.id === selected.id ? " ft-chosen" : ""}`}>
                 <div className="ft-label" style={{ paddingLeft: `${r.depth * 18}px` }}>
                   {r.expandable ? (
                     <button
@@ -174,18 +188,6 @@ export function FlowRunTimeline({ detail, now }: { detail: FlowRunDetail; now: n
                     {r.label}
                   </button>
                   {r.badge && <span className="ft-badge">{r.badge}</span>}
-                  {r.loading && r.pipelineRunId != null && failed.has(r.pipelineRunId) ? (
-                    <span className="small">
-                      Could not read its run.{" "}
-                      <button type="button" className="link-button" onClick={() => ask(r.pipelineRunId!)}>
-                        Try again
-                      </button>
-                    </span>
-                  ) : (
-                    r.loading && <span className="small muted">Loading…</span>
-                  )}
-                  {r.waiting && open.has(r.id) && <span className="small muted">Waiting to start</span>}
-                  {r.untimed && open.has(r.id) && <span className="small muted">Its nodes were not timed</span>}
                 </div>
                 <div className="ft-lane" onClick={() => choose(r)} title={words} aria-hidden="true">
                   {marks.map((t) => (
@@ -207,6 +209,23 @@ export function FlowRunTimeline({ detail, now }: { detail: FlowRunDetail; now: n
                   {r.status === "skipped" && <span className="run-took">skipped</span>}
                 </div>
               </li>
+              {note && (
+                <li className="ft-row ft-note">
+                  <span className="small muted" style={{ paddingLeft: `${(r.depth + 1) * 18 + 26}px` }}>
+                    {note === "failed" ? (
+                      <>
+                        Could not read its pipeline run.{" "}
+                        <button type="button" className="link-button" onClick={() => ask(r.pipelineRunId!)}>
+                          Try again
+                        </button>
+                      </>
+                    ) : (
+                      note
+                    )}
+                  </span>
+                </li>
+              )}
+              </Fragment>
             );
           })}
         </ul>

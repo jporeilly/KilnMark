@@ -252,6 +252,12 @@
   border-radius: 6px;
 }
 
+/* A line under an open row that has nothing to show under it yet. */
+.ft-row.ft-note {
+  display: block;
+  min-height: 24px;
+}
+
 .ft-row.ft-chosen {
   background: var(--km-surface-2);
 }
