@@ -82,9 +82,9 @@ may do, and exactly what in ADR 0028 changes and what stays.
   and the quoting of a name are the same whether a pipeline creates the table or a person copies
   the statement. Names are always quoted and schema-qualified.
 - **Types.** A column's type is the dialect's type for its kind (`JdbcColumn.Kind`), from the
-  dialect's own list. A column whose type has no kind (a range, `hierarchyid`, an enum) is listed
-  under "left out", never copied as the catalogue spells it: a type's name is text from the
-  database and can carry anything.
+  dialect's own list. A column whose type has no kind (a range, `hierarchyid`, an enum) is written
+  as text and listed under "left out or changed", never copied as the catalogue spells it: a
+  type's name is text from the database and can carry anything.
 - **No values.** The generator writes names, types, nulls, keys and plain indexes. It never copies
   a default, a check, a comment, a partition bound, a generated column's expression, an index on an
   expression or a partial index's condition: they can quote values, and they are each database's
@@ -168,13 +168,39 @@ operations**; what they do not cover is said in point 12.
    limit. **Only the source's own database**: an operation acts on schemas of the database the
    connection is to, never another database on the same server, and a MySQL or MariaDB source with
    no database set gets no operations. Objects in the database's own schemas (`pg_catalog`, `sys`,
-   `information_schema`, Oracle-maintained schemas) are refused. **Only ordinary local tables**: a
+   `information_schema`, Oracle-maintained schemas) are refused.
+   **Only a database that cannot reach elsewhere by itself.** Before any operation, the database
+   is checked for every way it could carry a change to another database, and the operation is
+   refused if it has one, or if the check cannot read what it needs. **An empty answer counts only
+   from a view the login can be shown to see in full**: SQL Server and Oracle show each login only
+   what it has rights on, so there the check first proves its rights (SQL Server
+   `HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW ANY DEFINITION')` and `VIEW DEFINITION` on the database;
+   Oracle `SELECT` on `DBA_TRIGGERS` and `DBA_DB_LINKS`, queried for `DATABASE` and `SCHEMA`
+   triggers) and refuses without them. The guide lists these rights with the others each operation
+   needs; a test runs the check as a login without them against a database with a DDL trigger:
+   - **No code that fires on the operation**: no event trigger (PostgreSQL `pg_event_trigger`), no
+     database or server DDL trigger (SQL Server `sys.triggers` with `parent_class = 0`,
+     `sys.server_triggers`), no DDL or `TRUNCATE` trigger on the schema or database (Oracle), and
+     no trigger on the table that fires on the operation (PostgreSQL `ON TRUNCATE`).
+   - **No way out of the database**: on PostgreSQL the login check of ADR 0028 applies to operations
+     too (no superuser, no file or program roles, no dblink, no foreign server, user mapping or
+     foreign table); Oracle refuses a schema with database links; SQL Server refuses a database
+     whose login can reach a linked server.
+   - **Only extensions Kilnmark knows**: on PostgreSQL every installed extension must be on
+     Kilnmark's list of extensions that do not pass DDL or a truncate on (`plpgsql`, `pgcrypto`,
+     `uuid-ossp`, `citext`, `hstore`, `pg_trgm`, `btree_gin`, `btree_gist`, `pg_stat_statements`,
+     `pg_buffercache`, `postgis`, and the like); any other (Citus, TimescaleDB's distributed
+     tables, `pglogical`, `spock`, `bdr`, `pgactive`) refuses operations on that database until it is
+     reviewed and listed. The table's access method must be `heap`.
+   **Only ordinary local tables**: a
    table an operation drops, truncates, alters or indexes must be one whose rows the database keeps
    itself, never one that reaches elsewhere, checked against an allow-list for each database:
    - PostgreSQL: an ordinary table (`relkind` `r`), or a partitioned one (`p`) with no foreign
      partition at any level; never a table that any publication sends, read from
      `pg_publication_tables` (which expands `FOR ALL TABLES`, `TABLES IN SCHEMA` and a published
-     partitioned table's leaves), since a truncate or a drop would reach every subscriber. Truncates use `TRUNCATE ONLY`, so a partitioned table and
+     partitioned table's leaves), since a truncate or a drop would reach every subscriber.
+     (Replication extensions are not on the extension list above, so a database with one gets no
+     operations.) Truncates use `TRUNCATE ONLY`, so a partitioned table and
      a table with child tables (inheritance) are refused for truncate.
    - MySQL and MariaDB: an InnoDB, Aria or MyISAM table (never `FEDERATED`, `CONNECT`, `SPIDER` or
      `MERGE`).
@@ -182,8 +208,16 @@ operations**; what they do not cover is said in point 12.
      `is_remote_data_archive_enabled = 0`, and not replicated (`is_published`, `is_merge_published`,
      `is_replicated` and `is_sync_tran_subscribed` all 0), since an article's `ALTER TABLE` reaches
      its subscribers; never a synonym.
-   - Oracle: a table in `ALL_OBJECTS` of type `TABLE`, not in `ALL_EXTERNAL_TABLES` and with no
-     external (hybrid) partition; never a synonym.
+   - Oracle: a table in `ALL_OBJECTS` of type `TABLE`, not in `ALL_EXTERNAL_TABLES`, with no
+     external (hybrid) partition, no materialized view log (`ALL_MVIEW_LOGS`) and no registered
+     materialized view (`ALL_BASE_TABLE_MVIEWS`); never a synonym.
+   - **On every database, the principle behind these lists**: a table the database's catalogue
+     shows as sending its changes anywhere (published, replicated, captured for change data
+     capture or change tracking, logged for materialized views) is refused, and so is any operation
+     whose check cannot read the catalogue it needs. The lists above are that principle written out
+     for each database today; when a review finds another catalogued way, it joins the list rather
+     than becoming an exception. SQL Server also refuses tables tracked by change data capture
+     (`is_tracked_by_cdc`) or change tracking (`sys.change_tracking_tables`).
    Never a table the database or an extension ships: PostgreSQL tables an extension owns
    (`pg_depend` type `e`), SQL Server tables with `is_ms_shipped = 1`. A SQL Server source must name
    its database, and `master`, `msdb`, `model`, `tempdb` and `distribution` are refused, as a MySQL
@@ -264,7 +298,11 @@ operations**; what they do not cover is said in point 12.
        Server `encrypt=true` without `trustServerCertificate`, and the like, ADR 0034), and the mark
        holds the certificate's fingerprint. A database reports its other identity values about
        itself, and a copy, a proxy or a pooler can make them match; a certificate it cannot fake
-       without the production server's private key.
+       without the production server's private key. **The database itself must confirm** that this
+       session reached it over TLS (PostgreSQL `pg_stat_ssl` for `pg_backend_pid()`, SQL Server
+       `sys.dm_exec_connections.encrypt_option`, MySQL `Ssl_cipher`, Oracle `NETWORK_PROTOCOL` =
+       `tcps`), at marking and on every run, so a proxy or pooler that ends TLS and goes on in
+       plain text is refused: its certificate would be the proxy's, not the database's.
      Any identity part that is empty (PostgreSQL's address over a Unix socket behind a pooler, say)
      refuses the mark. The identity is read for marking as for a run: on a connection whose
      PostgreSQL `search_path` is `pg_catalog` alone, with every catalogue name qualified, so a URL's
@@ -280,9 +318,11 @@ operations**; what they do not cover is said in point 12.
      identity read **on the run's own connection** is the one the mark holds; a failover to another
      instance, a restore, an upgrade that makes a new identity, a renamed database or a DNS change to
      another instance, or another certificate, therefore makes approval needed again, and the page
-     says why. What remains is a copy that also carries production's certificate and private key,
-     reached under a name that certificate covers: two admins marked it, and the guide says not to
-     mark a copy that shares production's keys.
+     says why. What remains: a copy that also carries production's certificate and private key,
+     reached under a name that certificate covers; and a proxy or pooler that ends TLS and opens
+     TLS again to the database, which the database cannot tell from Kilnmark. Two admins marked
+     such a source; the guide says not to mark a copy that shares production's keys, nor a source
+     reached through a proxy or pooler.
    - **Who marks.** An admin asks and **another admin approves, both signed in with the identity
      provider**, each shown the host name, the address it resolved to, the certificate's subject and
      the database's name, not only opaque ids, compared by issuer and subject as for the unmask grant (ADR 0038); an API token can
@@ -334,11 +374,12 @@ operations**; what they do not cover is said in point 12.
    decision) is for the owner; this record refuses operations. Explore's panes and **Count
    exactly** will make the same check once the marker exists (it comes with operations, D4); the
    preview, like every other read of such a source, stays with that owner decision.
-10. **No login check, and why.** ADR 0028 refuses superuser and file or program rights before SQL a
-    person writes, because such SQL can call functions and read files. An operation cannot: its
-    statements are fixed shapes over objects of the source's own database, outside the database's
-    own schemas. What it may drop is what the login may drop; the guide lists the rights each
-    operation needs and recommends a login without them while Allow changes is off.
+10. **The login check applies.** ADR 0028's login check, made for SQL a person writes, also runs
+    before every operation on PostgreSQL (point 3): an operation's statements are fixed shapes, but a
+    trigger or an extension can run code with the login's rights, so the login must not be able to
+    leave the database. What an operation may drop is still what the login may drop; the guide
+    lists the rights each operation needs and recommends a login without them while Allow changes
+    is off.
 11. **Which databases.** PostgreSQL, SQL Server, MySQL and MariaDB, and Oracle: the databases whose
     dialect `WriteSql` already writes. Generic JDBC sources get Explore and the generator, not
     operations, until a database there has a dialect of its own.
@@ -349,6 +390,62 @@ operations**; what they do not cover is said in point 12.
     before a pipeline or flow version runs in production is the backlog's "change approval and
     environments" (Compliance, change management); until it ships, a production source that must
     have two people for every change keeps Allow writing and Allow SQL off and uses operations.
+    Nor can these controls see replication the database does not list in its catalogue: MySQL and
+    MariaDB binary-log replicas, Oracle GoldenGate, or a change-data-capture consumer reading the
+    log. A change to a table such a tool copies reaches its copies. The guide asks that Allow
+    changes stay off on a source whose tables are replicated that way.
+
+### 5. How other products do it, and the approach taken
+
+**Generating SQL.** Hibernate's dialects, SQLAlchemy, jOOQ and Liquibase all keep a neutral model
+of a table (columns, types, nulls, keys, indexes) and render it through one dialect per database
+(type mapping, identifier quoting, identity columns, name limits). Kilnmark does the same, with
+the dialects it already has: the write node's `create` code (`WriteSql`) is the dialect, and the
+generator (`DdlWriter`) renders its model through it. So the SQL the generator shows is the SQL a
+pipeline's `create` runs: one code path, not two that drift. Alternatives, and why not:
+
+- **Ask the database for its own DDL** (PostgreSQL's `pg_get_*def`, MySQL's `SHOW CREATE TABLE`,
+  Oracle's `DBMS_METADATA.GET_DDL`, SQL Server's scripting). Exact for the same database, with
+  partitions and constraints, but it cannot translate to another database, and it copies defaults,
+  checks, partition bounds and comments as text, which can quote values (point 2). Not in this
+  record; it could come later for designers with the unmask grant, as text only.
+- **A library** (jOOQ, Liquibase). jOOQ's free edition covers open-source databases only (Oracle and
+  SQL Server need its commercial licence); Liquibase is large and its licence terms would need
+  review. A renderer of Kilnmark's own keeps ADR 0042's dependency verification simple and keeps
+  one code path with `create`.
+- **String templates per database**: rejected; they drift from what pipelines run.
+
+**Managing databases.** Database clients (DBeaver, DataGrip, pgAdmin, SQL Server Management Studio)
+show an object tree from the catalogue; every management action is a form that generates SQL,
+shown before it runs; connections are typed development, test or production, and production is
+marked clearly and asks for confirmation. Change-management tools (Bytebase, Redgate, DBmaestro,
+Atlas) treat a change as a request (its SQL, who asked, why), run review rules that flag
+destructive statements, let the environment decide the policy (development runs, production needs
+a second person), audit every change, offer an undo script where one exists, and keep a history.
+Kilnmark takes both:
+
+- **A fixed set of actions**, each a form that builds its SQL through the same dialect (point 4.3):
+  create a table, add a column, create or drop an index, drop or truncate a table. No free-form
+  change editor: SQL a person writes stays under ADR 0028. Renaming a table or column, and a
+  database's housekeeping (`ANALYZE`, `VACUUM`, statistics), are candidates for later, each added
+  through the same review as this record.
+- **Statements shown first**, with **review rules** that flag what destroys data (drop, truncate)
+  in the preview; typing the table's name confirms those. A later diff of a wanted table against
+  the live one (the Atlas pattern) would add `ALTER`s through the same rules, including type
+  narrowing, which this record does not offer.
+- **The policy follows the environment.** Until environments exist, a source is production unless
+  two admins mark it Not production (point 4.7); a production source is marked clearly on its page
+  and in every preview of a change. When environments arrive (backlog, "change approval and
+  environments"), development and test run on confirmation and production needs a second person,
+  by the same rules.
+- **Undoing.** Where the database can undo DDL (PostgreSQL, SQL Server), each operation runs in one
+  transaction; where it cannot (MySQL, MariaDB, Oracle), the preview says the change cannot be
+  undone. The preview shows an undo script where one exists without losing data (dropping an
+  index or a still-empty table it created), **as text only**: to run it, a person makes it a new
+  plan, under every control of point 4 (typed name, approval, fingerprint). The preview suggests a
+  backup before a drop or a truncate.
+- **History.** Every plan, approval and run is an audit event (point 4.6), and the source's page
+  lists its changes: what ran, who asked, who approved, and the outcome.
 
 ## What changes in ADR 0028, and what stays
 
@@ -428,6 +525,11 @@ flowchart LR
   source's settings; the mark never is. Allow changes, the pooling settings and the
   partitioning limit are keys of the source's settings, as Allow writing and Allow SQL are
   (`CommonSettings`).
+- **A foreign or linked table's preview** (a PostgreSQL foreign table, a MySQL `FEDERATED` table, a
+  view over a database link) reads rows from another server under the source's login, as the
+  source's preview always has; those rows carry this source's marks, set on this source's asset,
+  not the other server's. Count exactly refuses such tables; the preview is left as it is with the
+  never-scanned decision below.
 - **Open owner decision: a table never scanned.** The source's live preview, which Explore reuses,
   masks by the marks the catalogue holds; a table never scanned has none yet, so a steward sees its
   values. This is how the preview has always worked, and Explore does not change it. The owner may
