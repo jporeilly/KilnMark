@@ -272,12 +272,17 @@ always.
    ```
    export RUNNER_TOKEN=$(gh api -X POST repos/jporeilly/KilnMark/actions/runners/registration-token --jq .token)
    podman run -d --name kilnmark-ci-runner --restart=always --network host --security-opt label=disable \
-     -e RUNNER_TOKEN -v /srv/gh-runner:/srv/gh-runner -v /run/podman/podman.sock:/var/run/docker.sock \
+     -e RUNNER_TOKEN -e TESTCONTAINERS_HOST_OVERRIDE=10.88.0.1 \
+     -v /srv/gh-runner:/srv/gh-runner -v /run/podman/podman.sock:/var/run/docker.sock \
      localhost/kilnmark-ci-runner:2.338.2
    unset RUNNER_TOKEN
    ```
 
    On Git Bash, put `MSYS_NO_PATHCONV=1` before `podman run` so the paths are not rewritten.
+   `TESTCONTAINERS_HOST_OVERRIDE` is where the tests reach the databases they start: the gateway of
+   Podman's default network (`podman network inspect podman` shows it). Inside a Podman machine on
+   Windows with mirrored networking, published ports do not answer on `localhost`, only on the
+   container networks' gateways.
 4. Check it: `gh api repos/jporeilly/KilnMark/actions/runners` lists it as online. Its settings are
    kept in `/srv/gh-runner/runner`, so later starts need no token: `podman start kilnmark-ci-runner`
    after the machine restarts.
