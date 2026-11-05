@@ -235,16 +235,18 @@ nodes:
 
 ## The diagram
 
-The **Diagram** tab draws the flow as you write it: a box for each node, saying what it does
-(the pipeline it runs, the notice it sends, how long it waits), and an arrow for each connection,
-labelled with when it is taken:
+The **Diagram** tab draws the flow as you write it. Each node is a card, as on a pipeline's
+canvas: its type, with an icon, its id, what it does (the pipeline it runs, the notice it sends,
+how long it waits), and its connectors, `in` on the left and `out` on the right. Each connection is
+an arrow from one node's `out` to another's `in`, labelled with when it is taken:
 
 - a solid arrow, **on success**: the next node runs when this one succeeds (the default);
 - a red dashed arrow, **on failure**: it runs when this one fails;
 - a dotted arrow, **always**: it runs whether this one succeeds or fails;
 - an amber arrow with the condition: it runs when this one succeeds and the condition holds.
 
-The diagram is drawn from left to right, with each arrow routed round the nodes it passes. It
+The diagram is drawn from left to right, with each arrow in square steps round the nodes it
+passes, turning only in the gaps between them. It
 follows the text a moment after you stop typing; while the YAML cannot be read, it says so and
 keeps showing the flow as it last could be read. Zoom with the buttons in its corner; **The
 connections in words**, under it, lists every connection as a sentence.
@@ -265,13 +267,13 @@ The panel under the diagram has the same tabs as a pipeline's:
   chosen.
 - **Run**, **History** and **Versions** show the latest run, every run and every saved version.
 
-![A flow's page: the diagram, with a node that runs a pipeline joined to a notice and to a second pipeline by two amber connections labelled with their conditions; under it the Nodes tab, a table giving each node, what it does, what it runs after, and its status, start, time and result in the latest run](images/flow-diagram-edit.png)
+![A flow's page: the diagram, with the node copy, which runs a pipeline, joined from its out connector to a notice and to a second pipeline by two amber connections labelled with their conditions, and to a closing notice by a red dashed connection on failure that runs round the nodes between; the second pipeline joins the closing notice on success. Under it the Nodes tab, a table giving each node, what it does, what it runs after, and its status, start, time and result in the latest run](images/flow-diagram-edit.png)
 
 - **Add a node.** In the **Nodes** tab, choose its type (and, for one that runs a pipeline, the
   pipeline), then **Add node**. It gets an id from its type or pipeline, and the settings it starts
   with, and its settings open; the problems under the flow say what else it needs, such as a `sql`
   node's source.
-- **Connect two nodes.** Drag from a node's right edge to another node: that connection is taken
+- **Connect two nodes.** Drag from a node's `out` connector to another node: that connection is taken
   when the first succeeds. Or, in the **Nodes** tab, choose **From**, **To** and when it is taken,
   then **Connect**. A connection that would join a node to itself, make a loop or repeat one already
   there is refused, and the note under the diagram says why.
@@ -389,7 +391,7 @@ A run page is laid out as a pipeline run's, in this order:
   item's start to its last item's end. Viewers see the items' values when they
   are written in the flow, not when they came from the run's values.
 
-![The Diagram, Run timeline and Nodes panels of a run page that succeeded: the diagram shows the two pipeline nodes outlined green as Succeeded and the notices dashed as Skipped; the run timeline nests the flow, its two pipeline nodes (each with its pipeline's name and time) and, under each, its pipeline's nodes, with the flow's details below; the Nodes table gives each node's status, start, time taken, rows written and score, with a link to its pipeline run](images/flow-run-page.png)
+![The Diagram, Run timeline and Nodes panels of a run page that succeeded: the diagram shows each node as a card, the two pipeline nodes and the closing notice outlined green as Succeeded and the other notice dashed as Skipped, each with its status in its card; the run timeline nests the flow, its two pipeline nodes (each with its pipeline's name and time) and, under each, its pipeline's nodes, with the flow's details below; the Nodes table gives each node's status, start, time taken, rows written and score, with a link to its pipeline run](images/flow-run-page.png)
 
 A node's message says that a pipeline failed and where to look, never why: why can quote values
 from the data, and the pipeline run's own page shows it to those who may see it.

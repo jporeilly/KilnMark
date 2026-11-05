@@ -238,10 +238,15 @@ moves the unique index to `(flow_run_id, flow_node, coalesce(flow_item, -1))`.
   Library (ADR 0043).
 - **F4a, built.** `FlowDiagram` (ui/src/flows): the flow read from its YAML on the page
   (`readFlowGraph`, which reads only what it draws; the server's check says whether it is valid),
-  nodes as boxes with what each does, connections as labelled arrows (solid on success, red dashed
-  on failure, dotted always, amber with the condition's text), laid out left to right by dagre
-  with room made for each label and each connection drawn along the route dagre found, so none
-  crosses a node it does not join; `when` is read as the server reads it, in any case. The wheel
+  nodes as cards drawn as a pipeline's are (canvas.css `.cv-node`: type and icon, id, what it
+  does, and `in` and `out` connectors), connections as labelled arrows from `out` to `in` (solid on
+  success, red dashed on failure, dotted always, amber with the condition's text), laid out left to
+  right by dagre with room made for each label, each connection drawn in square steps through the
+  route dagre found (`route.ts`, `steps`), turning only in the gaps between columns, so none
+  crosses a node it does not join (dagre routes from a box's middle, so its bends in those gaps,
+  and the labels, move down to the connectors' height; a second connection between the same two
+  nodes is bracketed round its label at its own height); two unseen points at the routes' corners
+  make fitting the view take in a route that runs round the outside; `when` is read as the server reads it, in any case. The wheel
   scrolls the page, zoom is by buttons or pinch, and a list under it says every connection in
   words. On the flow page it
   follows the text 400 ms after typing stops, keeping the last flow it could read. On the run page

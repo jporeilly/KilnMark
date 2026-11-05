@@ -3,71 +3,53 @@
   height: 380px;
 }
 
-.fd-node {
-  width: 220px;
-  background: var(--km-surface);
-  color: var(--km-ink);
-  border: 1px solid var(--km-border-control);
-  border-top: 4px solid var(--km-muted);
-  border-radius: 8px;
-  font-size: 12px;
+/* A node is drawn as a pipeline's (canvas.css, .cv-node); its icon square takes its type's colour. */
+.fd-card.fd-type-run-pipeline .cv-node-icon,
+.fd-card.fd-type-for-each .cv-node-icon {
+  background: var(--km-tint-blue-bg);
+  color: var(--km-tint-blue-fg);
 }
 
-.fd-node.fd-type-run-pipeline,
-.fd-node.fd-type-for-each {
-  border-top-color: var(--km-link);
+.fd-card.fd-type-sql .cv-node-icon {
+  background: var(--km-tint-teal-bg);
+  color: var(--km-tint-teal-fg);
+}
+
+.fd-card.fd-type-notify .cv-node-icon {
+  background: var(--km-tint-amber-bg);
+  color: var(--km-tint-amber-fg);
+}
+
+.fd-card.fd-type-wait .cv-node-icon {
+  background: var(--km-tint-slate-bg);
+  color: var(--km-tint-slate-fg);
+}
+
+.fd-card.fd-type-stop .cv-node-icon {
+  background: var(--km-tint-red-bg);
+  color: var(--km-tint-red-fg);
 }
 
 /* A for-each node: a second edge behind it, a stack of runs. */
-.fd-node.fd-type-for-each {
-  box-shadow: 4px 4px 0 -1px var(--km-surface), 4px 4px 0 0 var(--km-border-control);
-}
-
-.fd-node.fd-type-stop {
-  border-top-color: var(--km-bad);
-}
-
-.fd-node.fd-type-notify,
-.fd-node.fd-type-wait {
-  border-top-color: var(--km-warn);
-}
-
-.fd-node.fd-type-sql {
-  border-top-color: var(--km-good);
-}
-
-.fd-node-head {
-  display: grid;
-  padding: 6px 10px 2px;
-}
-
-.fd-node-summary {
-  padding: 0 10px 6px;
-  color: var(--km-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.fd-node-status {
-  padding: 0 10px 6px;
+.fd-card.fd-type-for-each {
+  box-shadow: 4px 4px 0 -1px var(--km-surface), 4px 4px 0 0 var(--km-border-control), var(--km-shadow-card);
 }
 
 /* How a node stands in a run: the chip says it in words, the outline repeats it. */
-.fd-node.fd-status-running {
+.fd-card.fd-status-running {
   box-shadow: 0 0 0 2px var(--km-tint-blue-fg);
 }
 
-.fd-node.fd-status-succeeded {
+.fd-card.fd-status-succeeded {
   box-shadow: 0 0 0 2px var(--km-good);
 }
 
-.fd-node.fd-status-failed {
+.fd-card.fd-status-failed {
   box-shadow: 0 0 0 2px var(--km-bad);
 }
 
-.fd-node.fd-status-skipped,
-.fd-node.fd-status-cancelled {
+.fd-card.fd-status-skipped,
+.fd-card.fd-status-cancelled {
   opacity: 0.75;
   border-style: dashed;
 }
@@ -132,11 +114,6 @@
 .fd-editable .react-flow__node:focus-visible {
   outline: 3px solid var(--km-focus);
   outline-offset: 3px;
-}
-
-.fd-editable .react-flow__node.selected .fd-node {
-  border-color: var(--km-accent);
-  box-shadow: 0 0 0 2px var(--km-accent);
 }
 
 .fd-editable .react-flow__edge:focus-visible .react-flow__edge-path,
@@ -216,13 +193,6 @@
 .fd-words ul {
   margin: 4px 0 0;
   padding-left: 1.2em;
-}
-
-/* The diagram's nodes keep an outline where colours are forced. */
-@media (forced-colors: active) {
-  .fd-node {
-    border: 1px solid CanvasText;
-  }
 }
 
 /* A for-each node's items on the run page. */

@@ -7,6 +7,11 @@ details.
 
 ### What's new
 
+- **Flow nodes look like pipeline nodes.** On a flow's diagram, each node is now a card as on a
+  pipeline's canvas: its type with an icon, its id, what it does, and `in` and `out` connectors.
+  Connections run in square steps from one node's `out` to the next one's `in`, never from a
+  corner, and the diagram fits every connection, even one that runs round the others.
+  ([The diagram](docs/guide/flows.md#the-diagram))
 - **Run timelines, nested as the run went** (docs/guide/flows.md, docs/guide/pipelines.md). A flow
   run's page has a **Run timeline** in place of the run chart: the flow, then each node, each node
   opening into its pipeline run's nodes, and a `for-each` node into its items, each with its value,
@@ -168,6 +173,15 @@ details.
 
 ### Details
 
+- **Flow diagram cards** (docs/design/flows.md, F4a). `FlowDiagram` draws a node with the pipeline
+  canvas's `.cv-node` styles (the icon square in the node type's tint) and `in`/`out` ring
+  connectors; a node's run status is in its foot. A laid-out connection is drawn in rounded square
+  steps from connector to connector through dagre's route (`route.ts`: `steps` turns only in the
+  gaps between columns, and brackets a second connection between the same two nodes round its label;
+  `roundedPath`), its bends in those gaps and its label moved to the connectors' height; connections
+  between nodes placed by hand still bow apart. Two unseen 1-pixel points at the corners of the
+  routes let fitting the view take in a route round the outside. The hint under the Nodes tab says
+  to drag from a node's out connector.
 - **A flow node's `priority`** (ADR 0041, amended; docs/design/flow-controls.md, C5). `run-pipeline`
   and `for-each` nodes take `priority: high | normal | low` (any case), checked when saved; `sql`
   and the other types refuse it, since a sql node never waits in the job queue. Migration V33 adds

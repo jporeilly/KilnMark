@@ -17,17 +17,36 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import { Graph, layout } from "@dagrejs/dagre";
+import { IconBell, IconHandStop, IconHourglass, IconPlayerPlay, IconRepeat, IconSql, IconBox } from "@tabler/icons-react";
 import "@xyflow/react/dist/style.css";
 import type { FlowNodeStatus } from "../api";
 import { useColourScheme } from "../theme/appearance";
 import { FlowStatus, flowStatusWords } from "./RunFlow";
 import { bowOffsets, connectionSentence, TYPE_WORDS, whenWords, type ConnectionKind, type FlowGraph, type FlowGraphNode, type Point } from "./graph";
+import { inColumn, roundedPath, steps, type Columns } from "./route";
+import "../pipelines/canvas/canvas.css";
 import "./flows.css";
 
-const WIDTH = 220;
-const HEIGHT = 74;
-const STATUS_ROW = 26;
+/** A node is drawn as a pipeline's is (NodeCard): the same width, head, ports and foot. */
+const WIDTH = 212;
+const HEIGHT = 118;
+/** The foot that holds a node's status in a run (its chip and padding). */
+const STATUS_ROW = 29;
+/** How far down a card its `in` and `out` connectors are: the middle of its ports row. */
+const PORT_Y = 102;
 const LABEL_HEIGHT = 20;
+/** How round a connection's corners are, as on a pipeline's canvas. */
+const CORNER = 8;
+
+/** Each node type's icon. */
+const ICONS: Record<string, typeof IconBox> = {
+  "run-pipeline": IconPlayerPlay,
+  "for-each": IconRepeat,
+  notify: IconBell,
+  wait: IconHourglass,
+  stop: IconHandStop,
+  sql: IconSql,
+};
 
 /** About how wide a connection's label is drawn (11px semibold, with its padding). */
 const labelWidth = (text: string) => Math.ceil(text.length * 6.6) + 16;
@@ -40,32 +59,60 @@ export type FlowSelection = { node: string } | { connection: number; from: strin
 
 type NodeData = { node: FlowGraphNode; status: FlowNodeStatus | null };
 type FlowCard = Node<NodeData, "flowNode">;
+/** An unseen point at a corner of the routes, so fitting the view takes in every connection, not only the nodes. */
+type FitAnchor = Node<Record<string, never>, "fitAnchor">;
 type LabelData = { label: string; kind: ConnectionKind; full: string; index: number };
-/** A connection drawn along the route the layout found, its label where the layout made room for it. */
-type RouteData = LabelData & { points: Point[]; labelAt: Point };
+/**
+ * A connection between nodes where the layout put them: the route it found (its first and last
+ * points on the boxes' borders) and the label where it made room for one.
+ */
+type RouteData = LabelData & { points: Point[]; labelAt: Point; columns: Columns; bracket: number };
 type RoutedEdge = Edge<RouteData, "routed">;
 /** A connection between nodes placed by hand: bowed to one side when two nodes have several. */
 type BowData = LabelData & { offset: number };
 type BowedEdge = Edge<BowData, "bowed">;
 
-function FlowNodeBox({ data }: NodeProps<FlowCard>) {
+/**
+ * A flow node, drawn as a pipeline's node is: its type's icon and words, its id, what it does,
+ * and a row with its connectors, `in` on the left and `out` on the right. In a run, its status
+ * is in the foot.
+ */
+function FlowNodeBox({ data, selected }: NodeProps<FlowCard>) {
   const { node, status } = data;
+  const Icon = ICONS[node.type] ?? IconBox;
   return (
-    <div className={`fd-node fd-type-${node.type}${status ? ` fd-status-${status}` : ""}`}>
-      <Handle type="target" position={Position.Left} className="pl-handle" />
-      <div className="fd-node-head">
-        <span className="pl-node-id mono">{node.id}</span>
-        <span className="pl-node-type">{TYPE_WORDS[node.type] ?? node.type}</span>
+    <div className={`cv-node fd-card fd-type-${node.type}${status ? ` fd-status-${status}` : ""}${selected ? " is-selected" : ""}`}>
+      <div className="cv-node-head">
+        <span className="cv-node-icon">
+          <Icon size={18} stroke={1.8} aria-hidden="true" />
+        </span>
+        <span className="cv-node-kind">{TYPE_WORDS[node.type] ?? node.type}</span>
       </div>
-      <div className="fd-node-summary small" title={node.summary}>
+      <div className="cv-node-id mono">{node.id}</div>
+      <div className="cv-node-summary" title={node.summary}>
         {node.summary}
       </div>
+      <div className="cv-node-ports">
+        <ul className="cv-port-list">
+          <li className="cv-port cv-port-in">
+            <Handle type="target" position={Position.Left} className="cv-handle" />
+            in
+          </li>
+        </ul>
+        <ul className="cv-port-list cv-port-list-out">
+          <li className="cv-port cv-port-out">
+            out
+            <Handle type="source" position={Position.Right} className="cv-handle" />
+          </li>
+        </ul>
+      </div>
       {status && (
-        <div className="fd-node-status">
-          <FlowStatus status={status} />
+        <div className="cv-node-foot">
+          <div className="cv-node-chips">
+            <FlowStatus status={status} />
+          </div>
         </div>
       )}
-      <Handle type="source" position={Position.Right} className="pl-handle" />
     </div>
   );
 }
@@ -84,13 +131,29 @@ function EdgeLabel({ data, at }: { data: LabelData; at: Point }) {
   );
 }
 
-function Routed({ data, markerEnd, interactionWidth }: EdgeProps<RoutedEdge>) {
+/**
+ * A connection where the layout put its nodes: in steps, as on a pipeline's canvas, from the node's
+ * `out` connector to the next node's `in`, through the layout's route. It turns only in the gaps
+ * between columns (between neighbours, in the gap the layout kept for its label, where the label
+ * goes), so it never crosses a node it does not join.
+ */
+function Routed({ data, markerEnd, interactionWidth, sourceX, sourceY, targetX, targetY }: EdgeProps<RoutedEdge>) {
   if (!data) return null;
-  const [first, ...rest] = data.points;
-  const path = `M ${first.x} ${first.y} ${rest.map((p) => `L ${p.x} ${p.y}`).join(" ")}`;
+  if (targetX <= sourceX + 2 * CORNER) {
+    // Backwards (a loop, while the YAML is being written, which the check refuses): a plain curve.
+    const mid = { x: (sourceX + targetX) / 2, y: Math.min(sourceY, targetY) - 60 };
+    const path = `M ${sourceX} ${sourceY} C ${sourceX + 60} ${mid.y} ${targetX - 60} ${mid.y} ${targetX} ${targetY}`;
+    return (
+      <>
+        <BaseEdge path={path} markerEnd={markerEnd} interactionWidth={interactionWidth} />
+        <EdgeLabel data={data} at={mid} />
+      </>
+    );
+  }
+  const route = [{ x: sourceX, y: sourceY }, ...data.points.slice(1, -1), { x: targetX, y: targetY }];
   return (
     <>
-      <BaseEdge path={path} markerEnd={markerEnd} interactionWidth={interactionWidth} />
+      <BaseEdge path={roundedPath(steps(route, data.columns, data.bracket), CORNER)} markerEnd={markerEnd} interactionWidth={interactionWidth} />
       <EdgeLabel data={data} at={data.labelAt} />
     </>
   );
@@ -113,7 +176,10 @@ function Bowed({ data, markerEnd, sourceX, sourceY, targetX, targetY, interactio
   );
 }
 
-const nodeTypes = { flowNode: FlowNodeBox };
+/** A fit point: nothing to see. */
+const FitPoint = () => null;
+
+const nodeTypes = { flowNode: FlowNodeBox, fitAnchor: FitPoint };
 const edgeTypes = { routed: Routed, bowed: Bowed };
 
 const markerFor = (kind: ConnectionKind) => ({
@@ -122,15 +188,16 @@ const markerFor = (kind: ConnectionKind) => ({
 });
 
 /**
- * A flow as a graph: a box per node with what it does, a labelled arrow per connection (solid on
- * success, dashed on failure, dotted always, and a condition's text). Without a `layout:` block it
- * is laid out left to right with room for each label, each connection routed round the nodes it
- * passes; with one, nodes are where it puts them (any it does not name, where the layout would),
- * and connections between the same two nodes bow apart. With `statuses`, each node shows how it
+ * A flow as a graph: a card per node, drawn as a pipeline's node is, and a labelled arrow per
+ * connection from a node's `out` connector to another's `in` (solid on success, dashed on failure,
+ * dotted always, and a condition's text). Without a `layout:` block it is laid out left to right
+ * with room for each label, each connection drawn in steps as on a pipeline's canvas; with one,
+ * nodes are where it puts them (any it does not name, where the layout would), and connections
+ * between the same two nodes bow apart. With `statuses`, each node shows how it
  * stands in a run, in words and colour. The list under it says the same in sentences.
  *
  * With `editable`, nodes can be dragged (`onMove` is given every node's position, so the picture
- * stays as it is seen), connections drawn from a node's right handle to another's left
+ * stays as it is seen), connections drawn from a node's `out` connector to another's `in`
  * (`onConnect`), and a node or connection chosen (`onSelect`); changing them is for the page.
  */
 export default function FlowDiagram({
@@ -158,7 +225,7 @@ export default function FlowDiagram({
   const [moving, setMoving] = useState(false);
   // The layout depends only on the flow: a run's page asks for statuses every two seconds, and
   // only the cards change with them.
-  const { where, routes } = useMemo(() => {
+  const { where, routes, columns } = useMemo(() => {
     const g = new Graph({ multigraph: true });
     g.setGraph({ rankdir: "LR", nodesep: 30, edgesep: 20, ranksep: 60, marginx: 16, marginy: 16 });
     for (const n of graph.nodes) g.setNode(n.id, { width: WIDTH, height });
@@ -171,8 +238,17 @@ export default function FlowDiagram({
       const p = g.node(n.id);
       where[n.id] = graph.positions[n.id] ?? { x: p.x - WIDTH / 2, y: p.y - height / 2 };
     }
-    const routes = graph.connections.map((c, i) => g.edge({ v: c.from, w: c.to, name: `c${i}` }) as { points: Point[]; x: number; y: number });
-    return { where, routes };
+    // Dagre routes from the middle of each box; the connectors are lower, in the ports row. The bends
+    // in the gaps between columns, where the labels are, move down by as much, so a label stays on
+    // its line; a bend beside a column's nodes keeps the height dagre gave it to clear them.
+    const down = PORT_Y - height / 2;
+    const columns: Columns = graph.nodes.map((n) => [where[n.id].x, where[n.id].x + WIDTH]);
+    const routes = graph.connections.map((c, i) => {
+      const r = g.edge({ v: c.from, w: c.to, name: `c${i}` }) as { points: Point[]; x: number; y: number };
+      const points = r.points.map((p) => (inColumn(p.x, columns) ? p : { x: p.x, y: p.y + down }));
+      return { points, x: r.x, y: inColumn(r.x, columns) ? r.y : r.y + down };
+    });
+    return { where, routes, columns };
   }, [graph, height]);
 
   const links = useMemo(() => {
@@ -192,9 +268,31 @@ export default function FlowDiagram({
       // The layout's routes hold only while nodes are where it put them.
       return byHand || moving
         ? { ...common, type: "bowed", data: { ...words, offset: offsets[i] } }
-        : { ...common, type: "routed", data: { ...words, points: routes[i].points, labelAt: { x: routes[i].x, y: routes[i].y } } };
+        : { ...common, type: "routed", data: { ...words, points: routes[i].points, labelAt: { x: routes[i].x, y: routes[i].y }, columns, bracket: labelWidth(words.label) / 2 + CORNER } };
     });
-  }, [graph, routes, byHand, moving, selected]);
+  }, [graph, routes, columns, byHand, moving, selected]);
+
+  // The layout may take a connection round the outside of the nodes: two unseen points at the corners
+  // of every route make fitting the view take them in.
+  const anchors = useMemo((): FitAnchor[] => {
+    if (byHand) return [];
+    const all = routes.flatMap((r) => r.points);
+    if (all.length === 0) return [];
+    const xs = all.map((p) => p.x);
+    const ys = all.map((p) => p.y);
+    const corner = (id: string, x: number, y: number): FitAnchor => ({
+      id,
+      type: "fitAnchor",
+      position: { x, y },
+      data: {},
+      // Drawn, so it is measured and fitting counts it, but never seen or read out.
+      style: { visibility: "hidden", width: 1, height: 1 },
+      selectable: false,
+      draggable: false,
+      focusable: false,
+    });
+    return [corner("__fit-min", Math.min(...xs), Math.min(...ys)), corner("__fit-max", Math.max(...xs), Math.max(...ys))];
+  }, [routes, byHand]);
 
   const cards = useMemo(
     () =>
@@ -222,7 +320,9 @@ export default function FlowDiagram({
   const keyTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(keyTimer.current), []);
   // Choosing (by click, or Enter on a focused node or connection) is the page's to keep.
-  const onNodesChange = (changes: NodeChange<FlowCard>[]) => {
+  const onNodesChange = (all: NodeChange<FlowCard | FitAnchor>[]) => {
+    // The fit points are not the flow's: nothing about them is kept.
+    const changes = all.filter((c) => !("id" in c) || !c.id.startsWith("__fit-")) as NodeChange<FlowCard>[];
     const chosen = changes.find((c) => c.type === "select" && c.selected);
     if (chosen && "id" in chosen) onSelect?.({ node: chosen.id });
     if (!dragging.current) {
@@ -253,8 +353,8 @@ export default function FlowDiagram({
   return (
     <>
       <div className={`dg-frame fd-frame${editable ? " fd-editable" : ""}`} role="group" aria-label={label}>
-        <ReactFlow
-          nodes={nodes}
+        <ReactFlow<FlowCard | FitAnchor, RoutedEdge | BowedEdge>
+          nodes={[...nodes, ...anchors]}
           edges={links}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
