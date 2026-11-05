@@ -1,6 +1,9 @@
 -- The library (ADR 0043): pipelines and flows added from Kilnmark's samples are marked, so the
 -- Library page lists them and the Pipelines and Flows pages, which hold a team's own work, do not.
 -- NULL is a team's own pipeline or flow; 'sample' one added from the samples.
+
+SET search_path = kilnmark, public;
+
 ALTER TABLE pipeline ADD COLUMN library text CHECK (library IS NULL OR library = 'sample');
 ALTER TABLE flow ADD COLUMN library text CHECK (library IS NULL OR library = 'sample');
 

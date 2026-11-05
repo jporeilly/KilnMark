@@ -447,8 +447,8 @@ public class Samples {
         String yaml = setupYaml(name, schema);
         String message = "The sample tables, in " + name + "." + schema;
         if (existing == null) {
-            pipelines.create(new PipelineViews.NewPipeline(SETUP, "Sample tables", null, yaml, message), by, sights);
-            pipelineStore.setLibrary(SETUP, LIBRARY);
+            pipelines.create(new PipelineViews.NewPipeline(SETUP, "Sample tables", null, yaml, message), by, sights,
+                LIBRARY);
         } else {
             // Saved over the version read above only: one saved since is not overwritten (409).
             pipelines.save(SETUP, existing.latestVersion(), new PipelineViews.PipelineChange(yaml, message, null, null),
@@ -560,9 +560,8 @@ public class Samples {
             try {
                 String yaml = withSources(s.yaml(), mapping);
                 if ("flow".equals(s.type())) {
-                    flows.create(yaml, "Added from the samples (" + s.file() + ")", by, role,
-                        sights != null && sights.mayUnmask());
-                    flowStore.setLibrary(s.name(), LIBRARY);
+                    flows.createInLibrary(yaml, "Added from the samples (" + s.file() + ")", by, role,
+                        sights != null && sights.mayUnmask(), LIBRARY);
                     Boolean valid = flowStore.summaries().stream().filter(f -> f.flow().name().equals(s.name()))
                         .map(FlowStore.Summary::valid).findFirst().orElse(null);
                     out.add(new Outcome(s.name(), s.file(), "added", null, valid));
@@ -571,8 +570,7 @@ public class Samples {
                 }
                 PipelineViews.PipelineDetail d = pipelines.create(new PipelineViews.NewPipeline(s.name(), null, null,
                     schema == null ? yaml : withTables(yaml, schema), "Added from the samples (" + s.file() + ")"), by,
-                    sights);
-                pipelineStore.setLibrary(s.name(), LIBRARY);
+                    sights, LIBRARY);
                 Boolean valid = d.latest() == null ? null : d.latest().valid();
                 out.add(new Outcome(s.name(), s.file(), "added", null, valid));
                 added++;
@@ -580,8 +578,9 @@ public class Samples {
                 if (e.getResponse().getStatus() == Response.Status.CONFLICT.getStatusCode()) {
                     out.add(new Outcome(s.name(), s.file(), "exists", "already there: left as it is", null));
                 } else if (e.getResponse().getStatus() == Response.Status.FORBIDDEN.getStatusCode()) {
-                    out.add(new Outcome(s.name(), s.file(), "skipped", "it reads with a query: only a designer who "
-                        + "may see unmasked values adds it", null));
+                    out.add(new Outcome(s.name(), s.file(), "skipped", ("flow".equals(s.type())
+                        ? "it runs SQL" : "it reads with a query") + ": only a designer who may see unmasked values "
+                        + "adds it", null));
                 } else {
                     out.add(failed(s, e.getResponse().getEntity() instanceof io.kilnmark.server.api.ApiError a
                         ? a.error() : e.getMessage(), e));

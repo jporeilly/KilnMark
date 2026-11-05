@@ -374,12 +374,21 @@ public class FlowService {
      */
     public FlowStore.Flow save(String yaml, String message, String by, AccessRole role, boolean mayUnmask,
                                Integer expected) {
-        return save(yaml, message, by, role, mayUnmask, expected, null, false);
+        return save(yaml, message, by, role, mayUnmask, expected, null, false, null);
     }
 
     /** Saves a new flow as version 1; 409 when a flow with the YAML's name exists. */
     public FlowStore.Flow create(String yaml, String message, String by, AccessRole role, boolean mayUnmask) {
-        return save(yaml, message, by, role, mayUnmask, null, null, true);
+        return save(yaml, message, by, role, mayUnmask, null, null, true, null);
+    }
+
+    /**
+     * As {@link #create}, in the library {@code library} ({@code sample}, ADR 0043), marked in the
+     * same transaction. Only the samples call it: the flows API never sets the mark.
+     */
+    public FlowStore.Flow createInLibrary(String yaml, String message, String by, AccessRole role, boolean mayUnmask,
+                                          String library) {
+        return save(yaml, message, by, role, mayUnmask, null, null, true, library);
     }
 
     /**
@@ -394,11 +403,11 @@ public class FlowService {
         if (store.find(name).isEmpty()) {
             throw fail(Response.Status.NOT_FOUND, "No flow called " + name);
         }
-        return save(yaml, message, by, role, mayUnmask, expected, name, false);
+        return save(yaml, message, by, role, mayUnmask, expected, name, false, null);
     }
 
     private FlowStore.Flow save(String yaml, String message, String by, AccessRole role, boolean mayUnmask,
-                                Integer expected, String named, boolean create) {
+                                Integer expected, String named, boolean create, String library) {
         if (!role.atLeast(AccessRole.DESIGNER)) {
             throw fail(Response.Status.FORBIDDEN, "Saving a flow takes the designer role");
         }
@@ -426,7 +435,7 @@ public class FlowService {
         boolean exists = !create && store.find(check.name()).isPresent();
         try {
             return store.save(check.name(), expected, !exists, check.name(), description, yaml, message, by,
-                check.valid(), problems);
+                check.valid(), problems, library);
         } catch (FlowStore.Exists e) {
             throw fail(Response.Status.CONFLICT, "A flow called " + check.name() + " exists already");
         } catch (FlowStore.Changed e) {

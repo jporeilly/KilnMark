@@ -194,7 +194,12 @@ export function PipelinePage({
 
   // A new pipeline from a Library template: its YAML, under the name being given, with its <...>
   // gaps for the check to point at until they are filled in.
+  // Only while the starter is untouched (but for the name being typed): nothing typed is replaced.
+  // Until it is known whether the template applies, the usual starter's sources are not filled in.
   const [fromTemplate, setFromTemplate] = useState<string | null>(null);
+  const [templateState, setTemplateState] = useState<"none" | "pending" | "applied" | "failed">(
+    isNew && template ? "pending" : "none",
+  );
   useEffect(() => {
     if (!isNew || !template) return;
     let live = true;
@@ -205,12 +210,21 @@ export function PipelinePage({
         if (!live) return;
         if (!t) {
           setFromTemplate(`There is no pipeline template ${template}: starting from the usual one.`);
+          setTemplateState("failed");
           return;
         }
-        setYaml(renamed(t.yaml, "my-pipeline"));
-        setFromTemplate(`Started from the template ${t.description ?? t.name} Replace each <…> with your own.`);
+        setYaml((y) => {
+          const n = /^name:\s*(.*)$/m.exec(y)?.[1] ?? "my-pipeline";
+          return y === starterYaml(n) ? renamed(t.yaml, n) : y;
+        });
+        setFromTemplate(`Started from the template ${t.name}. Replace each <…> with your own.`);
+        setTemplateState("applied");
       })
-      .catch((e: Error) => live && setFromTemplate(`The template could not be read: ${e.message}`));
+      .catch((e: Error) => {
+        if (!live) return;
+        setFromTemplate(`The template could not be read (${e.message}): starting from the usual one.`);
+        setTemplateState("failed");
+      });
     return () => {
       live = false;
     };
@@ -219,7 +233,7 @@ export function PipelinePage({
   // A new pipeline's template names the person's own sources once they are known, unless the
   // YAML has been changed by then. Without sources it keeps its placeholders.
   useEffect(() => {
-    if (!isNew || template) return;
+    if (!isNew || templateState === "pending" || templateState === "applied") return;
     let live = true;
     findStarterPicks()
       .then((picks) => {
@@ -233,7 +247,7 @@ export function PipelinePage({
     return () => {
       live = false;
     };
-  }, [isNew, template]);
+  }, [isNew, templateState]);
 
   // Keep the runs table current while a run is queued or running.
   const active = runs?.some((r) => r.status === "queued" || r.status === "running");

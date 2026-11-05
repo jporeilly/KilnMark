@@ -145,7 +145,7 @@ details.
 
 ### Details
 
-- **The Library** (ADR 0043). Migration V33 adds `library` to `pipeline` and `flow`: `sample` for
+- **The Library** (ADR 0043). Migration V32 adds `library` to `pipeline` and `flow`: `sample` for
   one added from the samples, set by the server, never by the YAML; samples added before are marked
   by their fixed names, never by a pattern. `GET /api/v1/pipelines`, `/flows` and each one's detail
   give `library`. `POST /api/v1/samples` adds the sample flows after their pipelines, skipping one

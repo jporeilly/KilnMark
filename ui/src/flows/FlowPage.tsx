@@ -178,7 +178,12 @@ export function FlowPage({
 
   // A new flow from a Library template: its YAML, named my-flow, with its <...> gaps for the check
   // to point at until they are filled in.
+  // Only while the starter is untouched: nothing typed is replaced. Until it is known whether the
+  // template applies, the usual starter does not pick a pipeline.
   const [fromTemplate, setFromTemplate] = useState<string | null>(null);
+  const [templateState, setTemplateState] = useState<"none" | "pending" | "applied" | "failed">(
+    isNew && template ? "pending" : "none",
+  );
   useEffect(() => {
     if (!isNew || !template) return;
     let live = true;
@@ -189,12 +194,18 @@ export function FlowPage({
         if (!live) return;
         if (!t) {
           setFromTemplate(`There is no flow template ${template}: starting from the usual one.`);
+          setTemplateState("failed");
           return;
         }
-        setYaml(t.yaml.replace(/^name:.*$/m, "name: my-flow"));
-        setFromTemplate(`Started from the template ${t.description ?? t.name} Replace each <…> with your own.`);
+        setYaml((y) => (y === starterFlow() ? t.yaml.replace(/^name:.*$/m, "name: my-flow") : y));
+        setFromTemplate(`Started from the template ${t.name}. Replace each <…> with your own.`);
+        setTemplateState("applied");
       })
-      .catch((e: Error) => live && setFromTemplate(`The template could not be read: ${e.message}`));
+      .catch((e: Error) => {
+        if (!live) return;
+        setFromTemplate(`The template could not be read (${e.message}): starting from the usual one.`);
+        setTemplateState("failed");
+      });
     return () => {
       live = false;
     };
@@ -203,9 +214,10 @@ export function FlowPage({
   // A new flow's starter runs one of the person's pipelines once they are known, unless the YAML
   // has been changed by then.
   useEffect(() => {
-    if (!isNew || template || !pipelines || pipelines.length === 0) return;
+    if (!isNew || templateState === "pending" || templateState === "applied" || !pipelines || pipelines.length === 0)
+      return;
     setYaml((y) => (y === starterFlow() ? starterFlow(pipelines[0]) : y));
-  }, [isNew, pipelines, template]);
+  }, [isNew, pipelines, templateState]);
 
   // Keep the runs table current while a run is queued or running. Only the lists: reloading the
   // flow would replace text being edited, and take in someone else's save without the conflict.

@@ -141,18 +141,6 @@ public class PipelineStore {
             Db.instant(rs.getTimestamp(6)), rs.getString(7), Db.instant(rs.getTimestamp(8)), rs.getString(9));
     }
 
-    /** Puts a pipeline in the library ({@code sample}) or takes it out (null) (ADR 0043). */
-    public void setLibrary(String name, String library) {
-        db.tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement("UPDATE pipeline SET library = ? WHERE name = ?")) {
-                ps.setString(1, library);
-                ps.setString(2, name);
-                ps.executeUpdate();
-            }
-            return null;
-        });
-    }
-
     /**
      * Adds a pipeline with its first version.
      *
@@ -160,15 +148,27 @@ public class PipelineStore {
      */
     public Pipeline create(String name, String displayName, String description, String by, String yaml, String message,
                            boolean valid, String problems) {
+        return create(name, displayName, description, by, yaml, message, valid, problems, null);
+    }
+
+    /**
+     * Adds a pipeline with its first version, in the library {@code library} ({@code sample}, ADR
+     * 0043) or none (null), in one transaction: a sample is never left saved but unmarked.
+     *
+     * @throws Exists when the name is taken
+     */
+    public Pipeline create(String name, String displayName, String description, String by, String yaml, String message,
+                           boolean valid, String problems, String library) {
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.pipeline (name, display_name, "
-                + "description, latest_version, created_by, updated_by) VALUES (?, ?, ?, 1, ?, ?) "
+                + "description, latest_version, created_by, updated_by, library) VALUES (?, ?, ?, 1, ?, ?, ?) "
                 + "ON CONFLICT (name) DO NOTHING")) {
                 ps.setString(1, name);
                 ps.setString(2, displayName);
                 ps.setString(3, description);
                 ps.setString(4, by);
                 ps.setString(5, by);
+                ps.setString(6, library);
                 if (ps.executeUpdate() == 0) {
                     throw new Exists();
                 }

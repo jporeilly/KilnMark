@@ -112,18 +112,6 @@ public class FlowStore {
             rs.getTimestamp(6).toInstant(), rs.getString(7), rs.getTimestamp(8).toInstant(), rs.getString(9));
     }
 
-    /** Puts a flow in the library ({@code sample}) or takes it out (null) (ADR 0043). */
-    public void setLibrary(String name, String library) {
-        db.tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement("UPDATE flow SET library = ? WHERE name = ?")) {
-                ps.setString(1, library);
-                ps.setString(2, name);
-                ps.executeUpdate();
-            }
-            return null;
-        });
-    }
-
     public Optional<Flow> find(String name) {
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("SELECT " + FLOW_COLUMNS
@@ -202,17 +190,28 @@ public class FlowStore {
      */
     public Flow save(String name, Integer expected, boolean create, String displayName, String description, String yaml,
                      String message, String by, boolean valid, String problems) {
+        return save(name, expected, create, displayName, description, yaml, message, by, valid, problems, null);
+    }
+
+    /**
+     * As {@link #save(String, Integer, boolean, String, String, String, String, String, boolean, String)};
+     * a flow created here goes in the library {@code library} ({@code sample}, ADR 0043) or none
+     * (null), in the same transaction. A later version leaves the mark as it is.
+     */
+    public Flow save(String name, Integer expected, boolean create, String displayName, String description, String yaml,
+                     String message, String by, boolean valid, String problems, String library) {
         return db.tx(c -> {
             int next;
             if (create) {
                 try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.flow (name, display_name, "
-                    + "description, latest_version, created_by, updated_by) VALUES (?, ?, ?, 1, ?, ?) "
+                    + "description, latest_version, created_by, updated_by, library) VALUES (?, ?, ?, 1, ?, ?, ?) "
                     + "ON CONFLICT (name) DO NOTHING")) {
                     ps.setString(1, name);
                     ps.setString(2, displayName);
                     ps.setString(3, description);
                     ps.setString(4, by);
                     ps.setString(5, by);
+                    ps.setString(6, library);
                     if (ps.executeUpdate() == 0) {
                         throw new Exists();
                     }

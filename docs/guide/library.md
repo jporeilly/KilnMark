@@ -21,6 +21,9 @@ routing, transforming, combining, totals, quality gates, parameters, flows and v
 named `sample-...` and starts with comments on what it shows and what to look for. Those added
 here link to their own page and show their last run; the rest say **Not added**.
 
+A sample you change stays a sample, in the Library. To build real work from one, copy its YAML
+into a **New pipeline** or **New flow** under a name of your own, or start from a template.
+
 One sample, `sample-volume`, reads four million made-up sales, enough for a run of several seconds:
 run it and open the run's page to see where each node spent its time, how many rows a second went
 through, and which node held the others up.

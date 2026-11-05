@@ -435,6 +435,14 @@ public class PipelineService {
      * query is refused unless {@code sights} may see unmasked values ({@link #allowQueries}).
      */
     public PipelineViews.PipelineDetail create(PipelineViews.NewPipeline body, String by, Sights sights) {
+        return create(body, by, sights, null);
+    }
+
+    /**
+     * As {@link #create(PipelineViews.NewPipeline, String, Sights)}, in the library {@code library}
+     * ({@code sample}, ADR 0043). Only the samples call it: the API never sets the mark.
+     */
+    PipelineViews.PipelineDetail create(PipelineViews.NewPipeline body, String by, Sights sights, String library) {
         if (body == null) {
             throw new IllegalArgumentException("Send the pipeline as JSON with a name and its YAML");
         }
@@ -450,7 +458,7 @@ public class PipelineService {
         String message = clip(body.message() == null ? "First version" : body.message(), MAX_MESSAGE, "message");
         try {
             PipelineStore.Pipeline p = store.create(body.name(), display == null ? body.name() : display, description,
-                by, body.yaml(), message, v.valid(), problemsJson(v.problems()));
+                by, body.yaml(), message, v.valid(), problemsJson(v.problems()), library);
             LOG.infof("Pipeline %s added by %s", p.name(), by);
             return detail(p, store.version(p.name(), 1).orElse(null), null, null);
         } catch (PipelineStore.Exists e) {

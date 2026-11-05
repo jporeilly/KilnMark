@@ -200,14 +200,18 @@ function TemplatesTab({ designer }: { designer: boolean }) {
           {templates.map((t) => (
             <li key={t.file} className="panel lib-card">
               <span className={`lib-kind lib-kind--${t.type}`}>{t.type === "flow" ? "Flow" : "Pipeline"}</span>
-              <h2>{t.description ?? t.name}</h2>
+              <h2 id={`tpl-${t.name}`}>{t.description ?? t.name}</h2>
               <p className="small muted mono">{t.name}</p>
               <details>
                 <summary>Show the YAML</summary>
                 <pre className="lib-yaml">{t.yaml}</pre>
               </details>
               {designer ? (
-                <a className="pl-link-button" href={t.type === "flow" ? href.newFlow(t.file) : href.newPipeline(t.file)}>
+                <a
+                  className="pl-link-button"
+                  href={t.type === "flow" ? href.newFlow(t.file) : href.newPipeline(t.file)}
+                  aria-describedby={`tpl-${t.name}`}
+                >
                   Use this template
                 </a>
               ) : (

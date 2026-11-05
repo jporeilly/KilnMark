@@ -25,7 +25,7 @@ separate page so they don't get mixed up with dev / production pipelines and flo
 2. **Samples are marked, not moved.** An added sample is an ordinary pipeline or flow: it is
    saved, versioned, checked, run, scheduled and audited exactly as any other, so nothing in the
    engine, the API or the run history changes for it. A new column, `library`, on `pipeline` and
-   `flow` (migration V33) marks one added from the samples (`sample`); it is NULL for a team's own.
+   `flow` (migration V32) marks one added from the samples (`sample`); it is NULL for a team's own.
    The Pipelines and Flows pages list only those without a mark and say how many samples are in
    the Library; the Library lists the samples with their last runs. The mark is given by the
    server when it adds a sample, never by the YAML, so no one can hide their own pipeline in the
@@ -53,5 +53,10 @@ separate page so they don't get mixed up with dev / production pipelines and flo
 - Home, notifications and the run pages still show sample runs as runs, as they are: a run is a
   run, and hiding some would make the run history disagree with the audit log.
 - Moving a pipeline into or out of the Library by hand is not offered: there is no case for it yet.
-  `PipelineStore.setLibrary` is the one place that sets the mark.
+  The mark is written only with a sample's first version, in the same transaction
+  (`PipelineStore.create` and `FlowStore.save` with a library), so a sample is never left saved but
+  unmarked. A sample a designer changes into real work stays in the Library, and runs on any
+  schedule it is given: copy it to a new name to make it a team's own.
+- `lab samples` adds the samples through `POST /api/v1/samples`, as the Library does, so the lab's
+  samples are marked too.
 - Templates of a team's own ("save as template") are a later step, if asked for.
