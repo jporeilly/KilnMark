@@ -41,6 +41,25 @@ On Windows and macOS, start the Podman machine once per boot: `podman machine st
    placeholders the samples use (`crm-db`, `shop-db`, `files`). See
    [samples/README.md](samples/README.md). The samples are also in the release's `samples` folder.
 
+### Start and stop with one click
+
+After the first start (step 3), Kilnmark can start and stop from a shortcut, on Windows 11 and on
+Ubuntu (or any desktop that reads `.desktop` files). Starting runs `podman compose up -d` (or
+Docker's), starts the Podman machine on Windows if it is not running, waits until Kilnmark answers
+(and Keycloak, when `.env` says `COMPOSE_PROFILES=auth`), then opens Kilnmark in the browser at
+`KILNMARK_URL`. Stopping runs `down`: the containers stop, and every volume, so all data, is kept.
+
+| | Windows 11 | Ubuntu |
+| --- | --- | --- |
+| Make the shortcuts, once | `powershell -ExecutionPolicy Bypass -File .\create-shortcut.ps1` | `./create-shortcut.sh` |
+| They go | on the desktop and in the Start menu | in the applications menu and on the desktop |
+| Start, without a shortcut | `start-kilnmark.cmd` | `./start-kilnmark.sh` |
+| Stop | `stop-kilnmark.cmd` | `./stop-kilnmark.sh` |
+
+On Ubuntu with Docker, your user must be in the `docker` group, so the shortcut needs no `sudo`.
+If something goes wrong, the window stays open saying what, and which logs to look at. Run the
+shortcut maker again after moving the folder.
+
 ### Check a release
 
 A release from GitHub comes as `kilnmark-<version>.tar.gz` or `.zip`, two SBOMs, `SHA256SUMS`, and

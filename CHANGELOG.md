@@ -7,6 +7,13 @@ details.
 
 ### What's new
 
+- **Start and stop Kilnmark with one click**, on Windows 11 and Ubuntu. The release folder has
+  `start-kilnmark` and `stop-kilnmark` scripts for each, and `create-shortcut` puts **Kilnmark**
+  and **Stop Kilnmark** on the desktop and in the Start or applications menu, with Kilnmark's
+  icon. Starting waits until Kilnmark answers, then opens it in the browser; with
+  `COMPOSE_PROFILES=auth` in `.env`, Keycloak starts and stops with it. Stopping keeps every bit of
+  data. (INSTALL.md, "Start and stop with one click")
+
 - **Keycloak for organisations with no identity provider** (ADR 0014). An optional compose profile,
   `auth`, starts Keycloak beside Kilnmark and sets it up: a `kilnmark` realm with a group for each
   role and for seeing sensitive values, the client Kilnmark signs in with, a sign-in of a password
