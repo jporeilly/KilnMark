@@ -172,14 +172,16 @@ operations**; what they do not cover is said in point 12.
    table an operation drops, truncates, alters or indexes must be one whose rows the database keeps
    itself, never one that reaches elsewhere, checked against an allow-list for each database:
    - PostgreSQL: an ordinary table (`relkind` `r`), or a partitioned one (`p`) with no foreign
-     partition at any level; never a table in a publication (`pg_publication_rel`, a `FOR ALL
-     TABLES` publication, or `pg_publication_namespace` on 15 and later), since a truncate or a
-     drop would reach every subscriber. Truncates use `TRUNCATE ONLY`, so a partitioned table and
+     partition at any level; never a table that any publication sends, read from
+     `pg_publication_tables` (which expands `FOR ALL TABLES`, `TABLES IN SCHEMA` and a published
+     partitioned table's leaves), since a truncate or a drop would reach every subscriber. Truncates use `TRUNCATE ONLY`, so a partitioned table and
      a table with child tables (inheritance) are refused for truncate.
    - MySQL and MariaDB: an InnoDB, Aria or MyISAM table (never `FEDERATED`, `CONNECT`, `SPIDER` or
      `MERGE`).
-   - SQL Server: a user table in `sys.tables` (type `U`) with `is_external = 0` and
-     `is_remote_data_archive_enabled = 0`; never a synonym.
+   - SQL Server: a user table in `sys.tables` (type `U`) with `is_external = 0`,
+     `is_remote_data_archive_enabled = 0`, and not replicated (`is_published`, `is_merge_published`,
+     `is_replicated` and `is_sync_tran_subscribed` all 0), since an article's `ALTER TABLE` reaches
+     its subscribers; never a synonym.
    - Oracle: a table in `ALL_OBJECTS` of type `TABLE`, not in `ALL_EXTERNAL_TABLES` and with no
      external (hybrid) partition; never a synonym.
    Never a table the database or an extension ships: PostgreSQL tables an extension owns
@@ -329,8 +331,9 @@ operations**; what they do not cover is said in point 12.
    `pg_class` and `pg_namespace` cannot be read at all (a database that revoked them), the
    operation is refused. As the database itself is asked, host names, aliases and proxies make no
    difference. Refusing every use of such a source (reads and SQL a person writes, ADR 0028's open
-   decision) is for the owner; this record refuses operations, and Explore and **Count exactly**
-   make the same check.
+   decision) is for the owner; this record refuses operations. Explore's panes and **Count
+   exactly** will make the same check once the marker exists (it comes with operations, D4); the
+   preview, like every other read of such a source, stays with that owner decision.
 10. **No login check, and why.** ADR 0028 refuses superuser and file or program rights before SQL a
     person writes, because such SQL can call functions and read files. An operation cannot: its
     statements are fixed shapes over objects of the source's own database, outside the database's
