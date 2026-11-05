@@ -99,6 +99,7 @@ final class NodePreview {
      * that writes, any node upstream that a preview may not run, and problems the reading found in
      * the part that would run. Problems elsewhere in the pipeline do not stop a preview.
      */
+    @SuppressWarnings("ReferenceEquality") // the very definition the id names, not one equal to it
     static Plan plan(String yaml, String node, Caps caps) {
         if (node == null || node.isBlank()) {
             throw new IllegalArgumentException("node: the id of the node to preview");
@@ -288,7 +289,7 @@ final class NodePreview {
         }
 
         boolean hides(String column) {
-            return all || column != null && names.contains(key(column));
+            return all || (column != null && names.contains(key(column)));
         }
 
         /** Whether any of {@code columns} is hidden; null columns means not known, so any hidden one. */
@@ -718,7 +719,7 @@ final class NodePreview {
 
         /** Whether column {@code index} (called {@code name}) was masked. */
         boolean masked(int index, String name) {
-            return mask != null && index < mask.length ? mask[index] : hidden.hides(name);
+            return (mask != null && index < mask.length) ? mask[index] : hidden.hides(name);
         }
 
         @Override

@@ -483,7 +483,7 @@ public final class PipelineCompiler {
                 case EXPRESSIONS, CONDITIONS, COLUMN_MAP -> {
                     boolean columns = spec.kind() == SettingSpec.Kind.COLUMN_MAP;
                     if (!(v instanceof Map<?, ?> m) || !m.values().stream().allMatch(i -> i instanceof String
-                        || i instanceof Number || !columns && i instanceof Boolean)) {
+                        || i instanceof Number || (!columns && i instanceof Boolean))) {
                         yield Checked.wrong(columns
                             ? "must be a mapping of column names to column names, such as { id: customer_id }"
                             : "must be a mapping of names to expressions, such as { total: \"sum(amount)\" }");
@@ -532,8 +532,8 @@ public final class PipelineCompiler {
         private static String firstWord(String message, Collection<String> keys) {
             String m = message.strip();
             for (String k : keys) {
-                if (m.startsWith(k) && (m.length() == k.length() || !Character.isLetterOrDigit(m.charAt(k.length()))
-                    && m.charAt(k.length()) != '_')) {
+                if (m.startsWith(k) && (m.length() == k.length() || (!Character.isLetterOrDigit(m.charAt(k.length()))
+                    && m.charAt(k.length()) != '_'))) {
                     return k;
                 }
             }

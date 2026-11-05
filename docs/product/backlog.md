@@ -11,7 +11,9 @@ Last reviewed: 5 November 2026 (after #86-#93 merged).
 1. **Flow controls** ([ADR 0041](../adr/0041-flow-nodes-for-resources-and-control.md),
    docs/design/flow-controls.md; owner, 5 November 2026): a node's `timeout` (built, C3), then a
    flow's `priority`, the `check-source` and `wait-for` nodes, then a node's `retries`, in that
-   order.
+   order. When it is finished, take `FlowDefinition`, its test, `FlowService` and `JobQueue` out of
+   Error Prone's `excludedPaths` in `build.gradle.kts` and fix what it finds there (ADR 0042,
+   decision 5).
 
 ## Next
 
@@ -22,12 +24,13 @@ Last reviewed: 5 November 2026 (after #86-#93 merged).
    releases (#69), encrypted connections to sources (ADR 0034), OIDC sign-in with MFA (ADR 0036,
    #78), access reviews and token policy (ADR 0037, #81), two people for the unmask grant
    (ADR 0038, #82), backup and restore with a runbook (ADR 0039, #83), the SSDF
-   self-assessment (#84), and the bundled Keycloak for customers without an identity provider
-   (ADR 0014, #93). Next:
-   - the SSDF gaps: static analysis, Gradle dependency verification, build provenance, a threat
-     model; the rest of the evidence pack when a customer's due diligence asks; a full export in
+   self-assessment (#84), the bundled Keycloak for customers without an identity provider
+   (ADR 0014, #93), and static analysis with dependency verification (ADR 0042). Next:
+   - the SSDF gaps: build provenance, a threat model, base images pinned by digest, a security
+     analyser; the rest of the evidence pack when a customer's due diligence asks; a full export in
      open formats, for exit;
-   - Generic JDBC drivers in a process of their own (ADR 0030, decision 5);
+   - Generic JDBC drivers in a process of their own (ADR 0030, decision 5); new table names
+     checked against the driver's longest table name, not its longest column name (ADR 0042);
    - change approval and environments;
    - `KILNMARK_DB_PASSWORD` in the dev compose, a JDBC `socketTimeout`, masking on the run quality
      view, a metric for preview slots;

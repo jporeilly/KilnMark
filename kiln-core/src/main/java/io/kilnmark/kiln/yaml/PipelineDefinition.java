@@ -79,6 +79,7 @@ public record PipelineDefinition(String name, String description, List<NodeDefin
      * @param configText the same settings with every scalar as the text written ({@code 007},
      *                   {@code 2024.10}), so a setting that is text keeps exactly what was typed
      */
+    @SuppressWarnings("InvalidParam") // {@code input} is the YAML key, not the component inputs
     public record NodeDefinition(String id, String type, List<InputRef> inputs, Map<String, Object> config,
                                  Position position, Map<String, Position> keys, Map<String, Object> configText) {
 

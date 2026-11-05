@@ -132,7 +132,7 @@ public final class DocumentFixtures {
         try (XWPFDocument d = new XWPFDocument(); OutputStream out = Files.newOutputStream(p)) {
             d.getProperties().getCoreProperties().setTitle("Onboarding guide");
             d.getProperties().getCoreProperties().setCreator("People Team");
-            d.getProperties().getCoreProperties().setCreated(Optional.of(new java.util.Date(1735725600000L)));
+            d.getProperties().getCoreProperties().setCreated(Optional.of(java.util.Date.from(java.time.Instant.ofEpochMilli(1735725600000L))));
             d.createParagraph().createRun().setText("Welcome to Harbour Logistics.");
             d.createParagraph().createRun().setText("Your first week includes a safety briefing and a tour of the "
                 + "warehouse.");

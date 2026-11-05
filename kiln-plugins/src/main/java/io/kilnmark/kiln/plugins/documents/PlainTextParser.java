@@ -52,7 +52,7 @@ final class PlainTextParser implements Parser {
         if (charset == null) {
             charset = Encodings.utf8OrWindows1252(in, metadata);
         } else if (Encodings.bom(in, metadata) != null) {
-            in.skipNBytes(charset == StandardCharsets.UTF_8 ? 3 : 2);
+            in.skipNBytes(StandardCharsets.UTF_8.equals(charset) ? 3 : 2);
         }
         boolean markdown = isMarkdown(metadata);
         XHTMLContentHandler x = new XHTMLContentHandler(handler, metadata);

@@ -282,6 +282,7 @@ final class Compiler {
         return new Ev.Between(Ev.widen(x, t), Ev.widen(low, t), Ev.widen(high, t), b.negated(), b.pos());
     }
 
+    @SuppressWarnings("ReferenceEquality") // which of the two sides, even when both are the same expression
     private Ev like(Node.Like l) throws ExprException {
         Ev x = compile(l.operand());
         Ev p = compile(l.pattern());

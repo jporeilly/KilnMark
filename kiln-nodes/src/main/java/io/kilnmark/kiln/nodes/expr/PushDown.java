@@ -108,7 +108,7 @@ public final class PushDown {
             case Node.IsNull isNull -> isNull(isNull);
             case Node.Like like -> like(like);
             case Node.Column c -> booleanColumn(c);
-            default -> keep(n, "a value worked out in Kilnmark");
+            default -> keep("a value worked out in Kilnmark");
         };
     }
 
@@ -167,7 +167,7 @@ public final class PushDown {
             default -> null;
         };
         if (op == null) {
-            return keep(b, "'" + b.op() + "'");
+            return keep("'" + b.op() + "'");
         }
         Node colSide = b.left();
         Node valueSide = b.right();
@@ -179,11 +179,11 @@ public final class PushDown {
         Field f = colSide instanceof Node.Column c ? field(c.name()) : null;
         Object value = value(valueSide, f);
         if (f == null || value == null) {
-            return keep(b, "a comparison that is not a column with a value");
+            return keep("a comparison that is not a column with a value");
         }
         if (kind(f) == Type.Kind.UTF8) {
             if (!op.equals("=")) {
-                return keep(b, "comparing text other than for equality (databases order and match text in "
+                return keep("comparing text other than for equality (databases order and match text in "
                     + "their own way)");
             }
             return new Part(new ReadFilter.Compare(f.getName(), op, value), true, false);
@@ -194,19 +194,19 @@ public final class PushDown {
     private Part in(Node.In in) {
         Field f = in.operand() instanceof Node.Column c ? field(c.name()) : null;
         if (f == null) {
-            return keep(in, "in (...) on something other than a column");
+            return keep("in (...) on something other than a column");
         }
         List<Object> values = new ArrayList<>();
         for (Node item : in.items()) {
             Object v = value(item, f);
             if (v == null) {
-                return keep(in, "in (...) with something other than values");
+                return keep("in (...) with something other than values");
             }
             values.add(v);
         }
         boolean text = kind(f) == Type.Kind.UTF8;
         if (text && in.negated()) {
-            return keep(in, "not in (...) on text");
+            return keep("not in (...) on text");
         }
         return new Part(new ReadFilter.In(f.getName(), values, in.negated()), true, !text);
     }
@@ -216,10 +216,10 @@ public final class PushDown {
         Object low = value(bt.low(), f);
         Object high = value(bt.high(), f);
         if (f != null && kind(f) == Type.Kind.UTF8) {
-            return keep(bt, "between on text (databases order text in their own way)");
+            return keep("between on text (databases order text in their own way)");
         }
         if (f == null || low == null || high == null) {
-            return keep(bt, "between on a function or calculation, or with bounds that are not values");
+            return keep("between on a function or calculation, or with bounds that are not values");
         }
         return new Part(new ReadFilter.Between(f.getName(), low, high, bt.negated()), true, true);
     }
@@ -227,7 +227,7 @@ public final class PushDown {
     private Part isNull(Node.IsNull n) {
         Field f = n.operand() instanceof Node.Column c ? field(c.name()) : null;
         if (f == null) {
-            return keep(n, "is null on a function or calculation");
+            return keep("is null on a function or calculation");
         }
         return new Part(new ReadFilter.IsNull(f.getName(), n.negated()), true, true);
     }
@@ -235,16 +235,16 @@ public final class PushDown {
     private Part like(Node.Like like) {
         Field f = like.operand() instanceof Node.Column c ? field(c.name()) : null;
         if (f == null || kind(f) != Type.Kind.UTF8) {
-            return keep(like, "like on a function or calculation rather than a text column");
+            return keep("like on a function or calculation rather than a text column");
         }
         if (like.negated()) {
-            return keep(like, "not like");
+            return keep("not like");
         }
         if (!(like.pattern() instanceof Node.Literal l) || !(l.value() instanceof String pattern)) {
-            return keep(like, "like with a pattern that is not a value");
+            return keep("like with a pattern that is not a value");
         }
         if (pattern.indexOf('\\') >= 0 || pattern.indexOf('[') >= 0) {
-            return keep(like, "like with \\ or [ in the pattern (some databases read them as more than a character)");
+            return keep("like with \\ or [ in the pattern (some databases read them as more than a character)");
         }
         return new Part(new ReadFilter.Like(f.getName(), pattern), true, false);
     }
@@ -253,12 +253,12 @@ public final class PushDown {
     private Part booleanColumn(Node.Column c) {
         Field f = field(c.name());
         if (f == null || kind(f) != Type.Kind.BOOLEAN) {
-            return keep(c, "a column used as a condition");
+            return keep("a column used as a condition");
         }
-        return new Part(new ReadFilter.Compare(f.getName(), "=", Boolean.TRUE), true, true);
+        return new Part(new ReadFilter.Compare(f.getName(), "=", true), true, true);
     }
 
-    private Part keep(Node n, String why) {
+    private Part keep(String why) {
         if (foreign != null) {
             kept.add(foreign + ": the source stores it differently from how Kilnmark reads it");
             foreign = null;

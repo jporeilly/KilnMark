@@ -61,7 +61,7 @@ public class RelationshipService {
     public static String sketchFields(io.kilnmark.kiln.connect.AssetInfo asset) {
         List<String> fields = asset.fields().stream().map(io.kilnmark.kiln.connect.AssetInfo.FieldInfo::name)
             .filter(f -> io.kilnmark.kiln.plugins.relate.KeyNames.idLike(f)
-                || asset.primaryKey().size() == 1 && asset.primaryKey().get(0).equals(f))
+                || (asset.primaryKey().size() == 1 && asset.primaryKey().get(0).equals(f)))
             .toList();
         return ProfileNode.sketchFields(fields);
     }

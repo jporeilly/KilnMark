@@ -24,16 +24,16 @@ class OidcAccessTest {
     /** Settings: four groups, one per role, an unmask group, MFA required, 8 hours. */
     private static KilnmarkConfig.Oidc config(boolean requireMfa, List<String> acr) {
         return new KilnmarkConfig.Oidc() {
-            public String providerName() { return "Example"; }
-            public String groupsClaim() { return "groups"; }
-            public Optional<List<String>> viewerGroups() { return Optional.of(List.of("km-viewers")); }
-            public Optional<List<String>> stewardGroups() { return Optional.of(List.of("km-stewards")); }
-            public Optional<List<String>> designerGroups() { return Optional.of(List.of("km-designers")); }
-            public Optional<List<String>> adminGroups() { return Optional.of(List.of("km-admins")); }
-            public Optional<List<String>> unmaskGroups() { return Optional.of(List.of("km-unmask")); }
-            public boolean requireMfa() { return requireMfa; }
-            public Optional<List<String>> mfaAcr() { return Optional.ofNullable(acr); }
-            public Duration maxSession() { return Duration.ofHours(8); }
+            @Override public String providerName() { return "Example"; }
+            @Override public String groupsClaim() { return "groups"; }
+            @Override public Optional<List<String>> viewerGroups() { return Optional.of(List.of("km-viewers")); }
+            @Override public Optional<List<String>> stewardGroups() { return Optional.of(List.of("km-stewards")); }
+            @Override public Optional<List<String>> designerGroups() { return Optional.of(List.of("km-designers")); }
+            @Override public Optional<List<String>> adminGroups() { return Optional.of(List.of("km-admins")); }
+            @Override public Optional<List<String>> unmaskGroups() { return Optional.of(List.of("km-unmask")); }
+            @Override public boolean requireMfa() { return requireMfa; }
+            @Override public Optional<List<String>> mfaAcr() { return Optional.ofNullable(acr); }
+            @Override public Duration maxSession() { return Duration.ofHours(8); }
         };
     }
 

@@ -278,7 +278,7 @@ public class NotificationStore {
             + "WHERE token_id = ? AND confirm_hash = ? AND confirm_sent_at > now() - make_interval(secs => ?)", ps -> {
                 ps.setLong(1, tokenId);
                 ps.setBytes(2, hash);
-                ps.setDouble(3, CONFIRM_FOR.toSeconds());
+                ps.setDouble(3, (double) CONFIRM_FOR.toSeconds());
             }) == 1;
     }
 
@@ -494,7 +494,7 @@ public class NotificationStore {
             ps.setString(6, clip(steward.detail()));
             ps.setString(7, clip(viewer.detail()));
             ps.setString(8, e.link());
-            ps.setDouble(9, activeFor.toSeconds());
+            ps.setDouble(9, (double) activeFor.toSeconds());
             ps.setString(10, e.kind().id());
             ps.setString(11, e.source());
             ps.setString(12, e.source());
@@ -522,7 +522,7 @@ public class NotificationStore {
             lock(c, key);
             Dedupe.State current = state(c, key);
             Dedupe.State next = Dedupe.clear(current);
-            if (next != current) {
+            if (!java.util.Objects.equals(next, current)) {
                 saveState(c, key, next, null);
             }
             return null;

@@ -16,7 +16,8 @@ final class PlannedConnectors {
     private static Views.PlannedConnector p(String id, String monogram, String name, String category, String family,
                                             String caps, String wave) {
         List<String> c = new java.util.ArrayList<>();
-        for (char x : caps.toCharArray()) {
+        for (int i = 0; i < caps.length(); i++) {
+            char x = caps.charAt(i);
             c.add(switch (x) {
                 case 'D' -> "discover";
                 case 'R' -> "read";

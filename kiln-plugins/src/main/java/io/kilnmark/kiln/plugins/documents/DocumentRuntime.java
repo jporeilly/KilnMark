@@ -259,7 +259,7 @@ public final class DocumentRuntime {
             if (n.contains("Encrypted") || n.equals("InvalidPasswordException")) {
                 return true;
             }
-            if (t.getCause() == t) {
+            if (t.equals(t.getCause())) {
                 break;
             }
         }

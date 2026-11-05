@@ -24,7 +24,7 @@ public final class PredictionViews {
 
     /**
      * The predicted quality of a pipeline: rows on each node's output ports (null when unknown), and
-     * each write ({@code output}) and gate. {@code valid} is whether the YAML has no problems; a
+     * each write ({@code outputs}) and gate. {@code valid} is whether the YAML has no problems; a
      * pipeline with problems is still predicted as far as it can be.
      */
     public record Prediction(boolean estimate, boolean valid, List<PredictedNode> nodes, List<PredictedQuality> outputs) {

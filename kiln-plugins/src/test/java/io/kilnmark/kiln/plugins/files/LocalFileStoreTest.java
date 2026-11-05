@@ -1,5 +1,7 @@
 package io.kilnmark.kiln.plugins.files;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -78,7 +80,7 @@ class LocalFileStoreTest {
                 IOException e = assertThrows(IOException.class, () -> s.open(bad), bad);
                 assertTrue(e.getMessage().startsWith("Refusing to read"), e.getMessage());
             }
-            assertEquals("a\n1\n", new String(s.head("inside-link.csv", 100)));
+            assertEquals("a\n1\n", new String(s.head("inside-link.csv", 100), UTF_8));
             IOException gone = assertThrows(IOException.class, () -> s.open("missing.csv"));
             assertTrue(gone.getMessage().contains("scan the source again"), gone.getMessage());
         }

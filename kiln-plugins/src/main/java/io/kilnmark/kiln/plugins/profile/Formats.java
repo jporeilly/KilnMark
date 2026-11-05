@@ -28,6 +28,7 @@ public final class Formats {
         }
 
         /** The bit for this format in {@link #detect}'s result. */
+        @SuppressWarnings("EnumOrdinal") // the order is the bit's; formats are only ever added at the end
         public int bit() {
             return 1 << ordinal();
         }

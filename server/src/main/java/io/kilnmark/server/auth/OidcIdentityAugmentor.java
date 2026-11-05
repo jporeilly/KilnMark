@@ -150,6 +150,7 @@ public class OidcIdentityAugmentor implements SecurityIdentityAugmentor {
         }
 
         @Override
+        @SuppressWarnings("TypeParameterUnusedInFormals") // JsonWebToken's signature, implemented as it is
         public <T> T getClaim(String claimName) {
             return token.getClaim(claimName);
         }

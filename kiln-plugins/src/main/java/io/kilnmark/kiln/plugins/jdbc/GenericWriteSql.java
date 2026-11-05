@@ -52,7 +52,7 @@ final class GenericWriteSql extends WriteSql {
 
     /** For capabilities and write settings: nothing about any database is known before connecting. */
     static final GenericWriteSql PLACEHOLDER = new GenericWriteSql(new GenericCatalog.Shape(
-        GenericCatalog.Level.SCHEMA, null, "\"", ".", true), Map.of(), 0, 0, false, Set.of());
+        GenericCatalog.Level.SCHEMA, null, "\"", ".", true), Map.of(), 0, false, Set.of());
 
     /** One type the driver lists. */
     record TypeInfo(String name, int jdbcType, long precision, boolean unsigned, int maxScale) {
@@ -76,7 +76,6 @@ final class GenericWriteSql extends WriteSql {
     /** The driver's types, by JDBC type code, in the driver's order. */
     private final Map<Integer, List<TypeInfo>> types;
     private final int maxColumnName;
-    private final int maxTableName;
     private final boolean ddlCommits;
     /** Type names the driver says are unsigned. */
     private final Set<String> unsignedTypes;
@@ -93,11 +92,10 @@ final class GenericWriteSql extends WriteSql {
     private final SqlDialect dialect;
 
     private GenericWriteSql(GenericCatalog.Shape shape, Map<Integer, List<TypeInfo>> types, int maxColumnName,
-                            int maxTableName, boolean ddlCommits, Set<String> unsignedTypes) {
+                            boolean ddlCommits, Set<String> unsignedTypes) {
         this.shape = shape;
         this.types = types;
         this.maxColumnName = maxColumnName;
-        this.maxTableName = maxTableName;
         this.ddlCommits = ddlCommits;
         this.unsignedTypes = unsignedTypes;
         this.dialect = new Dialect(shape);
@@ -133,8 +131,7 @@ final class GenericWriteSql extends WriteSql {
         } catch (SQLException | RuntimeException e) {
             // assume the worst: a created table may outlive a rollback
         }
-        return new GenericWriteSql(shape, types, safe(md::getMaxColumnNameLength), safe(md::getMaxTableNameLength),
-            commits, unsigned);
+        return new GenericWriteSql(shape, types, safe(md::getMaxColumnNameLength), commits, unsigned);
     }
 
     private interface IntCall {
@@ -305,13 +302,13 @@ final class GenericWriteSql extends WriteSql {
             case FLOAT64 -> doubleType();
             case DECIMAL -> {
                 TypeInfo d = decimalType();
-                yield d == null || d.precision() > 0 && c.precision() > d.precision() ? null
+                yield d == null || (d.precision() > 0 && c.precision() > d.precision()) ? null
                     : d.name() + "(" + c.precision() + "," + c.scale() + ")";
             }
             case TEXT -> {
                 TypeInfo v = textType();
                 if (textLength > 0) {
-                    yield v == null || v.precision() > 0 && textLength > v.precision() ? null
+                    yield v == null || (v.precision() > 0 && textLength > v.precision()) ? null
                         : v.name() + "(" + textLength + ")";
                 }
                 TypeInfo l = longTextType();
@@ -351,7 +348,7 @@ final class GenericWriteSql extends WriteSql {
             }
         }
         TypeInfo d = decimalType();
-        return d == null || d.precision() > 0 && d.precision() < digits ? null : d.name() + "(" + digits + ",0)";
+        return d == null || (d.precision() > 0 && d.precision() < digits) ? null : d.name() + "(" + digits + ",0)";
     }
 
     private String doubleType() {
@@ -559,6 +556,8 @@ final class GenericWriteSql extends WriteSql {
     }
 
     @Override
+    // The nanoseconds within the second are wanted: the fraction a column may be too short for.
+    @SuppressWarnings({"JavaLocalDateTimeGetNano", "JavaInstantGetSecondsGetNano", "JavaLocalTimeGetNano"})
     String targetValueProblem(WritePlan.TargetColumn t, Object v) {
         if (t == null) {
             return null;
@@ -750,7 +749,7 @@ final class GenericWriteSql extends WriteSql {
     boolean permissionDenied(SQLException e) {
         String state = e.getSQLState();
         String m = e.getMessage() == null ? "" : e.getMessage().toLowerCase(Locale.ROOT);
-        return "42501".equals(state) || state != null && state.startsWith("42")
-            && (m.contains("permission") || m.contains("privilege") || m.contains("not authorized"));
+        return "42501".equals(state) || (state != null && state.startsWith("42")
+            && (m.contains("permission") || m.contains("privilege") || m.contains("not authorized")));
     }
 }

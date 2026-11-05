@@ -169,8 +169,8 @@ public record RuleDraft(String assetUrn, String field, String name, String type,
     /** {@code :port} as written, or nothing when there is none or it is the scheme's default. */
     private static String port(URI u) {
         int p = u.getPort();
-        boolean usual = p == 443 && "https".equalsIgnoreCase(u.getScheme())
-            || p == 80 && "http".equalsIgnoreCase(u.getScheme());
+        boolean usual = (p == 443 && "https".equalsIgnoreCase(u.getScheme()))
+            || (p == 80 && "http".equalsIgnoreCase(u.getScheme()));
         return p < 0 || usual ? "" : ":" + p;
     }
 
@@ -204,7 +204,7 @@ public record RuleDraft(String assetUrn, String field, String name, String type,
             int hi = Character.digit(rawPath.charAt(i + 1), 16);
             int lo = Character.digit(rawPath.charAt(i + 2), 16);
             int b = hi * 16 + lo;
-            if (hi < 0 || lo < 0 || !(b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '-'
+            if (hi < 0 || lo < 0 || !((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '-'
                 || b == '_' || b == '~')) {
                 return false;
             }

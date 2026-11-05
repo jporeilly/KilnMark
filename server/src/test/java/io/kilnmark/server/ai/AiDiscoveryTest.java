@@ -214,7 +214,7 @@ class AiDiscoveryTest {
 
         FoundModel idle = model(s, "nomic-embed-text:latest");
         assertEquals("not-loaded", idle.gpu());
-        assertEquals(Boolean.FALSE, idle.loaded());
+        assertEquals(false, idle.loaded());
         assertTrue(idle.gpuText().startsWith("Not loaded yet"));
         assertTrue(idle.embedding(), "nomic-embed-text is an embedding model");
         assertEquals(768, idle.dimensions(), "from /api/show");
@@ -322,10 +322,10 @@ class AiDiscoveryTest {
                       {"id": "my-text-model", "type": "embeddings", "state": "not-loaded"}]}""")));
         FoundServer s = discovery(true).probe(new Candidate("LM Studio", Kind.LM_STUDIO, root, true)).server();
         assertEquals("LM Studio", s.server());
-        assertEquals(Boolean.TRUE, model(s, "qwen3-8b").loaded());
+        assertEquals(true, model(s, "qwen3-8b").loaded());
         assertEquals(32768, model(s, "qwen3-8b").contextSize());
         assertTrue(model(s, "my-text-model").embedding(), "LM Studio's type says so, whatever the name");
-        assertEquals(Boolean.FALSE, model(s, "my-text-model").loaded());
+        assertEquals(false, model(s, "my-text-model").loaded());
     }
 
     private static int closedPort() throws IOException {
@@ -468,10 +468,10 @@ class AiDiscoveryTest {
     @Test
     void kilnmarkInContainerTakesTheUsualWordsForYesAndNo() {
         for (String yes : List.of("1", "yes", "TRUE", " True ", "on")) {
-            assertEquals(Boolean.TRUE, ModelHosts.yesNo(yes), yes);
+            assertEquals(true, ModelHosts.yesNo(yes), yes);
         }
         for (String no : List.of("0", "No", "false", "off")) {
-            assertEquals(Boolean.FALSE, ModelHosts.yesNo(no), no);
+            assertEquals(false, ModelHosts.yesNo(no), no);
         }
         assertNull(ModelHosts.yesNo("maybe"));
         assertNull(ModelHosts.yesNo(null));

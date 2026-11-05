@@ -56,7 +56,7 @@ import jakarta.ws.rs.core.Response;
  * <p>Viewers read scores, measures, shapes, rules and results without values. Seeing values
  * (samples, example values, failing rows, previews) needs {@value #DATA_ROLE}; columns marked
  * sensitive stay masked unless an admin asks for {@code unmask=true}. Every endpoint shows values
- * through one {@link Masking.Sight} per asset ({@link #sight}), so a value of a sensitive column
+ * through one {@link Masking.Sight} per asset ({@code sights.of}), so a value of a sensitive column
  * cannot slip out through evidence, drift detail, rule parameters, queries, error text,
  * recommendations or exports. Stewards change rules, patterns, baselines and issues.
  */
@@ -735,7 +735,9 @@ public class QualityResource {
     @GET
     @Path("sources/{name}")
     public ObjectNode source(@PathParam("name") String name) {
-        graph.source(name).orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND, "No source called " + name));
+        if (graph.source(name).isEmpty()) {
+            throw ApiError.of(Response.Status.NOT_FOUND, "No source called " + name);
+        }
         ObjectNode out = json.createObjectNode().put("source", name);
         out.set("scores", json.valueToTree(store.sourceScores(name)));
         ArrayNode assets = out.putArray("assets");

@@ -133,7 +133,7 @@ final class Regexes {
                 case '\\' -> {
                     if (i + 1 < n) {
                         char e = regex.charAt(i + 1);
-                        if (e >= '1' && e <= '9' || e == 'k') {
+                        if ((e >= '1' && e <= '9') || e == 'k') {
                             return new Scan("uses a back-reference, which is not allowed", false);
                         }
                         if (e == 'Q') {
