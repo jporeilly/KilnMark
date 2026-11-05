@@ -8,11 +8,12 @@ details.
 ### Details
 
 - **Dependencies updated** (Dependabot's Gradle group): Jackson 2.22, the AWS SDK 2.57, LangChain4j
-  1.23, Error Prone 2.52, the SQL Server and Oracle drivers' patch releases, lz4, GreenMail
+  1.23, Error Prone 2.52, the SQL Server driver's patch release, lz4, GreenMail
   and the licence report plug-in, with their checksums and signing keys in
   `gradle/verification-metadata.xml` (ADR 0042). `mime4j` stays at 0.8.12, the version the Quarkus
   platform pins: 0.8.15 cannot be resolved against it. The MariaDB driver stays at 3.5.10: 3.5.11
-  fails every connection to MariaDB, and Dependabot is told to skip it.
+  fails every connection to MariaDB, and Dependabot is told to skip it. Oracle's driver stays at
+  23.26.3.0.0, the version Kilnmark pins with its checksum; Dependabot no longer proposes it.
 
 ## 0.0.10 (5 November 2026)
 

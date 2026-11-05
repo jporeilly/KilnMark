@@ -11,7 +11,9 @@ mariadb-java-client = "3.5.10"
 # Oracle's JDBC driver, for tests only: it is under the Oracle Free Use Terms and Conditions, which
 # do not allow it in a product that is sold, so it never ships; customers install it (ADR 0007).
 # Keep in step with OracleConnector.DRIVER.
-ojdbc11 = "23.26.4.0.0"
+# The same version, and so the same jar, as OracleConnector.DRIVER pins with its SHA-256: tests run
+# the driver customers install. Moving it is a change of its own (docs/design/drivers.md).
+ojdbc11 = "23.26.3.0.0"
 # H2 (MPL 2.0 or EPL 1.0, not GPL), for tests only: the generic JDBC connector's tests register it
 # as an admin would register a customer's driver. It never ships (checkNoCustomerDrivers).
 h2 = "2.5.252"

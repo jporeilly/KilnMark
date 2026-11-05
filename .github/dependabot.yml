@@ -17,6 +17,9 @@ updates:
       # 3.5.11 cannot connect to MariaDB (gradle/libs.versions.toml); a later fix is welcome.
       - dependency-name: "org.mariadb.jdbc:mariadb-java-client"
         versions: ["3.5.11"]
+      # Pinned with its SHA-256 in OracleConnector.DRIVER, the lab scripts and the docs: a new
+      # version is moved by hand, everywhere at once (docs/design/drivers.md).
+      - dependency-name: "com.oracle.database.jdbc:ojdbc11"
     groups:
       gradle:
         patterns: ["*"]
