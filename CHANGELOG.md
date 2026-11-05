@@ -182,6 +182,12 @@ details.
 
 ### Details
 
+- **Dependencies updated** (Dependabot's Gradle group): Jackson 2.22, the AWS SDK 2.57, LangChain4j
+  1.23, Error Prone 2.52, the SQL Server, Oracle and MariaDB drivers' patch releases, lz4, GreenMail
+  and the licence report plug-in, with their checksums and signing keys in
+  `gradle/verification-metadata.xml` (ADR 0042). `mime4j` stays at 0.8.12, the version the Quarkus
+  platform pins: 0.8.15 cannot be resolved against it.
+
 - **The control script** (ADR 0044). One install root per site holds `versions/<version>/`,
   `config/.env` (written by `install` with a new database password and admin token, `600`, never
   overwritten), `certs/https`, `backups` and `logs`. Every command logs what it said and exits
