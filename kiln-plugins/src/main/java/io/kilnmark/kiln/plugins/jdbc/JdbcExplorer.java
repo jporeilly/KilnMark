@@ -44,17 +44,26 @@ final class JdbcExplorer {
             JdbcCatalog.escapeWithDriver(md, table), "%")) {
             Set<String> labels = labels(rs);
             while (rs.next()) {
-                if (!table.equals(rs.getString("TABLE_NAME")) || !sameScope(rs, scope, "TABLE_CAT", "TABLE_SCHEM")) {
+                // Read in column order: Oracle's driver streams COLUMN_DEF (a LONG), which cannot be read
+                // once a later column has been.
+                String catalog = rs.getString(1);
+                String schema = rs.getString(2);
+                String name = rs.getString(3);
+                String column = rs.getString(4);
+                int type = rs.getInt(5);
+                String typeName = rs.getString(6);
+                Integer size = whole(rs, 7);
+                Integer digits = whole(rs, 9);
+                boolean nullable = rs.getInt(11) != DatabaseMetaData.columnNoNulls;
+                boolean hasDefault = labels.contains("COLUMN_DEF") && rs.getString(13) != null;
+                int position = rs.getInt(17);
+                boolean generated = yes(rs, labels, "IS_AUTOINCREMENT") || yes(rs, labels, "IS_GENERATEDCOLUMN");
+                if (!table.equals(name) || !sameScope(catalog, schema, scope)) {
                     continue; // a driver that ignores the escape matched a look-alike
                 }
-                int type = rs.getInt("DATA_TYPE");
-                Integer size = sized(type) ? whole(rs, "COLUMN_SIZE") : null;
-                Integer scale = type == java.sql.Types.DECIMAL || type == java.sql.Types.NUMERIC
-                    ? whole(rs, "DECIMAL_DIGITS") : null;
-                boolean generated = yes(rs, labels, "IS_AUTOINCREMENT") || yes(rs, labels, "IS_GENERATEDCOLUMN");
-                out.add(new TableDetail.Column(rs.getString("COLUMN_NAME"), rs.getInt("ORDINAL_POSITION"),
-                    rs.getString("TYPE_NAME"), size, scale, rs.getInt("NULLABLE") != DatabaseMetaData.columnNoNulls,
-                    labels.contains("COLUMN_DEF") && rs.getString("COLUMN_DEF") != null, generated));
+                boolean decimal = type == java.sql.Types.DECIMAL || type == java.sql.Types.NUMERIC;
+                out.add(new TableDetail.Column(column, position, typeName, sized(type) ? size : null,
+                    decimal ? digits : null, nullable, hasDefault, generated, null));
             }
         }
         out.sort(java.util.Comparator.comparingInt(TableDetail.Column::position));
@@ -115,14 +124,17 @@ final class JdbcExplorer {
      * so no database gathers statistics to answer (Oracle would otherwise analyse the table). A
      * part of an index that is not one of {@code columns} is an expression, which some drivers
      * report as its text: it shows as {@value #EXPRESSION}, since an expression can quote a value.
-     * A partial index's condition ({@code FILTER_CONDITION}) is never read, for the same reason.
+     * A partial index is marked as one ({@code FILTER_CONDITION} is not null), and its condition's
+     * text is never passed on, for the same reason.
      */
     static List<TableDetail.Index> indexes(DatabaseMetaData md, Scope scope, String table, Key primaryKey,
                                            Set<String> columns) throws SQLException {
         Map<String, Map<Integer, String>> cols = new LinkedHashMap<>();
         Map<String, Boolean> unique = new LinkedHashMap<>();
         Map<String, String> method = new LinkedHashMap<>();
+        Set<String> partial = new HashSet<>();
         try (ResultSet rs = md.getIndexInfo(scope.catalog(), scope.schema(), table, false, true)) {
+            boolean hasFilter = labels(rs).contains("FILTER_CONDITION");
             while (rs.next()) {
                 short type = rs.getShort("TYPE");
                 String name = rs.getString("INDEX_NAME");
@@ -134,6 +146,9 @@ final class JdbcExplorer {
                     .put((int) rs.getShort("ORDINAL_POSITION"), column != null && columns.contains(column)
                         ? column : EXPRESSION);
                 unique.putIfAbsent(name, !rs.getBoolean("NON_UNIQUE"));
+                if (hasFilter && rs.getString("FILTER_CONDITION") != null) {
+                    partial.add(name); // only that there is one: the condition's text stays unread
+                }
                 method.putIfAbsent(name, type == DatabaseMetaData.tableIndexClustered ? "clustered"
                     : type == DatabaseMetaData.tableIndexHashed ? "hash" : null);
             }
@@ -142,20 +157,21 @@ final class JdbcExplorer {
         boolean pkFound = false;
         for (Map.Entry<String, Map<Integer, String>> e : cols.entrySet()) {
             List<String> parts = List.copyOf(e.getValue().values());
+            // by the key's name when the database gives one; by its columns only when it does not
             boolean isPk = !pkFound && !primaryKey.columns().isEmpty() && unique.get(e.getKey())
-                && (e.getKey().equals(primaryKey.name()) || parts.equals(primaryKey.columns()));
+                && (primaryKey.name() != null ? e.getKey().equals(primaryKey.name()) : parts.equals(primaryKey.columns()));
             pkFound |= isPk;
-            out.add(new TableDetail.Index(e.getKey(), parts, unique.get(e.getKey()), isPk, method.get(e.getKey())));
+            out.add(new TableDetail.Index(e.getKey(), parts, unique.get(e.getKey()), isPk, method.get(e.getKey()),
+                partial.contains(e.getKey())));
         }
         return out;
     }
 
-    private static boolean sameScope(ResultSet rs, Scope scope, String catalogColumn, String schemaColumn)
-        throws SQLException {
-        if (scope.catalog() != null && !scope.catalog().equals(rs.getString(catalogColumn))) {
+    private static boolean sameScope(String catalog, String schema, Scope scope) {
+        if (scope.catalog() != null && !scope.catalog().equals(catalog)) {
             return false;
         }
-        return scope.schema() == null || scope.schema().equals(rs.getString(schemaColumn));
+        return scope.schema() == null || scope.schema().equals(schema);
     }
 
     /** {@code schema.table}, with the catalog in place of a schema where the database has none. */
@@ -172,7 +188,7 @@ final class JdbcExplorer {
         };
     }
 
-    private static Integer whole(ResultSet rs, String column) throws SQLException {
+    private static Integer whole(ResultSet rs, int column) throws SQLException {
         int v = rs.getInt(column);
         return rs.wasNull() ? null : v;
     }

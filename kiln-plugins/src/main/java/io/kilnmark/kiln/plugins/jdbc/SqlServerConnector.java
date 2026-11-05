@@ -251,9 +251,18 @@ public final class SqlServerConnector extends JdbcConnector {
 
     /** Ordinary tables kept in this database only, for Count exactly (ADR 0045). */
     @Override
-    protected String localTableSql() {
+    protected String localTableSql(int major) {
+        // is_external came with SQL Server 2016 (13), as external tables did
         return "SELECT 1 FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id "
-            + "WHERE s.name = ? AND t.name = ? AND t.type = 'U' AND t.is_external = 0";
+            + "WHERE s.name = ? AND t.name = ? AND t.type = 'U' AND t.is_ms_shipped = 0"
+            + (major >= 13 ? " AND t.is_external = 0" : "");
+    }
+
+    /** Tables SQL Server itself ships, wherever they sit ({@code is_ms_shipped}). */
+    @Override
+    protected String refusedTableSql() {
+        return "SELECT 1 FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id "
+            + "WHERE s.name = ? AND t.name = ? AND t.is_ms_shipped = 1";
     }
 
     @Override

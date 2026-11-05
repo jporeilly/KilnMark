@@ -17,8 +17,8 @@ import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.kiln.connect.TableDetail;
 
 /**
- * Explore (ADR 0045) on MySQL and MariaDB, whose drivers keep each database at the catalog level of
- * metadata calls: columns, keys both ways, indexes, estimates and exact counts.
+ * Explore (ADR 0045) on MySQL and MariaDB, whose databases are schemas to Kilnmark's connections
+ * ({@code useCatalogTerm=Schema}): columns, keys both ways, indexes, estimates and exact counts.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 abstract class MySqlFamilyExploreTest {
@@ -93,8 +93,7 @@ abstract class MySqlFamilyExploreTest {
         for (String path : List.of("performance_schema.events_statements_history", "mysql.user")) {
             io.kilnmark.kiln.connect.ConnectorException e = org.junit.jupiter.api.Assertions.assertThrows(
                 io.kilnmark.kiln.connect.ConnectorException.class, () -> db.connector().explore(source, path, LIMIT), path);
-            assertTrue(e.getMessage().contains("database's own schemas") || e.getMessage().contains("no table"),
-                e.getMessage());
+            assertTrue(e.getMessage().contains("belongs to the database itself"), e.getMessage());
             org.junit.jupiter.api.Assertions.assertThrows(io.kilnmark.kiln.connect.ConnectorException.class,
                 () -> db.connector().preview(source, db.connector().asset(source, path), 5), path);
         }

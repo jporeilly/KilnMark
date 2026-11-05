@@ -713,7 +713,7 @@ public class GenericJdbcConnector extends JdbcConnector {
         AssetInfo a = asset(source, path);
         return new io.kilnmark.kiln.connect.TableDetail(a.path(), a.kind(), a.fields().stream()
             .map(f -> new io.kilnmark.kiln.connect.TableDetail.Column(f.name(), f.position(), f.sourceType(), null,
-                null, f.nullable(), false, false)).toList(),
+                null, f.nullable(), false, false, f.kind())).toList(),
             a.primaryKey(), List.of(), List.of(), List.of(), null);
     }
 

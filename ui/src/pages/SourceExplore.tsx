@@ -91,17 +91,24 @@ export function SourceExplore({ source, schema, table }: { source: string; schem
 function Tables({ source, schema, table }: { source: string; schema: string; table: string | null }) {
   const [list, setList] = useState<AssetList | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const page = (offset: number) => {
+  const [offset, setOffset] = useState(0);
+  useEffect(() => {
+    setOffset(0);
+  }, [source, schema]);
+  useEffect(() => {
+    // A slower answer for a schema chosen before must not land under the one chosen now.
+    let current = true;
     setError(null);
+    setList(null);
     api
       .assets(source, schema, offset)
-      .then(setList)
-      .catch((e: Error) => setError(e.message));
-  };
-  useEffect(() => {
-    setList(null);
-    page(0);
-  }, [source, schema]); // eslint-disable-line react-hooks/exhaustive-deps
+      .then((l) => current && setList(l))
+      .catch((e: Error) => current && setError(e.message));
+    return () => {
+      current = false;
+    };
+  }, [source, schema, offset]);
+  const page = (to: number) => setOffset(to);
 
   return (
     <nav aria-label={`Tables and views in ${schema}`} className="explore-pane">
@@ -163,8 +170,10 @@ function Table({ source, path }: { source: string; path: string }) {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState("columns");
   const [count, setCount] = useState<number | null>(null);
+  const [countError, setCountError] = useState<string | null>(null);
   const [counting, setCounting] = useState(false);
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const idBase = useTabsId();
 
   useEffect(() => {
@@ -175,20 +184,20 @@ function Table({ source, path }: { source: string; path: string }) {
   }, [source, path]);
 
   useEffect(() => {
-    if (tab !== "preview" || preview) return;
+    if (tab !== "preview" || preview || previewError) return;
     api
       .preview(source, path, 50)
       .then(setPreview)
-      .catch((e: Error) => setError(e.message));
-  }, [tab, preview, source, path]);
+      .catch((e: Error) => setPreviewError(e.message));
+  }, [tab, preview, previewError, source, path]);
 
   const countNow = async () => {
     setCounting(true);
-    setError(null);
+    setCountError(null);
     try {
       setCount((await api.countRows(source, path)).rows);
     } catch (e) {
-      setError((e as Error).message);
+      setCountError((e as Error).message);
     } finally {
       setCounting(false);
     }
@@ -213,6 +222,11 @@ function Table({ source, path }: { source: string; path: string }) {
               </Button>
             )}
           </p>
+          {countError && (
+            <p role="alert" className="error">
+              {countError}
+            </p>
+          )}
           <Tabs tabs={TABS} selected={tab} onSelect={setTab} label={`About ${path}`} idBase={idBase} />
           <TabPanel idBase={idBase} selected={tab}>
             {tab === "columns" && <Columns detail={detail} />}
@@ -221,8 +235,15 @@ function Table({ source, path }: { source: string; path: string }) {
             {tab === "preview" &&
               (preview ? (
                 <PreviewTable preview={preview} hint="The first 50 rows, read live and not kept. Marked columns are masked." />
+              ) : previewError ? (
+                <div>
+                  <p role="alert" className="error">
+                    {previewError}
+                  </p>
+                  <Button onClick={() => setPreviewError(null)}>Try again</Button>
+                </div>
               ) : (
-                !error && <p role="status">Reading the first rows…</p>
+                <p role="status">Reading the first rows…</p>
               ))}
           </TabPanel>
         </>
@@ -246,7 +267,7 @@ function Columns({ detail }: { detail: TableDetail }) {
           <th scope="col">Type</th>
           <th scope="col">Nulls</th>
           <th scope="col">Filled by</th>
-          <th scope="col">Primary key</th>
+          <th scope="col">Key</th>
         </tr>
       </thead>
       <tbody>
@@ -332,8 +353,8 @@ function Indexes({ detail }: { detail: TableDetail }) {
           <tr key={i.name}>
             <td className="mono">{i.name}</td>
             <td className="mono">{i.columns.join(", ")}</td>
-            <td>{i.primaryKey ? "Primary key" : i.unique ? "Yes" : "No"}</td>
-            <td>{i.method ?? "–"}</td>
+            <td>{i.primaryKey ? "Primary key" : i.unique ? (i.partial ? "Yes, among the rows it covers" : "Yes") : "No"}</td>
+            <td>{[i.method, i.partial ? "partial" : null].filter(Boolean).join(", ") || "–"}</td>
           </tr>
         ))}
       </tbody>

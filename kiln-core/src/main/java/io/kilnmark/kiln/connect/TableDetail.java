@@ -36,9 +36,16 @@ public record TableDetail(String path, String kind, List<Column> columns, List<S
      * @param scale      its digits after the point where the database gives them, or null
      * @param hasDefault whether it has a default; the default's text is never read out
      * @param generated  whether the database fills it itself (an identity or a generated column)
+     * @param kind       how Kilnmark reads it, as {@link AssetInfo.FieldInfo#kind()} spells it
+     *                   ({@code int32}, {@code text}), or null when not known
      */
     public record Column(String name, int position, String sourceType, Integer size, Integer scale, boolean nullable,
-                         boolean hasDefault, boolean generated) {
+                         boolean hasDefault, boolean generated, String kind) {
+
+        /** The column with how Kilnmark reads it. */
+        public Column withKind(String k) {
+            return new Column(name, position, sourceType, size, scale, nullable, hasDefault, generated, k);
+        }
     }
 
     /**
@@ -56,9 +63,11 @@ public record TableDetail(String path, String kind, List<Column> columns, List<S
     /**
      * An index, with its columns in index order. {@code primaryKey} marks the index that holds the
      * primary key; {@code method} is the database's word for its kind ({@code btree}, {@code hash},
-     * {@code clustered}), or null when the driver does not say.
+     * {@code clustered}), or null when the driver does not say; {@code partial} that it covers only
+     * the rows a condition picks, whose text is never read out (it can quote a value).
      */
-    public record Index(String name, List<String> columns, boolean unique, boolean primaryKey, String method) {
+    public record Index(String name, List<String> columns, boolean unique, boolean primaryKey, String method,
+                        boolean partial) {
 
         public Index {
             columns = List.copyOf(columns);

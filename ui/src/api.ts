@@ -356,9 +356,19 @@ export type TableColumn = {
   nullable: boolean;
   hasDefault: boolean;
   generated: boolean;
+  /** How Kilnmark reads it (int32, text…), or null when not known. */
+  kind: string | null;
 };
 export type TableForeignKey = { name: string | null; table: string; columns: string[]; toTable: string; toColumns: string[] };
-export type TableIndex = { name: string; columns: string[]; unique: boolean; primaryKey: boolean; method: string | null };
+export type TableIndex = {
+  name: string;
+  columns: string[];
+  unique: boolean;
+  primaryKey: boolean;
+  method: string | null;
+  /** It covers only the rows a condition picks; the condition itself is never shown. */
+  partial: boolean;
+};
 export type TableDetail = {
   path: string;
   kind: string;

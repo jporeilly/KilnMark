@@ -34,16 +34,17 @@ const orders: TableDetail = {
   path: "shop.orders",
   kind: "table",
   columns: [
-    { name: "order_id", position: 1, sourceType: "int4", size: null, scale: null, nullable: false, hasDefault: false, generated: true },
-    { name: "total", position: 2, sourceType: "numeric", size: 12, scale: 2, nullable: true, hasDefault: true, generated: false },
-    { name: "customer", position: 3, sourceType: "int4", size: null, scale: null, nullable: false, hasDefault: false, generated: false },
+    { name: "order_id", position: 1, sourceType: "int4", size: null, scale: null, nullable: false, hasDefault: false, generated: true, kind: "int32" },
+    { name: "total", position: 2, sourceType: "numeric", size: 12, scale: 2, nullable: true, hasDefault: true, generated: false, kind: "decimal" },
+    { name: "customer", position: 3, sourceType: "int4", size: null, scale: null, nullable: false, hasDefault: false, generated: false, kind: "int32" },
   ],
   primaryKey: ["order_id"],
   foreignKeys: [{ name: "orders_customer", table: "shop.orders", columns: ["customer"], toTable: "crm.customers", toColumns: ["id"] }],
   referencedBy: [],
   indexes: [
-    { name: "orders_pkey", columns: ["order_id"], unique: true, primaryKey: true, method: null },
-    { name: "orders_lower", columns: ["(expression)"], unique: false, primaryKey: false, method: null },
+    { name: "orders_pkey", columns: ["order_id"], unique: true, primaryKey: true, method: null, partial: false },
+    { name: "orders_lower", columns: ["(expression)"], unique: false, primaryKey: false, method: null, partial: false },
+    { name: "orders_open", columns: ["customer"], unique: true, primaryKey: false, method: null, partial: true },
   ],
   estimatedRows: 1204000,
 };
@@ -135,6 +136,7 @@ describe("Explore", () => {
     expect(host.textContent).toContain("crm.customers (id)");
     await act(async () => button("Indexes").click());
     expect(host.textContent).toContain("(expression)");
+    expect(host.textContent).toContain("Yes, among the rows it covers");
     expect(previewFn).not.toHaveBeenCalled();
     await act(async () => button("Preview").click());
     await settle();
