@@ -11,7 +11,7 @@ import {
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { itemsProgress } from "./chart";
-import { FlowRunChart } from "./FlowRunChart";
+import { FlowRunTimeline } from "./FlowRunTimeline";
 import { FlowRunFacts, FlowTimeSpent, took } from "./FlowRunSummary";
 import { readFlowGraph, TYPE_WORDS, type FlowGraphResult } from "./graph";
 import { FlowStatus } from "./RunFlow";
@@ -225,8 +225,8 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
         )}
       </section>
       <section aria-labelledby="fr-chart-h" className="panel">
-        <h2 id="fr-chart-h">Run chart</h2>
-        <FlowRunChart detail={detail} now={now} />
+        <h2 id="fr-chart-h">Run timeline</h2>
+        <FlowRunTimeline detail={detail} now={now} />
       </section>
       <section aria-labelledby="fr-nodes-h" className="panel">
         <h2 id="fr-nodes-h">Nodes</h2>

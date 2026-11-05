@@ -488,7 +488,8 @@
   text-align: right;
 }
 
-.cv-flow .cv-handle {
+.cv-flow .cv-handle,
+.fd-frame .cv-handle {
   width: 12px;
   height: 12px;
   background: var(--km-surface);
@@ -496,7 +497,9 @@
 }
 
 .cv-flow .cv-handle.connectingto,
-.cv-flow .cv-handle.valid {
+.cv-flow .cv-handle.valid,
+.fd-frame .cv-handle.connectingto,
+.fd-frame .cv-handle.valid {
   background: var(--km-accent);
   border-color: var(--km-accent);
 }
@@ -942,7 +945,8 @@ button.cv-danger {
     border-color: Highlight;
   }
 
-  .cv-flow .cv-handle {
+  .cv-flow .cv-handle,
+  .fd-frame .cv-handle {
     border-color: CanvasText;
   }
 
