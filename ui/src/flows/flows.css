@@ -182,7 +182,9 @@
   border-radius: 8px;
 }
 
+/* A node's settings line up at the top, so a field with a longer hint does not sit higher than the rest. */
 .fd-tools-row.fd-chosen {
+  align-items: start;
   border-color: var(--km-accent);
 }
 

@@ -65,6 +65,10 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
     public static final List<String> SEVERITIES = List.of("info", "low", "medium", "high");
     /** Longest wait. */
     public static final Duration MAX_WAIT = Duration.ofHours(24);
+    /** Longest a node's {@code timeout} may be (ADR 0041). */
+    public static final Duration MAX_TIMEOUT = Duration.ofDays(7);
+    /** The node types that take a {@code timeout}. */
+    public static final Set<String> TIMED = Set.of(RUN_PIPELINE, FOR_EACH, SQL);
     static final int MAX_TITLE = 200;
     static final int MAX_MESSAGE = 2_000;
     /** What a node that runs a pipeline reports, for conditions, besides {@code status}. */
@@ -91,14 +95,16 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         "max_parallel", "nodes", "connections", "layout");
     static final Set<String> NODE_KEYS = Set.of("id", "type");
     static final Map<String, Set<String>> TYPE_KEYS = Map.of(
-        RUN_PIPELINE, Set.of("pipeline", "version", "with"),
-        FOR_EACH, Set.of("pipeline", "version", "items", "as", "with", "max_parallel"),
+        RUN_PIPELINE, Set.of("pipeline", "version", "with", "timeout"),
+        FOR_EACH, Set.of("pipeline", "version", "items", "as", "with", "max_parallel", "timeout"),
         STOP, Set.of("status", "message"),
         NOTIFY, Set.of("severity", "title", "message"),
         WAIT, Set.of("for"),
-        SQL, Set.of("source", "statements"));
+        SQL, Set.of("source", "statements", "timeout"));
     static final Set<String> CONNECTION_KEYS = Set.of("from", "to", "when");
     private static final Pattern DURATION = Pattern.compile("(\\d{1,6})\\s*(s|m|h)");
+    /** A timeout also takes days: 7d is the most. */
+    private static final Pattern TIMEOUT = Pattern.compile("(\\d{1,6})\\s*(s|m|h|d)");
 
     /**
      * One flow node. {@code pipeline}, {@code version} (null for the latest) and {@code with} (the
@@ -109,14 +115,25 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
      * {@code statements} (as written, run in order in one transaction) for {@link #SQL}. A
      * {@link #FOR_EACH} node has {@code pipeline}, {@code version} and {@code with} as a run-pipeline
      * node, and {@code each}: its items, the parameter each fills, and how many run at once.
+     * {@code timeout} is how long a run-pipeline or sql node's run, or each of a for-each node's items,
+     * may take before it is stopped and the node fails (ADR 0041), or null for no limit.
      */
     public record Node(String id, String type, String pipeline, Integer version, String status, String message,
                        Position position, Map<String, Position> keys, Map<String, Object> with, String severity,
-                       String title, Duration waitFor, String source, List<String> statements, Each each) {
+                       String title, Duration waitFor, String source, List<String> statements, Each each,
+                       Duration timeout) {
 
         public Node {
             with = with == null ? Map.of() : java.util.Collections.unmodifiableMap(new LinkedHashMap<>(with));
             statements = statements == null ? List.of() : List.copyOf(statements);
+        }
+
+        /** A node with no timeout. */
+        public Node(String id, String type, String pipeline, Integer version, String status, String message,
+                    Position position, Map<String, Position> keys, Map<String, Object> with, String severity,
+                    String title, Duration waitFor, String source, List<String> statements, Each each) {
+            this(id, type, pipeline, version, status, message, position, keys, with, severity, title, waitFor, source,
+                statements, each, null);
         }
 
         public Node(String id, String type, String pipeline, Integer version, String status, String message,
@@ -415,6 +432,7 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
                     allowed.stream().sorted().toList())));
             }
         }
+        Duration timeout = TIMED.contains(type) ? timeout(m.entries().get("timeout"), id, problems) : null;
         if (type.equals(RUN_PIPELINE) || type.equals(FOR_EACH)) {
             YamlReader.Entry p = m.entries().get("pipeline");
             String pipeline = null;
@@ -441,13 +459,13 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
             Map<String, Object> with = with(m.entries().get("with"), id, names, problems);
             Each each = type.equals(FOR_EACH) ? each(id, m, with, declared, problems) : null;
             return new Node(id, type, pipeline, version, null, null, m.position(), keys, with, null, null, null, null,
-                null, each);
+                null, each, timeout);
         }
         if (type.equals(NOTIFY)) {
             return notifyNode(id, m, keys, names, problems);
         }
         if (type.equals(SQL)) {
-            return sqlNode(id, m, keys, problems);
+            return sqlNode(id, m, keys, timeout, problems);
         }
         if (type.equals(WAIT)) {
             YamlReader.Entry f = m.entries().get("for");
@@ -622,7 +640,8 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
      * a value put into SQL could change what it does (ADR 0028). Whether each statement is one the
      * server runs, and whether the source allows it, is for the server to check.
      */
-    private static Node sqlNode(String id, YamlReader.Mapping m, Map<String, Position> keys, List<Problem> problems) {
+    private static Node sqlNode(String id, YamlReader.Mapping m, Map<String, Position> keys, Duration timeout,
+                                List<Problem> problems) {
         YamlReader.Entry src = m.entries().get("source");
         String source = null;
         if (src == null) {
@@ -660,7 +679,47 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
                 + "statements: [\"TRUNCATE staging.orders\"]"));
         }
         return new Node(id, SQL, null, null, null, null, m.position(), keys, Map.of(), null, null, null, source,
-            statements);
+            statements, null, timeout);
+    }
+
+    /**
+     * A node's {@code timeout}: a time such as 90s, 30m, 2h or 1d, more than nothing and at most
+     * {@link #MAX_TIMEOUT}. Null when it is not written, or is wrong (with a problem saying so).
+     */
+    private static Duration timeout(YamlReader.Entry e, String id, List<Problem> problems) {
+        if (e == null) {
+            return null;
+        }
+        var m = e.value() instanceof YamlReader.Scalar sc && sc.value() != null
+            ? TIMEOUT.matcher(sc.written().strip().toLowerCase()) : null;
+        Duration d = null;
+        if (m != null && m.matches()) {
+            long n = Long.parseLong(m.group(1));
+            d = switch (m.group(2)) {
+                case "s" -> Duration.ofSeconds(n);
+                case "m" -> Duration.ofMinutes(n);
+                case "h" -> Duration.ofHours(n);
+                default -> Duration.ofDays(n);
+            };
+        }
+        if (d == null || d.isZero() || d.compareTo(MAX_TIMEOUT) > 0) {
+            problems.add(Problem.at(e.value().position(), id, "timeout is a time such as 90s, 30m, 2h or 1d, more "
+                + "than nothing and at most 7d: how long the node's run may take before it is stopped"));
+            return null;
+        }
+        return d;
+    }
+
+    /** A time as a timeout is written: 2h, 90m, 1d, 45s, in the largest whole unit. */
+    public static String written(Duration d) {
+        long s = d.toSeconds();
+        if (s % 86_400 == 0) {
+            return s / 86_400 + "d";
+        }
+        if (s % 3_600 == 0) {
+            return s / 3_600 + "h";
+        }
+        return s % 60 == 0 ? s / 60 + "m" : s + "s";
     }
 
     /** A notification's words, which may name the flow's parameters and server variables. */

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { FlowItemRun, FlowNodeRun, FlowRunDetail } from "../api";
-import { barWidths, flowShares, flowTimeSpent, flowTotals, nodeCountWords, peak, reportedWords, splitTime, waitWords } from "./runFacts";
+import { barWidths, flowShares, flowTimeSpent, flowTotals, nodeCountWords, peak, reportedWords, splitTime, timedOut, timedOutItems, waitWords } from "./runFacts";
 
 const T0 = Date.parse("2026-11-04T10:00:00Z");
 const at = (s: number) => new Date(T0 + s * 1000).toISOString();
@@ -85,6 +85,17 @@ describe("nodeCountWords", () => {
 describe("reportedWords", () => {
   test("says the rows written and the score", () => {
     expect(reportedWords(finished.nodes[0])).toBe("2,000 rows written, score 90%");
+  });
+});
+
+describe("timedOut and timedOutItems", () => {
+  test("read what the node's row records", () => {
+    expect(timedOut(node({ node: "a", position: 0, status: "failed", reported: { timed_out: true } }))).toBe(true);
+    expect(timedOut(node({ node: "a", position: 0, status: "failed", reported: { rows_written: 3 } }))).toBe(false);
+    expect(timedOut(node({ node: "a", position: 0 }))).toBe(false);
+    const each = node({ node: "e", position: 0, type: "for-each", reported: { timed_out_items: [0, 2, "x"] } });
+    expect([...timedOutItems(each)]).toEqual([0, 2]);
+    expect(timedOutItems(node({ node: "e", position: 0 })).size).toBe(0);
   });
 });
 

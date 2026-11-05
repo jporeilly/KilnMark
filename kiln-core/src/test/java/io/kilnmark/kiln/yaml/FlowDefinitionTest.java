@@ -430,4 +430,44 @@ class FlowDefinitionTest {
         assertTrue(firstProblem("kilnmark: flow/v1\nname: f\nnodes:\n  - &x {id: a, type: stop}").toLowerCase()
             .contains("anchor"));
     }
+
+    // ---- timeout (ADR 0041) ----
+
+    @Test
+    void readsATimeoutOnNodesThatRunSomething() {
+        String yaml = SQL.replace("    source: warehouse\n", "    source: warehouse\n    timeout: 90s\n")
+            .replace("    pipeline: orders-load\n", "    pipeline: orders-load\n    timeout: 2h\n");
+        FlowDefinition.Parsed p = FlowDefinition.parse(yaml);
+        assertTrue(p.valid(), p.problems().toString());
+        assertEquals(Duration.ofSeconds(90), p.definition().node("empty").timeout());
+        assertEquals(Duration.ofHours(2), p.definition().node("load").timeout());
+        assertEquals(null, p.definition().node("tell").timeout());
+        FlowDefinition.Parsed each = FlowDefinition.parse(FAN.replace("    max_parallel: 2\n",
+            "    max_parallel: 2\n    timeout: 7d\n"));
+        assertTrue(each.valid(), each.problems().toString());
+        assertEquals(Duration.ofDays(7), each.definition().node("regions").timeout());
+        assertEquals(null, FlowDefinition.parse(SQL).definition().node("load").timeout(), "no timeout unless written");
+    }
+
+    @Test
+    void checksATimeout() {
+        String load = "    pipeline: orders-load\n";
+        for (String bad : List.of("0s", "8d", "169h", "soon", "2 weeks", "-1h", "[1h]")) {
+            assertTrue(firstProblem(SQL.replace(load, load + "    timeout: " + bad + "\n"))
+                .contains("timeout is a time such as 90s, 30m, 2h or 1d, more than nothing and at most 7d"), bad);
+        }
+        assertTrue(FlowDefinition.parse(SQL.replace(load, load + "    timeout: 168h\n")).valid(), "7 days is the most");
+        // Only nodes that run something take one: a wait has for, a notify or stop ends at once.
+        assertTrue(firstProblem(SQL.replace("    title: \"Emptied", "    timeout: 1h\n    title: \"Emptied"))
+            .contains("has no setting 'timeout'"));
+    }
+
+    @Test
+    void writesATimeInItsLargestWholeUnit() {
+        assertEquals("2h", FlowDefinition.written(Duration.ofHours(2)));
+        assertEquals("90m", FlowDefinition.written(Duration.ofMinutes(90)));
+        assertEquals("1d", FlowDefinition.written(Duration.ofHours(24)));
+        assertEquals("45s", FlowDefinition.written(Duration.ofSeconds(45)));
+        assertEquals("2m", FlowDefinition.written(Duration.ofSeconds(120)));
+    }
 }
