@@ -129,7 +129,18 @@ jobs:
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           for name in kilnmark-server kilnmark-postgres; do
             docker push "ghcr.io/jporeilly/${name}:${VERSION}"
-            digest=$(docker inspect --format '{{index .RepoDigests 0}}' "ghcr.io/jporeilly/${name}:${VERSION}")
+            # The digest is the registry's, read back by tag: a Podman engine (the local runner) rewrites
+            # the manifest as it pushes, so the digest it records locally is not the one the registry
+            # stores, and signing that one fails.
+            pull=$(curl -sSf -u "$GITHUB_ACTOR:$GH_TOKEN" \
+              "https://ghcr.io/token?service=ghcr.io&scope=repository:jporeilly/${name}:pull" | jq -r .token)
+            sha=$(curl -sSfI -H "Authorization: Bearer $pull" \
+              -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json" \
+              "https://ghcr.io/v2/jporeilly/${name}/manifests/${VERSION}" \
+              | tr -d '\r' | awk -F': ' 'tolower($1) == "docker-content-digest" { print $2 }')
+            unset pull
+            [ -n "$sha" ] || { echo "::error::ghcr.io has no ${name}:${VERSION} after the push"; exit 1; }
+            digest="ghcr.io/jporeilly/${name}@${sha}"
             cosign sign --yes --key "$RUNNER_TEMP/cosign.key" --tlog-upload=false --use-signing-config=false "$digest"
             cosign verify --key "$RUNNER_TEMP/verify.pub" --insecure-ignore-tlog=true "$digest" > /dev/null
             echo "Pushed and signed $digest"
