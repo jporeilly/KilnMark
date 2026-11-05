@@ -22,7 +22,9 @@ env:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # GitHub's runner, or the local one KILNMARK_RUNNER names for the owner's own work, as in ci.yml
+    # (docs/development.md, "CI on a local runner").
+    runs-on: ${{ vars.KILNMARK_RUNNER && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && (github.event_name != 'pull_request' || (github.event.pull_request.user.login == github.repository_owner && !startsWith(github.head_ref, 'dependabot/'))) && fromJSON(vars.KILNMARK_RUNNER) || 'ubuntu-latest' }}
     permissions:
       contents: write   # to create the draft release; a rehearsal creates nothing
       packages: write   # to push the images to ghcr.io on a tag; a rehearsal pushes nothing
@@ -153,7 +155,10 @@ jobs:
       # The release installed as a customer would (INSTALL.md, section A): prepare as root makes the
       # kilnmark account and /opt/kilnmark; then, as that account, install from the offline images
       # file on Docker, status, check, a backup, a restore of it, down, up, and a purge.
+      # Only on GitHub's runners: it makes system accounts with sudo and starts Kilnmark on its usual
+      # ports, which a self-hosted runner shares with the machine's own installs.
       - name: Install the release with kilnmark.sh
+        if: runner.environment == 'github-hosted'
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
