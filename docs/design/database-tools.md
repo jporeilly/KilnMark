@@ -203,7 +203,7 @@ The operations are the generator's (D2) with a fixed shape each; there is no "ru
 run time the server checks both seals, writes the statements again from `fields` and refuses any
 difference from those previewed, checks again Allow changes, the role, authentication, the
 source's kind and target, and whether approval is needed now; then, on the run's own connection
-inside its transaction, sets `search_path` to `pg_catalog` on PostgreSQL, reads the database's
+inside its transaction, sets `search_path` to `pg_catalog, pg_temp` on PostgreSQL, reads the database's
 identity and the own-database marker again, takes the table's lock where DDL is transactional, and
 re-reads the fingerprint (identity, kind or engine, partitions and children). Only ordinary local
 tables are acted on (an allow-list per database, never a table in a publication), and PostgreSQL

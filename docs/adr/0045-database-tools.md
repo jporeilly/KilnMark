@@ -174,7 +174,10 @@ operations**; what they do not cover is said in point 12.
    - PostgreSQL: an ordinary table (`relkind` `r`), or a partitioned one (`p`) with no foreign
      partition at any level; never a table that any publication sends, read from
      `pg_publication_tables` (which expands `FOR ALL TABLES`, `TABLES IN SCHEMA` and a published
-     partitioned table's leaves), since a truncate or a drop would reach every subscriber. Truncates use `TRUNCATE ONLY`, so a partitioned table and
+     partitioned table's leaves), since a truncate or a drop would reach every subscriber. Where
+     a replication extension is installed (`pglogical`, `spock`, `bdr`, `pgactive`), a table it
+     replicates is refused too, read from that extension's own list; if that list cannot be read,
+     every drop, truncate and alter on the source is refused. Truncates use `TRUNCATE ONLY`, so a partitioned table and
      a table with child tables (inheritance) are refused for truncate.
    - MySQL and MariaDB: an InnoDB, Aria or MyISAM table (never `FEDERATED`, `CONNECT`, `SPIDER` or
      `MERGE`).
@@ -349,6 +352,10 @@ operations**; what they do not cover is said in point 12.
     before a pipeline or flow version runs in production is the backlog's "change approval and
     environments" (Compliance, change management); until it ships, a production source that must
     have two people for every change keeps Allow writing and Allow SQL off and uses operations.
+    Nor can these controls see replication the database does not list in its catalogue: MySQL and
+    MariaDB binary-log replicas, Oracle GoldenGate, or a change-data-capture consumer reading the
+    log. A change to a table such a tool copies reaches its copies. The guide asks that Allow
+    changes stay off on a source whose tables are replicated that way.
 
 ## What changes in ADR 0028, and what stays
 
