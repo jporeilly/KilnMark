@@ -5,7 +5,9 @@ datasketches = "9.0.0"
 postgresql = "42.7.14"
 mssql-jdbc = "13.6.2.jre11"
 # MySQL and MariaDB (LGPL-2.1-or-later, used unmodified; ADR 0007). Never MySQL Connector/J (GPL).
-mariadb-java-client = "3.5.11"
+# Held at 3.5.10: 3.5.11 sets session_track_system_variables to NULL when it connects, which
+# MariaDB refuses, so every connection fails (MariaDbWriteTest).
+mariadb-java-client = "3.5.10"
 # Oracle's JDBC driver, for tests only: it is under the Oracle Free Use Terms and Conditions, which
 # do not allow it in a product that is sold, so it never ships; customers install it (ADR 0007).
 # Keep in step with OracleConnector.DRIVER.

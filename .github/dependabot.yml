@@ -14,6 +14,9 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # 3.5.11 cannot connect to MariaDB (gradle/libs.versions.toml); a later fix is welcome.
+      - dependency-name: "org.mariadb.jdbc:mariadb-java-client"
+        versions: ["3.5.11"]
     groups:
       gradle:
         patterns: ["*"]
