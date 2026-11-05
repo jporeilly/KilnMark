@@ -86,7 +86,7 @@ class SqlServerExploreTest {
         assertEquals(List.of("region", "id"), t.primaryKey());
         assertTrue(t.indexes().stream().anyMatch(i -> i.name().equals("customers_pk") && i.primaryKey()));
         assertTrue(t.indexes().stream().anyMatch(i -> i.name().equals("customers_email") && i.unique()
-            && !i.primaryKey()));
+            && !i.primaryKey() && i.partial()), "a filtered index is partial");
         assertEquals(List.of("sales.orders"), t.referencedBy().stream().map(TableDetail.ForeignKey::table).toList());
     }
 

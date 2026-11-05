@@ -52,7 +52,9 @@ table.
 - **Not the database's own tables.** Tables in `information_schema`, `pg_catalog`, MySQL's
   `performance_schema`, `sys` and `mysql`, SQL Server's `sys` and the schemas Oracle maintains are
   not shown or previewed, even by name, nor are tables a PostgreSQL extension owns (such as
-  `pg_stat_statements`) or SQL Server ships: some keep other sessions' statements with their values.
+  `pg_stat_statements`, and also PostGIS's `spatial_ref_sys` or an extension's settings table) or
+  SQL Server ships (change data capture's tables among them): some keep other sessions' statements
+  with their values.
 - **Count exactly counts ordinary tables only.** A view, or a foreign, federated, linked or external
   table, keeps its estimate: counting it would run the view's query, or reach another server.
 - **Generic JDBC sources** show their schemas, tables, columns and primary key as a scan reads

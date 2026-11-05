@@ -670,7 +670,7 @@ public abstract class JdbcConnector implements Connector {
                     pk.columns(),
                     isTable ? JdbcExplorer.foreignKeys(md, scope, table, true) : List.of(),
                     isTable ? JdbcExplorer.foreignKeys(md, scope, table, false) : List.of(),
-                    isTable ? keyColumnsOnly(c, schema, table, JdbcExplorer.indexes(md, scope, table, pk, names))
+                    isTable ? refineIndexes(c, schema, table, JdbcExplorer.indexes(md, scope, table, pk, names))
                         : List.of(),
                     isTable ? estimate(c, a, timeout) : null);
             } finally {
@@ -860,11 +860,11 @@ public abstract class JdbcConnector implements Connector {
     }
 
     /**
-     * The indexes with only their key columns in {@code columns}, for databases whose driver lists
-     * an index's included columns as if they were keys (PostgreSQL's {@code INCLUDE}); by default
-     * as the driver gave them.
+     * The indexes as this database knows them better than its driver says: only their key columns
+     * (PostgreSQL lists {@code INCLUDE} columns as keys), or which are filtered (SQL Server); by
+     * default as the driver gave them.
      */
-    protected List<io.kilnmark.kiln.connect.TableDetail.Index> keyColumnsOnly(Connection c, String schema,
+    protected List<io.kilnmark.kiln.connect.TableDetail.Index> refineIndexes(Connection c, String schema,
                                                                              String table,
                                                                              List<io.kilnmark.kiln.connect.TableDetail.Index> indexes)
         throws SQLException {
