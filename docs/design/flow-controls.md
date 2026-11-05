@@ -78,13 +78,45 @@ flowchart LR
 - Waits on the flow's watcher, holding no slot and no connection between checks. Cancelling the
   flow ends the wait. Results also: `waited_s`.
 
-## C3. `timeout` (planned)
+## C3. `timeout` (built)
 
-- On `run-pipeline`, `for-each` (each item), `sql` and `check-source`: a duration, at most 7 days.
-- The watcher measures from when the node's run started (not while it waited for a slot or a
-  source's place). Past it, a pipeline run is cancelled (`PipelineService.cancel`, as a person's
-  cancel), a `sql` node's statement is stopped; the node fails: "Took longer than 2h and was
-  stopped". A timed-out try may be retried (C4) when retries allow.
+- On `run-pipeline`, `for-each` (each item), `sql` and, once C1 is built, `check-source`: a time
+  written `90s`, `30m`, `2h` or `1d`, more than nothing and at most 7 days
+  (`FlowDefinition.MAX_TIMEOUT`). Any other node type refuses the key when saved. No default: left
+  out, there is no limit.
+- The watcher measures from when the node's run started, not while it waited for a slot or a
+  source's place: a pipeline run's `started_at` (set when a worker takes it, after its places on
+  sources), a `sql` node's start on its thread (after its place). `started_at` is the database's
+  clock and the watcher reads its own; they are the same machine's or close, and a timeout is
+  minutes, not milliseconds.
+- Past it:
+  - **run-pipeline**: the run is cancelled (`PipelineService.cancel`, as a person's cancel), and the
+    node says "Took longer than 2h and was stopped; its pipeline run is being cancelled" while it
+    stops. Once the run has ended, the node **fails** ("...; its pipeline run was cancelled"), so
+    nothing after it starts while it may still write. A run that succeeded as it was stopped
+    succeeds.
+  - **sql**: `SqlAction.Control.stop` cancels the statement and rolls back, as a flow cancel does;
+    the node **fails** ("...; nothing was changed, as its statements run in one transaction").
+  - **for-each**: the item's run is cancelled and the item counts as **failed**, not cancelled, so
+    it does not stop the node or the flow as a run cancelled by hand does; the other items run. The
+    node's message names the first item that timed out.
+- A timed-out node fails, never ends cancelled, so its `failure` and `always` connections are taken.
+  The flow run's error, when nothing handles a timed-out run-pipeline or sql node, is "Node load took
+  longer than 2h and was stopped"; for a for-each node it stays "Node regions failed (the pipeline
+  ...)", and the node's message names the first item that timed out. An item stopped for its
+  timeout whose run succeeded all the same counts as succeeded, and is not marked.
+- A sql node whose statements ended on their own (failed or committed) before the watcher looked
+  keeps its own outcome, even past its timeout.
+- The node's row records `timed_out: true` (a for-each node's, `timed_out_items: [0, 2]`), beside
+  what it reported but never read by conditions. `GET /api/v1/flow-runs/{id}` returns it in
+  `reported`, shows a timed-out item's status as `failed`, and the run page marks both **Timed out**.
+- A worker that takes the flow over after another stopped finds a cancelled pipeline run that ran
+  at least the timeout and counts it as timed out, as the first worker would have. It allows up to 5
+  seconds (a tenth of a shorter timeout) for the first watcher's clock being ahead of the
+  database's. A flow cancel the watcher itself asked for is never counted so. (Not covered by a
+  test: a takeover needs a second worker.)
+- No migration: the timeout is read from the flow's version each time.
+- A timed-out try may be retried (C4) when retries allow.
 
 ## C4. `retries` (planned)
 

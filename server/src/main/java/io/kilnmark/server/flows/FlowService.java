@@ -644,7 +644,9 @@ public class FlowService {
         boolean show = values || each.itemsParameter() == null;
         java.util.SortedMap<Integer, PipelineStore.Run> runs = pipelineStore.flowItemRuns(r.id(), n.id());
         boolean ended = s != null && !"running".equals(s.status()) && !"pending".equals(s.status());
-        Set<Integer> notStarted = notStarted(s);
+        Set<Integer> notStarted = indexes(s, NOT_STARTED);
+        // An item stopped for its timeout counts as failed, as the node counts it, though its run was cancelled.
+        Set<Integer> timedOut = indexes(s, TIMED_OUT_ITEMS);
         List<FlowViews.ItemRunView> out = new ArrayList<>();
         int count = Math.max(list.size(), runs.isEmpty() ? 0 : runs.lastKey() + 1);
         for (int i = 0; i < count; i++) {
@@ -653,8 +655,9 @@ public class FlowService {
             String unrun = notStarted.contains(i) ? "failed" : ended ? "skipped" : "pending";
             out.add(pr == null
                 ? new FlowViews.ItemRunView(i, value, unrun, null, null, null, null)
-                : new FlowViews.ItemRunView(i, value, pr.status(), pr.id(), pr.requestedAt(), pr.startedAt(),
-                    pr.finishedAt()));
+                : new FlowViews.ItemRunView(i, value, timedOut.contains(i) && pr.finished()
+                    && !"succeeded".equals(pr.status()) ? "failed" : pr.status(), pr.id(), pr.requestedAt(),
+                    pr.startedAt(), pr.finishedAt()));
         }
         return out;
     }
@@ -662,11 +665,24 @@ public class FlowService {
     /** Where a for-each node's row lists the items that failed without a run (its node message says why). */
     static final String NOT_STARTED = "not_started";
 
-    /** The items a for-each node's row records as failed without a run. */
-    private Set<Integer> notStarted(FlowStore.NodeRun s) {
+    /** Where a run-pipeline or sql node's row says it took longer than its timeout and was stopped (ADR 0041). */
+    static final String TIMED_OUT = "timed_out";
+    /** Where a for-each node's row lists the items whose runs took longer than its timeout and were stopped. */
+    static final String TIMED_OUT_ITEMS = "timed_out_items";
+    private static final Map<String, Object> TIMED_OUT_RECORD = Map.of(TIMED_OUT, true);
+    /** The most the watcher's clock and the database's are taken to differ by, when judging a run found again. */
+    private static final Duration SKEW = Duration.ofSeconds(5);
+
+    /** What a node, or an item, that took longer than its timeout says. */
+    static String tookTooLong(Duration timeout) {
+        return "Took longer than " + FlowDefinition.written(timeout) + " and was stopped";
+    }
+
+    /** The items a for-each node's row lists under {@code key}: those failed without a run, or timed out. */
+    private Set<Integer> indexes(FlowStore.NodeRun s, String key) {
         Set<Integer> out = new HashSet<>();
         com.fasterxml.jackson.databind.JsonNode reported = s == null ? null : tree(s.reported());
-        if (reported != null && reported.get(NOT_STARTED) instanceof com.fasterxml.jackson.databind.JsonNode list
+        if (reported != null && reported.get(key) instanceof com.fasterxml.jackson.databind.JsonNode list
             && list.isArray()) {
             list.forEach(x -> out.add(x.asInt()));
         }
@@ -845,6 +861,10 @@ public class FlowService {
         private final Map<String, Long> pipelineRuns = new HashMap<>();
         private final Map<String, Instant> waitingSince = new HashMap<>();
         private final Set<String> cancelAsked = new HashSet<>();
+        /** Run-pipeline and sql nodes stopped for taking longer than their timeout (ADR 0041). */
+        private final Set<String> timedOut = new HashSet<>();
+        /** When each sql node's statements started: its timeout counts from then, not while it waited for a place. */
+        private final Map<String, Instant> sqlStartedAt = new HashMap<>();
         /** The sql nodes running, each on a thread of its own so the flow keeps watching its other nodes. */
         private final Map<String, java.util.concurrent.CompletableFuture<SqlAction.Outcome>> sqlRuns = new HashMap<>();
         private final Map<String, SqlAction.Control> sqlControls = new HashMap<>();
@@ -1063,6 +1083,8 @@ public class FlowService {
             /** How each item ended: succeeded, failed or cancelled; failed too for one that could not start. */
             final java.util.SortedMap<Integer, String> ended = new java.util.TreeMap<>();
             final Set<Integer> cancelAsked = new HashSet<>();
+            /** Items whose run took longer than the node's timeout and was stopped: each counts as failed. */
+            final java.util.SortedSet<Integer> timedOut = new java.util.TreeSet<>();
             /** Items that failed without a run: the pipeline refused their values, or could not be run. */
             final java.util.SortedSet<Integer> notStarted = new java.util.TreeSet<>();
             int next;
@@ -1162,6 +1184,27 @@ public class FlowService {
             }
         }
 
+        /** Records that an item's run took longer than the node's timeout; the node's message names the first. */
+        private void timeOutItem(Fan fan, int i) {
+            if (fan.timedOut.add(i) && fan.problem == null) {
+                fan.problem = "Item " + (i + 1) + " took longer than " + FlowDefinition.written(fan.node.timeout())
+                    + " and was stopped";
+            }
+        }
+
+        /** An item recorded as timed out whose run succeeded all the same: it is not timed out after all. */
+        private void untimeItem(Fan fan, int i) {
+            fan.timedOut.remove(i);
+            if (fan.problem != null && fan.problem.startsWith("Item " + (i + 1) + " took longer than")) {
+                fan.problem = null;
+                if (!fan.timedOut.isEmpty()) {
+                    int next = fan.timedOut.first();
+                    fan.timedOut.remove(next);
+                    timeOutItem(fan, next);
+                }
+            }
+        }
+
         private void itemNotStarted(Fan fan, int i, String why) {
             fan.ended.put(i, "failed");
             fan.notStarted.add(i);
@@ -1179,6 +1222,9 @@ public class FlowService {
             Map<String, Object> out = new LinkedHashMap<>(reported);
             if (!fan.notStarted.isEmpty()) {
                 out.put(NOT_STARTED, List.copyOf(fan.notStarted));
+            }
+            if (!fan.timedOut.isEmpty()) {
+                out.put(TIMED_OUT_ITEMS, List.copyOf(fan.timedOut));
             }
             return out;
         }
@@ -1220,11 +1266,29 @@ public class FlowService {
                     fan.ended.put(e.getKey(), "failed");
                 } else if (pr.get().finished()) {
                     String status = pr.get().status();
+                    if (!status.equals("succeeded") && !fan.cancelAsked.contains(e.getKey())
+                        && ranPast(fan.node.timeout(), pr.get())) {
+                        timeOutItem(fan, e.getKey()); // found again after the worker running the flow changed
+                    }
+                    if (fan.timedOut.contains(e.getKey())) {
+                        if (!status.equals("succeeded")) {
+                            fan.ended.put(e.getKey(), "failed");
+                            continue;
+                        }
+                        untimeItem(fan, e.getKey()); // it finished as it was stopped: it succeeded
+                    }
                     fan.ended.put(e.getKey(), status.equals("succeeded") || status.equals("cancelled") ? status : "failed");
                     if (status.equals("cancelled") && !fan.cancelAsked.contains(e.getKey()) && !stopped) {
                         // Someone cancelled an item's run: the node, and so the flow, stops.
                         fan.byHand = true;
                         fan.stopping = true;
+                    }
+                } else if (!stopped && overdue(fan.node.timeout(), pr.get().startedAt())
+                    && !fan.timedOut.contains(e.getKey())) {
+                    // Took longer than the node's timeout: its run is cancelled, and the item counts as failed.
+                    timeOutItem(fan, e.getKey());
+                    if (fan.cancelAsked.add(e.getKey())) {
+                        cancelPipelineRun(e.getValue());
                     }
                 }
             }
@@ -1325,6 +1389,7 @@ public class FlowService {
                 + (s.statements().size() == 1 ? " statement" : " statements") + " on " + s.source(), Map.of());
             SqlAction.Control control = new SqlAction.Control();
             sqlControls.put(s.id(), control);
+            sqlStartedAt.put(s.id(), Instant.now());
             java.util.concurrent.CompletableFuture<SqlAction.Outcome> done = new java.util.concurrent.CompletableFuture<>();
             sqlRuns.put(s.id(), done);
             Duration timeout = config == null ? Duration.ofMinutes(30) : config.pipelines().sqlStatementTimeout();
@@ -1358,16 +1423,23 @@ public class FlowService {
                 return;
             }
             SqlAction.Control control = sqlControls.get(node);
+            java.util.concurrent.CompletableFuture<SqlAction.Outcome> f = sqlRuns.get(node);
             if ((cancelling || engine.halted()) && control != null && !control.stopped()) {
                 control.stop();
+            } else if (control != null && !control.stopped() && f != null && !f.isDone()
+                && overdue(def.node(node).timeout(), sqlStartedAt.get(node))) {
+                // Took longer than its timeout: its statement is cancelled and its transaction rolled back. One that
+                // has already ended, however, keeps its own outcome.
+                timedOut.add(node);
+                control.stop();
             }
-            java.util.concurrent.CompletableFuture<SqlAction.Outcome> f = sqlRuns.get(node);
             if (f == null || !f.isDone()) {
                 return;
             }
             SqlAction.Outcome o = f.join();
             sqlRuns.remove(node);
             sqlControls.remove(node);
+            sqlStartedAt.remove(node);
             List<Long> places = sqlPlaces.remove(node);
             if (places != null) {
                 lease.givePlaces(places);
@@ -1375,6 +1447,9 @@ public class FlowService {
             if (o.succeeded()) {
                 end(def, engine, node, FlowEngine.State.SUCCEEDED, null, o.message(),
                     Map.of("rows_affected", (double) o.rowsAffected()));
+            } else if (timedOut.contains(node)) {
+                end(def, engine, node, FlowEngine.State.FAILED, null, tookTooLong(def.node(node).timeout())
+                    + "; nothing was changed, as its statements run in one transaction", Map.of(), TIMED_OUT_RECORD);
             } else if (control != null && control.stopped()) {
                 end(def, engine, node, FlowEngine.State.CANCELLED, null, o.message(), Map.of());
             } else {
@@ -1552,6 +1627,17 @@ public class FlowService {
             }
             Optional<PipelineStore.Run> pr = pipelineStore.run(prId);
             if (pr.isPresent() && !pr.get().finished()) {
+                if (!cancelling && !engine.halted() && !timedOut.contains(node)
+                    && overdue(s.timeout(), pr.get().startedAt())) {
+                    // Took longer than its timeout: its run is cancelled as a person's cancel would, and the node
+                    // fails once the run has stopped, so nothing after it starts while it may still be writing.
+                    timedOut.add(node);
+                    if (cancelAsked.add(node)) {
+                        cancelPipelineRun(prId);
+                    }
+                    save(def, node, "running", prId, null, tookTooLong(s.timeout()) + "; its pipeline run is being "
+                        + "cancelled", Map.of());
+                }
                 return;
             }
             if (pr.isEmpty()) {
@@ -1567,6 +1653,13 @@ public class FlowService {
                 reported.put("duration_s", r.durationSeconds());
             });
             String status = pr.get().status();
+            if (!status.equals("succeeded") && (timedOut.contains(node)
+                || (!cancelAsked.contains(node) && ranPast(s.timeout(), pr.get())))) {
+                timedOut.add(node);
+                end(def, engine, node, FlowEngine.State.FAILED, prId, tookTooLong(s.timeout()) + "; its pipeline run "
+                    + "was cancelled", reported, TIMED_OUT_RECORD);
+                return;
+            }
             // Why a pipeline run failed may quote data; its own page shows it to those who may see it.
             switch (status) {
                 case "succeeded" -> end(def, engine, node, FlowEngine.State.SUCCEEDED, prId, null, reported);
@@ -1602,9 +1695,39 @@ public class FlowService {
 
         private void end(FlowDefinition def, FlowEngine engine, String node, FlowEngine.State state, Long prId,
                          String message, Map<String, Object> reported) {
+            end(def, engine, node, state, prId, message, reported, Map.of());
+        }
+
+        /** Ends a node; its row also records {@code recorded}, which conditions never read (that it timed out). */
+        private void end(FlowDefinition def, FlowEngine engine, String node, FlowEngine.State state, Long prId,
+                         String message, Map<String, Object> reported, Map<String, Object> recorded) {
             engine.finish(node, state, reported);
             nodeWasCancelled |= state == FlowEngine.State.CANCELLED;
-            save(def, node, state.name().toLowerCase(), prId, Instant.now(), message, reported);
+            Map<String, Object> row = new LinkedHashMap<>(reported);
+            row.putAll(recorded);
+            save(def, node, state.name().toLowerCase(), prId, Instant.now(), message, row);
+        }
+
+        /**
+         * Whether a run that started at {@code since} has taken longer than {@code timeout}. A run not yet
+         * started (waiting for a worker, a source's place) has not: its timeout counts from its start.
+         */
+        private boolean overdue(Duration timeout, Instant since) {
+            return timeout != null && since != null && Duration.between(since, Instant.now()).compareTo(timeout) > 0;
+        }
+
+        /**
+         * Whether a pipeline run that ended cancelled ran for at least {@code timeout}: one this flow
+         * stopped for its timeout, found again by a worker that took the flow over and so never asked.
+         * Callers ask only about runs this watcher did not cancel itself (a flow cancel landing late).
+         */
+        private boolean ranPast(Duration timeout, PipelineStore.Run pr) {
+            if (timeout == null || !"cancelled".equals(pr.status()) || pr.startedAt() == null || pr.finishedAt() == null) {
+                return false;
+            }
+            // The watcher that stopped it read its own clock, these times are the database's: allow for a little skew.
+            Duration slack = timeout.dividedBy(10).compareTo(SKEW) < 0 ? timeout.dividedBy(10) : SKEW;
+            return Duration.between(pr.startedAt(), pr.finishedAt()).compareTo(timeout.minus(slack)) >= 0;
         }
 
         private void save(FlowDefinition def, String node, String status, Long prId, Instant finished, String message,
@@ -1651,6 +1774,10 @@ public class FlowService {
                 return engine.haltMessage().isBlank() ? "The flow stopped at a stop node" : engine.haltMessage();
             }
             for (FlowDefinition.Node s : def.nodes()) {
+                if (engine.state(s.id()) == FlowEngine.State.FAILED && !engine.handled(s.id()) && timedOut.contains(s.id())) {
+                    return "Node " + s.id() + " took longer than " + FlowDefinition.written(s.timeout()) + " and was "
+                        + "stopped";
+                }
                 if (engine.state(s.id()) == FlowEngine.State.FAILED && !engine.handled(s.id())) {
                     return "Node " + s.id() + " failed" + (s.pipeline() == null ? "" : " (the pipeline " + s.pipeline() + ")");
                 }

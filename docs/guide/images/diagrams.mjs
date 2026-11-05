@@ -103,6 +103,8 @@ function icon(kind, cx, cy, color) {
       return g(`<path d="M${cx} ${cy - 5}c-2 -2 -6 -2 -8 -1v12c2 -1 6 -1 8 1c2 -2 6 -2 8 -1v-12c-2 -1 -6 -1 -8 1z"/><path d="M${cx} ${cy - 5}v12"/>`);
     case "funnel":
       return g(`<path d="M${cx - 8} ${cy - 6}h16l-6 7v6l-4 2v-8z"/>`);
+    case "clock":
+      return g(`<circle cx="${cx}" cy="${cy}" r="7"/><path d="M${cx} ${cy - 4}v4l3 2"/>`);
     default:
       return "";
   }
@@ -471,4 +473,38 @@ function svg(name, height, title, sub, body) {
     text(524, 220, "Alice herself, under any name · any API token", { size: 11.5, fill: C.quiet, anchor: "middle" }) +
     foot(252, "log", "Each step is in the audit log; the access review shows who approved each grant.");
   svg("signin-two-people", 302, "No one person can give access to sensitive values", "With KILNMARK_UNMASK_APPROVAL on: both people sign in with your identity provider", b);
+}
+
+// ---- A flow node's timeout ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 188, y3 = 300;
+  const dx = X[1] + W / 2, dy = y2 + 58;
+  const b =
+    lane(y1, 96, "Not counted", C.quiet) +
+    card(X[0], y1 + 30, W, { n: "1", title: "Node ready", sub: "its connections allow it" }) +
+    card(X[1], y1 + 30, W, { n: "2", title: "Waits its turn", sub: "for a worker or a source" }) +
+    card(X[2], y1 + 30, W, { n: "3", color: C.blue, title: "A worker takes it", sub: "the timeout starts now" }) +
+    arrow([[X[0] + W, y1 + 58], [X[1] - 2, y1 + 58]]) +
+    arrow([[X[1] + W, y1 + 58], [X[2] - 2, y1 + 58]]) +
+    lane(y2, 96, "Counted: timeout: 2h", C.blue) +
+    card(X[2], y2 + 30, W, { icon: "play", color: C.blue, title: "Runs", sub: "its pipeline run, or its SQL" }) +
+    arrow([[X[2] + W / 2, y1 + 86], [X[2] + W / 2, y2 + 28]], C.blue) +
+    arrow([[X[2], dy], [dx + 92, dy]], C.blue) +
+    `<polygon points="${dx - 90},${dy} ${dx},${dy - 36} ${dx + 90},${dy} ${dx},${dy + 36}" fill="${C.tint}" stroke="${C.axis}" stroke-width="1.25"/>` +
+    text(dx, dy - 4, "Ended within", { size: 12.5, weight: 600, anchor: "middle" }) +
+    text(dx, dy + 12, "its timeout?", { size: 12.5, weight: 600, anchor: "middle" }) +
+    arrow([[dx - 90, dy], [X[0] + W + 2, dy]], C.good) +
+    label(dx - 104, dy - 8, "yes", C.good, "end") +
+    card(X[0], y2 + 30, W, { icon: "check", color: C.good, strong: true, title: "Ends as it ended", sub: "succeeded or failed" }) +
+    lane(y3, 96, "Past it", C.bad) +
+    arrow([[dx, dy + 36], [dx, y3 + 28]], C.bad, { dash: "4 3" }) +
+    label(dx + 8, dy + 52, "no", C.bad, "start") +
+    card(X[1], y3 + 30, W, { icon: "clock", color: C.bad, dash: "4 3", title: "Stopped", sub: "run cancelled, or rolled back" }) +
+    arrow([[X[1] + W, y3 + 58], [X[2] - 2, y3 + 58]], C.bad) +
+    card(X[2], y3 + 30, W, { icon: "cross", color: C.bad, title: "Node fails", sub: "\"Took longer than 2h\"" }) +
+    arrow([[X[2] + W / 2, y3 + 86], [X[2] + W / 2, y3 + 112], [X[0] + W / 2, y3 + 112], [X[0] + W / 2, y3 + 88]], C.bad) +
+    card(X[0], y3 + 30, W, { icon: "bell", color: C.bad, title: "failure connection", sub: "taken: notify, or stop" }) +
+    foot(y3 + 128, "gear", "A for-each node gives each item's run the whole timeout; an item stopped for it counts as failed.");
+  svg("flow-timeout", 482, "What a node's timeout does", "On run-pipeline, for-each and sql nodes: the time counts only while the work runs", b);
 }

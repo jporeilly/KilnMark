@@ -905,4 +905,76 @@ class FlowRunTest {
         assertTrue(flows.validate(yaml.replace("suffixes: { type: text list, default: [pa] }",
             "suffixes: { type: text list, default: [pa] }\n  suffix: { type: number, default: 1 }")).valid());
     }
+
+    // ---- timeout (ADR 0041) ----
+
+    @Test
+    @Order(20)
+    void aRunPipelineNodePastItsTimeoutIsCancelledAndFails() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fl-timeout
+            nodes:
+              - { id: slow, type: run-pipeline, pipeline: fl-copy, timeout: 3s }
+              - { id: after, type: run-pipeline, pipeline: fl-gated }
+            connections:
+              - { from: slow, to: after }
+            """);
+        HoldingGraphRunner.hold = true; // released after each test (release())
+        FlowStore.Run run = start("fl-timeout", Map.of());
+        FlowStore.Run done = waitForFlow(run.id(), "failed");
+        assertEquals("Node slow took longer than 3s and was stopped", done.error());
+        FlowStore.NodeRun slow = node(run.id(), "slow");
+        assertEquals("failed", slow.status(), "a timeout fails the node; it does not cancel the flow");
+        assertEquals("Took longer than 3s and was stopped; its pipeline run was cancelled", slow.message());
+        assertTrue(slow.reported().replace(" ", "").contains("\"timed_out\":true"), slow.reported());
+        PipelineStore.Run pr = pipelineStore.run(slow.pipelineRunId()).orElseThrow();
+        assertEquals("cancelled", pr.status());
+        assertTrue(Duration.between(pr.startedAt(), pr.finishedAt()).toMillis() >= 3000, "it ran its three seconds");
+        assertEquals("skipped", node(run.id(), "after").status());
+        assertTrue(flows.runDetail(run.id(), false).nodes().get(0).reported().get("timed_out").asBoolean(),
+            "the run page reads it");
+        HoldingGraphRunner.hold = false;
+
+        // A run that ends within its timeout is not touched.
+        FlowStore.Run quick = start("fl-timeout", Map.of());
+        waitForFlow(quick.id(), "succeeded");
+        assertFalse(node(quick.id(), "slow").reported().contains("timed_out"), node(quick.id(), "slow").reported());
+    }
+
+    @Test
+    @Order(21)
+    void aForEachItemPastTheTimeoutFailsAndTheOthersRun() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fl-each-timeout
+            nodes:
+              - id: each
+                type: for-each
+                pipeline: fl-param
+                items: [ta, tb]
+                as: suffix
+                max_parallel: 1
+                timeout: 3s
+            """);
+        HoldingGraphRunner.hold = true;
+        FlowStore.Run run = start("fl-each-timeout", Map.of());
+        // The first item is held past its timeout; once it is stopped, the second runs and is let through.
+        await("the first item to be cancelled", () -> item(run.id(), "each", 0),
+            r -> r != null && "cancelled".equals(r.status()));
+        HoldingGraphRunner.hold = false;
+        FlowStore.Run done = waitForFlow(run.id(), "failed");
+        assertEquals("Node each failed (the pipeline fl-param)", done.error());
+        assertEquals("succeeded", item(run.id(), "each", 1).status(), "the other item still ran");
+        FlowStore.NodeRun each = node(run.id(), "each");
+        assertEquals("failed", each.status(), "not cancelled: the flow was not stopped by hand");
+        assertEquals("1 of 2 items failed; their pipeline runs say why. Item 1 took longer than 3s and was stopped",
+            each.message());
+        assertTrue(each.reported().replace(" ", "").contains("\"timed_out_items\":[0]"), each.reported());
+        assertTrue(each.reported().replace(" ", "").contains("\"failed\":1.0"), each.reported());
+        // The run page shows the item as failed, as the node counts it, though its pipeline run was cancelled.
+        assertEquals(List.of("failed", "succeeded"), flows.runDetail(run.id(), true).nodes().get(0).items().stream()
+            .map(FlowViews.ItemRunView::status).toList());
+        assertEquals("cancelled", item(run.id(), "each", 0).status());
+    }
 }
