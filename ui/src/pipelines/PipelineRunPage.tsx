@@ -13,6 +13,7 @@ import { dimensionRows, ESTIMATE, gapWords, pointsWords } from "./prediction";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { RunTimeSpent } from "./RunTimeSpent";
+import { RunTimeline } from "./RunTimeline";
 import { RunRates } from "./RunRates";
 import { RunLogPanel } from "./RunLogPanel";
 import { runOrigin } from "./timeline";
@@ -273,6 +274,10 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
       <section aria-labelledby="spent-h" className="panel">
         <h2 id="spent-h">Where each node spent its time</h2>
         <RunTimeSpent detail={detail} clock={clock} />
+      </section>
+      <section aria-labelledby="timeline-h" className="panel">
+        <h2 id="timeline-h">Run timeline</h2>
+        <RunTimeline detail={detail} clock={clock} tiles={false} />
       </section>
 
       <section aria-labelledby="rates-h" className="panel">

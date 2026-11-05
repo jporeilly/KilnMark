@@ -7,6 +7,13 @@ details.
 
 ### What's new
 
+- **Run timelines, nested as the run went** (docs/guide/flows.md, docs/guide/pipelines.md). A flow
+  run's page has a **Run timeline** in place of the run chart: the flow, then each node, each node
+  opening into its pipeline run's nodes, and a `for-each` node into its items, each with its value,
+  every bar on one time line with how long it took at its end. One sentence sums up the run, and
+  choosing any row shows everything recorded about it. A pipeline run's page shows the same
+  timeline again, with the chosen node's details.
+
 - **A Library of samples and templates** (ADR 0043). **Library**, in the navigation, holds what
   ships with Kilnmark, apart from your own work. **Samples**: Add samples and the starter pack moved
   here from the Pipelines page, and added samples stay here, so the Pipelines and Flows pages show
