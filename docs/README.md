@@ -28,6 +28,7 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 - [Backing up and restoring Kilnmark](guide/backup-and-restore.md): what to back up, the backup and restore scripts, what to check after a restore, and testing a restore
 - [The audit log](guide/audit-log.md): what is recorded, why it cannot be changed, sending it to a SIEM, and reading it
 - [Signing in, roles and tokens](guide/signing-in.md): API tokens and signing in with your organisation, the four roles and the unmask grant, token lifetime, the access review and two people for sensitive values
+- [Database tools](guide/database-tools.md): Explore a database source's schemas, tables, columns, keys, indexes and rows
 - [Notifications and email alerts](guide/notifications.md): what can notify you, in the app and by email; choosing what you get; setting up email and team addresses
 
 ## Spikes

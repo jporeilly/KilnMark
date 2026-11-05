@@ -83,6 +83,25 @@ class GenericJdbcConnectorTest {
         writer = h2.source("h2-lab", Map.of("read_only", "false"));
     }
 
+    // ------------------------------------------------------------------ Explore (ADR 0045)
+
+    @Test
+    void exploreShowsColumnsAndThePrimaryKeyButNoCount() throws Exception {
+        assertTrue(h2.connector().explores());
+        io.kilnmark.kiln.connect.TableDetail t = h2.connector().explore(reader, "CRM.CUSTOMERS",
+            java.time.Duration.ofSeconds(30));
+        assertEquals(List.of("ID", "NAME"), t.columns().stream().map(io.kilnmark.kiln.connect.TableDetail.Column::name)
+            .toList());
+        assertEquals(List.of("ID"), t.primaryKey());
+        assertTrue(t.indexes().isEmpty(), "Generic JDBC shows no indexes");
+        assertNull(t.estimatedRows());
+        ConnectorException e = assertThrows(ConnectorException.class,
+            () -> h2.connector().countRows(reader, "CRM.CUSTOMERS", java.time.Duration.ofSeconds(30)));
+        assertTrue(e.getMessage().contains("not offered for Generic JDBC"), e.getMessage());
+        assertThrows(ConnectorException.class,
+            () -> h2.connector().explore(reader, "CRM.NOTHING", java.time.Duration.ofSeconds(30)));
+    }
+
     // ------------------------------------------------------------------ registration and settings
 
     @Test

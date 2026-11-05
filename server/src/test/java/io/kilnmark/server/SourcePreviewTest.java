@@ -103,6 +103,46 @@ class SourcePreviewTest {
     }
 
     @Test
+    void exploreShowsATablesColumnsKeysAndIndexesAndCountsItsRows() throws Exception {
+        try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
+            // in a schema of its own, so the listing test still finds two tables in prev
+            s.execute("CREATE SCHEMA IF NOT EXISTS prevx");
+            s.execute("CREATE TABLE IF NOT EXISTS prevx.visits (id integer PRIMARY KEY, person integer NOT NULL "
+                + "REFERENCES prev.people (id), at timestamptz DEFAULT now())");
+            s.execute("CREATE INDEX IF NOT EXISTS visits_person ON prevx.visits (person)");
+        }
+        JsonPath t = designer().queryParam("asset", "prevx.visits").get("/api/v1/sources/prev-db/explore")
+            .then().statusCode(200).header("Cache-Control", containsString("no-store")).extract().jsonPath();
+        assertEquals("prevx.visits", t.getString("path"));
+        assertEquals(List.of("id", "person", "at"), t.getList("columns.name"));
+        assertEquals(List.of(false, false, true), t.getList("columns.hasDefault"));
+        assertEquals(List.of("id"), t.getList("primaryKey"));
+        assertEquals("prev.people", t.getString("foreignKeys[0].toTable"));
+        assertTrue(t.getList("indexes.name").contains("visits_person"));
+        assertFalse(t.prettify().contains("now()"), "a default's text is never shown");
+
+        designer().queryParam("asset", "prev.people").get("/api/v1/sources/prev-db/explore")
+            .then().statusCode(200).body("referencedBy[0].table", equalTo("prevx.visits"));
+        designer().queryParam("asset", "prev.people").get("/api/v1/sources/prev-db/explore/count")
+            .then().statusCode(200).header("Cache-Control", containsString("no-store")).body("rows", equalTo(250));
+        designer().queryParam("asset", "prev.nothing").get("/api/v1/sources/prev-db/explore")
+            .then().statusCode(502).body("error", containsString("prev.nothing"));
+        designer().get("/api/v1/sources/prev-db/explore").then().statusCode(400).body("error", containsString("asset"));
+    }
+
+    @Test
+    void viewersCannotExploreAndFileSourcesHaveNoExplore() {
+        Tokens.as(viewer).queryParam("asset", "prev.people").get("/api/v1/sources/prev-db/explore")
+            .then().statusCode(403);
+        Tokens.as(viewer).queryParam("asset", "prev.people").get("/api/v1/sources/prev-db/explore/count")
+            .then().statusCode(403);
+        admin().contentType(ContentType.JSON).body(Map.of("name", "prev-files", "kind", "files", "settings",
+            Map.of("path", folder.toString()))).post("/api/v1/sources").then().statusCode(201);
+        designer().queryParam("asset", "data.csv").get("/api/v1/sources/prev-files/explore")
+            .then().statusCode(404).body("error", containsString("database sources"));
+    }
+
+    @Test
     void listsAContainersTablesInPages() {
         designer().queryParam("container", "prev").queryParam("limit", 1)
             .get("/api/v1/sources/prev-db/assets").then().statusCode(200)

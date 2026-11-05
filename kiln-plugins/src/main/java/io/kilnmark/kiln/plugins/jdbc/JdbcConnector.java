@@ -634,6 +634,136 @@ public abstract class JdbcConnector implements Connector {
         throw new ConnectorException("There is no table or view " + path + " in " + source.name());
     }
 
+    // ------------------------------------------------------------------ Explore (ADR 0045)
+
+    @Override
+    public boolean explores() {
+        return true;
+    }
+
+    /**
+     * The table's columns, keys and indexes from the driver's metadata, and the database's estimate
+     * of its rows ({@link #estimateRowsSql}), on a read-only connection. The table is found first
+     * as a preview finds it ({@link #asset}), so a name that is not in the catalogue is refused
+     * before any metadata call, and the calls use the catalogue's own spelling.
+     */
+    @Override
+    public io.kilnmark.kiln.connect.TableDetail explore(SourceConfig source, String path, Duration timeout)
+        throws ConnectorException {
+        AssetInfo a = asset(source, path);
+        String schema = a.hints().getOrDefault("schema", a.container());
+        String table = a.hints().getOrDefault("table", a.name());
+        try (Connection c = connectToExplore(source, timeout)) {
+            try {
+                DatabaseMetaData md = c.getMetaData();
+                JdbcExplorer.Scope scope = exploreScope(md, schema);
+                JdbcExplorer.Key pk = JdbcExplorer.primaryKey(md, scope, table);
+                boolean isTable = a.kind().equals("table") || a.kind().equals("partitioned table");
+                List<io.kilnmark.kiln.connect.TableDetail.Column> columns = JdbcExplorer.columns(md, scope, table);
+                Set<String> names = new java.util.HashSet<>();
+                columns.forEach(col -> names.add(col.name()));
+                return new io.kilnmark.kiln.connect.TableDetail(a.path(), a.kind(), columns, pk.columns(),
+                    isTable ? JdbcExplorer.foreignKeys(md, scope, table, true) : List.of(),
+                    isTable ? JdbcExplorer.foreignKeys(md, scope, table, false) : List.of(),
+                    isTable ? JdbcExplorer.indexes(md, scope, table, pk, names) : List.of(),
+                    isTable ? estimate(c, a, timeout) : null);
+            } finally {
+                c.rollback();
+            }
+        } catch (SQLException e) {
+            throw new ConnectorException("Cannot read the columns, keys and indexes of " + a.path() + " in "
+                + source.name() + ": " + refusal(e));
+        }
+    }
+
+    /**
+     * {@code SELECT COUNT(*)} of the table, its names as the catalogue spells them and quoted with
+     * {@link #quote}, on a read-only connection within {@code timeout}.
+     */
+    @Override
+    public long countRows(SourceConfig source, String path, Duration timeout) throws ConnectorException {
+        AssetInfo a = asset(source, path);
+        String sql = "SELECT COUNT(*) FROM " + quote(a.hints().getOrDefault("schema", a.container())) + "."
+            + quote(a.hints().getOrDefault("table", a.name()));
+        try (Connection c = connectToExplore(source, timeout)) {
+            try (java.sql.Statement s = c.createStatement()) {
+                if (timeout != null) {
+                    s.setQueryTimeout(Math.max(1, seconds(timeout)));
+                }
+                try (java.sql.ResultSet rs = s.executeQuery(sql)) {
+                    return rs.next() ? rs.getLong(1) : 0;
+                }
+            } finally {
+                c.rollback();
+            }
+        } catch (SQLException e) {
+            throw new ConnectorException("Cannot count the rows of " + a.path() + " in " + source.name() + ": "
+                + refusal(e));
+        }
+    }
+
+    /**
+     * A read-only connection for Explore. A failure to connect is explained as for a test (it holds
+     * no value of the source); failures after that are reported by {@link #refusal} only.
+     */
+    private Connection connectToExplore(SourceConfig source, Duration timeout) throws ConnectorException {
+        Connection c;
+        try {
+            c = connect(source, timeout);
+        } catch (SQLException e) {
+            throw new ConnectorException("Cannot connect to " + source.name() + ": " + explain(e), e);
+        }
+        try {
+            JdbcExplorer.readOnly(c);
+            return c;
+        } catch (SQLException e) {
+            try {
+                c.close();
+            } catch (SQLException ignored) {
+                // closing a connection that could not be set up
+            }
+            throw new ConnectorException("Cannot read " + source.name() + " read-only: " + refusal(e));
+        }
+    }
+
+    /**
+     * What a database said when it refused a query, as its code only: its own text can quote a value
+     * of the table (a cast that failed in a view, say), so it is never passed on (ADR 0045).
+     */
+    static String refusal(SQLException e) {
+        String state = e.getSQLState();
+        return "the database refused the query (" + (state == null ? "no SQLSTATE" : "SQLSTATE " + state)
+            + (e.getErrorCode() != 0 ? ", error " + e.getErrorCode() : "") + ")";
+    }
+
+    /**
+     * Where a schema is in metadata calls. By default the schema level, with its name as a pattern
+     * from {@link #schemaPattern}; MySQL and MariaDB keep databases at the catalog level instead.
+     */
+    protected JdbcExplorer.Scope exploreScope(DatabaseMetaData md, String schema) throws SQLException {
+        return new JdbcExplorer.Scope(null, schema, schemaPattern(md, schema));
+    }
+
+    /** The database's estimate of the rows of {@code asset}, or null when it has none or never gathered one. */
+    private Long estimate(Connection c, AssetInfo asset, Duration timeout) throws SQLException {
+        String sql = estimateRowsSql(asset);
+        if (sql == null) {
+            return null;
+        }
+        try (java.sql.Statement s = c.createStatement()) {
+            if (timeout != null) {
+                s.setQueryTimeout(Math.max(1, seconds(timeout)));
+            }
+            try (java.sql.ResultSet rs = s.executeQuery(sql)) {
+                if (!rs.next()) {
+                    return null;
+                }
+                long n = rs.getLong(1);
+                return rs.wasNull() || n < 0 ? null : n;
+            }
+        }
+    }
+
     private static AssetInfo info(JdbcCatalog.Table t) {
         List<AssetInfo.FieldInfo> fields = t.columns().stream().map(col -> new AssetInfo.FieldInfo(col.name(),
             col.position(), col.sourceType(), col.kind().name().toLowerCase(Locale.ROOT), col.nullable(),

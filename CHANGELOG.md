@@ -7,6 +7,12 @@ details.
 
 ### What's new
 
+- **Explore a database source** ([Database tools](docs/guide/database-tools.md), ADR 0045). A
+  database source's page shows its schemas, the tables and views of one, and a table's columns,
+  keys (both ways), indexes and the database's estimate of its rows, read live; **Count exactly**
+  counts them now, and **Preview** shows the first rows, masked as everywhere. For stewards,
+  designers and admins; no default's text, index expression or database error text is shown, as
+  each can quote a value.
 - **Database tools are decided** ([ADR 0045](docs/adr/0045-database-tools.md),
   [design](docs/design/database-tools.md)): Explore a source's schemas, tables, columns, keys and
   indexes with a masked preview; generate `CREATE TABLE`, `ALTER`, `CREATE INDEX` and `DROP` in

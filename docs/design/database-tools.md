@@ -15,7 +15,7 @@ flowchart LR
   S --> T["Edit: settings on tabs (D3)<br/>General, Advanced, Options,<br/>Pooling, Partitioning"]
 ```
 
-## D1. Explore (planned)
+## D1. Explore (built)
 
 **Page.** A tab **Explore** on the source page, beside the source's settings and scans, for
 stewards, designers and admins, on database sources (PostgreSQL, SQL Server, MySQL, MariaDB,

@@ -506,6 +506,12 @@ public class MySqlConnector extends JdbcConnector {
         return dialect().quote(identifier);
     }
 
+    /** MySQL and MariaDB drivers keep each database at the catalog level of metadata calls. */
+    @Override
+    protected JdbcExplorer.Scope exploreScope(java.sql.DatabaseMetaData md, String schema) {
+        return new JdbcExplorer.Scope(schema, null, null);
+    }
+
     @Override
     public SqlDialect dialect() {
         return product == Product.MARIADB ? SqlDialect.MARIADB : SqlDialect.MYSQL;
