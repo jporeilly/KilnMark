@@ -9,6 +9,7 @@ import {
   type TableForeignKey,
 } from "../api";
 import { PreviewTable } from "../components/PreviewTable";
+import { GenerateSql } from "./GenerateSql";
 import { Button, DataTable, TabPanel, Tabs, useTabsId } from "../components/ui";
 import { href } from "../router";
 
@@ -17,6 +18,7 @@ const TABS = [
   { id: "keys", label: "Keys" },
   { id: "indexes", label: "Indexes" },
   { id: "preview", label: "Preview" },
+  { id: "sql", label: "SQL" },
 ];
 
 /** Opens a schema or table in the address (replaced, so Back leaves the source rather than stepping back through tables). */
@@ -30,7 +32,17 @@ function show(source: string, schema: string | null, table: string | null) {
  * columns, keys, indexes and rows, read live and never stored. The preview is the source's own,
  * masked as every view of values is.
  */
-export function SourceExplore({ source, schema, table }: { source: string; schema: string | null; table: string | null }) {
+export function SourceExplore({
+  source,
+  kind,
+  schema,
+  table,
+}: {
+  source: string;
+  kind: string;
+  schema: string | null;
+  table: string | null;
+}) {
   const [schemas, setSchemas] = useState<ContainerList | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -80,7 +92,7 @@ export function SourceExplore({ source, schema, table }: { source: string; schem
             )}
           </nav>
           {schema && <Tables source={source} schema={schema} table={table} />}
-          {schema && table && <Table key={`${schema}.${table}`} source={source} path={`${schema}.${table}`} />}
+          {schema && table && <Table key={`${schema}.${table}`} source={source} kind={kind} path={`${schema}.${table}`} />}
           {!schema && <p className="muted explore-pane">Choose a schema to see its tables and views.</p>}
         </div>
       )}
@@ -165,7 +177,7 @@ export function estimateText(t: TableDetail): string {
   return `About ${formatNumber(t.estimatedRows)} ${t.estimatedRows === 1 ? "row" : "rows"} (the database's estimate).`;
 }
 
-function Table({ source, path }: { source: string; path: string }) {
+function Table({ source, kind, path }: { source: string; kind: string; path: string }) {
   const [detail, setDetail] = useState<TableDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState("columns");
@@ -232,6 +244,7 @@ function Table({ source, path }: { source: string; path: string }) {
             {tab === "columns" && <Columns detail={detail} />}
             {tab === "keys" && <Keys detail={detail} />}
             {tab === "indexes" && <Indexes detail={detail} />}
+            {tab === "sql" && <GenerateSql source={source} sourceKind={kind} detail={detail} />}
             {tab === "preview" &&
               (preview ? (
                 <PreviewTable preview={preview} hint="The first 50 rows, read live and not kept. Marked columns are masked." />

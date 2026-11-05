@@ -4408,3 +4408,23 @@ h1.with-tile {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* The SQL generator on Explore's SQL tab (ADR 0045): the statements, read-only, to copy or save. */
+.sql-out {
+  margin: 12px 0 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--km-divider);
+  border-radius: var(--km-radius-xs);
+  background: var(--km-surface-2);
+  font-family: var(--km-mono);
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.explore-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 4px 0 8px;
+}

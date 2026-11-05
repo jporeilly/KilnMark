@@ -7,6 +7,12 @@ details.
 
 ### What's new
 
+- **Generate SQL for a table** ([Database tools](docs/guide/database-tools.md#generate-sql-for-a-table),
+  ADR 0045). Explore's new **SQL** tab writes `CREATE TABLE`, `ALTER TABLE … ADD`, `CREATE INDEX`,
+  `DROP INDEX`, `DROP TABLE` or `TRUNCATE` for a table, in its database's dialect or another's, to
+  copy or save as `.sql`. Nothing is run. Types are the ones a pipeline's `create` mode chooses;
+  names are quoted; defaults, checks, comments and expressions are never copied, and the page says
+  what was left out.
 - **Explore a database source** ([Database tools](docs/guide/database-tools.md), ADR 0045). A
   database source's page shows its schemas, the tables and views of one, and a table's columns,
   keys (both ways), indexes and the database's estimate of its rows, read live; **Count exactly**

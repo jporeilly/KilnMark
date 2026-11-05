@@ -371,6 +371,8 @@ export type TableIndex = {
 };
 export type TableDetail = {
   path: string;
+  schema: string;
+  table: string;
   kind: string;
   columns: TableColumn[];
   primaryKey: string[];
@@ -380,6 +382,24 @@ export type TableDetail = {
   estimatedRows: number | null;
 };
 export type RowCount = { asset: string; rows: number };
+export type SqlStatement = "create-table" | "add-columns" | "create-index" | "drop-index" | "drop-table" | "truncate";
+export type SqlRequest = {
+  statement: SqlStatement;
+  asset: string;
+  /** A source kind (postgresql, sqlserver, mysql, mariadb, oracle), or null for the source's own. */
+  dialect: string | null;
+  columns: {
+    name: string;
+    kind: string;
+    length: number | null;
+    precision: number | null;
+    scale: number | null;
+    nullable: boolean;
+  }[] | null;
+  index: { name: string; columns: string[] | null; unique: boolean | null } | null;
+};
+/** SQL the generator wrote (ADR 0045), never run, and what it left out. */
+export type GeneratedSql = { dialect: string; sql: string[]; leftOut: string[] };
 export type Deleted = { name: string; assets: number; runs: number };
 
 export type ImportRow = {
@@ -676,6 +696,12 @@ export const api = {
   /** One table's columns, keys, indexes and estimated rows, read live (Explore). */
   explore: (name: string, asset: string) =>
     call<TableDetail>(`/api/v1/sources/${encodeURIComponent(name)}/explore?asset=${encodeURIComponent(asset)}`),
+  /** SQL for one table, written by Kilnmark as text and never run. */
+  generateSql: (name: string, request: SqlRequest) =>
+    call<GeneratedSql>(`/api/v1/sources/${encodeURIComponent(name)}/explore/sql`, {
+      method: "POST",
+      body: JSON.stringify(request),
+    }),
   /** The exact number of rows of one table, counted by the database. */
   countRows: (name: string, asset: string) =>
     call<RowCount>(`/api/v1/sources/${encodeURIComponent(name)}/explore/count?asset=${encodeURIComponent(asset)}`),

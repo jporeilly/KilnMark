@@ -253,7 +253,7 @@ export function SourcePage({
 
 
       {canChange && connector?.category === "databases" && (
-        <SourceExplore source={source.name} schema={schema} table={table} />
+        <SourceExplore source={source.name} kind={source.kind} schema={schema} table={table} />
       )}
 
       <section aria-labelledby="runs-h" className="panel">

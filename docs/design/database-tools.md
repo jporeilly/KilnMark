@@ -81,9 +81,9 @@ key, a foreign key, a unique and a plain index, an expression index, a view; `my
 `myXtable`); `SourceResourceTest` for roles (a viewer gets 403) and for a file source (404); UI
 tests for the panes, the address, and the estimate's wording.
 
-## D2. The SQL generator (planned)
+## D2. The SQL generator (built, except the write node's button)
 
-**Page.** On Explore's table pane, **Generate SQL** opens a panel with a choice of statement:
+**Page.** On Explore's table pane, an **SQL** tab offers a choice of statement:
 
 - `CREATE TABLE` for this table (in this database's dialect, or another's: a designer moving a
   table from SQL Server to PostgreSQL picks PostgreSQL);
@@ -92,13 +92,15 @@ tests for the panes, the address, and the estimate's wording.
 - `DROP INDEX`, `DROP TABLE`, `TRUNCATE TABLE`.
 
 On a pipeline's write node, **Show the CREATE TABLE** gives what its `create` mode would run, from
-the node's input columns (the pipeline's check already knows them).
+the node's input columns (the pipeline's check already knows them). **Not built yet**: it follows
+as its own change.
 
 The text is shown read-only, with **Copy** and **Save as .sql**, and a list of what was left out
 ("defaults, checks and comments are not copied").
 
 **API.** `POST /api/v1/sources/{name}/explore/sql` (`STEWARD`) with
-`{statement, asset, dialect?, columns?, index?}`; answer `{sql: [text], leftOut: [text]}`.
+`{statement, asset, dialect?, columns?, index?}`; answer `{dialect, sql: [text], leftOut: [text]}`.
+`SqlGenerator` (server) reads the table live as Explore does, then calls `DdlWriter`.
 `POST /api/v1/pipelines/{id}/nodes/{node}/create-sql` (`STEWARD`) for a write node.
 
 **Engine.** `WriteSql` is package-private; a public facade `jdbc.DdlWriter` (in `kiln-plugins`)
