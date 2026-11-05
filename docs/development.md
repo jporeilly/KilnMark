@@ -256,17 +256,27 @@ flowchart LR
 - to use the local runner: `gh variable set KILNMARK_RUNNER --body '["self-hosted","kilnmark-linux"]'`;
 - to go back to GitHub's runners: `gh variable delete KILNMARK_RUNNER`.
 
-Checks then report as usual on the pull request; a pull request merges only with them green, as
-always.
+Dependabot's pull requests always run on GitHub's runners, whatever the variable says: their code
+comes from outside, and a dependency's install scripts must not run on our own machine. While
+GitHub's runners are unavailable they wait. Checks report as usual on the pull request, and a pull
+request merges only with them green, as always.
 
-**Setting the runner up**, once, on a machine with Podman (a rootful machine, as Kilnmark's own):
+**Deleting the variable is not an off-switch.** A workflow can name the runner's label itself; the
+runner takes such a job as long as it runs. To stop it taking jobs, stop it:
+`podman stop kilnmark-ci-runner`.
+
+**Setting the runner up**, once, on a machine with Podman (a rootful machine, as Kilnmark's own).
+The commands are for bash; in Git Bash put `MSYS_NO_PATHCONV=1` before each `podman` command that
+names a Linux path (`/srv/...`, `/run/...`), or Git Bash rewrites it to a Windows one.
 
 1. Build the image: `podman build -t localhost/kilnmark-ci-runner:2.338.2 ci/local-runner`. The
-   Containerfile pins Ubuntu by digest and checks the runner download against its published sha256;
-   raise both together when GitHub publishes a new runner.
+   Containerfile pins Ubuntu by digest and checks the runner download against its published sha256.
+   The runner never updates itself and is unpacked from the image on every start, so that checked
+   version is the one that runs: when GitHub stops accepting it, raise both values, build again
+   and recreate the container (its registration is kept).
 2. Keep the machine's Podman API service running when idle. By default it exits after 5 seconds
    without a request, which breaks the connection the tests keep open ("Broken pipe" when a later
-   test starts its container):
+   test starts its container). In bash (the `\$` keeps `$LOGGING` for the machine's shell):
 
    ```
    podman machine ssh -- "sudo mkdir -p /etc/systemd/system/podman.service.d && printf '[Service]\nExecStart=\nExecStart=/usr/bin/podman \$LOGGING system service --time=0\n' | sudo tee /etc/systemd/system/podman.service.d/10-no-idle-exit.conf && sudo systemctl daemon-reload && sudo systemctl restart podman.service"
@@ -276,34 +286,49 @@ always.
 3. Make its folder in the machine: `podman machine ssh sudo mkdir -p /srv/gh-runner`. Its work
    folder has the same path inside and outside the container, so the tests' containers can mount
    files from it.
-4. Register and start it, with a registration token (valid for an hour; never print or commit it):
+4. Register and start it. The registration token (valid for an hour) goes in a file the runner
+   reads once and deletes, never in the container's environment, where a job could read it:
 
    ```
-   export RUNNER_TOKEN=$(gh api -X POST repos/jporeilly/KilnMark/actions/runners/registration-token --jq .token)
+   gh api -X POST repos/jporeilly/KilnMark/actions/runners/registration-token --jq .token \
+     | podman machine ssh "sudo tee /srv/gh-runner/token >/dev/null && sudo chmod 600 /srv/gh-runner/token"
    podman run -d --name kilnmark-ci-runner --restart=always --network host --security-opt label=disable \
-     -e RUNNER_TOKEN -e TESTCONTAINERS_HOST_OVERRIDE=10.88.0.1 \
+     -e TESTCONTAINERS_HOST_OVERRIDE=10.88.0.1 \
      -v /srv/gh-runner:/srv/gh-runner -v /run/podman/podman.sock:/var/run/docker.sock \
      localhost/kilnmark-ci-runner:2.338.2
-   unset RUNNER_TOKEN
    ```
 
-   On Git Bash, put `MSYS_NO_PATHCONV=1` before `podman run` so the paths are not rewritten.
    `TESTCONTAINERS_HOST_OVERRIDE` is where the tests reach the databases they start: the gateway of
    Podman's default network (`podman network inspect podman` shows it). Inside a Podman machine on
    Windows with mirrored networking, published ports do not answer on `localhost`, only on the
    container networks' gateways.
-5. Check it: `gh api repos/jporeilly/KilnMark/actions/runners` lists it as online. Its settings are
-   kept in `/srv/gh-runner/runner`, so later starts need no token: `podman start kilnmark-ci-runner`
-   after the machine restarts.
+5. Check it: `gh api repos/jporeilly/KilnMark/actions/runners` lists it as online. Its registration
+   is kept in `/srv/gh-runner/runner`, so later starts need no token: `podman start
+   kilnmark-ci-runner` after the machine restarts.
 
 **What to know:**
 
-- Jobs run as root in the container and reach the machine's container engine through its socket:
-  a job can do anything on the machine's VM. Run only this repository's jobs on it, and keep the
-  repository private.
+- **A job can reach everything the Podman machine can.** Jobs run as root in the container and
+  drive the machine's container engine through its socket, so a job can start a container that
+  mounts any path in the machine: every other container and volume in it (on the owner's PC, the
+  other projects' too) and, through WSL's mount of the Windows drives, the Windows user's files
+  (`/mnt/c/Users/...`: SSH keys, git and gh credentials, every project's `.env`). That is why only
+  the owner's own commits run on it (Dependabot's never, fork pull requests are off in this private
+  repository) and why it must never serve a public repository. A runner on a Podman machine of its
+  own, without the Windows drives mounted, would contain it; that is on the backlog.
+- **It keeps state between jobs**, unlike GitHub's runners: the JDK and Node in `_work/_tool`,
+  Gradle's caches, images in the engine. A job could change what later jobs use, which is a second
+  reason to run only the owner's commits on it. Recreate it (`podman rm -f`, delete
+  `/srv/gh-runner/_work`, `podman run` again) after anything suspicious. A runner that starts
+  afresh for each job ("ephemeral") would remove this; it needs a token to register each time, so
+  it is not set up here.
+- Testcontainers' Ryuk removes a job's test containers when the job ends, even a cancelled one, so
+  SQL Server and Oracle do not pile up between runs.
 - Gradle builds one module's tests at a time on this runner (`org.gradle.parallel=false` in its
   `/root/.gradle/gradle.properties`, which overrides the project's setting): in parallel, the
   modules' tests start their containers at once through Podman's API, and some starts fail.
+- The `build` job tags the PostgreSQL image it builds `kilnmark-postgres:dev`, the same tag a local
+  `podman compose up --build` uses: after a CI run, that image is the pull request's.
 - It runs one job at a time, so a pull request's three jobs run one after the other (about 25
   minutes). Each heavy-databases job starts SQL Server, MySQL, MariaDB and Oracle containers in the
   machine; give it the memory (the machine has 24 GB on the owner's PC).

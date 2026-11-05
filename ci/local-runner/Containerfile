@@ -30,8 +30,12 @@ RUN mkdir -p /root/.gradle && echo 'org.gradle.parallel=false' > /root/.gradle/g
 COPY entrypoint.sh /opt/entrypoint.sh
 RUN chmod 755 /opt/entrypoint.sh
 
-# Jobs run as root in this container: with the engine's socket mounted, a job could reach root on
-# the machine's VM anyway, so a separate user would add nothing. Run only this repository's jobs.
+# Jobs run as root in this container: with the engine's socket mounted, a job can reach everything
+# the Podman machine can (its containers, and through WSL the Windows user's files), so a separate
+# user would add nothing. Run only the owner's own commits on it (docs/development.md).
+# Ryuk removes a job's test containers when the job ends, even a cancelled one, so they do not pile
+# up in the shared engine. It mounts the engine's socket by its path in the machine.
 ENV RUNNER_ALLOW_RUNASROOT=1 \
-    TESTCONTAINERS_RYUK_DISABLED=true
+    TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED=true \
+    TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/run/podman/podman.sock
 ENTRYPOINT ["/opt/entrypoint.sh"]

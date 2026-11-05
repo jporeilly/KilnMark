@@ -20,8 +20,9 @@ env:
 
 jobs:
   scan:
-    # GitHub's runner, or the one KILNMARK_RUNNER names (docs/development.md, "CI on a local runner").
-    runs-on: ${{ vars.KILNMARK_RUNNER && fromJSON(vars.KILNMARK_RUNNER) || 'ubuntu-latest' }}
+    # GitHub's runner, or the one KILNMARK_RUNNER names (docs/development.md, "CI on a local runner");
+    # Dependabot's pull requests always on GitHub's: their code is not ours to run on our machines.
+    runs-on: ${{ vars.KILNMARK_RUNNER && github.actor != 'dependabot[bot]' && fromJSON(vars.KILNMARK_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -71,7 +72,10 @@ jobs:
             for image in kilnmark-postgres:scan docker.io/library/eclipse-temurin:25-jre; do
               echo "### ${image}"
               echo '```'
-              trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed --format table "$image"
+              # Our own image is only in the engine; a base image is read from its registry, never a
+              # stale copy a persistent runner's engine may hold.
+              src=remote; [ "$image" = kilnmark-postgres:scan ] && src=docker
+              trivy image --quiet --image-src "$src" --severity HIGH,CRITICAL --ignore-unfixed --format table "$image"
               echo '```'
             done
           } >> "$GITHUB_STEP_SUMMARY"
