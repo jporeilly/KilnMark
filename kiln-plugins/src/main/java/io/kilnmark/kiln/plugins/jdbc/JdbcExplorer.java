@@ -154,13 +154,24 @@ final class JdbcExplorer {
             }
         }
         List<TableDetail.Index> out = new ArrayList<>();
-        boolean pkFound = false;
+        // the key's own index by its name; failing that (no name, or Oracle's USING INDEX with another
+        // name), the first unique index over exactly the key's columns
+        String pkIndex = null;
+        if (!primaryKey.columns().isEmpty()) {
+            if (primaryKey.name() != null && cols.containsKey(primaryKey.name())) {
+                pkIndex = primaryKey.name();
+            } else {
+                for (Map.Entry<String, Map<Integer, String>> e : cols.entrySet()) {
+                    if (unique.get(e.getKey()) && List.copyOf(e.getValue().values()).equals(primaryKey.columns())) {
+                        pkIndex = e.getKey();
+                        break;
+                    }
+                }
+            }
+        }
         for (Map.Entry<String, Map<Integer, String>> e : cols.entrySet()) {
             List<String> parts = List.copyOf(e.getValue().values());
-            // by the key's name when the database gives one; by its columns only when it does not
-            boolean isPk = !pkFound && !primaryKey.columns().isEmpty() && unique.get(e.getKey())
-                && (primaryKey.name() != null ? e.getKey().equals(primaryKey.name()) : parts.equals(primaryKey.columns()));
-            pkFound |= isPk;
+            boolean isPk = e.getKey().equals(pkIndex);
             out.add(new TableDetail.Index(e.getKey(), parts, unique.get(e.getKey()), isPk, method.get(e.getKey()),
                 partial.contains(e.getKey())));
         }

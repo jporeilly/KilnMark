@@ -138,7 +138,7 @@ public final class PostgresConnector extends JdbcConnector {
 
     /** The driver lists an index's {@code INCLUDE} columns as keys: keep the first {@code indnkeyatts}. */
     @Override
-    protected java.util.List<io.kilnmark.kiln.connect.TableDetail.Index> keyColumnsOnly(java.sql.Connection c,
+    protected java.util.List<io.kilnmark.kiln.connect.TableDetail.Index> refineIndexes(java.sql.Connection c,
         String schema, String table, java.util.List<io.kilnmark.kiln.connect.TableDetail.Index> indexes)
         throws java.sql.SQLException {
         if (c.getMetaData().getDatabaseMajorVersion() < 11 || indexes.isEmpty()) {
