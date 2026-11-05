@@ -58,7 +58,12 @@ may do, and exactly what in ADR 0028 changes and what stays.
 - **The preview** is the source's existing live preview (`GET /api/v1/sources/{name}/preview`,
   `SourceService.preview`), unchanged: the first rows of a table or view, read by the connector,
   never stored, and shown **through `Sights`** (`Sights.catalogue`), so a column marked sensitive is
-  masked for everyone without the unmask grant (ADR 0027), admins included.
+  masked for everyone without the unmask grant (ADR 0027), admins included. One thing changes in
+  it: **its failures, like every live read a person starts (listing schemas and tables, the preview,
+  Explore, Count exactly), report the database's SQLSTATE or error code with a message Kilnmark
+  writes, never the database's own text**, since a cast that fails in a view quotes the value it
+  failed on ("invalid input syntax for type integer: …"). Failing to connect is still explained, as
+  a connection test is: that text holds no value of the data. Server logs follow the same rule.
 - **Who.** Stewards, designers and admins, as for the source's containers, assets and preview
   today. Viewers do not see Explore. It is not offered to the assistant or the MCP server in this
   record.
@@ -140,10 +145,15 @@ operations**; what they do not cover is said in point 12.
    A designer or an admin turns it on or off; each change is an audit event
    (`source.allow_changes`), from the form or an import. It is independent of the other two: Allow
    writing lets pipelines write rows, Allow SQL lets people's own SQL run, Allow changes lets these
-   operations run. **It is bound to the connection**: any change to what the source connects to
+   operations run. Like them it belongs to the source, not the database: a second source over the
+   same database can have it on while the first has it off, and the second person's approval
+   (point 7) is what still holds there. **It is bound to the connection**: any change to what the source connects to
    (URL, host, port, database, login, password or password reference, or a driver property that
    names a database, catalogue, schema or server) turns Allow changes off again and cancels the
-   source's open plans, so a source cannot be turned on in one place and pointed at another.
+   source's open plans, so a source cannot be turned on in one place and pointed at another. The
+   hash of the connection settings is computed again from the source as it is when a plan is made
+   and when it runs, and compared, so a change by any path (a save, an import, a future one) fails
+   closed. Tokens flagged for a local assistant are refused.
 2. **Designers and admins only**, by role, and only with authentication on (tokens or the identity
    provider): with sign-in off, where every caller on the machine is an admin, operations are
    refused. The unmask grant is not needed: an operation shows no values and the statements carry
@@ -179,7 +189,8 @@ operations**; what they do not cover is said in point 12.
    `foreign_key_checks = 1` itself, whatever the URL says, so a table others depend on is refused.
    **Count exactly** in Explore follows the same list, so it never runs a full count on another
    server through a foreign or linked table; such a table shows the estimate only. A column's length, precision and scale are whole numbers within the dialect's ranges,
-   never text. `DROP` and `TRUNCATE` never cascade
+   never text. `DROP INDEX` checks the index's table against the same allow-list. `DROP` and
+   `TRUNCATE` never cascade
    (no PostgreSQL `CASCADE`, no Oracle `CASCADE CONSTRAINTS`): a table other objects depend on is
    refused by the database, and the failure says so.
 4. **A preview of every statement.** The server answers a request with the exact statements, the
@@ -187,8 +198,8 @@ operations**; what they do not cover is said in point 12.
    plan lasts 15 minutes (24 hours once approved). It is **bound** to: who made it; the source; the
    source's connection target and the database's identity (point 7); and a fingerprint of the
    objects it acts on, including each one's identity in the database (PostgreSQL `oid`, SQL Server
-   `object_id`, Oracle `OBJECT_ID`, MySQL the table's creation time, and a MySQL table without one is
-   refused), its kind or engine, and its partitions and child tables, so a table dropped and
+   `object_id`, Oracle `OBJECT_ID`, MySQL InnoDB's `TABLE_ID`, or for its other engines the table's
+   creation time, and a MySQL table with neither is refused), its kind or engine, and its partitions and child tables, so a table dropped and
    re-created, swapped for one of the same shape, or given a foreign partition no longer matches. **Run** names the plan id. The server then:
    - checks the plan's **seal**: an HMAC, with a key derived (HKDF) from the key that seals source
      passwords and so never kept in Kilnmark's own database, over the plan's id, source, maker,
@@ -205,7 +216,8 @@ operations**; what they do not cover is said in point 12.
      approval is needed now** (point 7), whatever the plan said; that the approver is not the
      maker; and that the audit log has no run of this plan yet;
    - on the run's own connection, inside its transaction: sets PostgreSQL's `search_path` to
-     `pg_catalog` alone for the session (`SET`, so it holds for the online forms too) (and every catalogue query names `pg_catalog` itself), so a URL's
+     `pg_catalog, pg_temp` for the session (`SET`, so it holds for the online forms too; `pg_temp`
+     named last, so a temporary table cannot come first) (and every catalogue query names `pg_catalog` itself), so a URL's
      `options` or `currentSchema` cannot put a look-alike type or table in the way; reads the
      database's identity and the own-database marker again (points 7 and 9), takes the table's lock where the database's DDL is
      transactional (PostgreSQL, SQL Server), re-reads the fingerprint, and refuses on any
@@ -241,7 +253,8 @@ operations**; what they do not cover is said in point 12.
      - PostgreSQL: `system_identifier`, `current_database()`, `inet_server_addr()` and its port;
      - SQL Server: `service_broker_guid` and `create_date` of the database (a restore resets it),
        `DB_NAME()` and `SERVERPROPERTY('MachineName')`;
-     - MySQL: `@@server_uuid` and `@@hostname`;
+     - MySQL: `@@server_uuid` and `@@hostname`, and the database the source names (a plan for any
+       other schema of that server is refused);
      - Oracle: `DBID`, `CON_DBID`, `RESETLOGS_TIME`, `DB_UNIQUE_NAME`, `INSTANCE_NAME` and
        `SYS_CONTEXT('USERENV', 'SERVER_HOST')`;
      - and on every database, the **server's TLS certificate**: a source can be marked only over
@@ -280,7 +293,8 @@ operations**; what they do not cover is said in point 12.
      and approve it as themselves. People are compared by the provider's fixed id (issuer and
      subject), never by name. Only the person who made the plan runs it. Without the identity
      provider, nothing can be marked and operations that need approval are refused, so no
-     operation runs. The approver's role is checked when they approve and again at run time. A
+     operation runs. The approver's role is the one their sign-in carried when they approved, and
+     an approval lapses after 24 hours. A
      plan made with a token on a marked source that needs approval at run time (its identity
      changed) is refused, and must be made again by a person.
    - An approved plan runs once, within 24 hours of approval; a refused, expired, cancelled or
@@ -297,7 +311,11 @@ operations**; what they do not cover is said in point 12.
    the driver while the database is still running it. **A wait for locks is bounded on every
    database**, so an operation queued behind a long read gives up rather than blocks the table for
    everyone: PostgreSQL `lock_timeout`, MySQL and MariaDB `lock_wait_timeout`, SQL Server
-   `SET LOCK_TIMEOUT`, Oracle `ddl_lock_timeout`, each 10 seconds. Building an index blocks writes to
+   `SET LOCK_TIMEOUT`, Oracle `ddl_lock_timeout`, each 10 seconds.
+   The identity check and the statements run on one connection: for the online forms, which run
+   outside a transaction, PostgreSQL's `pg_backend_pid()` must be the same before and after the
+   check (a pooler handing out a backend per transaction fails it), and SQL Server's driver is told
+   never to reconnect by itself (`connectRetryCount=0`). Building an index blocks writes to
    the table while it builds; the preview says so, and where the database has an online form
    (PostgreSQL `CONCURRENTLY`, MySQL `ALGORITHM=INPLACE, LOCK=NONE`, Oracle `ONLINE`, SQL Server
    `ONLINE = ON` on editions that have it) it is offered as a choice, run outside a transaction.
@@ -307,7 +325,8 @@ operations**; what they do not cover is said in point 12.
    when Kilnmark first starts. Before an
    operation on a PostgreSQL source, at planning and again on the run's connection, Kilnmark asks
    the source's database whether such a table exists, from `pg_class` and `pg_namespace`, which
-   every login can read. If it exists and its id is Kilnmark's, or its id cannot be read, the
+   every login can read. If it exists and its id is Kilnmark's, or its id cannot be read, or
+   `pg_class` and `pg_namespace` cannot be read at all (a database that revoked them), the
    operation is refused. As the database itself is asked, host names, aliases and proxies make no
    difference. Refusing every use of such a source (reads and SQL a person writes, ADR 0028's open
    decision) is for the owner; this record refuses operations, and Explore and **Count exactly**
