@@ -187,6 +187,10 @@ details.
   and the licence report plug-in, with their checksums and signing keys in
   `gradle/verification-metadata.xml` (ADR 0042). `mime4j` stays at 0.8.12, the version the Quarkus
   platform pins: 0.8.15 cannot be resolved against it.
+- **CI on a local runner**: the `build`, `heavy-databases` and `scan` jobs run where the repository
+  variable `KILNMARK_RUNNER` says, GitHub's runners when it is empty. `ci/local-runner` builds a Linux
+  runner for Podman, with its image pinned by digest and the runner download checked
+  (docs/development.md, "CI on a local runner").
 
 - **The control script** (ADR 0044). One install root per site holds `versions/<version>/`,
   `config/.env` (written by `install` with a new database password and admin token, `600`, never
