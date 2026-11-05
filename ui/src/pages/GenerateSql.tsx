@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { api, type GeneratedSql, type SqlStatement, type TableDetail } from "../api";
 import { Button } from "../components/ui";
 
@@ -69,6 +69,12 @@ export function GenerateSql({ source, sourceKind, detail }: { source: string; so
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const droppable = detail.indexes.filter((i) => !i.primaryKey);
+  // An answer belongs to the choices it was made for: any change clears it, so Save never pairs
+  // one statement's file name with another's SQL.
+  useEffect(() => {
+    setResult(null);
+    setCopied(false);
+  }, [statement, dialect, colName, colKind, colLength, colPrecision, colScale, colNullable, indexName, indexColumns, unique, dropIndex]);
   const whole = (v: string) => (v.trim() === "" ? null : Number(v));
 
   const generate = async () => {
@@ -127,7 +133,8 @@ export function GenerateSql({ source, sourceKind, detail }: { source: string; so
     a.href = url;
     a.download = sqlFileName(detail.path, statement);
     a.click();
-    URL.revokeObjectURL(url);
+    // some browsers start the download after click returns: let go of the file a moment later
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const toggleColumn = (name: string) =>
@@ -264,7 +271,7 @@ export function GenerateSql({ source, sourceKind, detail }: { source: string; so
           </div>
           {result.leftOut.length > 0 && (
             <>
-              <h4>Not in this SQL</h4>
+              <h4>Left out or changed</h4>
               <ul>
                 {result.leftOut.map((l) => (
                   <li key={l}>{l}</li>

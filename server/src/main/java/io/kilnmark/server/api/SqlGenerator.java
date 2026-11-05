@@ -52,14 +52,27 @@ final class SqlGenerator {
                 : "dialect: one of postgresql, sqlserver, mysql, mariadb or oracle"));
     }
 
-    /** The statements for {@code r} on the table {@code t}, in {@code d}. */
-    static Views.GeneratedSql generate(Request r, TableDetail t, DdlWriter.Dialect d) {
-        DdlWriter w = DdlWriter.of(d);
+    /** Numeric type names, so a decimal the scan reads as text (Oracle's {@code NUMBER} without precision) is still a decimal. */
+    private static final Set<String> NUMBER_TYPES = Set.of("number", "numeric", "decimal", "float", "dec");
+
+    /** The longest text a key or an index can hold in each database, in characters (UTF-8 throughout). */
+    private static int keyTextLength(DdlWriter.Dialect d) {
+        return switch (d) {
+            case POSTGRESQL -> 0; // text can be a key as it is
+            case SQLSERVER -> 450;
+            case MYSQL, MARIADB -> 768;
+            case ORACLE -> 1000;
+        };
+    }
+
+    /** The statements for {@code r} on the table {@code t} of a {@code from} database (null: no dialect of its own), in {@code d}. */
+    static Views.GeneratedSql generate(Request r, TableDetail t, DdlWriter.Dialect d, DdlWriter.Dialect from) {
+        DdlWriter w = DdlWriter.of(d, from);
         String statement = r.statement() == null ? "" : r.statement();
         boolean table = t.kind().equals("table") || t.kind().equals("partitioned table");
         try {
             DdlWriter.Generated g = switch (statement) {
-                case "create-table" -> createTable(w, t, d);
+                case "create-table" -> createTable(w, t, d, from == null);
                 case "add-columns" -> {
                     requireTable(table, t);
                     yield w.addColumns(t.schema(), t.table(), newColumns(r.columns(), t));
@@ -93,6 +106,10 @@ final class SqlGenerator {
                 }
                 case "truncate" -> {
                     requireTable(table, t);
+                    if (d == DdlWriter.Dialect.POSTGRESQL && t.kind().equals("partitioned table")) {
+                        throw new IllegalArgumentException(t.path() + " is partitioned: PostgreSQL empties it only "
+                            + "with all its partitions. Truncate its partitions one at a time instead.");
+                    }
                     yield w.truncate(t.schema(), t.table());
                 }
                 default -> throw new IllegalArgumentException("statement: one of " + String.join(", ", STATEMENTS));
@@ -117,40 +134,14 @@ final class SqlGenerator {
         return i;
     }
 
-    /** {@code CREATE TABLE} for a table Explore read, with what could not be carried across listed. */
-    private static DdlWriter.Generated createTable(DdlWriter w, TableDetail t, DdlWriter.Dialect d)
+    /** {@code CREATE TABLE} for a table Explore read, with what was left out or changed listed. */
+    private static DdlWriter.Generated createTable(DdlWriter w, TableDetail t, DdlWriter.Dialect d, boolean sizesUnknown)
         throws ConnectorException {
         List<String> leftOut = new ArrayList<>();
         List<DdlWriter.Column> columns = new ArrayList<>();
         List<String> defaults = new ArrayList<>();
-        for (TableDetail.Column c : t.columns()) {
-            JdbcColumn.Kind kind = DdlWriter.kind(c.kind());
-            String type = c.sourceType() == null ? "" : c.sourceType().toLowerCase(Locale.ROOT);
-            if (kind == null || (kind == JdbcColumn.Kind.TEXT && !TEXT_TYPES.contains(type))) {
-                leftOut.add(c.name() + " (" + c.sourceType() + ") has no type of its own in " + d.label()
-                    + " that Kilnmark writes; it is written as text.");
-                kind = JdbcColumn.Kind.TEXT;
-            }
-            int length = kind == JdbcColumn.Kind.TEXT && TEXT_TYPES.contains(type) && c.size() != null && c.size() > 0
-                && c.size() < Integer.MAX_VALUE ? c.size() : 0;
-            int precision = 0;
-            int scale = 0;
-            if (kind == JdbcColumn.Kind.DECIMAL) {
-                precision = c.size() == null ? 0 : c.size();
-                scale = c.scale() == null ? 0 : Math.max(0, c.scale());
-                if (precision < 1 || precision > 38 || scale > precision) {
-                    leftOut.add(c.name() + " has no precision " + d.label() + " keeps; it is written as decimal(38,"
-                        + Math.min(scale, 10) + ").");
-                    precision = 38;
-                    scale = Math.min(scale, 10);
-                }
-            }
-            if (c.hasDefault() || c.generated()) {
-                defaults.add(c.name());
-            }
-            columns.add(new DdlWriter.Column(c.name(), kind, length, precision, scale, c.nullable()));
-        }
         List<DdlWriter.Index> indexes = new ArrayList<>();
+        Set<String> keyed = new java.util.HashSet<>(t.primaryKey());
         for (TableDetail.Index i : t.indexes()) {
             if (i.primaryKey()) {
                 continue;
@@ -161,6 +152,58 @@ final class SqlGenerator {
                 continue;
             }
             indexes.add(new DdlWriter.Index(i.name(), i.columns(), i.unique()));
+            keyed.addAll(i.columns());
+        }
+        int keyText = keyTextLength(d);
+        for (TableDetail.Column c : t.columns()) {
+            JdbcColumn.Kind kind = DdlWriter.kind(c.kind());
+            String type = c.sourceType() == null ? "" : c.sourceType().toLowerCase(Locale.ROOT);
+            boolean number = NUMBER_TYPES.contains(type);
+            if (kind == JdbcColumn.Kind.TEXT && number) {
+                kind = JdbcColumn.Kind.DECIMAL; // a number without precision of its own, read as text by the scan
+            } else if (kind == null || (kind == JdbcColumn.Kind.TEXT && !TEXT_TYPES.contains(type))) {
+                leftOut.add(c.name() + " (" + c.sourceType() + ") has no type of its own in " + d.label()
+                    + " that Kilnmark writes; it is written as text.");
+                kind = JdbcColumn.Kind.TEXT;
+            }
+            Integer size = c.size() == null || c.size() <= 0 || c.size() >= 1_000_000 ? null : c.size();
+            int length = kind == JdbcColumn.Kind.TEXT && TEXT_TYPES.contains(type) && size != null ? size : 0;
+            if (kind == JdbcColumn.Kind.TEXT && keyed.contains(c.name()) && keyText > 0) {
+                if (length == 0) {
+                    leftOut.add(c.name() + " is in a key or an index, which " + d.label() + " cannot build on text "
+                        + "without a length, so it is written with " + keyText + " characters.");
+                    length = keyText;
+                } else if (length > keyText) {
+                    leftOut.add(c.name() + " (" + length + " characters) may be too long for a key or an index in "
+                        + d.label() + "; check it.");
+                }
+            }
+            int precision = 0;
+            int scale = 0;
+            if (kind == JdbcColumn.Kind.DECIMAL) {
+                // no precision of its own (0), or more than the target keeps: the target's widest or unconstrained decimal
+                precision = size == null || size > d.maxPrecision() ? 0 : size;
+                scale = c.scale() == null ? 0 : Math.max(0, c.scale());
+                if (precision > 0 && scale > precision) {
+                    scale = precision;
+                }
+                if (size != null && size > d.maxPrecision()) {
+                    leftOut.add(c.name() + " keeps " + size + " digits, more than " + d.label() + " keeps in a decimal "
+                        + "with a precision; it is written without one where " + d.label() + " allows.");
+                }
+            }
+            if (c.hasDefault() || c.generated()) {
+                defaults.add(c.name());
+            }
+            columns.add(new DdlWriter.Column(c.name(), kind, length, precision, scale, c.nullable()));
+        }
+        if (sizesUnknown) {
+            leftOut.add("This source does not say its columns' lengths and digits (Generic JDBC), so text is written "
+                + "without a length and decimals without a precision.");
+        }
+        if (!indexes.isEmpty()) {
+            leftOut.add("Indexes are written as plain ones: full-text, spatial, GIN or GiST kinds, descending order and "
+                + "prefix lengths are not copied; check them.");
         }
         if (!defaults.isEmpty()) {
             leftOut.add("Defaults and values the database fills (" + String.join(", ", defaults) + ") are not "

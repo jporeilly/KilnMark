@@ -720,9 +720,11 @@ public class SourceService {
         if (request == null) {
             throw new IllegalArgumentException("statement: what to generate");
         }
+        explorable(connector, request.asset());
         io.kilnmark.kiln.plugins.jdbc.DdlWriter.Dialect dialect = SqlGenerator.dialect(request.dialect(), config.kind());
         io.kilnmark.kiln.connect.TableDetail table = explore(connector, config, request.asset());
-        return SqlGenerator.generate(request, table, dialect);
+        return SqlGenerator.generate(request, table, dialect,
+            io.kilnmark.kiln.plugins.jdbc.DdlWriter.Dialect.forKind(config.kind()).orElse(null));
     }
 
     /** The exact number of rows of one table, counted by the database under the check time limit. */

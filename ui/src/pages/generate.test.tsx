@@ -77,6 +77,14 @@ describe("the SQL generator", () => {
     });
     expect(host.querySelector("pre")?.textContent).toContain('CREATE TABLE "sales"."orders"');
     expect(host.textContent).toContain("never copied");
+
+    // changing the choice clears the answer, so Save cannot pair it with another statement
+    const statement = select("Statement");
+    await act(async () => {
+      statement.value = "truncate";
+      statement.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(host.querySelector("pre")).toBeNull();
   });
 
   test("offers only indexes that are not the key's for DROP INDEX", async () => {

@@ -18,26 +18,34 @@ import io.kilnmark.kiln.plugins.write.WriteColumn;
  *
  * <p>Types and quoting come from the write node's own code ({@link WriteSql}), so a table the
  * generator writes is the one a pipeline's {@code create} mode would make. Names are always quoted
- * and schema-qualified; a column's type is the dialect's type for its kind, never text taken from a
- * catalogue; lengths, precision and scale are whole numbers within the dialect's ranges. Defaults,
- * checks, comments, expressions and partial indexes are never written: they can quote values.
+ * and schema-qualified where the database allows; a column's type is the dialect's type for its
+ * kind, never text taken from a catalogue; lengths, precision and scale are whole numbers within the
+ * dialect's ranges. Defaults, checks, comments, expressions and partial indexes are never written:
+ * they can quote values.
+ *
+ * <p><b>Names.</b> A name read from the same database's catalogue is written exactly as it is
+ * stored. A name a person typed, and every name when writing for another database, is written as
+ * that database stores a plain name ({@link WriteSql#storedName}: Oracle stores {@code orders} as
+ * {@code ORDERS}), as a pipeline's {@code create} writes it.
  */
 public final class DdlWriter {
 
     /** The databases the generator writes for. */
     public enum Dialect {
-        POSTGRESQL("postgresql", "PostgreSQL"),
-        SQLSERVER("sqlserver", "SQL Server"),
-        MYSQL("mysql", "MySQL"),
-        MARIADB("mariadb", "MariaDB"),
-        ORACLE("oracle", "Oracle");
+        POSTGRESQL("postgresql", "PostgreSQL", 1000),
+        SQLSERVER("sqlserver", "SQL Server", 38),
+        MYSQL("mysql", "MySQL", 65),
+        MARIADB("mariadb", "MariaDB", 65),
+        ORACLE("oracle", "Oracle", 38);
 
         private final String kind;
         private final String label;
+        private final int maxPrecision;
 
-        Dialect(String kind, String label) {
+        Dialect(String kind, String label, int maxPrecision) {
             this.kind = kind;
             this.label = label;
+            this.maxPrecision = maxPrecision;
         }
 
         /** The source kind of this database. */
@@ -48,6 +56,11 @@ public final class DdlWriter {
         /** The database's name, for people. */
         public String label() {
             return label;
+        }
+
+        /** The most digits a decimal column keeps. */
+        public int maxPrecision() {
+            return maxPrecision;
         }
 
         /** The dialect of a source kind, or empty for a kind with none (Generic JDBC, files). */
@@ -63,7 +76,8 @@ public final class DdlWriter {
 
     /**
      * A column to write: its name, its kind ({@code JdbcColumn.Kind}), for text its length (0 for
-     * unbounded), for decimals precision and scale, and whether it allows nulls.
+     * unbounded), for decimals precision and scale (precision 0: no precision of its own), and
+     * whether it allows nulls.
      */
     public record Column(String name, JdbcColumn.Kind kind, int length, int precision, int scale, boolean nullable) {
     }
@@ -76,7 +90,7 @@ public final class DdlWriter {
         }
     }
 
-    /** The statements written, in order, and what was left out of them, for people to read. */
+    /** The statements written, in order, and what was left out of them or changed, for people to read. */
     public record Generated(List<String> statements, List<String> leftOut) {
 
         public Generated {
@@ -85,30 +99,43 @@ public final class DdlWriter {
         }
     }
 
-    /** The longest decimal precision any of these databases keeps. */
-    static final int MAX_PRECISION = 38;
-
     private final Dialect dialect;
     private final WriteSql sql;
+    private final boolean converting;
 
-    private DdlWriter(Dialect dialect, WriteSql sql) {
+    private DdlWriter(Dialect dialect, WriteSql sql, boolean converting) {
         this.dialect = dialect;
         this.sql = sql;
+        this.converting = converting;
     }
 
-    /** The generator for one database. Oracle is written without its 23ai {@code BOOLEAN}, as {@code create} writes it. */
+    /** The generator for one database, for names read from that same database. */
     public static DdlWriter of(Dialect dialect) {
+        return of(dialect, dialect);
+    }
+
+    /**
+     * The generator for {@code dialect}, for names read from a {@code from} database (null when not
+     * known): when they differ, every name is written as {@code dialect} stores a plain name.
+     * Oracle is written without its 23ai {@code BOOLEAN}, as {@code create} writes it.
+     */
+    public static DdlWriter of(Dialect dialect, Dialect from) {
         return new DdlWriter(dialect, switch (dialect) {
             case POSTGRESQL -> WriteSql.Postgres.INSTANCE;
             case SQLSERVER -> WriteSql.SqlServer.INSTANCE;
             case MYSQL -> MySqlWriteSql.MYSQL;
             case MARIADB -> MySqlWriteSql.MARIADB;
             case ORACLE -> new OracleWriteSql(false, false);
-        });
+        }, from != dialect);
     }
 
     public Dialect dialect() {
         return dialect;
+    }
+
+    /** The longest text a sized text column of this database keeps. */
+    public long maxTextLength() {
+        return sql.maxTextLength();
     }
 
     /**
@@ -132,27 +159,31 @@ public final class DdlWriter {
             if (!names.add(c.name())) {
                 throw new ConnectorException("Two columns are called " + c.name() + ".");
             }
-            parts.add(column(c, leftOut));
+            parts.add(column(c, false, leftOut));
         }
         if (!primaryKey.isEmpty()) {
             for (String k : primaryKey) {
                 known(names, k, "The primary key");
             }
-            parts.add("PRIMARY KEY (" + primaryKey.stream().map(this::quoteStored).collect(Collectors.joining(", "))
-                + ")");
+            parts.add("PRIMARY KEY (" + primaryKey.stream().map(n -> name(n, false))
+                .collect(Collectors.joining(", ")) + ")");
         }
         List<String> out = new ArrayList<>();
-        out.add("CREATE TABLE " + qualified(schema, table) + " (\n  " + String.join(",\n  ", parts) + "\n)");
+        String charset = dialect == Dialect.MYSQL || dialect == Dialect.MARIADB ? " DEFAULT CHARACTER SET utf8mb4" : "";
+        out.add("CREATE TABLE " + qualified(schema, table) + " (\n  " + String.join(",\n  ", parts) + "\n)" + charset);
         for (Index i : indexes) {
             for (String col : i.columns()) {
                 known(names, col, "The index " + i.name());
             }
-            out.add(createIndexStatement(schema, table, i));
+            out.add(createIndexStatement(schema, table, i, false));
         }
         return new Generated(out, leftOut);
     }
 
-    /** {@code ALTER TABLE … ADD} for new columns, one statement each (every database here accepts that form). */
+    /**
+     * {@code ALTER TABLE … ADD} for new columns, one statement each (every database here accepts
+     * that form). The columns' names are a person's and are written as the database stores them.
+     */
     public Generated addColumns(String schema, String table, List<Column> columns) throws ConnectorException {
         if (columns.isEmpty()) {
             throw new ConnectorException("Name at least one column to add.");
@@ -160,27 +191,35 @@ public final class DdlWriter {
         checkNames(schema, table);
         List<String> leftOut = new ArrayList<>();
         List<String> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
         for (Column c : columns) {
             checkName(c.name());
+            if (!seen.add(c.name().toLowerCase(Locale.ROOT))) {
+                throw new ConnectorException("Two new columns are called " + c.name() + ".");
+            }
             String add = dialect == Dialect.SQLSERVER || dialect == Dialect.ORACLE ? " ADD " : " ADD COLUMN ";
-            out.add("ALTER TABLE " + qualified(schema, table) + add + column(c, leftOut));
+            out.add("ALTER TABLE " + qualified(schema, table) + add + column(c, true, leftOut));
+            if (!c.nullable()) {
+                leftOut.add("A column that allows no nulls and has no default cannot be added to a table that "
+                    + "already has rows: " + c.name() + " needs the table to be empty.");
+            }
         }
         return new Generated(out, leftOut);
     }
 
-    /** {@code CREATE INDEX}, or {@code CREATE UNIQUE INDEX}, over columns in order. */
+    /** {@code CREATE INDEX}, or {@code CREATE UNIQUE INDEX}, over existing columns in order; the index's name is a person's. */
     public Generated createIndex(String schema, String table, Index index) throws ConnectorException {
         checkNames(schema, table);
-        return new Generated(List.of(createIndexStatement(schema, table, index)), List.of());
+        return new Generated(List.of(createIndexStatement(schema, table, index, true)), List.of());
     }
 
-    /** {@code DROP INDEX}, in the form each database takes. */
+    /** {@code DROP INDEX} of an index read from the catalogue, in the form each database takes. */
     public Generated dropIndex(String schema, String table, String index) throws ConnectorException {
         checkNames(schema, table);
         checkName(index);
-        String q = quoteStored(index);
+        String q = name(index, false);
         return new Generated(List.of(switch (dialect) {
-            case POSTGRESQL, ORACLE -> "DROP INDEX " + sql.quote(schema) + "." + q;
+            case POSTGRESQL, ORACLE -> "DROP INDEX " + name(schema, false) + "." + q;
             case SQLSERVER, MYSQL, MARIADB -> "DROP INDEX " + q + " ON " + qualified(schema, table);
         }), List.of());
     }
@@ -203,7 +242,13 @@ public final class DdlWriter {
 
     // ------------------------------------------------------------------ helpers
 
-    private String createIndexStatement(String schema, String table, Index i) throws ConnectorException {
+    /**
+     * {@code CREATE INDEX}. PostgreSQL puts an index in its table's schema and takes no schema on
+     * its name; Oracle puts an unqualified name in the connected user's schema, so its name is
+     * qualified with the table's; SQL Server and MySQL name only the index.
+     */
+    private String createIndexStatement(String schema, String table, Index i, boolean typedName)
+        throws ConnectorException {
         checkName(i.name());
         if (i.columns().isEmpty()) {
             throw new ConnectorException("The index " + i.name() + " needs at least one column.");
@@ -211,13 +256,12 @@ public final class DdlWriter {
         for (String c : i.columns()) {
             checkName(c);
         }
-        // PostgreSQL and Oracle keep an index in its table's schema; the others name only the index
-        String name = quoteStored(i.name());
+        String name = (dialect == Dialect.ORACLE ? name(schema, false) + "." : "") + name(i.name(), typedName);
         return "CREATE " + (i.unique() ? "UNIQUE " : "") + "INDEX " + name + " ON " + qualified(schema, table)
-            + " (" + i.columns().stream().map(this::quoteStored).collect(Collectors.joining(", ")) + ")";
+            + " (" + i.columns().stream().map(n -> name(n, false)).collect(Collectors.joining(", ")) + ")";
     }
 
-    private String column(Column c, List<String> leftOut) throws ConnectorException {
+    private String column(Column c, boolean typedName, List<String> leftOut) throws ConnectorException {
         if (c.length() < 0 || c.precision() < 0 || c.scale() < 0) {
             throw new ConnectorException("The column " + c.name() + " has a negative size.");
         }
@@ -227,24 +271,48 @@ public final class DdlWriter {
                 + sql.maxTextLength() + " in a sized text column, so it is written without a length.");
             length = 0;
         }
-        int precision = c.precision();
-        int scale = c.scale();
+        String type;
         if (c.kind() == JdbcColumn.Kind.DECIMAL) {
-            if (precision < 1 || precision > MAX_PRECISION || scale > precision) {
-                throw new ConnectorException("The column " + c.name() + " needs a precision from 1 to " + MAX_PRECISION
-                    + " and a scale no larger than it.");
-            }
+            type = decimalType(c, leftOut);
+        } else {
+            type = sql.columnType(new WriteColumn(c.name(), c.kind(), 0, 0, null), length);
         }
-        WriteColumn w = new WriteColumn(c.name(), c.kind(), precision, scale, null);
-        return quoteStored(c.name()) + " " + sql.columnType(w, length) + (c.nullable() ? "" : " NOT NULL");
+        return name(c.name(), typedName) + " " + type + (c.nullable() ? "" : " NOT NULL");
     }
 
-    private String quoteStored(String name) {
-        return sql.quote(sql.storedName(name));
+    /** A decimal's type: its digits where the database keeps that many, the database's own unconstrained decimal where it has one. */
+    private String decimalType(Column c, List<String> leftOut) throws ConnectorException {
+        int precision = c.precision();
+        int scale = c.scale();
+        if (precision == 0) {
+            switch (dialect) {
+                case POSTGRESQL:
+                    return "numeric";
+                case ORACLE:
+                    return "NUMBER";
+                default:
+                    int p = dialect.maxPrecision();
+                    int s = Math.min(Math.max(scale, 10), p / 2);
+                    leftOut.add(c.name() + " has no precision of its own; " + dialect.label() + " needs one, so it is "
+                        + "written with " + p + " digits, " + s + " after the point.");
+                    precision = p;
+                    scale = s;
+            }
+        }
+        if (precision > dialect.maxPrecision() || scale > precision) {
+            throw new ConnectorException("The column " + c.name() + " needs a precision from 1 to "
+                + dialect.maxPrecision() + " on " + dialect.label() + ", and a scale no larger than it.");
+        }
+        return sql.columnType(new WriteColumn(c.name(), JdbcColumn.Kind.DECIMAL, precision, scale, null), 0);
+    }
+
+    /** A name quoted: as stored when it was read from this database; as a plain name is stored otherwise. */
+    private String name(String n, boolean typed) {
+        return sql.quote(typed || converting ? sql.storedName(n) : n);
     }
 
     private String qualified(String schema, String table) {
-        return sql.quote(schema) + "." + sql.quote(table);
+        return name(schema, false) + "." + name(table, false);
     }
 
     private void checkNames(String schema, String table) throws ConnectorException {

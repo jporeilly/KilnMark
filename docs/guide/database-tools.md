@@ -100,8 +100,20 @@ request. Stewards, designers and admins can use it.
 - **Nothing that can quote a value.** Defaults, checks, comments, triggers, grants, partitions, an
   index on an expression and a partial index are never copied: their text can hold values from the
   data. A column whose type Kilnmark has no kind for (a JSON or range type, say) is written as
-  text. Foreign keys are left for you to add once the tables they point to exist. Under **Not in
-  this SQL**, the page lists what it left out of this table.
+  text. Foreign keys are left for you to add once the tables they point to exist. Under **Left
+  out or changed**, the page lists what it left out of this table and what it wrote differently.
+- **What each database can hold.** A decimal without digits of its own is written as the database's
+  own unconstrained decimal where it has one (PostgreSQL `numeric`, Oracle `NUMBER`) and with the
+  most digits it keeps where it has not. A text column in a key or an index gets a length where the
+  database cannot index text without one (450 characters on SQL Server, 768 on MySQL and MariaDB,
+  1,000 on Oracle). MySQL and MariaDB tables are UTF-8 (`utf8mb4`), as a pipeline makes them.
+- **Names as the database keeps them.** Names read from the same database are written exactly as
+  they are stored. Names you type, and every name when writing for another database, are written
+  as that database stores a plain name: Oracle keeps `orders` as `ORDERS`.
+- **Indexes are plain.** Full-text, spatial, GIN or GiST kinds, descending order and prefix lengths
+  are not copied; check them. A Generic JDBC source says nothing of its indexes or sizes, so its
+  SQL has none.
 - **Safe forms.** `DROP TABLE` never cascades to other objects; on PostgreSQL a truncate is
-  `TRUNCATE ONLY`, so child tables are not emptied with it; on Oracle a dropped table goes to the
-  recycle bin.
+  `TRUNCATE ONLY`, so child tables are not emptied with it (a partitioned table is truncated a
+  partition at a time instead); on Oracle a dropped table goes to the recycle bin. Adding a column
+  that allows no nulls works only on an empty table, and the page says so.

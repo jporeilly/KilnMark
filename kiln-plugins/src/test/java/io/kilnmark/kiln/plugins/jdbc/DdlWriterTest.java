@@ -57,13 +57,27 @@ class DdlWriterTest {
         String mysql = create(Dialect.MYSQL).statements().get(0);
         assertTrue(mysql.startsWith("CREATE TABLE `sales`.`orders` ("), mysql);
         assertTrue(mysql.contains("`total` decimal(12,2)"), mysql);
+        assertTrue(mysql.endsWith(") DEFAULT CHARACTER SET utf8mb4"), "as create writes it: " + mysql);
 
-        DdlWriter.Generated oracle = create(Dialect.ORACLE);
-        // Oracle stores a plain lower-case name in upper case, as an unquoted name would be
-        assertTrue(oracle.statements().get(0).contains("\"ORDER_ID\" NUMBER(19) NOT NULL"), oracle.statements().get(0));
-        assertTrue(oracle.statements().get(0).contains("\"note\"") || oracle.statements().get(0).contains("\"NOTE\""));
-        assertTrue(oracle.statements().get(1).startsWith("CREATE INDEX \"ORDERS_CUSTOMER\" ON \"sales\".\"orders\""),
+        // names read from Oracle's own catalogue are written exactly as stored
+        DdlWriter.Generated oracle = DdlWriter.of(Dialect.ORACLE).createTable("SALES", "ORDERS",
+            List.of(new Column("ID", Kind.INT64, 0, 0, 0, false), new Column("note", Kind.TEXT, 0, 0, 0, true)),
+            List.of("ID"), List.of(new Index("ix_note", List.of("note"), false)));
+        assertTrue(oracle.statements().get(0).contains("\"note\" CLOB"), oracle.statements().get(0));
+        // Oracle puts an unqualified index in the connected user's schema: the name is qualified
+        assertEquals("CREATE INDEX \"SALES\".\"ix_note\" ON \"SALES\".\"ORDERS\" (\"note\")",
             oracle.statements().get(1));
+        assertEquals("DROP INDEX \"SALES\".\"ix_note\"",
+            DdlWriter.of(Dialect.ORACLE).dropIndex("SALES", "ORDERS", "ix_note").statements().get(0));
+
+        // written for Oracle from another database, every plain name is stored in upper case
+        DdlWriter.Generated converted = DdlWriter.of(Dialect.ORACLE, Dialect.POSTGRESQL).createTable("sales", "orders",
+            ORDERS, List.of("order_id"), List.of(new Index("orders_customer", List.of("customer"), false)));
+        assertTrue(converted.statements().get(0).startsWith("CREATE TABLE \"SALES\".\"ORDERS\""),
+            converted.statements().get(0));
+        assertTrue(converted.statements().get(0).contains("\"ORDER_ID\" NUMBER(19) NOT NULL"));
+        assertEquals("CREATE INDEX \"SALES\".\"ORDERS_CUSTOMER\" ON \"SALES\".\"ORDERS\" (\"CUSTOMER\")",
+            converted.statements().get(1));
     }
 
     @Test
@@ -106,13 +120,31 @@ class DdlWriterTest {
         assertThrows(ConnectorException.class, () -> pg.createTable("s", "t", ORDERS, List.of("nope"), List.of()));
         assertThrows(ConnectorException.class, () -> pg.createTable("s", "t", ORDERS, List.of(),
             List.of(new Index("ix", List.of("missing"), false))));
+        assertThrows(ConnectorException.class, () -> DdlWriter.of(Dialect.SQLSERVER).addColumns("s", "t",
+            List.of(new Column("d", Kind.DECIMAL, 0, 60, 2, true))), "SQL Server keeps 38 digits");
+        assertTrue(DdlWriter.of(Dialect.MYSQL).addColumns("s", "t", List.of(new Column("d", Kind.DECIMAL, 0, 60, 2, true)))
+            .statements().get(0).contains("decimal(60,2)"), "MySQL keeps 65");
         assertThrows(ConnectorException.class, () -> pg.addColumns("s", "t",
-            List.of(new Column("d", Kind.DECIMAL, 0, 60, 2, true))));
+            List.of(new Column("a", Kind.INT32, 0, 0, 0, true), new Column("A", Kind.INT32, 0, 0, 0, true))));
         assertThrows(ConnectorException.class, () -> pg.dropTable("s", "x".repeat(64)));
         assertThrows(ConnectorException.class, () -> pg.dropTable("s", "line\nbreak"));
         assertThrows(ConnectorException.class, () -> pg.createTable("s", "t",
             List.of(new Column("a", Kind.INT32, 0, 0, 0, true), new Column("a", Kind.TEXT, 0, 0, 0, true)), List.of(),
             List.of()));
+    }
+
+    @Test
+    void writesADecimalWithoutPrecisionAsEachDatabaseCan() throws Exception {
+        Column any = new Column("amount", Kind.DECIMAL, 0, 0, 4, true);
+        assertTrue(DdlWriter.of(Dialect.POSTGRESQL).addColumns("s", "t", List.of(any)).statements().get(0)
+            .endsWith("\"amount\" numeric"));
+        assertTrue(DdlWriter.of(Dialect.ORACLE).addColumns("S", "T", List.of(any)).statements().get(0)
+            .endsWith("NUMBER"));
+        DdlWriter.Generated m = DdlWriter.of(Dialect.MYSQL).addColumns("s", "t", List.of(any));
+        assertTrue(m.statements().get(0).endsWith("`amount` decimal(65,10)"), m.statements().get(0));
+        assertTrue(m.leftOut().stream().anyMatch(l -> l.contains("no precision of its own")));
+        assertTrue(DdlWriter.of(Dialect.POSTGRESQL).addColumns("s", "t",
+            List.of(new Column("n", Kind.INT32, 0, 0, 0, false))).leftOut().get(0).contains("already has rows"));
     }
 
     @Test

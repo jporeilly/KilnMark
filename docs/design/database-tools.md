@@ -108,15 +108,22 @@ gives `createTable`, `addColumns`, `createIndex`, `dropIndex`, `dropTable`, `tru
 each dialect's `WriteSql` so types and quoting are the write node's own. A table read by Explore
 maps each column to a `JdbcColumn.Kind` with the scan's own mapping, then to the target dialect's
 type with `columnType`; a column whose type has no kind (a PostgreSQL range, SQL Server
-`hierarchyid`, an enum) is listed in `leftOut`, never copied as text. Primary keys become a
+`hierarchyid`, an enum) is written as text and listed in `leftOut`, never copied as its type's
+name. Decimals use each database's limits (PostgreSQL 1,000 digits, MySQL 65, SQL Server and
+Oracle 38) and its unconstrained decimal where it has one; text in a key or index gets a length
+where the database needs one. Names read from the same database are kept as stored; typed names,
+and all names when writing for another database, go through `storedName`. Primary keys become a
 `PRIMARY KEY` clause; plain indexes become `CREATE INDEX` statements after the table; indexes on
 expressions and partial indexes are listed in `leftOut`. Names are checked with
-`identifierProblem`, quoted with `quote` and always schema-qualified.
+`identifierProblem` and quoted with `quote`; tables are schema-qualified, and so are index
+names on PostgreSQL's `DROP INDEX` and on Oracle, where an unqualified index lands in the
+connected user's schema.
 
 **Tests.** Golden tests per dialect in `DdlWriterTest` (each statement, quoting a name with a
-space or a quote in it, a composite key, a unique index), a round trip in the heavy-databases job
-(generate `CREATE TABLE` for a table, run it under a new name, Explore it, compare columns), and
-UI tests for copy and save.
+space or a quote in it, a composite key, a unique index, Oracle names and index schemas,
+decimals), `SqlGeneratorTest` (left out and changed, text keys, Oracle `NUMBER`, partitioned
+truncate), the API in `SourcePreviewTest`, and UI tests. **Not yet**: a round trip in the
+heavy-databases job (generate `CREATE TABLE`, run it under a new name, Explore it, compare).
 
 ## D3. Connection settings on tabs (planned)
 
