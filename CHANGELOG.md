@@ -7,6 +7,12 @@ details.
 
 ### What's new
 
+- **Database tools are decided** ([ADR 0045](docs/adr/0045-database-tools.md),
+  [design](docs/design/database-tools.md)): Explore a source's schemas, tables, columns, keys and
+  indexes with a masked preview; generate `CREATE TABLE`, `ALTER`, `CREATE INDEX` and `DROP` in
+  each database's dialect; connection settings on tabs; and operations that change a database,
+  behind a per-source Allow changes switch, previewed, confirmed and audited, with a second
+  person's approval on production sources. Nothing is built yet; ADR 0045 amends ADR 0028.
 - **Install, start, upgrade and back up Kilnmark with one script**: `kilnmark.sh` on Linux,
   `kilnmark.cmd` on Windows. On Linux, `sudo kilnmark.sh prepare` first makes the `kilnmark`
   service account that runs it, and `/opt/kilnmark` its own. `install` checks the machine, makes an install root (`/opt/kilnmark`

@@ -43,7 +43,9 @@ Last reviewed: 5 November 2026 (after #86-#93 merged).
    owner chose to allow with controls: a per-source **Allow changes** switch (off by default),
    designers and admins only, a preview of every statement, typing the table's name to confirm a
    drop or truncate, an audit event for each, and a second person's approval on production
-   sources. Needs an ADR amending ADR 0028 first.
+   sources. Decided in [ADR 0045](../adr/0045-database-tools.md) (amends ADR 0028); the design and
+   its order (Explore, the SQL generator, settings on tabs, operations) are in
+   [docs/design/database-tools.md](../design/database-tools.md).
 4. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
    pre-run checks, flags on slow pipelines. Run tools on the MCP server fold in here (parked item
    in Plan & Scope).

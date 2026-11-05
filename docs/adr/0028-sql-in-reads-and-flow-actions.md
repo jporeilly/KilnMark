@@ -1,6 +1,8 @@
 # 0028 SQL a person writes runs in two places only: a read's query, and a flow's SQL action
 
-Status: Accepted (31 October 2026)
+Status: Accepted (31 October 2026). Amended by [ADR 0045](0045-database-tools.md) (5 November 2026):
+statements Kilnmark writes from a database operation's fixed shapes may also change a source,
+behind Allow changes; SQL a person writes is unchanged.
 
 ## Context
 
