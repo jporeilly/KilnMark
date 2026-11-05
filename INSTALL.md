@@ -41,6 +41,25 @@ On Windows and macOS, start the Podman machine once per boot: `podman machine st
    placeholders the samples use (`crm-db`, `shop-db`, `files`). See
    [samples/README.md](samples/README.md). The samples are also in the release's `samples` folder.
 
+### Start and stop with one click
+
+After the first start (step 3), Kilnmark can start and stop from a shortcut, on Windows 11 and on
+Ubuntu (or any desktop that reads `.desktop` files). Starting runs `podman compose up -d` (or
+Docker's), starts the Podman machine on Windows if it is not running, waits until Kilnmark answers
+(and Keycloak, when `.env` says `COMPOSE_PROFILES=auth`), then opens Kilnmark in the browser at
+`KILNMARK_URL`. Stopping runs `down`: the containers stop, and every volume, so all data, is kept.
+
+| | Windows 11 | Ubuntu |
+| --- | --- | --- |
+| Make the shortcuts, once | `powershell -ExecutionPolicy Bypass -File .\create-shortcut.ps1` | `./create-shortcut.sh` |
+| They go | on the desktop and in the Start menu | in the applications menu and on the desktop |
+| Start, without a shortcut | `start-kilnmark.cmd` | `./start-kilnmark.sh` |
+| Stop | `stop-kilnmark.cmd` | `./stop-kilnmark.sh` |
+
+On Ubuntu with Docker, your user must be in the `docker` group, so the shortcut needs no `sudo`.
+If something goes wrong, the window stays open saying what, and which logs to look at. Run the
+shortcut maker again after moving the folder.
+
 ### Check a release
 
 A release from GitHub comes as `kilnmark-<version>.tar.gz` or `.zip`, two SBOMs, `SHA256SUMS`, and
@@ -206,7 +225,10 @@ of its own, or only Active Directory or LDAP (which Keycloak can read). It is a 
    a new `KILNMARK_OIDC_CLIENT_SECRET`, `KILNMARK_OIDC_PROVIDER_NAME=Keycloak`, and the five group
    settings (`kilnmark-viewers`, `kilnmark-stewards`, `kilnmark-designers`, `kilnmark-admins`,
    `kilnmark-sensitive-data`).
-3. Start it: `podman compose --profile auth up -d`. The `keycloak-setup` service waits for Keycloak,
+3. Start it: `podman compose --profile auth up -d`. To have Keycloak start and stop with Kilnmark
+   on every plain `podman compose up -d` and `down`, also set `COMPOSE_PROFILES=auth` in `.env`.
+   Docker Compose and recent podman-compose read it; an older podman-compose (as in Ubuntu 24.04)
+   may not, so there add `--profile auth` yourself. The one-click scripts (below) always do. The `keycloak-setup` service waits for Keycloak,
    then makes the `kilnmark` realm: those groups, the client Kilnmark signs in with, a sign-in of a
    password and a one-time code, and Kilnmark's sign-in page. `podman compose logs keycloak-setup`
    says what it did. Run it again after changing `KILNMARK_URL` or the client secret:
