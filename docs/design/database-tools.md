@@ -205,8 +205,10 @@ difference from those previewed, checks again Allow changes, the role, authentic
 source's kind and target, and whether approval is needed now; then, on the run's own connection
 inside its transaction, sets `search_path` to `pg_catalog, pg_temp` on PostgreSQL, reads the database's
 identity and the own-database marker again, takes the table's lock where DDL is transactional, and
-re-reads the fingerprint (identity, kind or engine, partitions and children). Only ordinary local
-tables are acted on (an allow-list per database, never a table in a publication), and PostgreSQL
+re-reads the fingerprint (identity, kind or engine, partitions and children). The database must
+have no way to reach elsewhere by itself (no event or DDL triggers, no trigger firing on the
+operation, ADR 0028's login check on PostgreSQL, only extensions on Kilnmark's list, `heap`
+tables). Only ordinary local tables are acted on (an allow-list per database, never a table in a publication), and PostgreSQL
 truncates with `TRUNCATE ONLY`. A plan id with a run already in
 the audit log is refused. When approval is needed (the source is not marked Not production, or the
 identity read now is not the one the mark holds) the maker and the approver
@@ -231,7 +233,8 @@ or index expression from the catalogue reaching a statement; retargeting a sourc
 a driver property) after Allow changes was turned on; another database on the same MySQL server; a
 plan's maker or approval changed in Kilnmark's own database; DNS or a failover moving the run's
 connection to another database; a foreign, federated or merge table, or a parent with foreign
-children; a table in a logical-replication publication; a `search_path` set in the URL; a run state reset in Kilnmark's own database.
+children; a table in a logical-replication publication; a trigger or event trigger that fires on
+the operation; an extension that passes DDL on (Citus and the like); a `search_path` set in the URL; a run state reset in Kilnmark's own database.
 
 ## Not in this plan
 

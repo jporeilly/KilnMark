@@ -168,16 +168,33 @@ operations**; what they do not cover is said in point 12.
    limit. **Only the source's own database**: an operation acts on schemas of the database the
    connection is to, never another database on the same server, and a MySQL or MariaDB source with
    no database set gets no operations. Objects in the database's own schemas (`pg_catalog`, `sys`,
-   `information_schema`, Oracle-maintained schemas) are refused. **Only ordinary local tables**: a
+   `information_schema`, Oracle-maintained schemas) are refused.
+   **Only a database that cannot reach elsewhere by itself.** Before any operation, the database
+   is checked for every way it could carry a change to another database, and the operation is
+   refused if it has one, or if the check cannot read what it needs:
+   - **No code that fires on the operation**: no event trigger (PostgreSQL `pg_event_trigger`), no
+     database or server DDL trigger (SQL Server `sys.triggers` with `parent_class = 0`,
+     `sys.server_triggers`), no DDL or `TRUNCATE` trigger on the schema or database (Oracle), and
+     no trigger on the table that fires on the operation (PostgreSQL `ON TRUNCATE`).
+   - **No way out of the database**: on PostgreSQL the login check of ADR 0028 applies to operations
+     too (no superuser, no file or program roles, no dblink, no foreign server, user mapping or
+     foreign table); Oracle refuses a schema with database links; SQL Server refuses a database
+     whose login can reach a linked server.
+   - **Only extensions Kilnmark knows**: on PostgreSQL every installed extension must be on
+     Kilnmark's list of extensions that do not pass DDL or a truncate on (`plpgsql`, `pgcrypto`,
+     `uuid-ossp`, `citext`, `hstore`, `pg_trgm`, `btree_gin`, `btree_gist`, `pg_stat_statements`,
+     `pg_buffercache`, `postgis`, and the like); any other (Citus, TimescaleDB's distributed
+     tables, `pglogical`, `spock`, `bdr`, `pgactive`) refuses operations on that database until it is
+     reviewed and listed. The table's access method must be `heap`.
+   **Only ordinary local tables**: a
    table an operation drops, truncates, alters or indexes must be one whose rows the database keeps
    itself, never one that reaches elsewhere, checked against an allow-list for each database:
    - PostgreSQL: an ordinary table (`relkind` `r`), or a partitioned one (`p`) with no foreign
      partition at any level; never a table that any publication sends, read from
      `pg_publication_tables` (which expands `FOR ALL TABLES`, `TABLES IN SCHEMA` and a published
-     partitioned table's leaves), since a truncate or a drop would reach every subscriber. Where
-     a replication extension is installed (`pglogical`, `spock`, `bdr`, `pgactive`), a table it
-     replicates is refused too, read from that extension's own list; if that list cannot be read,
-     every drop, truncate and alter on the source is refused. Truncates use `TRUNCATE ONLY`, so a partitioned table and
+     partitioned table's leaves), since a truncate or a drop would reach every subscriber.
+     (Replication extensions are not on the extension list above, so a database with one gets no
+     operations.) Truncates use `TRUNCATE ONLY`, so a partitioned table and
      a table with child tables (inheritance) are refused for truncate.
    - MySQL and MariaDB: an InnoDB, Aria or MyISAM table (never `FEDERATED`, `CONNECT`, `SPIDER` or
      `MERGE`).
@@ -337,11 +354,12 @@ operations**; what they do not cover is said in point 12.
    decision) is for the owner; this record refuses operations. Explore's panes and **Count
    exactly** will make the same check once the marker exists (it comes with operations, D4); the
    preview, like every other read of such a source, stays with that owner decision.
-10. **No login check, and why.** ADR 0028 refuses superuser and file or program rights before SQL a
-    person writes, because such SQL can call functions and read files. An operation cannot: its
-    statements are fixed shapes over objects of the source's own database, outside the database's
-    own schemas. What it may drop is what the login may drop; the guide lists the rights each
-    operation needs and recommends a login without them while Allow changes is off.
+10. **The login check applies.** ADR 0028's login check, made for SQL a person writes, also runs
+    before every operation on PostgreSQL (point 3): an operation's statements are fixed shapes, but a
+    trigger or an extension can run code with the login's rights, so the login must not be able to
+    leave the database. What an operation may drop is still what the login may drop; the guide
+    lists the rights each operation needs and recommends a login without them while Allow changes
+    is off.
 11. **Which databases.** PostgreSQL, SQL Server, MySQL and MariaDB, and Oracle: the databases whose
     dialect `WriteSql` already writes. Generic JDBC sources get Explore and the generator, not
     operations, until a database there has a dialect of its own.
