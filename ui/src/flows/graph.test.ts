@@ -193,3 +193,20 @@ nodes:
     expect(priorityWords(undefined)).toBe("");
   });
 });
+
+describe("a check-source node's summary", () => {
+  test("says what it looks for, and where", () => {
+    const r = readFlowGraph(`kilnmark: flow/v1
+name: f
+nodes:
+  - { id: a, type: check-source, source: warehouse, tables: [sales.orders, sales.customers], files: [in/a.csv] }
+  - { id: b, type: check-source, source: landing, files: [in/a.csv] }
+  - { id: c, type: check-source, source: warehouse }
+`);
+    expect(r.ok && r.graph.nodes.map((n) => [n.summary, TYPE_WORDS[n.type]])).toEqual([
+      ["2 tables and 1 file on warehouse", "Checks a source"],
+      ["1 file on landing", "Checks a source"],
+      ["That warehouse can be reached", "Checks a source"],
+    ]);
+  });
+});

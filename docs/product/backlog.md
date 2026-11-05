@@ -9,9 +9,9 @@ Last reviewed: 5 November 2026 (after #86-#93 merged).
 ## Now
 
 1. **Flow controls** ([ADR 0041](../adr/0041-flow-nodes-for-resources-and-control.md),
-   docs/design/flow-controls.md; owner, 5 November 2026): a node's `timeout` (built, C3) and
-   `priority` (built, C5), then the `check-source` and `wait-for` nodes, then a node's `retries`, in
-   that order. When it is finished, take `FlowDefinition`, its test, `FlowService` and `JobQueue` out
+   docs/design/flow-controls.md; owner, 5 November 2026): a node's `timeout` (built, C3),
+   `priority` (built, C5) and the `check-source` node (built, C1), then the `wait-for` node, then a
+   node's `retries`, in that order. When it is finished, take `FlowDefinition`, its test, `FlowService` and `JobQueue` out
    of Error Prone's `excludedPaths` in `build.gradle.kts` and fix what it finds there (ADR 0042,
    decision 5).
 

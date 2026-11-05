@@ -10,6 +10,11 @@
   color: var(--km-tint-blue-fg);
 }
 
+.fd-card.fd-type-check-source .cv-node-icon {
+  background: var(--km-tint-green-bg);
+  color: var(--km-tint-green-fg);
+}
+
 .fd-card.fd-type-sql .cv-node-icon {
   background: var(--km-tint-teal-bg);
   color: var(--km-tint-teal-fg);

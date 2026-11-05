@@ -553,3 +553,28 @@ function svg(name, height, title, sub, body) {
   b += foot(4 * step + 116, "shield", "Priority never passes a source's limit, a flow's max_parallel or a for-each node's.");
   svg("flow-priority", 4 * step + 166, "Which waiting run starts first", "Highest priority first; of the same priority, the one queued first", b);
 }
+
+// ---- What a check-source node does ----
+{
+  const y1 = 96, y2 = 196, y3 = 296;
+  const b =
+    card(40, y1 - 28, 230, { n: "1", color: C.blue, title: "Connect", sub: "as the source's Test does" }) +
+    arrow([[270, y1], [318, y1]], C.blue) +
+    card(320, y1 - 28, 230, { n: "2", color: C.blue, title: "Look up each name", sub: "names and columns, no rows" }) +
+    arrow([[550, y1], [598, y1]], C.blue) +
+    card(600, y1 - 28, 136, { icon: "check", color: C.good, strong: true, title: "All there", sub: "missing: 0" }) +
+    arrow([[155, y1 + 28], [155, y2 - 30]], C.bad, { dash: "4 3" }) +
+    label(165, y1 + 52, "cannot reach it", C.bad, "start") +
+    card(40, y2 - 28, 230, { icon: "cross", color: C.bad, title: "Fails", sub: "\"Could not reach warehouse\"" }) +
+    arrow([[435, y1 + 28], [435, y2 - 30]], C.bad, { dash: "4 3" }) +
+    label(445, y1 + 52, "some not there: missing 2", C.bad, "start") +
+    card(320, y2 - 28, 260, { icon: "cross", color: C.bad, title: "Fails, naming them", sub: "\"2 of 3 tables are missing ...\"" }) +
+    arrow([[668, y1 + 28], [668, y3 - 30]], C.good) +
+    label(678, y1 + 120, "next node", C.good, "start") +
+    arrow([[155, y2 + 28], [155, y3 - 2], [300, y3 - 2]], C.bad) +
+    arrow([[528, y2 + 28], [528, y3 - 2], [442, y3 - 2]], C.bad) +
+    card(302, y3 - 30, 140, { icon: "bell", color: C.bad, title: "failure", sub: "a notice, a stop" }) +
+    card(600, y3 - 30, 136, { icon: "play", color: C.good, title: "The work", sub: "runs" }) +
+    foot(y3 + 52, "shield", "Its messages name only what the flow wrote: never the source's settings or its driver's words.");
+  svg("flow-check-source", y3 + 104, "What a check-source node does", "Before the work starts: can the source be reached, and is everything it needs there?", b);
+}
