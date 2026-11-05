@@ -117,15 +117,15 @@ an existing source, **Edit** opens the same settings on five tabs, each saving t
 
 | Tab | Settings |
 | --- | --- |
-| General | display name, description, host, port, database, login, password; Allow writing, Allow SQL, Allow changes, Production (admins), Most runs at once |
+| General | display name, description, host, port, database, login, password; Allow writing, Allow SQL, Allow changes, Not production (admins), Most runs at once |
 | Advanced | the connector's own vetted settings (TLS, time zone, application name…); identifier quoting for pipelines' writes: always (default) or when needed |
 | Options | driver properties, picked from the list the connector allows (a registered driver's `allowedProperties`, within `RegisteredDriver.VETTED`; the block-list still applies); a property off the list cannot be added |
 | Pooling | `pool_max` (1–50), `pool_idle_s`, `pool_wait_s`, `statement_timeout_s`, `socket_timeout_s` (each 1–3,600) |
 | Partitioning | `max_parts` (1–32; 1 = never split) |
 
 New common settings live in `CommonSettings` with their kinds and bounds, so the API, imports and
-the form check them alike, and each change of Allow changes or Production is an audit event. A
-save or import that leaves Production out keeps it. The socket timeout is set with
+the form check them alike, and each change of Allow changes or Not production is an audit event.
+Any change to what a source connects to clears both. The socket timeout is set with
 `Connection.setNetworkTimeout` on every connection to the source; the statement timeout through
 `SqlDialect.timeout`. Pools are per source and per use: one for read-only connections, one for
 writable ones, made on first use and dropped when the source's settings change. A connection is
@@ -155,7 +155,7 @@ sequenceDiagram
   D->>K: POST plan {operation, asset, columns…}
   K->>DB: read the catalogue and object ids (read-only)
   K-->>D: statements, plan id, needs: typed name? approval?
-  alt Production database, or identity unreadable (both signed in, no tokens)
+  alt Not marked Not production, or identity changed (both signed in, no tokens)
     A->>K: approve (another person)
   end
   D->>K: POST run {plan id, typed name}
@@ -176,10 +176,9 @@ HMAC over all of these with the key that seals source passwords), `requested_by`
 SQLSTATE or code; never the database's text). The seal covers the plan's id, source, maker, fields,
 statements, target, identity, fingerprint and expiry; `approval_seal` covers the id, the seal, the
 approver and the time. Both are HMACs with a key derived (HKDF) from the key that seals source
-passwords. Checks in the table: approved and refused are never both set. `production_database`
-holds the register: the database's identity (kind and the identity values), the source it was read
-through, who marked it and when, and removals with both people. `instance` holds one random id,
-made at first start, for the own-database check.
+passwords. Checks in the table: approved and refused are never both set. `instance` holds one
+random id, made at first start, for the own-database check. The Not production mark is kept in the
+source's settings with the identity it was made for, who asked and who approved.
 
 **API**, under `/api/v1/sources/{name}/changes`, `@RolesAllowed(DESIGNER)` (admins hold it too):
 
@@ -194,9 +193,12 @@ The operations are the generator's (D2) with a fixed shape each; there is no "ru
 run time the server checks both seals, writes the statements again from `fields` and refuses any
 difference from those previewed, checks again Allow changes, the role, authentication, the
 source's kind and target, and whether approval is needed now; then, on the run's own connection
-inside its transaction, reads the database's identity and the own-database marker again, takes the
-table's lock where DDL is transactional, and re-reads the fingerprint. When approval is needed (the
-database is in the production register, or its identity cannot be read) the maker and the approver
+inside its transaction, sets `search_path` to `pg_catalog` on PostgreSQL, reads the database's
+identity and the own-database marker again, takes the table's lock where DDL is transactional, and
+re-reads the fingerprint (identity, kind or engine, partitions and children). Only ordinary local
+tables are acted on, and PostgreSQL truncates with `TRUNCATE ONLY`. A plan id with a run already in
+the audit log is refused. When approval is needed (the source is not marked Not production, or the
+identity read now is not the one the mark holds) the maker and the approver
 are both people signed in with the provider (tokens get 403), compared by issuer and subject, never
 the same, and only the maker runs the plan. A change to what the source connects to turns Allow
 changes off and cancels its open plans. Operations act only on the source's own database; a MySQL
@@ -215,7 +217,8 @@ it was turned off; a value in a failure's message (a duplicate key in a unique i
 or index expression from the catalogue reaching a statement; retargeting a source (URL, database,
 a driver property) after Allow changes was turned on; another database on the same MySQL server; a
 plan's maker or approval changed in Kilnmark's own database; DNS or a failover moving the run's
-connection to another database.
+connection to another database; a foreign, federated or merge table, or a parent with foreign
+children; a `search_path` set in the URL; a run state reset in Kilnmark's own database.
 
 ## Not in this plan
 

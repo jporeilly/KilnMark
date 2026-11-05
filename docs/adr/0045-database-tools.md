@@ -20,7 +20,7 @@ editor that writes DDL for a table, and connection settings on tabs. The owner d
 4. **Operations that change a database**, which the owner chose to allow *with controls* rather
    than leave to other tools: a per-source switch off by default, designers and admins only, a
    preview of every statement, typing the table's name to confirm a drop or a truncate, an audit
-   event for each, and a second person's approval on production sources.
+   event for each, and a second person's approval on production databases.
 
 The first three only read or only write text, and fit the rules Kilnmark already has. The fourth
 does not: [ADR 0028](0028-sql-in-reads-and-flow-actions.md) says a statement that changes a
@@ -93,14 +93,17 @@ may do, and exactly what in ADR 0028 changes and what stays.
 The source form becomes five tabs; the settings in them keep the rules they have:
 
 - **General**: name, kind, host, port, database, login, Allow writing, Allow SQL, Allow changes,
-  and Production (admins; point 4.7).
+  and Not production (admins; point 4.7).
 - **Advanced**: the connector's own vetted settings (ADR 0030: time limits, TLS, characters, the
   database's harmless named settings) and identifier quoting for what pipelines write (always, the
   default; or only when a name needs it). Database operations always quote, whatever it says.
 - **Options**: driver properties, picked from the list each connector allows: for a registered
   driver, the properties its registration allows (`allowedProperties`, itself within
-  `RegisteredDriver.VETTED`), and the block-list still applies over any list. Nothing off the list
-  can be typed in; the tab is a picker, not a free key and value table.
+  `RegisteredDriver.VETTED`), and the block-list still applies over any list. For those drivers
+  nothing off the list can be typed in; the tab is a picker, not a free key and value table. The
+  built-in connectors' own URLs still take any property their block-list
+  (`JdbcConnector.deniedProperty`) does not refuse, as today; moving them to an allow-list too is
+  part of this tab's work.
 - **Pooling**: the largest number of connections Kilnmark holds open to the source at once, how
   long one may stay idle, how long to wait for one, a statement timeout for the source (today the
   server's settings set it for all sources), and a JDBC **socket timeout** (the backlog item), so a
@@ -155,7 +158,15 @@ operations**; what they do not cover is said in point 12.
    limit. **Only the source's own database**: an operation acts on schemas of the database the
    connection is to, never another database on the same server, and a MySQL or MariaDB source with
    no database set gets no operations. Objects in the database's own schemas (`pg_catalog`, `sys`,
-   `information_schema`, Oracle-maintained schemas) are refused. `DROP` and `TRUNCATE` never cascade
+   `information_schema`, Oracle-maintained schemas) are refused. **Only ordinary local tables**: a
+   table an operation drops, truncates, alters or indexes must be one whose rows the database keeps
+   itself, never one that reaches elsewhere: on PostgreSQL an ordinary table (`relkind` `r`), or a
+   partitioned one (`p`) with no foreign partition; on MySQL and MariaDB an InnoDB, Aria or MyISAM
+   table (never `FEDERATED`, `CONNECT`, `SPIDER` or `MERGE`); on SQL Server and Oracle a table that is
+   not external or a synonym. The lists are those `replace` already refuses (`WriteSql.blockers`).
+   PostgreSQL truncates with `TRUNCATE ONLY`, and a table with child tables (inheritance) is
+   refused. A column's length, precision and scale are whole numbers within the dialect's ranges,
+   never text. `DROP` and `TRUNCATE` never cascade
    (no PostgreSQL `CASCADE`, no Oracle `CASCADE CONSTRAINTS`): a table other objects depend on is
    refused by the database, and the failure says so.
 4. **A preview of every statement.** The server answers a request with the exact statements, the
@@ -164,22 +175,26 @@ operations**; what they do not cover is said in point 12.
    source's connection target and the database's identity (point 7); and a fingerprint of the
    objects it acts on, including each one's identity in the database (PostgreSQL `oid`, SQL Server
    `object_id`, Oracle `OBJECT_ID`, MySQL the table's creation time, and a MySQL table without one is
-   refused), so a table dropped and re-created, or swapped for one of the same shape, no longer
-   matches. **Run** names the plan id. The server then:
+   refused), its kind or engine, and its partitions and child tables, so a table dropped and
+   re-created, swapped for one of the same shape, or given a foreign partition no longer matches. **Run** names the plan id. The server then:
    - checks the plan's **seal**: an HMAC, with a key derived (HKDF) from the key that seals source
      passwords and so never kept in Kilnmark's own database, over the plan's id, source, maker,
      fields, statements, target, identity, fingerprint and expiry. An approval adds a second HMAC
      over the plan's id, its seal, the approver and the time. A row whose seals do not match is
-     refused, so no one who can write Kilnmark's database can change a plan, its maker or its
-     approval;
+     refused, so a plan's statements, maker and approver cannot be changed in Kilnmark's database.
+     The seals protect the plan, not Kilnmark's database as a whole: someone who can write that
+     database can also change tokens and roles, which is why it is reached over TLS with a login of
+     its own (ADR 0032), and why the SIEM's copy of the audit log is the record (ADR 0029);
    - writes the statements again from the plan's fields and refuses the run if they differ from
      those previewed;
    - checks again, as they are now, everything it checked when planning: Allow changes, the
      caller's role, authentication, the source's kind and connection target, and **whether an
-     approval is needed now** (point 7), whatever the plan said; and that the approver is not the
-     maker;
-   - on the run's own connection, inside its transaction: reads the database's identity and the
-     own-database marker again (points 7 and 9), takes the table's lock where the database's DDL is
+     approval is needed now** (point 7), whatever the plan said; that the approver is not the
+     maker; and that the audit log has no run of this plan yet;
+   - on the run's own connection, inside its transaction: sets PostgreSQL's `search_path` to
+     `pg_catalog` alone (and every catalogue query names `pg_catalog` itself), so a URL's
+     `options` or `currentSchema` cannot put a look-alike type or table in the way; reads the
+     database's identity and the own-database marker again (points 7 and 9), takes the table's lock where the database's DDL is
      transactional (PostgreSQL, SQL Server), re-reads the fingerprint, and refuses on any
      difference. A `CREATE TABLE`, which has no fingerprint, is still bound by the identity;
    - runs the statements once (`UPDATE … WHERE ran_at IS NULL` decides who runs it).
@@ -196,33 +211,37 @@ operations**; what they do not cover is said in point 12.
    ("Key (ssn)=(…)"). A failure is reported, shown and stored as the statement that failed, its
    SQLSTATE or error code, and a fixed message Kilnmark writes for that code. Explore and **Count
    exactly** report their failures the same way (a cast in a view can quote a value).
-7. **A second person on production databases.**
-   - **What is Production.** An admin marks a source **Production**. Kilnmark then reads the
-     database's own identity through that source and keeps it in a **register of production
-     databases**, apart from the source record: PostgreSQL `system_identifier` with
-     `current_database()`, SQL Server `service_broker_guid` with `DB_NAME()`, MySQL and MariaDB
-     `@@server_uuid` (the whole server: a MySQL database is a schema of it), Oracle `DBID` with
-     `CON_DBID`. An operation needs approval when the database it runs on, read live through
-     whichever source, is in the register, **or when its identity cannot be read** (a login without
-     the right to read it: the guide says which right to grant). Host names, aliases, proxies,
-     password references and second sources over the same database therefore make no difference:
-     the database is asked who it is. Editing or deleting the source that was marked leaves the
-     register as it was.
+7. **A second person, unless a source is marked not production.** Every operation needs a second
+   person's approval **by default**. Until environments exist, a source is treated as production
+   unless an admin has marked it **Not production**; so a new source, a second source over the same
+   database, a source reached through another host name, alias or proxy, or one made with a
+   password reference are all production until someone decides otherwise, and nothing has to
+   recognise them as the same database.
+   - **Marking a source Not production** binds the mark to what the source connects to (as Allow
+     changes is bound, point 1) and to the database's own identity, read through the source when it
+     is marked: PostgreSQL `system_identifier` with `current_database()`, SQL Server
+     `service_broker_guid` with `DB_NAME()`, MySQL `@@server_uuid`, MariaDB (which has no server
+     UUID) `@@hostname`, `@@port`, `@@datadir` and `@@server_id` together, Oracle `DBID` with
+     `CON_DBID`. A source whose identity cannot be read cannot be marked: the guide says which right
+     the login needs. Any change to the connection settings removes the mark. An operation runs
+     without approval only when the identity read **on the run's own connection** is the one the
+     mark holds; a failover, an upgrade that makes a new identity, a renamed database or a DNS
+     change therefore makes approval needed again, and the page says why. Marking is an admin's act,
+     an audit event (`source.not_production`); with the identity provider on, it is asked by one
+     admin and approved by another, as the unmask grant is (ADR 0038).
    - **Who approves.** Another person, a designer or an admin, as for the unmask grant (ADR 0038).
      **Only people signed in with the identity provider** (ADR 0036) may make, approve or run a
      plan that needs approval; an API token is refused (403), so no one can make a plan with a token
      and approve it as themselves. People are compared by the provider's fixed id (issuer and
      subject), never by name. Only the person who made the plan runs it. Without the identity
-     provider, operations that need approval are refused.
+     provider, operations that need approval are refused, so only sources marked Not production
+     can be changed. The approver's role is checked when they approve.
    - An approved plan runs once, within 24 hours of approval; a refused, expired, cancelled or
-     already run plan cannot run.
-   - **Until environments exist** (backlog, "change approval and environments"), only an admin
-     marks a source Production, and the register is changed only by two people: removing a
-     database from it, changing the connection settings of a source marked Production, or deleting
-     that source each needs an admin signed in with the provider to ask and another to approve, and
-     both are in the audit log (`source.production`). A save or an import that leaves Production out
-     keeps it. When environments arrive, the register becomes the production environment's list of
-     databases.
+     already run plan cannot run. Before running, Kilnmark also refuses a plan whose id already has
+     a `db.change.ran` or `db.change.failed` event in the audit log, so a run state reset in
+     Kilnmark's own database does not let one approval run twice.
+   - **When environments arrive** (backlog, "change approval and environments"), a source in a
+     non-production environment is Not production, by the same rules.
 8. **How it runs.** On a fresh, unpooled, writable connection, in one transaction where the
    database can undo DDL (PostgreSQL, SQL Server), statement by statement where it cannot (MySQL,
    MariaDB, Oracle commit DDL by themselves), saying which statements ran if one fails. Within the
@@ -242,7 +261,8 @@ operations**; what they do not cover is said in point 12.
    every login can read. If it exists and its id is Kilnmark's, or its id cannot be read, the
    operation is refused. As the database itself is asked, host names, aliases and proxies make no
    difference. Refusing every use of such a source (reads and SQL a person writes, ADR 0028's open
-   decision) is for the owner; this record refuses operations.
+   decision) is for the owner; this record refuses operations, and Explore and **Count exactly**
+   make the same check.
 10. **No login check, and why.** ADR 0028 refuses superuser and file or program rights before SQL a
     person writes, because such SQL can call functions and read files. An operation cannot: its
     statements are fixed shapes over objects of the source's own database, outside the database's
@@ -272,9 +292,9 @@ flowchart LR
   W -->|"flow sql action: Allow SQL<br/>and Allow writing, PostgreSQL"| DB
   O --> PV["Kilnmark writes the statements:<br/>preview + plan id"]
   PV --> C{"DROP or TRUNCATE?<br/>type the table name"}
-  C --> PR{"Production database?<br/>(asked of the database)"}
-  PR -- "yes" --> AP["Another person approves<br/>(both signed in, no tokens)"] --> RUN
-  PR -- "no" --> RUN["Write the statements again from the plan,<br/>check everything again, run once"]
+  C --> PR{"Marked Not production,<br/>same identity now?"}
+  PR -- "no" --> AP["Another person approves<br/>(both signed in, no tokens)"] --> RUN
+  PR -- "yes" --> RUN["Write the statements again from the plan,<br/>check everything again, run once"]
   RUN --> DB
   RUN --> AU[["Audit log"]]
   G -. "copied into a flow sql action:<br/>now SQL a person writes" .-> W
@@ -317,22 +337,23 @@ flowchart LR
   changes is off.
 - Explore runs catalogue queries on demand, which a busy database feels a little. They are small,
   bounded and on the read-only connection; the source's **Most runs at once** does not count them.
-- The register of production databases is a stop-gap until environments: two admins acting
-  together can remove a database from it. That is the same limit ADR 0038 accepts: the provider
-  decides who is a person; two people are needed, and the audit log shows both. A login that cannot
-  read its database's identity makes every operation through it need approval; the guide says
-  which right to grant so that ordinary databases do not.
+- Production is the default, and Not production a stop-gap until environments: two admins acting
+  together can mark a production database Not production. That is the same limit ADR 0038 accepts:
+  the provider decides who is a person; two people are needed, and the audit log shows both. Every
+  new source needs an admin's mark before its operations run without approval, which is the price
+  of failing closed.
 - **Related gap, not opened here: marks follow the source record.** A designer can add a second
   source over a database with marked columns, using a password reference (`env:` or `secret:`), and
   that source has no marks, so its preview shows those columns to stewards and admins. This is how
   sources have always worked; Explore uses the same preview. The fix belongs with marks, not here:
-  keying marks by the database's identity (point 4.7), and making password references admin-only.
+  keying marks by the database's identity (as point 4.7 reads it), and making password references admin-only.
   It is added to the backlog's hardening item.
 - The SQL generator follows `WriteSql`: when a database's `create` types change, so does the
   generated DDL, and the guide's type table stays the one source of truth.
-- Three new tables in Kilnmark's own database, in a migration of their own: `db_change_plan` (the
-  plans, sealed, with their approval and outcome), `production_database` (the register of point
-  4.7) and `instance` (the random id that point 4.9 looks for). Allow changes, Production, the pooling settings and the
+- Two new tables in Kilnmark's own database, in a migration of their own: `db_change_plan` (the
+  plans, sealed, with their approval and outcome) and `instance` (the random id that point 4.9
+  looks for). Allow changes and the Not production mark (with its identity) are kept with the
+  source's settings. Allow changes, Production, the pooling settings and the
   partitioning limit are keys of the source's settings, as Allow writing and Allow SQL are
   (`CommonSettings`).
 - **Open owner decision: a table never scanned.** The source's live preview, which Explore reuses,
