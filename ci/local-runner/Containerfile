@@ -1,0 +1,43 @@
+# A Linux GitHub Actions runner for Kilnmark's CI, run in Podman on a developer's or the owner's
+# machine (docs/development.md, "CI on a local runner"). It is never shipped: the release takes
+# nothing from ci/.
+#
+# Jobs reach the machine's container engine through its socket, mounted at /var/run/docker.sock,
+# so `docker build` and the tests' Testcontainers run their containers next to this one.
+FROM docker.io/library/ubuntu:24.04@sha256:78d4744ead1f5b19b04d0df558ab182a5300903900755e515b2ca4d10eb2044d
+
+ARG RUNNER_VERSION=2.338.2
+# Published with the release (github.com/actions/runner/releases, "SHA linux-x64").
+ARG RUNNER_SHA256=baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40
+
+ENV DEBIAN_FRONTEND=noninteractive
+# The workflows need git, curl and tar; the Docker client (docker.io's CLI, talking to Podman's
+# API) builds images and runs the tests' containers. No Docker daemon is started.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl git jq tar gzip unzip zip xz-utils \
+      docker.io libicu74 libkrb5-3 zlib1g liblttng-ust1t64 \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL -o /opt/actions-runner.tar.gz \
+      "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
+ && echo "${RUNNER_SHA256}  /opt/actions-runner.tar.gz" | sha256sum -c -
+
+# One module's tests at a time on this machine: in parallel, the modules' Testcontainers start their
+# databases at once through Podman's API, which then drops some starts ("Broken pipe") and slows
+# others past their tests' waits. Gradle's user properties override the project's
+# org.gradle.parallel=true here only; GitHub's runners keep building in parallel.
+RUN mkdir -p /root/.gradle && echo 'org.gradle.parallel=false' > /root/.gradle/gradle.properties
+COPY entrypoint.sh /opt/entrypoint.sh
+RUN chmod 755 /opt/entrypoint.sh
+
+# Jobs run as root in this container: with the engine's socket mounted, a job can reach everything
+# the Podman machine can (its containers, and through WSL the Windows user's files), so a separate
+# user would add nothing. Run only the owner's own commits on it (docs/development.md).
+# Ryuk removes a job's test containers when the job ends, even a cancelled one, so they do not pile
+# up in the shared engine. It mounts the engine's socket by its path in the machine, and runs
+# privileged, so its image is pinned by digest (Ryuk 0.14.0).
+ENV RUNNER_ALLOW_RUNASROOT=1 \
+    TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED=true \
+    TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/run/podman/podman.sock \
+    TESTCONTAINERS_RYUK_CONTAINER_IMAGE=docker.io/testcontainers/ryuk@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0
+ENTRYPOINT ["/opt/entrypoint.sh"]
