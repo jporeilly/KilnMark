@@ -292,7 +292,11 @@ operations**; what they do not cover is said in point 12.
        Server `encrypt=true` without `trustServerCertificate`, and the like, ADR 0034), and the mark
        holds the certificate's fingerprint. A database reports its other identity values about
        itself, and a copy, a proxy or a pooler can make them match; a certificate it cannot fake
-       without the production server's private key.
+       without the production server's private key. **The database itself must confirm** that this
+       session reached it over TLS (PostgreSQL `pg_stat_ssl` for `pg_backend_pid()`, SQL Server
+       `sys.dm_exec_connections.encrypt_option`, MySQL `Ssl_cipher`, Oracle `NETWORK_PROTOCOL` =
+       `tcps`), at marking and on every run, so a proxy or pooler that ends TLS and goes on in
+       plain text is refused: its certificate would be the proxy's, not the database's.
      Any identity part that is empty (PostgreSQL's address over a Unix socket behind a pooler, say)
      refuses the mark. The identity is read for marking as for a run: on a connection whose
      PostgreSQL `search_path` is `pg_catalog` alone, with every catalogue name qualified, so a URL's
@@ -308,9 +312,11 @@ operations**; what they do not cover is said in point 12.
      identity read **on the run's own connection** is the one the mark holds; a failover to another
      instance, a restore, an upgrade that makes a new identity, a renamed database or a DNS change to
      another instance, or another certificate, therefore makes approval needed again, and the page
-     says why. What remains is a copy that also carries production's certificate and private key,
-     reached under a name that certificate covers: two admins marked it, and the guide says not to
-     mark a copy that shares production's keys.
+     says why. What remains: a copy that also carries production's certificate and private key,
+     reached under a name that certificate covers; and a proxy or pooler that ends TLS and opens
+     TLS again to the database, which the database cannot tell from Kilnmark. Two admins marked
+     such a source; the guide says not to mark a copy that shares production's keys, nor a source
+     reached through a proxy or pooler.
    - **Who marks.** An admin asks and **another admin approves, both signed in with the identity
      provider**, each shown the host name, the address it resolved to, the certificate's subject and
      the database's name, not only opaque ids, compared by issuer and subject as for the unmask grant (ADR 0038); an API token can
@@ -428,8 +434,10 @@ Kilnmark takes both:
   by the same rules.
 - **Undoing.** Where the database can undo DDL (PostgreSQL, SQL Server), each operation runs in one
   transaction; where it cannot (MySQL, MariaDB, Oracle), the preview says the change cannot be
-  undone. The preview offers an undo script where one exists without losing data (dropping an
-  index or a still-empty table it created) and suggests a backup before a drop or a truncate.
+  undone. The preview shows an undo script where one exists without losing data (dropping an
+  index or a still-empty table it created), **as text only**: to run it, a person makes it a new
+  plan, under every control of point 4 (typed name, approval, fingerprint). The preview suggests a
+  backup before a drop or a truncate.
 - **History.** Every plan, approval and run is an audit event (point 4.6), and the source's page
   lists its changes: what ran, who asked, who approved, and the outcome.
 
