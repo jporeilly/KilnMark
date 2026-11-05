@@ -805,8 +805,8 @@ status changes.
   this is drawn from its latest progress.
 - **Run timeline:** the run on one time line, as a Gantt chart. One sentence says when it started,
   how long it took and how it ended. The run's own row comes first, then a bar per node from its
-  start to its end, lighter while it waits for its first row, with ticks at its first and last row,
-  so nodes working at the same time overlap; its time is at the end of its bar, and a gate's verdict
+  start to its end, lighter while it waits for its first row, so nodes working at the same time
+  overlap; its time is at the end of its bar, and a gate's verdict
   or a write's quality beside it. **Show the critical path** colours the bars of the nodes that held the run's
   end back (it is off at first, to keep the chart plain). **Choose a row** for everything recorded about that node below the chart: its type, how
   it ended, its start, first row, last row and end, its share of the run, rows in and out, peak

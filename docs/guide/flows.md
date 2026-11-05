@@ -339,8 +339,9 @@ A run page is laid out as a pipeline run's, in this order:
   node says so. **Choose a row** (its name, or anywhere on its bar) for everything recorded about
   it below the chart: its status, start, end and time, the pipeline and its run, the time it
   waited for a worker, its message and what it reported, an item's value, or a pipeline node's
-  rows, quality and error. A pipeline run stopped before its nodes started says its nodes were
-  not timed;
+  rows, quality and error. An open pipeline run that is queued says it is waiting to start, one stopped
+  before its nodes started says they were not timed, and one that could not be read offers to try
+  again;
 - **Nodes**: every node of that version in order: its status (Not started, Running, Succeeded,
   Failed, Cancelled or Skipped), when it started, how long it took, and what happened, such as the
   rows a pipeline wrote and its score, with a link to its **pipeline run**, where its nodes, rows

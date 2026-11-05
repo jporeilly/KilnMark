@@ -53,7 +53,7 @@ const OUTCOME: Record<string, { word: string; tone: Tone }> = {
   not_started: { word: "Not started", tone: "neutral" },
 };
 
-/** One node's bar: lighter while it waits for its first row, ticks at its first and last row. */
+/** One node's bar: lighter while it waits for its first row, rounded at both ends of what it shows. */
 function Bar({ r, span, critical }: { r: TimelineRow; span: number; critical: boolean }) {
   if (r.start == null) return <span className="pl-tl-none">Did not start</span>;
   const end = r.end ?? span;
@@ -61,19 +61,21 @@ function Bar({ r, span, critical }: { r: TimelineRow; span: number; critical: bo
   const words = rowWords(r);
   return (
     <>
+      {solidFrom > r.start && (
       <span
-        className={`pl-tl-wait${r.running && r.firstRow == null ? " is-running" : ""}`}
+        className={`pl-tl-wait${r.running && r.firstRow == null ? " is-running" : ""}${r.firstRow == null ? " is-alone" : ""}`}
         style={{
           left: pct(r.start, span),
           width: pct(Math.max(0, solidFrom - r.start), span),
         }}
         title={words}
       />
+      )}
       {r.firstRow != null && (
         <span
           className={`pl-tl-bar${r.outcome === "failed" ? " is-failed" : ""}${r.running ? " is-running" : ""}${
             critical ? " is-critical" : ""
-          }`}
+          }${solidFrom <= r.start ? " is-alone" : ""}`}
           style={{
             left: pct(r.firstRow, span),
             width: pct(Math.max(0, end - r.firstRow), span),
@@ -103,6 +105,11 @@ export function RunTimeline({
 }) {
   const [showPath, setShowPath] = useState(false);
   const [chosen, setChosen] = useState<string | null>(null);
+  const [said, setSaid] = useState("");
+  const choose = (node: string | null) => {
+    setChosen(node);
+    setSaid(`Details of ${node ?? "the run"} are below the chart.`);
+  };
   const t = timeline(detail, clock);
   if (!t) {
     const unfinished = detail.run.status === "queued" || detail.run.status === "running";
@@ -200,12 +207,12 @@ export function RunTimeline({
                 type="button"
                 className="run-name mono"
                 aria-current={chosen == null ? "true" : undefined}
-                onClick={() => setChosen(null)}
+                onClick={() => choose(null)}
               >
                 {detail.run.pipeline}
               </button>
             </span>
-            <span className="pl-tl-track" aria-hidden="true" onClick={() => setChosen(null)}>
+            <span className="pl-tl-track" aria-hidden="true" onClick={() => choose(null)}>
               {axis.map((x) => (
                 <span key={x} className="pl-tl-grid" style={{ left: pct(x, t.span) }} />
               ))}
@@ -233,8 +240,8 @@ export function RunTimeline({
                     type="button"
                     className="run-name mono pl-tl-node"
                     aria-current={chosen === r.node ? "true" : undefined}
-                    aria-label={rowWords(r)}
-                    onClick={() => setChosen(r.node)}
+                    aria-label={`${r.node}: ${rowWords(r)}`}
+                    onClick={() => choose(r.node)}
                   >
                     {r.node}
                   </button>
@@ -246,18 +253,23 @@ export function RunTimeline({
                     o && o.word !== "Finished" && o.word !== "Ended" && <StatusChip tone={o.tone}>{o.word}</StatusChip>
                   )}
                 </span>
-                <span className="pl-tl-track" aria-hidden="true" onClick={() => setChosen(r.node)}>
+                <span className="pl-tl-track" aria-hidden="true" onClick={() => choose(r.node)}>
                   {axis.map((x) => (
                     <span key={x} className="pl-tl-grid" style={{ left: pct(x, t.span) }} />
                   ))}
                   <Bar r={r} span={t.span} critical={onPath.has(r.node)} />
-                  {r.start != null && r.end != null && (
+                  {r.start != null && (r.end != null || mark) && (
                     <span
-                      className={`run-took${(r.end ?? 0) / t.span > 0.7 && mark ? " is-before" : ""}`}
-                      style={{ left: pct(r.end, t.span) }}
+                      className={`run-took${(r.end ?? t.span) / t.span > 0.7 && mark ? " is-before" : ""}`}
+                      style={{ left: pct(r.end ?? t.span, t.span) }}
                     >
-                      {offsetWords(r.end - r.start)}
-                      {mark && <span className={`pl-tl-quality is-${mark.tone}`}> · {mark.text}</span>}
+                      {r.end != null && offsetWords(r.end - r.start)}
+                      {mark && (
+                        <span className={`pl-tl-quality is-${mark.tone}`}>
+                          {r.end != null ? " · " : ""}
+                          {mark.text}
+                        </span>
+                      )}
                     </span>
                   )}
                 </span>
@@ -275,6 +287,9 @@ export function RunTimeline({
           )}
         </p>
       </div>
+      <p className="visually-hidden" aria-live="polite">
+        {said}
+      </p>
       <NodeDetails detail={detail} t={t} node={chosen} quality={quality} />
       <details className="pl-tl-table">
         <summary>Show the timeline as a table</summary>
@@ -369,7 +384,7 @@ function NodeDetails({
     if (n?.error) facts.push(["Error", n.error]);
   }
   return (
-    <div className="run-details" aria-live="polite">
+    <div className="run-details">
       <h3>{r == null ? `Run of ${detail.run.pipeline}` : `Node ${r.node}`}</h3>
       <dl>
         {facts.map(([k, v]) => (

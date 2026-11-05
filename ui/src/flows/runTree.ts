@@ -31,6 +31,8 @@ export type TreeRow = {
   loading: boolean;
   /** Open, its pipeline run read, but its nodes were not timed (stopped before they started, or older). */
   untimed?: boolean;
+  /** Open, its pipeline run read, but it has not started its nodes yet (queued, or starting). */
+  waiting?: boolean;
   flowNode?: FlowNodeRun;
   item?: FlowItemRun;
   step?: PipelineNodeRun;
@@ -115,7 +117,9 @@ export function runTree(
     const t = timeline(d);
     if (!t || t.rows.length === 0) {
       const owner = rows.find((r) => r.id === parent);
-      if (owner) owner.untimed = true;
+      const starting = d.run.status === "queued" || d.run.status === "running";
+      if (owner && starting) owner.waiting = true;
+      else if (owner) owner.untimed = true;
       return;
     }
     const base = at(d.run.startedAt) ?? 0;

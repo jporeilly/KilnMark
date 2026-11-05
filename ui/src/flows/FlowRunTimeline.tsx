@@ -53,7 +53,11 @@ export function FlowRunTimeline({ detail, now }: { detail: FlowRunDetail; now: n
   const [open, setOpen] = useState<Set<string>>(() => openAtFirst(detail));
   const [runs, setRuns] = useState<Map<number, PipelineRunDetail>>(new Map());
   const [chosen, setChosen] = useState<string>("flow");
+  const [failed, setFailed] = useState<Set<number>>(new Set());
+  const [said, setSaid] = useState("");
   const asked = useRef(new Set<number>());
+  /** Requests on their way, by run: a run is asked for again only once the last answer is in. */
+  const inFlight = useRef(new Set<number>());
 
   // Rows that open later (nodes that start after the page loaded) open as they appear.
   const known = useRef(new Set<string>(openAtFirst(detail)));
@@ -73,20 +77,39 @@ export function FlowRunTimeline({ detail, now }: { detail: FlowRunDetail; now: n
       shown.current = false;
     };
   }, []);
+  const ask = (id: number) => {
+    if (inFlight.current.has(id)) return;
+    inFlight.current.add(id);
+    asked.current.add(id);
+    pipelinesApi
+      .runDetail(id)
+      .then((d) => {
+        if (!shown.current) return;
+        setFailed((f) => (f.has(id) ? new Set([...f].filter((x) => x !== id)) : f));
+        // A finished run is never replaced by an older answer that still said it was running.
+        setRuns((m) => {
+          const had = m.get(id);
+          const hadEnded = had && had.run.status !== "queued" && had.run.status !== "running";
+          return hadEnded ? m : new Map(m).set(id, d);
+        });
+      })
+      .catch(() => shown.current && setFailed((f) => new Set(f).add(id)))
+      .finally(() => inFlight.current.delete(id));
+  };
   useEffect(() => {
     for (const id of runsWanted(detail, open)) {
       const have = runs.get(id);
       const going = have && (have.run.status === "queued" || have.run.status === "running");
       if (have && !going) continue;
       if (!have && asked.current.has(id)) continue;
-      asked.current.add(id);
-      pipelinesApi
-        .runDetail(id)
-        .then((d) => shown.current && setRuns((m) => new Map(m).set(id, d)))
-        .catch(() => asked.current.delete(id));
+      ask(id);
     }
     // runs is read, not watched: a run read once is not asked for again unless it is still going.
   }, [detail, open]);
+  const choose = (r: TreeRow) => {
+    setChosen(r.id);
+    setSaid(`Details of ${r.kind === "flow" ? "the flow" : r.label} are below the chart.`);
+  };
 
   const tree = useMemo(() => runTree(detail, runs, open, now), [detail, runs, open, now]);
   if (!tree) return <p className="muted">The timeline starts when the run does.</p>;
@@ -146,15 +169,25 @@ export function FlowRunTimeline({ detail, now }: { detail: FlowRunDetail; now: n
                     className="ft-name mono"
                     aria-current={r.id === selected.id ? "true" : undefined}
                     aria-label={words}
-                    onClick={() => setChosen(r.id)}
+                    onClick={() => choose(r)}
                   >
                     {r.label}
                   </button>
                   {r.badge && <span className="ft-badge">{r.badge}</span>}
-                  {r.loading && <span className="small muted">Loading…</span>}
+                  {r.loading && r.pipelineRunId != null && failed.has(r.pipelineRunId) ? (
+                    <span className="small">
+                      Could not read its run.{" "}
+                      <button type="button" className="link-button" onClick={() => ask(r.pipelineRunId!)}>
+                        Try again
+                      </button>
+                    </span>
+                  ) : (
+                    r.loading && <span className="small muted">Loading…</span>
+                  )}
+                  {r.waiting && open.has(r.id) && <span className="small muted">Waiting to start</span>}
                   {r.untimed && open.has(r.id) && <span className="small muted">Its nodes were not timed</span>}
                 </div>
-                <div className="ft-lane" onClick={() => setChosen(r.id)} title={words} aria-hidden="true">
+                <div className="ft-lane" onClick={() => choose(r)} title={words} aria-hidden="true">
                   {marks.map((t) => (
                     <span key={t} className="ft-grid" style={{ left: pct(t, span) }} />
                   ))}
@@ -178,6 +211,9 @@ export function FlowRunTimeline({ detail, now }: { detail: FlowRunDetail; now: n
           })}
         </ul>
       </div>
+      <p className="visually-hidden" aria-live="polite">
+        {said}
+      </p>
       <RowDetails row={selected} detail={detail} />
     </>
   );
@@ -229,7 +265,7 @@ function RowDetails({ row: r, detail }: { row: TreeRow; detail: FlowRunDetail })
   }
   const title = r.kind === "flow" ? `Flow ${r.label}` : r.kind === "step" ? `Pipeline node ${r.label}` : r.kind === "item" ? r.label : `Node ${r.label}`;
   return (
-    <div className="run-details" aria-live="polite">
+    <div className="run-details">
       <h3>{title}</h3>
       <dl>
         {facts.map(([k, v]) => (

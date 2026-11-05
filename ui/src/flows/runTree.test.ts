@@ -125,6 +125,13 @@ describe("runTree", () => {
     expect(tree?.rows.some((r) => r.id.startsWith("n:orders/"))).toBe(false);
   });
 
+  test("an open row whose pipeline run is queued waits to start, rather than saying it was not timed", () => {
+    const queued = new Map([[11, pipelineRun(11, 2, [], "queued")]]);
+    const orders = runTree(detail, queued, new Set(["n:orders"]))?.rows.find((r) => r.id === "n:orders");
+    expect(orders?.waiting).toBe(true);
+    expect(orders?.untimed).toBeFalsy();
+  });
+
   test("a running flow and pipeline run their bars to now", () => {
     const live = flowRun(
       [node({ node: "orders", position: 0, status: "running", startedAt: at(1), pipelineRunId: 11, pipeline: "orders" })],

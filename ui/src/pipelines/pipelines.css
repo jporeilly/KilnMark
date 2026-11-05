@@ -854,8 +854,9 @@ main:has(.pl-wide) {
   background: color-mix(in srgb, var(--km-accent-blue) 55%, var(--km-surface));
 }
 
-.pl-tl-wait:only-child,
-.pl-tl-row .pl-tl-wait + .pl-tl-bar:first-child {
+/* A part that is the whole bar: no rows came (waiting only), or rows came at once (no waiting). */
+.pl-tl-wait.is-alone,
+.pl-tl-bar.is-alone {
   border-radius: 6px;
 }
 
@@ -870,19 +871,6 @@ main:has(.pl-wide) {
 .pl-tl-bar.is-running,
 .pl-tl-wait.is-running {
   border-right: 3px dotted var(--km-ink);
-}
-
-.pl-tl-tick {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  margin-left: -1px;
-  background: var(--km-ink-strong);
-}
-
-.pl-tl-tick.is-last {
-  background: var(--km-ink);
 }
 
 .pl-tl-none {
@@ -1069,27 +1057,6 @@ main:has(.pl-wide) {
 
 .pl-tl-key .pl-tl-key-critical {
   background: var(--km-accent-fill);
-}
-
-.pl-tl-mark {
-  position: absolute;
-  top: 1px;
-  transform: translateX(-100%);
-  padding-right: 2px;
-  white-space: nowrap;
-  z-index: 1;
-}
-
-.pl-tl-mark .km-chip {
-  font-size: var(--km-text-xs);
-  line-height: 1.4;
-  padding-block: 0;
-}
-
-/* A bar ending before the last part of the chart: its marker sits after its end and its time. */
-.pl-tl-mark.is-after {
-  transform: none;
-  padding: 0 0 0 64px;
 }
 
 /* ---- Where each node spent its time (RunTimeSpent): a 100% bar per node, each part its own pattern ---- */

@@ -246,10 +246,7 @@ moves the unique index to `(flow_run_id, flow_node, coalesce(flow_item, -1))`.
   words. On the flow page it
   follows the text 400 ms after typing stops, keeping the last flow it could read. On the run page
   the same diagram carries each node's status (in words and its outline), laid out once per
-  version, and `FlowRunChart` draws the run: a bar per node from the run's start (`flowChart`),
-  with its status beside it, running bars striped and growing to now (never ending before they
-  start, whatever the browser's clock), a skipped row hatched, a bar that started a pipeline run
-  linking to it. Built on its own rather than on the
+  version, and the run timeline (`FlowRunTimeline`, below) draws the run, nested as it went. Built on its own rather than on the
   pipeline run's timeline: a flow node has no rows or ports.
 - **F4b, built.** Editing on the diagram, for designers on the flow page. Every change is a
   function of `edit.ts` (text in, text out, refused rather than guessed), written as a patch of the
