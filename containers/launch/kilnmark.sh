@@ -457,6 +457,10 @@ cmd_prepare() {
   local v; v="$(version_of "$here")"
   root="${root:-$default_root}"
   case "$root" in *[[:space:]]*|"/") die "Choose a folder without spaces for --root." ;; /*) ;; *) die "--root must be a full path." ;; esac
+  # Checked before anything is made, so a refused prepare leaves no account behind.
+  if [ -e "$root" ] || [ -L "$root" ]; then
+    die "$root exists already. prepare makes a new install root only; upgrade an installed Kilnmark as $user (./kilnmark.sh upgrade), or choose another --root."
+  fi
   if [ -z "$eng" ]; then
     if command -v podman > /dev/null 2>&1; then eng=podman
     elif command -v docker > /dev/null 2>&1; then eng=docker
