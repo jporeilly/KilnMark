@@ -38,6 +38,7 @@ class FileInputTest {
             return List.of();
         }
 
+        @SuppressWarnings("InputStreamSlowMultibyteRead") // a few bytes, then a failure: speed does not matter
         @Override
         public InputStream open(String path) {
             opened.incrementAndGet();

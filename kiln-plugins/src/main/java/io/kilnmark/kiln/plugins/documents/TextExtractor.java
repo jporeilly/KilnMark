@@ -450,7 +450,7 @@ public final class TextExtractor {
             try {
                 parser.parse(in, new EmbeddedContentHandler(into), metadata, context(parser, this));
             } catch (TikaException | SAXException | IOException | RuntimeException e) {
-                stopIfOver(e);
+                stopIfOver();
                 failed++;
             } finally {
                 depth--;
@@ -498,7 +498,7 @@ public final class TextExtractor {
         }
 
         /** The character budget spent or the time up: the whole read stops; anything else is this file's. */
-        private void stopIfOver(Exception e) throws SAXException {
+        private void stopIfOver() throws SAXException {
             if (cancelled.get()) {
                 throw new TextCollector.Cancelled();
             }

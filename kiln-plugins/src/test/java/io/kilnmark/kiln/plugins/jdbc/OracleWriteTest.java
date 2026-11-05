@@ -121,7 +121,7 @@ class OracleWriteTest {
         Rows.Collected back = read("KT_BILLING.ALL_KINDS");
         assertEquals(List.of("ID", "SMALL", "TINY", "COUNT", "RATIO", "SCORE", "PRICE", "BALANCE", "HUGE", "OK",
             "NAME", "RAW", "BORN", "AT", "LOCAL", "UTC"), back.columns.stream().map(c -> c.name()).toList());
-        back.rows.sort(java.util.Comparator.comparing(row -> ((Number) row.get(0)).longValue()));
+        back.rows.sort(java.util.Comparator.comparingLong(row -> ((Number) row.get(0)).longValue()));
         assertEquals(rows.size(), back.rows.size());
         for (int i = 0; i < rows.size(); i++) {
             for (int c = 0; c < rows.get(i).length; c++) {
@@ -134,7 +134,7 @@ class OracleWriteTest {
                 } else if ("".equals(want)) {
                     want = null; // allowed by empty_text_as_null
                 }
-                if (want instanceof Long n && got instanceof BigDecimal d) {
+                if (want instanceof Long && got instanceof BigDecimal d) {
                     got = d.longValueExact();
                 }
                 Rows.assertSameValue(want, got, "row " + i + " column " + c);

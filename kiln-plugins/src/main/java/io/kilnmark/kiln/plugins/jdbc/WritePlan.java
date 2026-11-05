@@ -188,7 +188,6 @@ final class WritePlan {
         boolean fits = switch (from) {
             case BOOLEAN -> to == Kind.BOOLEAN;
             case INT16, INT32, INT64 -> {
-                int digits = from == Kind.INT16 ? 5 : from == Kind.INT32 ? 10 : 19;
                 yield switch (to) {
                     case INT16 -> from == Kind.INT16;
                     case INT32 -> from != Kind.INT64;
@@ -233,7 +232,8 @@ final class WritePlan {
     /** Why {@code value} does not fit a decimal column, for the "Row N" message. */
     static String decimalProblem(java.math.BigDecimal value, int precision, int scale) {
         try {
-            value.setScale(scale, java.math.RoundingMode.UNNECESSARY);
+            // only whether it throws matters: it does when the value has more decimal places
+            var _ = value.setScale(scale, java.math.RoundingMode.UNNECESSARY);
         } catch (ArithmeticException e) {
             return scale < 0 ? "is not a whole multiple of " + java.math.BigDecimal.ONE.scaleByPowerOfTen(-scale)
                 .toPlainString() + ", as the column's scale of " + scale + " needs"

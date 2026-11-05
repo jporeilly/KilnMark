@@ -31,6 +31,12 @@ json-schema-validator = "1.5.9"
 # Pipeline YAML (docs/design/pipelines.md): YAML 1.2, safe by default, Apache-2.0
 snakeyaml-engine = "3.2"
 greenmail = "2.1.11"
+# Static analysis inside javac (ADR 0042), Apache-2.0; a build tool, never shipped.
+errorprone = "2.51.0"
+errorprone-plugin = "5.1.1"
+# Annotations the PostgreSQL driver refers to (MIT), on the compile classpath only: without them Error
+# Prone's reading of the driver's annotations warns, and -Werror fails. Never shipped.
+checker-qual = "3.55.1"
 
 [libraries]
 quarkus-bom = { module = "io.quarkus.platform:quarkus-bom", version.ref = "quarkus" }
@@ -74,6 +80,9 @@ greenmail = { module = "com.icegreen:greenmail", version.ref = "greenmail" }
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+checker-qual = { module = "org.checkerframework:checker-qual", version.ref = "checker-qual" }
+errorprone-core = { module = "com.google.errorprone:error_prone_core", version.ref = "errorprone" }
 
 [plugins]
 quarkus = { id = "io.quarkus", version.ref = "quarkus" }
+errorprone = { id = "net.ltgt.errorprone", version.ref = "errorprone-plugin" }

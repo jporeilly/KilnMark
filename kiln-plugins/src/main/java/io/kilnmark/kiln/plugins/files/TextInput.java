@@ -75,7 +75,7 @@ final class TextInput {
         int n = p.readNBytes(head, 0, 3);
         byte[] got = java.util.Arrays.copyOf(head, n);
         Charset bom = bom(got);
-        int skip = bom == null ? 0 : bom == StandardCharsets.UTF_8 ? 3 : 2;
+        int skip = bom == null ? 0 : bom.equals(StandardCharsets.UTF_8) ? 3 : 2;
         if (n > skip) {
             p.unread(got, skip, n - skip);
         }

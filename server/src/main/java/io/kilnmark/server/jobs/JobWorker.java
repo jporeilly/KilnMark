@@ -7,6 +7,7 @@ import java.sql.Statement;
 import java.time.Duration;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -303,7 +304,7 @@ public class JobWorker {
             // Not the exception's text or trace: a source's secret could be in it.
             LOG.errorf("%s job %d failed with %s", what, job.id(), e.getClass().getName());
             if (lost.remove(job.id()) == null) {
-                queue.retryOrFail(job, "The " + what.toLowerCase() + " job failed (" + e.getClass().getSimpleName()
+                queue.retryOrFail(job, "The " + what.toLowerCase(Locale.ROOT) + " job failed (" + e.getClass().getSimpleName()
                     + "); the run says why");
             }
         } finally {
@@ -317,7 +318,7 @@ public class JobWorker {
                 queue.release(job, PLACE_RETRY, null);
             } catch (RuntimeException e) {
                 // Still running in the queue, never started: recovery puts it back (JobQueue.recoverStale).
-                LOG.warnf("Could not put waiting %s job %d back in the queue; recovery will", what.toLowerCase(),
+                LOG.warnf("Could not put waiting %s job %d back in the queue; recovery will", what.toLowerCase(Locale.ROOT),
                     job.id());
             }
         }

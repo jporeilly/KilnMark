@@ -242,8 +242,8 @@ public class SourceImporter {
         int updated = count(plans, "updated");
         int unchanged = count(plans, "unchanged");
         Long batch = null;
-        boolean follow = (options.test() || options.scan() && !options.dryRun()) && (apply || options.dryRun()
-            && failed < plans.size());
+        boolean follow = (options.test() || (options.scan() && !options.dryRun())) && (apply || (options.dryRun()
+            && failed < plans.size()));
         if (follow) {
             List<ImportBatches.Item> items = plans.stream().filter(p -> p.draft() != null)
                 .map(p -> new ImportBatches.Item(p.result().line(), p.result().name(), p.draft().connector(),

@@ -1,5 +1,7 @@
 package io.kilnmark.kiln.plugins.files;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -18,6 +20,7 @@ import java.nio.file.Path;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -100,10 +103,10 @@ class HostileDocumentsTest {
     static Path docx(String name, String document) throws IOException {
         Map<String, byte[]> e = new LinkedHashMap<>();
         e.put("[Content_Types].xml", (CT + "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd."
-            + "openxmlformats-officedocument.wordprocessingml.document.main+xml\"/></Types>").getBytes());
+            + "openxmlformats-officedocument.wordprocessingml.document.main+xml\"/></Types>").getBytes(UTF_8));
         e.put("_rels/.rels", ("<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/"
             + "2006/relationships\"><Relationship Id=\"rId1\" Type=\"" + R + "/officeDocument\" Target=\"word/"
-            + "document.xml\"/></Relationships>").getBytes());
+            + "document.xml\"/></Relationships>").getBytes(UTF_8));
         e.put("word/document.xml", document.getBytes(StandardCharsets.UTF_8));
         return DocumentFixtures.zip(dir.resolve(name), e);
     }
@@ -193,20 +196,20 @@ class HostileDocumentsTest {
             + "<office:body><office:text><text:p>odt &xxe; text</text:p></office:text></office:body>"
             + "</office:document-content>";
         Map<String, byte[]> odt = new LinkedHashMap<>();
-        odt.put("mimetype", "application/vnd.oasis.opendocument.text".getBytes());
-        odt.put("content.xml", odfContent.getBytes());
+        odt.put("mimetype", "application/vnd.oasis.opendocument.text".getBytes(UTF_8));
+        odt.put("content.xml", odfContent.getBytes(UTF_8));
         Map<String, byte[]> epub = new LinkedHashMap<>();
-        epub.put("mimetype", "application/epub+zip".getBytes());
+        epub.put("mimetype", "application/epub+zip".getBytes(UTF_8));
         epub.put("META-INF/container.xml", ("<?xml version=\"1.0\"?><container version=\"1.0\" xmlns=\"urn:oasis:names:"
             + "tc:opendocument:xmlns:container\"><rootfiles><rootfile full-path=\"OEBPS/content.opf\" media-type=\""
-            + "application/oebps-package+xml\"/></rootfiles></container>").getBytes());
+            + "application/oebps-package+xml\"/></rootfiles></container>").getBytes(UTF_8));
         epub.put("OEBPS/content.opf", (dtd("package") + "<package xmlns=\"http://www.idpf.org/2007/opf\" version="
             + "\"2.0\"><metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>E &xxe;</dc:title></metadata>"
             + "<manifest><item id=\"c1\" href=\"c1.xhtml\" media-type=\"application/xhtml+xml\"/></manifest><spine>"
-            + "<itemref idref=\"c1\"/></spine></package>").getBytes());
+            + "<itemref idref=\"c1\"/></spine></package>").getBytes(UTF_8));
         epub.put("OEBPS/c1.xhtml", (dtd("html") + "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><p>epub &xxe; "
-            + "body</p></body></html>").getBytes());
-        String attachment = Base64.getMimeEncoder().encodeToString((dtd("r") + "<r>att &xxe;</r>").getBytes());
+            + "body</p></body></html>").getBytes(UTF_8));
+        String attachment = Base64.getMimeEncoder().encodeToString((dtd("r") + "<r>att &xxe;</r>").getBytes(UTF_8));
         List<Path> files = List.of(
             DocumentFixtures.write(dir.resolve("xxe.xml"), dtd("r") + "<r>before &xxe; after</r>"),
             DocumentFixtures.write(dir.resolve("xxe.xhtml"), dtd("html") + "<html xmlns=\"http://www.w3.org/1999/"
@@ -320,15 +323,15 @@ class HostileDocumentsTest {
     /** Shared strings of about {@code mb} MB once expanded. */
     static Writer manyStrings(int mb) {
         return out -> {
-            out.write(("<?xml version=\"1.0\"?><sst " + NS + ">").getBytes());
+            out.write(("<?xml version=\"1.0\"?><sst " + NS + ">").getBytes(UTF_8));
             java.util.Random r = new java.util.Random(2);
             long written = 0;
             while (written < ((long) mb << 20)) {
-                byte[] si = ("<si><t>w" + r.nextInt(1_000_000_000) + "</t></si>").getBytes();
+                byte[] si = ("<si><t>w" + r.nextInt(1_000_000_000) + "</t></si>").getBytes(UTF_8);
                 out.write(si);
                 written += si.length;
             }
-            out.write("</sst>".getBytes());
+            out.write("</sst>".getBytes(UTF_8));
         };
     }
 
@@ -357,11 +360,11 @@ class HostileDocumentsTest {
     void aRowWiderThanExcelAllowsStopsTheSheet() throws Exception {
         Path p = xlsx("wide.xlsx", null, out -> {
             out.write(("<?xml version=\"1.0\"?><worksheet " + NS + "><sheetData><row r=\"1\"><c t=\"inlineStr\"><is>"
-                + "<t>a</t></is></c><c t=\"inlineStr\"><is><t>b</t></is></c></row><row r=\"2\">").getBytes());
+                + "<t>a</t></is></c><c t=\"inlineStr\"><is><t>b</t></is></c></row><row r=\"2\">").getBytes(UTF_8));
             for (int i = 0; i < 20_000; i++) {
-                out.write(("<c><v>" + i + "</v></c>").getBytes());
+                out.write(("<c><v>" + i + "</v></c>").getBytes(UTF_8));
             }
-            out.write("</row></sheetData></worksheet>".getBytes());
+            out.write("</row></sheetData></worksheet>".getBytes(UTF_8));
         }, null);
         try (Sheets.Workbook wb = Sheets.open(p, "wide.xlsx")) {
             IOException e = assertThrows(IOException.class, () -> Sheets.inspect(wb, 1000));
@@ -371,13 +374,13 @@ class HostileDocumentsTest {
 
     @Test
     void aZipBombSheetIsRefusedOnTheSheetPath() throws Exception {
-        byte[] row = "<row><c><v>1</v></c></row>".repeat(10_000).getBytes();
+        byte[] row = "<row><c><v>1</v></c></row>".repeat(10_000).getBytes(UTF_8);
         Path p = xlsx("bomb.xlsx", null, out -> {
-            out.write(("<?xml version=\"1.0\"?><worksheet " + NS + "><sheetData>").getBytes());
+            out.write(("<?xml version=\"1.0\"?><worksheet " + NS + "><sheetData>").getBytes(UTF_8));
             for (int i = 0; i < 400; i++) {
                 out.write(row); // 100 MB of rows, a few hundred KB compressed
             }
-            out.write("</sheetData></worksheet>".getBytes());
+            out.write("</sheetData></worksheet>".getBytes(UTF_8));
         }, null);
         assertTrue(Files.size(p) < 2_000_000, "small on disk: " + Files.size(p));
         try (Sheets.Workbook wb = Sheets.open(p, "bomb.xlsx"); Sheets.SheetRows rows = wb.rows("Data")) {
@@ -387,7 +390,7 @@ class HostileDocumentsTest {
                     // read on
                 }
             });
-            assertTrue(e.getMessage().toLowerCase().contains("zip bomb"), e.getMessage());
+            assertTrue(e.getMessage().toLowerCase(Locale.ROOT).contains("zip bomb"), e.getMessage());
         }
     }
 
@@ -572,12 +575,12 @@ class HostileDocumentsTest {
     void withoutReadableContentTypesNothingIsExempt() throws Exception {
         limitTo2Mb();
         Path book = xlsx("no-types-book.xlsx", null, out -> {
-            out.write(("<?xml version=\"1.0\"?><worksheet " + NS + "><sheetData>").getBytes());
+            out.write(("<?xml version=\"1.0\"?><worksheet " + NS + "><sheetData>").getBytes(UTF_8));
             java.util.Random r = new java.util.Random(3);
             for (int i = 0; i < 80_000; i++) { // about 3 MB, varied so it does not look like a zip bomb
-                out.write(("<row><c><v>" + r.nextInt(1_000_000_000) + "</v></c></row>").getBytes());
+                out.write(("<row><c><v>" + r.nextInt(1_000_000_000) + "</v></c></row>").getBytes(UTF_8));
             }
-            out.write("</sheetData></worksheet>".getBytes());
+            out.write("</sheetData></worksheet>".getBytes(UTF_8));
         }, null);
         Path p = dir.resolve("no-types.xlsx");
         try (ZipOutputStream z = new ZipOutputStream(Files.newOutputStream(p));
@@ -585,7 +588,7 @@ class HostileDocumentsTest {
             for (ZipEntry e : java.util.Collections.list(src.entries())) {
                 z.putNextEntry(new ZipEntry(e.getName()));
                 if (e.getName().equals("[Content_Types].xml")) {
-                    z.write("<Types><Override PartName=".getBytes()); // not XML
+                    z.write("<Types><Override PartName=".getBytes(UTF_8)); // not XML
                 } else {
                     src.getInputStream(e).transferTo(z);
                 }
@@ -744,7 +747,7 @@ class HostileDocumentsTest {
             "Type=\"" + R + "/sharedStrings\"", "Type=\"" + R + "/worksheet\""),
             Map.of("docProps/_rels/app.xml.rels", ("<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas."
                 + "openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"" + R
-                + "/sharedStrings\" Target=\"../xl/worksheets/ss.xml\"/></Relationships>").getBytes()),
+                + "/sharedStrings\" Target=\"../xl/worksheets/ss.xml\"/></Relationships>").getBytes(UTF_8)),
             java.util.Set.of());
         String got = read(elsewhere);
         assertTrue(got.startsWith("refused: its part xl/worksheets/ss.xml expands"), got);
@@ -802,7 +805,7 @@ class HostileDocumentsTest {
         limitTo2Mb();
         Path book = xlsx("dup-book.xlsx", null, sstRef(), manyStrings(5));
         Path decoy = copy(book, "dup-decoy.xlsx", (n, b) -> b, Map.of("xl/sharedStringZ.xml",
-            ("<?xml version=\"1.0\"?><sst " + NS + "><si><t>a</t></si></sst>").getBytes()), java.util.Set.of());
+            ("<?xml version=\"1.0\"?><sst " + NS + "><si><t>a</t></si></sst>").getBytes(UTF_8)), java.util.Set.of());
         record Case(String name, String to, boolean local, boolean central, String reason) { }
         for (Case c : List.of(
             new Case("dup-both.xlsx", "xl/sharedStrings.xml", true, true, "two parts named xl/sharedStrings.xml"),
@@ -829,22 +832,22 @@ class HostileDocumentsTest {
         }
         body.append("</office:text></office:body></office:document-content>");
         Map<String, byte[]> e = new LinkedHashMap<>();
-        e.put("mimetype", "application/vnd.oasis.opendocument.text".getBytes());
+        e.put("mimetype", "application/vnd.oasis.opendocument.text".getBytes(UTF_8));
         // Office content types and relationships claiming the content is a worksheet change nothing
         e.put("[Content_Types].xml", (CT + "<Override PartName=\"/content.xml\" ContentType=\"" + SHEET_TYPE
             + "\"/><Override PartName=\"/book.xml\" ContentType=\"application/vnd.openxmlformats-officedocument."
-            + "spreadsheetml.sheet.main+xml\"/></Types>").getBytes());
+            + "spreadsheetml.sheet.main+xml\"/></Types>").getBytes(UTF_8));
         e.put("_rels/.rels", ("<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/"
             + "package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"" + R + "/officeDocument\" Target=\""
-            + "book.xml\"/></Relationships>").getBytes());
+            + "book.xml\"/></Relationships>").getBytes(UTF_8));
         e.put("_rels/book.xml.rels", ("<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats."
             + "org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"" + R + "/worksheet\" Target=\""
-            + "content.xml\"/></Relationships>").getBytes());
-        e.put("book.xml", "<workbook/>".getBytes());
+            + "content.xml\"/></Relationships>").getBytes(UTF_8));
+        e.put("book.xml", "<workbook/>".getBytes(UTF_8));
         e.put("content.xml", body.toString().getBytes(StandardCharsets.UTF_8));
         e.put("META-INF/manifest.xml", ("<?xml version=\"1.0\"?><manifest:manifest xmlns:manifest=\"urn:oasis:names:"
             + "tc:opendocument:xmlns:manifest:1.0\"><manifest:file-entry manifest:full-path=\"/\" manifest:media-type"
-            + "=\"application/vnd.oasis.opendocument.text\"/></manifest:manifest>").getBytes());
+            + "=\"application/vnd.oasis.opendocument.text\"/></manifest:manifest>").getBytes(UTF_8));
         Path odt = DocumentFixtures.zip(dir.resolve("large.odt"), e);
         String got = read(odt);
         assertTrue(got.startsWith("refused: its part content.xml expands to more than 2 MB"), got);

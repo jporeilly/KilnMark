@@ -27,7 +27,7 @@ public final class NodeFactories {
 
     public synchronized NodeFactories register(NodeFactory factory) {
         NodeFactory before = byType.putIfAbsent(factory.type(), factory);
-        if (before != null && before != factory) {
+        if (before != null && !before.equals(factory)) {
             throw new IllegalStateException("Two node types are called " + factory.type() + ": "
                 + before.getClass().getName() + " and " + factory.getClass().getName());
         }

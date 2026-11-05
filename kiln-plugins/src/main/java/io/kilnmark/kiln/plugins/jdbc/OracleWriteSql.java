@@ -493,10 +493,11 @@ final class OracleWriteSql extends WriteSql {
     @Override
     String targetValueProblem(WritePlan.TargetColumn t, Object v) {
         if (v instanceof String s && (t == null || characterColumn(t.typeName()))) {
-            OracleCharset cs = t != null && national(t.typeName()) ? nationalCharset : charset;
+            boolean toNational = t != null && national(t.typeName());
+            OracleCharset cs = toNational ? nationalCharset : charset;
             String unstorable = cs.unstorable(s);
             if (unstorable != null) {
-                return unstorable + (cs == charset && nationalCharset.unicode() ? ". Write it to an NVARCHAR2 or NCLOB "
+                return unstorable + (!toNational && nationalCharset.unicode() ? ". Write it to an NVARCHAR2 or NCLOB "
                     + "column, whose character set (" + nationalCharset.name() + ") holds it, or replace the character "
                     + "with a compute node" : ". Replace the character with a compute node");
             }

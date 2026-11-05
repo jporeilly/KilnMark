@@ -130,7 +130,7 @@ final class JdbcTableOutput implements Node {
         this.lockTimeoutMillis = settings.number("lock_timeout", 30, 1, 3600) * 1000;
         // where DDL commits by itself, a created table is also filled under a temporary name, so the
         // target never appears half-filled
-        this.newName = mode.equals("replace") || mode.equals("create") && !sql.transactionalDdl()
+        this.newName = mode.equals("replace") || (mode.equals("create") && !sql.transactionalDdl())
             ? "kiln_new_" + WriteSql.hexName() : null;
     }
 
@@ -734,6 +734,8 @@ final class JdbcTableOutput implements Node {
     }
 
     /** The value of {@code binding} in {@code row}, converted, with the checks a database would fail on less plainly. */
+    // The nanoseconds within the second are wanted: the fraction a column may be too short for.
+    @SuppressWarnings({"JavaLocalDateTimeGetNano", "JavaInstantGetSecondsGetNano", "JavaLocalTimeGetNano"})
     private Object value(Binding binding, VectorSchemaRoot batch, int row, long rowNumber) throws NodeException {
         Object v = WritePlan.convert(binding.input().value(batch.getVector(binding.index()), row),
             binding.input().kind(), binding.kind());
@@ -745,7 +747,7 @@ final class JdbcTableOutput implements Node {
             return null;
         }
         if (binding.key() && sql.emptyMeansNull()
-            && (v instanceof String text && text.isEmpty() || v instanceof byte[] bytes && bytes.length == 0)) {
+            && ((v instanceof String text && text.isEmpty()) || (v instanceof byte[] bytes && bytes.length == 0))) {
             // whatever empty_text_as_null says: as null, the key would match no row and add one each time
             throw new NodeException("Row " + rowNumber + " has an empty value in the key column " + binding.target()
                 + ", which the database stores as null, so it could never match a row; upsert needs every key "

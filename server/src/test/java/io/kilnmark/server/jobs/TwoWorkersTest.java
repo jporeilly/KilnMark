@@ -195,6 +195,9 @@ class TwoWorkersTest {
 
     @Test
     @Order(1)
+    // The second worker is made outside CDI, as a second server would have it, so its injected
+    // beans are set by hand.
+    @SuppressWarnings("UnnecessaryAssignment")
     void setUp() throws Exception {
         assertTrue(first.running(), "the server's own worker");
         assertEquals(2, config.worker().concurrency());
