@@ -249,6 +249,13 @@ public final class SqlServerConnector extends JdbcConnector {
         return p;
     }
 
+    /** Ordinary tables kept in this database only, for Count exactly (ADR 0045). */
+    @Override
+    protected String localTableSql() {
+        return "SELECT 1 FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id "
+            + "WHERE s.name = ? AND t.name = ? AND t.type = 'U' AND t.is_external = 0";
+    }
+
     @Override
     protected String estimateRowsSql(AssetInfo asset) {
         String name = quote(asset.hints().get("schema")) + "." + quote(asset.hints().get("table"));

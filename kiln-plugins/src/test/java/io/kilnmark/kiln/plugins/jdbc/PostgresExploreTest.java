@@ -69,6 +69,9 @@ class PostgresExploreTest {
             // _ is a pattern wildcard: my_table must not pick up myxtable's columns
             s.execute("CREATE TABLE shop.my_table (a integer)");
             s.execute("CREATE TABLE shop.myxtable (b integer, c integer)");
+            // a parent's count would include its children, which could be foreign tables
+            s.execute("CREATE TABLE shop.events (id integer)");
+            s.execute("CREATE TABLE shop.events_2026 () INHERITS (shop.events)");
         }
     }
 
@@ -139,6 +142,15 @@ class PostgresExploreTest {
         assertEquals(300L, t.estimatedRows());
         assertEquals(300L, CONNECTOR.countRows(source(), "shop.customers", LIMIT));
         assertEquals(0L, CONNECTOR.countRows(source(), "shop.my_table", LIMIT));
+    }
+
+    @Test
+    void countsOnlyOrdinaryTablesKeptInTheDatabase() {
+        for (String path : List.of("shop.big_spenders", "shop.events")) {
+            ConnectorException e = assertThrows(ConnectorException.class,
+                () -> CONNECTOR.countRows(source(), path, LIMIT), path);
+            assertTrue(e.getMessage().startsWith("Count exactly is offered for ordinary tables"), e.getMessage());
+        }
     }
 
     @Test

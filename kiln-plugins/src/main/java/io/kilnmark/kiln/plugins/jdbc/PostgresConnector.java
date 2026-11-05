@@ -104,6 +104,22 @@ public final class PostgresConnector extends JdbcConnector {
         return WriteSql.Postgres.INSTANCE;
     }
 
+    /** Ordinary tables kept in this database only, for Count exactly (ADR 0045). */
+    @Override
+    protected String localTableSql() {
+        return LOCAL_TABLE;
+    }
+
+    /**
+     * An ordinary table without child tables, or a partitioned one with no foreign partition at any
+     * level: a count of either never reaches another server.
+     */
+    static final String LOCAL_TABLE = "SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n "
+        + "ON n.oid = c.relnamespace WHERE n.nspname = ? AND c.relname = ? AND ("
+        + "(c.relkind = 'r' AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = c.oid)) "
+        + "OR (c.relkind = 'p' AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_partition_tree(c.oid) t "
+        + "JOIN pg_catalog.pg_class k ON k.oid = t.relid WHERE k.relkind = 'f')))";
+
     /** The planner's estimate (-1 before the table was first analysed, so it is then read in full). */
     @Override
     protected String estimateRowsSql(io.kilnmark.kiln.connect.AssetInfo asset) {

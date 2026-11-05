@@ -378,6 +378,20 @@ public class OracleConnector extends JdbcConnector {
         return false;
     }
 
+    /**
+     * Schemas Oracle itself keeps, refused by Explore and previews even when named: SYS holds the
+     * {@code V$} views, whose SQL text quotes other sessions' values.
+     */
+    @Override
+    protected boolean refusedSchema(String schema) {
+        return ORACLE_OWN.contains(schema.toUpperCase(Locale.ROOT));
+    }
+
+    private static final java.util.Set<String> ORACLE_OWN = java.util.Set.of("SYS", "SYSTEM", "AUDSYS", "SYSBACKUP",
+        "SYSDG", "SYSKM", "SYSRAC", "XDB", "MDSYS", "CTXSYS", "ORDSYS", "ORDDATA", "OLAPSYS", "DBSNMP", "OUTLN", "LBACSYS",
+        "DVSYS", "DVF", "GSMADMIN_INTERNAL", "GSMCATUSER", "OJVMSYS", "WMSYS", "APPQOSSYS", "DBSFWUSER", "REMOTE_SCHEDULER_AGENT",
+        "ANONYMOUS", "GGSYS", "XS$NULL", "DIP", "MDDATA", "SI_INFORMTN_SCHEMA", "ORDPLUGINS", "PUBLIC");
+
     @Override
     public List<ContainerInfo> containers(SourceConfig source, Duration timeout) throws ConnectorException {
         checkValid(source);
@@ -481,6 +495,13 @@ public class OracleConnector extends JdbcConnector {
     @Override
     protected boolean bindsBooleans() {
         return false;
+    }
+
+    /** Ordinary tables kept in this database only, for Count exactly (ADR 0045). */
+    @Override
+    protected String localTableSql() {
+        return "SELECT 1 FROM ALL_TABLES t WHERE t.OWNER = ? AND t.TABLE_NAME = ? AND NOT EXISTS "
+            + "(SELECT 1 FROM ALL_EXTERNAL_TABLES e WHERE e.OWNER = t.OWNER AND e.TABLE_NAME = t.TABLE_NAME)";
     }
 
     /** The optimiser's row count from the last statistics; none without statistics, so the table is read in full. */

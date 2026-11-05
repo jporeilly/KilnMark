@@ -651,6 +651,7 @@ public abstract class JdbcConnector implements Connector {
     public io.kilnmark.kiln.connect.TableDetail explore(SourceConfig source, String path, Duration timeout)
         throws ConnectorException {
         AssetInfo a = asset(source, path);
+        refuseSystem(source, a);
         String schema = a.hints().getOrDefault("schema", a.container());
         String table = a.hints().getOrDefault("table", a.name());
         try (Connection c = connectToExplore(source, timeout)) {
@@ -683,9 +684,16 @@ public abstract class JdbcConnector implements Connector {
     @Override
     public long countRows(SourceConfig source, String path, Duration timeout) throws ConnectorException {
         AssetInfo a = asset(source, path);
+        refuseSystem(source, a);
         String sql = "SELECT COUNT(*) FROM " + quote(a.hints().getOrDefault("schema", a.container())) + "."
             + quote(a.hints().getOrDefault("table", a.name()));
         try (Connection c = connectToExplore(source, timeout)) {
+            if (!localTable(c, a.hints().getOrDefault("schema", a.container()),
+                a.hints().getOrDefault("table", a.name()), timeout)) {
+                throw new ConnectorException("Count exactly is offered for ordinary tables kept in this database "
+                    + "only. A view, or a foreign, federated or linked table, is counted when it is read, so "
+                    + a.path() + " keeps its estimate.");
+            }
             try (java.sql.Statement s = c.createStatement()) {
                 if (timeout != null) {
                     s.setQueryTimeout(Math.max(1, seconds(timeout)));
@@ -734,6 +742,62 @@ public abstract class JdbcConnector implements Connector {
         String state = e.getSQLState();
         return "the database refused the query (" + (state == null ? "no SQLSTATE" : "SQLSTATE " + state)
             + (e.getErrorCode() != 0 ? ", error " + e.getErrorCode() : "") + ")";
+    }
+
+    /**
+     * A preview of a table, never of one in the database's own schemas, even when it is named:
+     * those hold other sessions' statements with their values (MySQL's {@code performance_schema},
+     * Oracle's {@code V$SQL}), and no mark covers them (ADR 0045).
+     */
+    @Override
+    public io.kilnmark.kiln.connect.Preview preview(SourceConfig source, AssetInfo asset, int rows)
+        throws ConnectorException {
+        refuseSystem(source, asset);
+        return Connector.super.preview(source, asset, rows);
+    }
+
+    /**
+     * True for a schema of the database's own that Explore, counts and previews refuse even when it
+     * is named; by default {@link #isSystemSchema}.
+     */
+    protected boolean refusedSchema(String schema) {
+        return isSystemSchema(schema);
+    }
+
+    private void refuseSystem(SourceConfig source, AssetInfo asset) throws ConnectorException {
+        String schema = asset.hints().getOrDefault("schema", asset.container());
+        if (schema != null && refusedSchema(schema)) {
+            throw new ConnectorException(asset.path() + " is in one of the database's own schemas, which Kilnmark "
+                + "does not show: they can hold other sessions' statements and values. Choose a table of "
+                + source.name() + "'s own data.");
+        }
+    }
+
+    /**
+     * SQL that returns a row when the table (schema and table, bound in that order) is an ordinary
+     * table whose rows this database keeps itself: never a view, nor a foreign, federated, linked or
+     * external table, nor one whose children or partitions are (ADR 0045). Null, the default, means
+     * no table qualifies, so a database without its own list is never counted.
+     */
+    protected String localTableSql() {
+        return null;
+    }
+
+    private boolean localTable(Connection c, String schema, String table, Duration timeout) throws SQLException {
+        String sql = localTableSql();
+        if (sql == null) {
+            return false;
+        }
+        try (java.sql.PreparedStatement s = c.prepareStatement(sql)) {
+            if (timeout != null) {
+                s.setQueryTimeout(Math.max(1, seconds(timeout)));
+            }
+            s.setString(1, schema);
+            s.setString(2, table);
+            try (java.sql.ResultSet rs = s.executeQuery()) {
+                return rs.next();
+            }
+        }
     }
 
     /**

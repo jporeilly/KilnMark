@@ -7,8 +7,6 @@ tabs, and changes to a database behind controls.
 
 ## Explore a database
 
-![Explore on a source's page: schemas, the tables of one, and a table's columns with its row estimate](images/source-explore.png)
-
 Open **Sources**, choose a database source (PostgreSQL, SQL Server, MySQL, MariaDB, Oracle or
 Generic JDBC) and scroll to **Explore**. Stewards, designers and admins see it; viewers do not.
 
@@ -46,6 +44,11 @@ table.
   Each can quote a value from the data (`WHERE ssn = '…'`).
 - **Errors give a code, not the database's message.** When the database refuses a count, the
   message gives its SQLSTATE or error code only, as its own text can quote a value.
+- **Not the database's own schemas.** Tables in `information_schema`, `pg_catalog`, MySQL's
+  `performance_schema`, `sys` and `mysql`, SQL Server's `sys` and Oracle's own schemas are not
+  shown or previewed, even by name: some keep other sessions' statements with their values.
+- **Count exactly counts ordinary tables only.** A view, or a foreign, federated, linked or external
+  table, keeps its estimate: counting it would run the view's query, or reach another server.
 - **Generic JDBC sources** show their schemas, tables, columns and primary key as a scan reads
   them, without foreign keys, indexes or counts: each driver places schemas and catalogues its own
   way.

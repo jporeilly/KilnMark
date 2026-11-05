@@ -632,6 +632,13 @@ public class MySqlConnector extends JdbcConnector {
         return MySqlTypes.SPATIAL.contains(type);
     }
 
+    /** Ordinary tables kept in this database only, for Count exactly (ADR 0045). */
+    @Override
+    protected String localTableSql() {
+        return "SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? "
+            + "AND TABLE_TYPE = 'BASE TABLE' AND ENGINE IN ('InnoDB', 'Aria', 'MyISAM')";
+    }
+
     /** The storage engine's estimate ({@code TABLE_ROWS}), which InnoDB keeps roughly. */
     @Override
     protected String estimateRowsSql(AssetInfo asset) {

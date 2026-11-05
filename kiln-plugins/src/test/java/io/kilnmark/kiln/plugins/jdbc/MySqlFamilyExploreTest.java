@@ -55,7 +55,8 @@ abstract class MySqlFamilyExploreTest {
             "INSERT INTO ke_shop.customers (region, id, email) VALUES ('uk', 1, 'a@example.com'), "
                 + "('uk', 2, 'b@example.com'), ('fr', 1, 'c@example.com')",
             "ANALYZE TABLE ke_shop.customers",
-            "CREATE TABLE ke_shop.my_table (a INT)", "CREATE TABLE ke_shop.myxtable (b INT, c INT)");
+            "CREATE TABLE ke_shop.my_table (a INT)", "CREATE TABLE ke_shop.myxtable (b INT, c INT)",
+            "CREATE VIEW ke_shop.uk_customers AS SELECT * FROM ke_shop.customers WHERE region = 'uk'");
         source = db.source("shopdb", Map.of());
     }
 
@@ -87,8 +88,23 @@ abstract class MySqlFamilyExploreTest {
     }
 
     @Test
+    void neverShowsTheServersOwnSchemasEvenWhenNamed() {
+        // performance_schema keeps other sessions' statements, values and all
+        for (String path : List.of("performance_schema.events_statements_history", "mysql.user")) {
+            io.kilnmark.kiln.connect.ConnectorException e = org.junit.jupiter.api.Assertions.assertThrows(
+                io.kilnmark.kiln.connect.ConnectorException.class, () -> db.connector().explore(source, path, LIMIT), path);
+            assertTrue(e.getMessage().contains("database's own schemas") || e.getMessage().contains("no table"),
+                e.getMessage());
+            org.junit.jupiter.api.Assertions.assertThrows(io.kilnmark.kiln.connect.ConnectorException.class,
+                () -> db.connector().preview(source, db.connector().asset(source, path), 5), path);
+        }
+    }
+
+    @Test
     void countsRowsAndMatchesAnUnderscoreOnlyItself() throws Exception {
         assertEquals(3L, db.connector().countRows(source, "ke_shop.customers", LIMIT));
+        org.junit.jupiter.api.Assertions.assertThrows(io.kilnmark.kiln.connect.ConnectorException.class,
+            () -> db.connector().countRows(source, "ke_shop.uk_customers", LIMIT), "a view is counted when read");
         TableDetail t = db.connector().explore(source, "ke_shop.my_table", LIMIT);
         assertEquals(List.of("a"), t.columns().stream().map(TableDetail.Column::name).toList());
         assertFalse(t.columns().get(0).generated());
