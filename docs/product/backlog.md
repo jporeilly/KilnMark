@@ -35,6 +35,8 @@ Last reviewed: 5 November 2026 (after #86-#93 merged).
    - `KILNMARK_DB_PASSWORD` in the dev compose, a JDBC `socketTimeout`, masking on the run quality
      view, a metric for preview slots;
    - audit events for data read with the unmask grant, and for MCP refusals (ADR 0029);
+   - marks keyed by the database's identity rather than the source record, and password references
+     (`env:`, `secret:`) for admins only (ADR 0045, "Related gap");
    - a FIPS mode when a federal customer needs it.
 3. **Database tools** (owner, 5 November 2026): on a source, **Explore** (live schemas, tables,
    columns, keys and indexes, a masked preview of rows); a SQL generator (`CREATE TABLE`, `ALTER`,
