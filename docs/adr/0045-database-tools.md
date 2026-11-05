@@ -171,7 +171,13 @@ operations**; what they do not cover is said in point 12.
    `information_schema`, Oracle-maintained schemas) are refused.
    **Only a database that cannot reach elsewhere by itself.** Before any operation, the database
    is checked for every way it could carry a change to another database, and the operation is
-   refused if it has one, or if the check cannot read what it needs:
+   refused if it has one, or if the check cannot read what it needs. **An empty answer counts only
+   from a view the login can be shown to see in full**: SQL Server and Oracle show each login only
+   what it has rights on, so there the check first proves its rights (SQL Server
+   `HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW ANY DEFINITION')` and `VIEW DEFINITION` on the database;
+   Oracle `SELECT` on `DBA_TRIGGERS` and `DBA_DB_LINKS`, queried for `DATABASE` and `SCHEMA`
+   triggers) and refuses without them. The guide lists these rights with the others each operation
+   needs; a test runs the check as a login without them against a database with a DDL trigger:
    - **No code that fires on the operation**: no event trigger (PostgreSQL `pg_event_trigger`), no
      database or server DDL trigger (SQL Server `sys.triggers` with `parent_class = 0`,
      `sys.server_triggers`), no DDL or `TRUNCATE` trigger on the schema or database (Oracle), and
