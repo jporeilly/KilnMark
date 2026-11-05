@@ -64,6 +64,8 @@ class SuggestionSightsTest {
         return new ProfileFacts.FieldFacts(name, position, "float64", "numeric", true, stats, Set.of());
     }
 
+    // A catalogue made outside CDI for the test, so its injected store is set by hand.
+    @SuppressWarnings("UnnecessaryAssignment")
     static PredictionCatalogue stored() {
         ProfileFacts facts = new ProfileFacts(1L, PAYROLL, Instant.now(), 10L, true, false, List.of(),
             List.of(field("id", 1), field("salary", 2)));

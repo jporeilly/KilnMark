@@ -85,6 +85,7 @@ class QualityFlowTest {
     static List<String> firstSampleIds;
     static final ObjectMapper JSON = new ObjectMapper();
 
+    @SuppressWarnings("AddressSelection") // the loopback address written out, not a host name to look up
     @BeforeAll
     static void startWebhookServer() throws IOException {
         hooks = HttpServer.create(new InetSocketAddress("127.0.0.1", 47391), 0);

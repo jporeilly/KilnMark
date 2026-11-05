@@ -130,7 +130,7 @@ public class MailService {
         boolean stored = store.settings().map(s -> s.password() != null).orElse(false);
         MailPolicy.PasswordAction action = MailPolicy.password(stored, MailPolicy.destinationChanged(current, v), v);
         boolean entered = action == MailPolicy.PasswordAction.REPLACE
-            || action == MailPolicy.PasswordAction.KEEP && stored;
+            || (action == MailPolicy.PasswordAction.KEEP && stored);
         MailPolicy.checkPlainAuth(v.security(), v.username(), v.allowPlainAuth(), entered);
         byte[] sealed = action == MailPolicy.PasswordAction.REPLACE ? secrets.seal(v.password()) : null;
         store.saveSettings(v, action, sealed, by);
@@ -232,7 +232,7 @@ public class MailService {
         if (server == null || !settings.enabled()) {
             return;
         }
-        sends.submit(() -> {
+        sends.execute(() -> {
             MailMessages.Mail mail = new MailMessages(settings, ZoneId.systemDefault(), e -> Exposure.NONE)
                 .confirmation(code);
             try {

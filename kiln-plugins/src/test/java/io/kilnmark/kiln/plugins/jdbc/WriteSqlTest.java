@@ -42,12 +42,12 @@ class WriteSqlTest {
 
     @Test
     void identifiersAreQuotedSoAnyNameIsSafe() {
-        assertEquals("\"zq\"\"x]\".\"jyq]\"\"k\"", WriteSql.POSTGRESQL.table(ODD));
-        assertEquals("[zq\"x]]].[jyq]]\"k]", WriteSql.SQL_SERVER.table(ODD));
+        assertEquals("\"zq\"\"x]\".\"jyq]\"\"k\"", WriteSql.Postgres.INSTANCE.table(ODD));
+        assertEquals("[zq\"x]]].[jyq]]\"k]", WriteSql.SqlServer.INSTANCE.table(ODD));
         assertEquals("INSERT INTO \"billing\".\"customer_spend\" (\"a\", \"b\"\"c\") VALUES (?, ?)",
-            WriteSql.POSTGRESQL.insert(T, List.of("a", "b\"c")));
+            WriteSql.Postgres.INSTANCE.insert(T, List.of("a", "b\"c")));
         assertEquals("INSERT INTO [billing].[customer_spend] ([a], [b]]c]) VALUES (?, ?)",
-            WriteSql.SQL_SERVER.insert(T, List.of("a", "b]c")));
+            WriteSql.SqlServer.INSTANCE.insert(T, List.of("a", "b]c")));
     }
 
     @Test
@@ -55,29 +55,29 @@ class WriteSqlTest {
         assertEquals("CREATE TABLE \"billing\".\"customer_spend\" (\"ok\" boolean, \"tiny\" smallint, \"small\" smallint, "
             + "\"n\" integer, \"id\" bigint, \"r\" real, \"d\" double precision, \"amount\" numeric(12,2), \"name\" text, "
             + "\"raw\" bytea, \"born\" date, \"at\" time, \"local\" timestamp, \"utc\" timestamptz, "
-            + "\"u64\" numeric(20,0), \"tags\" text)", WriteSql.POSTGRESQL.createTable(T, ALL, 0));
+            + "\"u64\" numeric(20,0), \"tags\" text)", WriteSql.Postgres.INSTANCE.createTable(T, ALL, 0));
         assertEquals("CREATE TABLE [billing].[customer_spend] ([ok] bit, [tiny] smallint, [small] smallint, [n] int, "
             + "[id] bigint, [r] real, [d] float, [amount] decimal(12,2), [name] nvarchar(max), [raw] varbinary(max), "
             + "[born] date, [at] time(6), [local] datetime2(6), [utc] datetimeoffset(6), [u64] decimal(20,0), "
-            + "[tags] nvarchar(max))", WriteSql.SQL_SERVER.createTable(T, ALL, 0));
-        assertEquals("nvarchar(200)", WriteSql.SQL_SERVER.columnType(ALL.get(8), 200));
-        assertEquals("varchar(200)", WriteSql.POSTGRESQL.columnType(ALL.get(8), 200));
+            + "[tags] nvarchar(max))", WriteSql.SqlServer.INSTANCE.createTable(T, ALL, 0));
+        assertEquals("nvarchar(200)", WriteSql.SqlServer.INSTANCE.columnType(ALL.get(8), 200));
+        assertEquals("varchar(200)", WriteSql.Postgres.INSTANCE.columnType(ALL.get(8), 200));
     }
 
     @Test
     void upsertsUseOnConflictAndMergeWithHoldlock() {
         assertEquals("INSERT INTO \"billing\".\"customer_spend\" (\"customer_id\", \"total\", \"seen\") VALUES (?, ?, ?) "
             + "ON CONFLICT (\"customer_id\") DO UPDATE SET \"total\" = EXCLUDED.\"total\", \"seen\" = EXCLUDED.\"seen\"",
-            WriteSql.POSTGRESQL.upsert(T, List.of("customer_id", "total", "seen"), List.of("customer_id")));
+            WriteSql.Postgres.INSTANCE.upsert(T, List.of("customer_id", "total", "seen"), List.of("customer_id")));
         assertEquals("INSERT INTO \"billing\".\"customer_spend\" (\"a\", \"b\") VALUES (?, ?) ON CONFLICT (\"a\", \"b\") "
-            + "DO NOTHING", WriteSql.POSTGRESQL.upsert(T, List.of("a", "b"), List.of("a", "b")));
+            + "DO NOTHING", WriteSql.Postgres.INSTANCE.upsert(T, List.of("a", "b"), List.of("a", "b")));
         assertEquals("MERGE INTO [billing].[customer_spend] WITH (HOLDLOCK) AS [target] USING (VALUES (?, ?)) AS [source] "
             + "([customer_id], [total]) ON [target].[customer_id] = [source].[customer_id] WHEN MATCHED THEN UPDATE SET "
             + "[total] = [source].[total] WHEN NOT MATCHED THEN INSERT ([customer_id], [total]) VALUES "
             + "([source].[customer_id], [source].[total]);",
-            WriteSql.SQL_SERVER.upsert(T, List.of("customer_id", "total"), List.of("customer_id")));
+            WriteSql.SqlServer.INSTANCE.upsert(T, List.of("customer_id", "total"), List.of("customer_id")));
         assertEquals("COPY \"billing\".\"customer_spend\" (\"a\") FROM STDIN WITH (FORMAT csv)",
-            ((WriteSql.Postgres) WriteSql.POSTGRESQL).copy(T, List.of("a")));
+            WriteSql.Postgres.INSTANCE.copy(T, List.of("a")));
     }
 
     @Test
@@ -86,30 +86,30 @@ class WriteSqlTest {
                 new WriteSql.Sql("ALTER TABLE \"billing\".\"customer_spend\" RENAME TO \"kiln_old_1\""),
                 new WriteSql.Sql("ALTER TABLE \"billing\".\"kiln_new_1\" RENAME TO \"customer_spend\""),
                 new WriteSql.Sql("DROP TABLE \"billing\".\"kiln_old_1\"")),
-            WriteSql.POSTGRESQL.swap(T, "kiln_new_1", "kiln_old_1"));
+            WriteSql.Postgres.INSTANCE.swap(T, "kiln_new_1", "kiln_old_1"));
         assertEquals(List.of(
                 new WriteSql.Sql("EXEC sp_rename @objname = ?, @newname = ?", List.of("[billing].[customer_spend]",
                     "kiln_old_1")),
                 new WriteSql.Sql("EXEC sp_rename @objname = ?, @newname = ?", List.of("[billing].[kiln_new_1]",
                     "customer_spend")),
                 new WriteSql.Sql("DROP TABLE [billing].[kiln_old_1]")),
-            WriteSql.SQL_SERVER.swap(T, "kiln_new_1", "kiln_old_1"));
+            WriteSql.SqlServer.INSTANCE.swap(T, "kiln_new_1", "kiln_old_1"));
     }
 
     @Test
     void upsertKeysIgnoreIncludedColumnsAndReplaceHandsTheTableBack() {
-        assertTrue(WriteSql.POSTGRESQL.uniqueKeys(T).text().contains("(i.indkey::int2[])[0:i.indnkeyatts - 1]"));
+        assertTrue(WriteSql.Postgres.INSTANCE.uniqueKeys(T).text().contains("(i.indkey::int2[])[0:i.indnkeyatts - 1]"));
         assertEquals("ALTER TABLE \"billing\".\"kiln_new_1\" OWNER TO \"Old \"\"Owner\"",
-            WriteSql.POSTGRESQL.setOwner(new TableName("billing", "kiln_new_1"), "Old \"Owner"));
+            WriteSql.Postgres.INSTANCE.setOwner(new TableName("billing", "kiln_new_1"), "Old \"Owner"));
         assertEquals("GRANT ALL PRIVILEGES ON \"billing\".\"t\" TO \"o\"",
-            WriteSql.POSTGRESQL.grantOwnerRights(new TableName("billing", "t"), "o"));
+            WriteSql.Postgres.INSTANCE.grantOwnerRights(new TableName("billing", "t"), "o"));
         assertEquals("GRANT CONTROL ON [billing].[t] TO [o]]x]",
-            WriteSql.SQL_SERVER.grantOwnerRights(new TableName("billing", "t"), "o]x"));
+            WriteSql.SqlServer.INSTANCE.grantOwnerRights(new TableName("billing", "t"), "o]x"));
         assertEquals(new WriteSql.Sql("ALTER TABLE \"billing\".\"kiln_new_1\" RENAME TO \"t\""),
-            WriteSql.POSTGRESQL.rename(new TableName("billing", "kiln_new_1"), "t"));
-        assertEquals(List.of("SET LOCAL lock_timeout = 30000"), WriteSql.POSTGRESQL.lockTimeout(30_000));
-        assertEquals(List.of("SET LOCK_TIMEOUT 30000"), WriteSql.SQL_SERVER.lockTimeout(30_000));
-        assertTrue(WriteSql.POSTGRESQL.privileges("append", T, true).get(0).query().text()
+            WriteSql.Postgres.INSTANCE.rename(new TableName("billing", "kiln_new_1"), "t"));
+        assertEquals(List.of("SET LOCAL lock_timeout = 30000"), WriteSql.Postgres.INSTANCE.lockTimeout(30_000));
+        assertEquals(List.of("SET LOCK_TIMEOUT 30000"), WriteSql.SqlServer.INSTANCE.lockTimeout(30_000));
+        assertTrue(WriteSql.Postgres.INSTANCE.privileges("append", T, true).get(0).query().text()
             .contains("has_any_column_privilege"), "column grants count");
     }
 
@@ -121,12 +121,12 @@ class WriteSqlTest {
         assertTrue(new SqlServerConnector().writeOptions().stream().anyMatch(o -> o.key().equals("bulk_copy")));
         assertEquals("billing.t", new PostgresConnector().writtenAssetPath(PG, write("billing.t", "create", List.of(),
             null)));
-        String blockers = WriteSql.POSTGRESQL.blockers(T).text();
+        String blockers = WriteSql.Postgres.INSTANCE.blockers(T).text();
         assertTrue(blockers.contains("pg_publication_rel") && blockers.contains("typarray")
             && blockers.contains("s.relkind = 'S'"), blockers);
-        assertEquals(1, WriteSql.POSTGRESQL.blockers(T).params().size());
-        assertTrue(WriteSql.SQL_SERVER.blockers(T).text().contains("is_published"));
-        assertEquals("INSERT on billing.customer_spend", WriteSql.POSTGRESQL.needs("append", T, true));
+        assertEquals(1, WriteSql.Postgres.INSTANCE.blockers(T).params().size());
+        assertTrue(WriteSql.SqlServer.INSTANCE.blockers(T).text().contains("is_published"));
+        assertEquals("INSERT on billing.customer_spend", WriteSql.Postgres.INSTANCE.needs("append", T, true));
     }
 
     @Test
@@ -139,10 +139,10 @@ class WriteSqlTest {
 
     @Test
     void catalogueQueriesTakeTheNameAsAParameter() {
-        WriteSql.Sql exists = WriteSql.POSTGRESQL.exists(ODD);
+        WriteSql.Sql exists = WriteSql.Postgres.INSTANCE.exists(ODD);
         assertEquals(List.of("\"zq\"\"x]\".\"jyq]\"\"k\""), exists.params());
         assertTrue(!exists.text().contains("zq"));
-        for (WriteSql sql : List.of(WriteSql.POSTGRESQL, WriteSql.SQL_SERVER)) {
+        for (WriteSql sql : List.of(WriteSql.Postgres.INSTANCE, WriteSql.SqlServer.INSTANCE)) {
             List<WriteSql.Sql> queries = new java.util.ArrayList<>(List.of(sql.exists(ODD), sql.requiredColumns(ODD),
                 sql.blockers(ODD), sql.grants(ODD), sql.rowSecurity(ODD), sql.owner(ODD)));
             if (sql.copyRefused(ODD) != null) {
@@ -189,11 +189,11 @@ class WriteSqlTest {
 
     @Test
     void namesTooLongForTheDatabaseAreRefused() {
-        assertNull(WriteSql.POSTGRESQL.identifierProblem("a".repeat(63)));
-        assertTrue(WriteSql.POSTGRESQL.identifierProblem("a".repeat(64)).contains("63"));
-        assertTrue(WriteSql.POSTGRESQL.identifierProblem("é".repeat(32)).contains("64 bytes"));
-        assertNull(WriteSql.SQL_SERVER.identifierProblem("a".repeat(128)));
-        assertTrue(WriteSql.SQL_SERVER.identifierProblem("a".repeat(129)).contains("128"));
+        assertNull(WriteSql.Postgres.INSTANCE.identifierProblem("a".repeat(63)));
+        assertTrue(WriteSql.Postgres.INSTANCE.identifierProblem("a".repeat(64)).contains("63"));
+        assertTrue(WriteSql.Postgres.INSTANCE.identifierProblem("é".repeat(32)).contains("64 bytes"));
+        assertNull(WriteSql.SqlServer.INSTANCE.identifierProblem("a".repeat(128)));
+        assertTrue(WriteSql.SqlServer.INSTANCE.identifierProblem("a".repeat(129)).contains("128"));
     }
 
     @Test
@@ -283,11 +283,11 @@ class WriteSqlTest {
 
     @Test
     void sqlServerCatalogueUnionsUseTheDatabaseCollation() {
-        String q = WriteSql.SQL_SERVER.blockers(T).text();
+        String q = WriteSql.SqlServer.INSTANCE.blockers(T).text();
         for (String branch : q.split("UNION")) {
             assertTrue(branch.contains("COLLATE DATABASE_DEFAULT"), branch);
         }
-        assertTrue(WriteSql.SQL_SERVER.owner(T).text().contains("COLLATE DATABASE_DEFAULT"));
+        assertTrue(WriteSql.SqlServer.INSTANCE.owner(T).text().contains("COLLATE DATABASE_DEFAULT"));
     }
 
     @Test

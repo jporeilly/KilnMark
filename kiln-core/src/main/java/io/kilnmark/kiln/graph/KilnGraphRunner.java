@@ -69,7 +69,7 @@ import io.kilnmark.kiln.NodeException;
 public final class KilnGraphRunner implements GraphRunner {
 
     /** How long a run may go without moving a batch while every node waits, unless set otherwise. */
-    public static final Duration DEFAULT_STALL_TIMEOUT = Duration.ofSeconds(120);
+    public static final Duration DEFAULT_STALL_TIMEOUT = Duration.ofMinutes(2);
 
     /** How often a listener hears where the rows are, unless set otherwise. */
     public static final Duration DEFAULT_PROGRESS_EVERY = Duration.ofSeconds(2);
@@ -296,7 +296,7 @@ public final class KilnGraphRunner implements GraphRunner {
                     throw t;
                 }
                 startAll();
-                if (listener != RunListener.NONE) {
+                if (!RunListener.NONE.equals(listener)) {
                     teller = new Teller(graph.name());
                 }
                 try {
@@ -477,7 +477,7 @@ public final class KilnGraphRunner implements GraphRunner {
         }
 
         private void note(RunListener.Level level, RunNode n, String text) {
-            if (listener != RunListener.NONE) {
+            if (!RunListener.NONE.equals(listener)) {
                 notes.add(new Note(level, n == null ? null : n.id(), text, System.nanoTime()));
             }
         }

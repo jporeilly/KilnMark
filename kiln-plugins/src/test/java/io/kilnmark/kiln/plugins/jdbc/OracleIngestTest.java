@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
@@ -209,7 +210,7 @@ class OracleIngestTest {
         assertEquals("NUMBER(10,2)", f.get("PRICE").sourceType());
         assertEquals("VARCHAR2(100 CHAR)", f.get("NOTE").sourceType());
         assertEquals("NUMBER", f.get("PLAIN").sourceType());
-        assertEquals("uk_email".toUpperCase() + "(EMAIL)", assets.get("KT_SALES.CUSTOMERS").hints().get("unique_keys"));
+        assertEquals("uk_email".toUpperCase(Locale.ROOT) + "(EMAIL)", assets.get("KT_SALES.CUSTOMERS").hints().get("unique_keys"));
         assertEquals("20000", assets.get("KT_SALES.NUMBERS").hints().get("row_estimate"));
         AssetInfo view = assets.get("KT_SALES.BIG_ORDERS");
         assertEquals("view", view.kind());

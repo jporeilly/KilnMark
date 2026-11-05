@@ -7,6 +7,12 @@ details.
 
 ### What's new
 
+- **Every build checks its code and its parts** (ADR 0042). The Java code is read for known kinds of
+  bug as it compiles, and a finding stops the build; the first run found and fixed two places where
+  quality prediction could fail on a column with an unknown count, and a file write to a path ending
+  in `/`. Every library and tool the build downloads is checked against its recorded checksum and,
+  where it is signed, its signature, so a changed file cannot slip into a release.
+
 - **Start and stop Kilnmark with one click**, on Windows 11 and Ubuntu. The release folder has
   `start-kilnmark` and `stop-kilnmark` scripts for each, and `create-shortcut` puts **Kilnmark**
   and **Stop Kilnmark** on the desktop and in the Start or applications menu, with Kilnmark's
@@ -135,6 +141,24 @@ details.
   or deleted, and can be sent to a SIEM. Admins read it under Settings, Audit log (ADR 0029).
 
 ### Details
+
+- **Static analysis and dependency verification** (ADR 0042; SSDF PW.7.2, RV.1.2, PW.4.4). Error
+  Prone 2.51 runs in every Java compile, main and test, and `-Werror` makes its warnings fail the
+  build; nine checks are off for the whole build, each with its reason in the ADR, and suppressions
+  are `@SuppressWarnings` on the narrowest method with a comment. Its first run found 5 errors and
+  327 warnings. Fixed: two conditional expressions in `QualityPredictor` that unboxed a null (a text
+  column profiled without blanks; a group-by of an unknown row count); `LocalFileStore.create` taking
+  `a/` as a file `a` (now refused before any folder is made); a confirmation mail sent with `submit`,
+  whose errors were lost (now `execute`); `WriteSql` making its own subclasses in static fields, which
+  can deadlock two threads (the instances moved into the subclasses); `toLowerCase()`, `toUpperCase()`
+  and `getBytes()` without a locale or character set; identity comparisons of values; an unused
+  longest table name read from every generic JDBC driver; `Thread.interrupted()` calls that did
+  nothing. `FlowDefinition`, `FlowService` and `JobQueue` are left out until the flow-controls change
+  merges. `gradle/verification-metadata.xml` holds the sha256 of each of the 1,622 files the build
+  downloads, and Gradle checks signatures against 130 trusted keys in
+  `gradle/verification-keyring.keys`, never a key server. `./gradlew resolveAllDependencies`
+  resolves every configuration, for writing the metadata (docs/development.md, "Dependency
+  verification"). CI validates the Gradle wrapper's jar.
 
 - **Parallel runs in flows** (ADR 0040, docs/design/flows.md section 8). A flow's top-level
   `max_parallel` (1 to 50) holds ready nodes back, in the order written, while that many run; `stop`

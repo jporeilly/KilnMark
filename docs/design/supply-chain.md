@@ -32,6 +32,19 @@ Dependabot (`.github/dependabot.yml`) opens one grouped pull request a month for
 npm, GitHub Actions and the base images, with minor and patch versions only. A major version changes
 APIs, so it gets a pull request of its own, written by a person with the code changes it needs.
 
+## What the build checks
+
+[ADR 0042](../adr/0042-static-analysis-and-dependency-verification.md):
+
+- **Every library the build downloads** is checked against `gradle/verification-metadata.xml`:
+  its sha256 checksum, and its signature when it is signed (the signers' keys are in
+  `gradle/verification-keyring.keys`). The web UI's packages are checked the same way by npm, from
+  the checksums in `ui/package-lock.json`. A dependency change updates the metadata in the same pull
+  request ([Development](../development.md#dependency-verification)).
+- **The Gradle wrapper's jar** is checked in CI against Gradle's published checksums, and the
+  Gradle distribution it downloads against `distributionSha256Sum`.
+- **The Java code** is read by Error Prone in every compile; a finding fails the build.
+
 ## Releases
 
 `.github/workflows/release.yml`, on a version tag the owner pushes (`v` and the version in

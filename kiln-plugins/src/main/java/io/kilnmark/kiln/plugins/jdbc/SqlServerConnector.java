@@ -221,7 +221,7 @@ public final class SqlServerConnector extends JdbcConnector {
 
     @Override
     WriteSql writeSql() {
-        return WriteSql.SQL_SERVER;
+        return WriteSql.SqlServer.INSTANCE;
     }
 
     /** SQL Server also takes {@code bulk_copy}. */

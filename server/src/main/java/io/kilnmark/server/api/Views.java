@@ -34,6 +34,7 @@ public final class Views {
      * {@code choices} lists a choice's values (empty otherwise); {@code defaultValue} is the value used
      * when the setting is left empty, as stored text, or null.
      */
+    @SuppressWarnings("InvalidParam") // {@code choice} is a kind's name, not the component choices
     public record Setting(String key, String label, boolean required, String hint, boolean multiple, String example,
                           String kind, List<String> choices, String defaultValue) {
 
@@ -98,6 +99,7 @@ public final class Views {
      * {@code kind} is {@code text}, {@code number}, {@code boolean} or {@code choice}, as for
      * {@link Setting}.
      */
+    @SuppressWarnings("InvalidParam") // {@code choice} is a kind's name, not the component choices
     public record CommonSetting(String key, String label, String hint, boolean multiple, List<String> choices,
                                 String defaultValue, String kind) {
     }

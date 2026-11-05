@@ -56,6 +56,7 @@ final class WithSettings implements Node {
         inner.close();
     }
 
+    @SuppressWarnings("ReferenceEquality") // remembers the wrapper for the very context it was made for
     private NodeContext wrap(NodeContext outer) {
         if (outer != lastOuter) {
             lastOuter = outer;

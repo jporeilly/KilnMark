@@ -110,8 +110,8 @@ class TokenLifetimeTest {
                 return ps.executeUpdate();
             }
         });
-        assertEquals(Boolean.FALSE, works(old), "past the limit: does not work");
-        assertEquals(Boolean.TRUE, works(env), "the environment's token is not limited");
+        assertEquals(false, works(old), "past the limit: does not work");
+        assertEquals(true, works(env), "the environment's token is not limited");
         as(old).get("/api/v1/me").then().statusCode(401);
         as(env).get("/api/v1/me").then().statusCode(200);
     }

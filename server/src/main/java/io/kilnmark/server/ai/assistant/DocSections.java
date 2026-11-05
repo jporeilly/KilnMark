@@ -75,7 +75,7 @@ public final class DocSections {
         StringBuilder b = new StringBuilder();
         for (byte x : s.getBytes(StandardCharsets.UTF_8)) {
             int c = x & 0xff;
-            if (c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || "-_.!~*'()".indexOf(c) >= 0) {
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || "-_.!~*'()".indexOf(c) >= 0) {
                 b.append((char) c);
             } else {
                 b.append('%').append(Character.toUpperCase(Character.forDigit(c >> 4, 16)))

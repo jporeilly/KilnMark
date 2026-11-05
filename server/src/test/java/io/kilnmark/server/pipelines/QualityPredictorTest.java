@@ -275,8 +275,8 @@ class QualityPredictorTest {
             .node("either", "filter", Map.of("condition", "id > 900 or email is null"), "people")
             .node("odd", "filter", Map.of("condition", "upper(name) like 'A%'"), "people")
             .write("a", "early").write("b", "either").write("c", "odd"));
-        assertEquals(Math.round(1000 * (249.0 / 999) * 0.9), rows(r, "early", "out"), 1);
-        assertEquals(Math.round(1000 * (1 - (1 - 99.0 / 999 - 1e-12) * 0.9)), rows(r, "either", "out"), 2);
+        assertEquals((float) Math.round(1000 * (249.0 / 999) * 0.9), rows(r, "early", "out"), 1);
+        assertEquals((float) Math.round(1000 * (1 - (1 - 99.0 / 999 - 1e-12) * 0.9)), rows(r, "either", "out"), 2);
         assertNull(rows(r, "odd", "out"), "a condition it cannot read is unknown");
     }
 
@@ -582,6 +582,16 @@ class QualityPredictorTest {
         assertEquals(1.0, QualityPredictor.shapeShare(country, "^[A-Z]{2}$"), 1e-9);
         assertTrue(QualityPredictor.literalLettersOrDigits("^GB\\d+"));
         assertFalse(QualityPredictor.literalLettersOrDigits("^[A-Z]{2}\\d[A-Z]? \\d[A-Z]{2}$"));
+    }
+
+    @Test
+    void aTextProfileWithoutBlanksLeavesThemUnknown() {
+        // Once threw: the unknown share was unboxed into a double (found by static analysis, ADR 0042).
+        QualityPredictor.Col note = QualityPredictor.fromFacts(field("note", "text", stats(100, 5), Set.of()), "text");
+        assertNull(note.blanks, "a text column's blanks are unknown when the profile has no count of them");
+        assertEquals(0.05, note.nulls, 1e-9);
+        QualityPredictor.Col n = QualityPredictor.fromFacts(field("n", "int64", stats(100, 5), Set.of()), "int64");
+        assertEquals(0.0, n.blanks, 1e-9, "a number is never blank");
     }
 
     @Test

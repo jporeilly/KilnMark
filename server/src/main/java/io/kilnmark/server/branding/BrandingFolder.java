@@ -167,7 +167,7 @@ public class BrandingFolder {
     }
 
     /** One reload: what has been stamped, read and found wrong so far. */
-    private final class Load {
+    private static final class Load {
         final Map<String, String> stamps = new LinkedHashMap<>();
         final Map<String, Image> images = new LinkedHashMap<>();
         final List<String> problems = new ArrayList<>();

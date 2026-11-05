@@ -266,7 +266,7 @@ public final class WriteNodeFactory implements NodeFactory {
             if (part.equals("..")) {
                 return "a path inside the source: .. is not allowed";
             }
-            if (part.equals(".") || part.isEmpty() && target.contains("/")) {
+            if (part.equals(".") || (part.isEmpty() && target.contains("/"))) {
                 return "a path written as the source lists it: no empty or . folders (such as a//b or a/./b)";
             }
         }

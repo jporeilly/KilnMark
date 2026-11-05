@@ -165,7 +165,7 @@ public class ScanService {
      */
     boolean scan(Records.Source source, long runId, BooleanSupplier cancelled) {
         store.startRun(runId);
-        AtomicInteger seen = new AtomicInteger();
+        int seen = 0;
         AtomicInteger failed = new AtomicInteger();
         AtomicLong rows = new AtomicLong();
         List<String> problems = java.util.Collections.synchronizedList(new ArrayList<>());
@@ -213,7 +213,7 @@ public class ScanService {
                     break;
                 }
                 String urn = new Urn(source.name(), a.path()).toString();
-                seen.incrementAndGet();
+                seen++;
                 try {
                     store.saveAsset(source.id(), runId, asset(urn, a), fields(a));
                     documents.recorded(source.name(), runId, urn, a); // documents (ADR 0017): a sheet's workbook
@@ -257,8 +257,8 @@ public class ScanService {
             }
             int removed = store.markUnseenRemoved(source.id(), runId);
             quality.afterScan(source, runId);
-            status = failed.get() == 0 ? "succeeded" : failed.get() < seen.get() ? "partial" : "failed";
-            detail = summary(seen.get(), failed.get(), removed, problems) + relate(source, catalog);
+            status = failed.get() == 0 ? "succeeded" : failed.get() < seen ? "partial" : "failed";
+            detail = summary(seen, failed.get(), removed, problems) + relate(source, catalog);
             LOG.infof("Scan %d of %s: %s", runId, source.name(), detail);
         } catch (ConnectorException e) {
             detail = e.getMessage();
@@ -282,7 +282,7 @@ public class ScanService {
         // A database call with the interrupt flag set may be refused, so clear it for the final write.
         boolean interrupted = Thread.interrupted();
         try {
-            store.finishRun(runId, status, seen.get(), failed.get(), rows.get(), detail);
+            store.finishRun(runId, status, seen, failed.get(), rows.get(), detail);
         } finally {
             if (interrupted) {
                 Thread.currentThread().interrupt();

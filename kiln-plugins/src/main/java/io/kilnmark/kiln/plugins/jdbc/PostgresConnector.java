@@ -101,7 +101,7 @@ public final class PostgresConnector extends JdbcConnector {
 
     @Override
     WriteSql writeSql() {
-        return WriteSql.POSTGRESQL;
+        return WriteSql.Postgres.INSTANCE;
     }
 
     /** The planner's estimate (-1 before the table was first analysed, so it is then read in full). */

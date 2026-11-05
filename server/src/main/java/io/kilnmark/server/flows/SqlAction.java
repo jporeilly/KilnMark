@@ -122,7 +122,7 @@ final class SqlAction {
             return Outcome.failed("Node " + id + " " + problems.getFirst());
         }
         Connector connector = sources.connector(s.kind()).orElse(null);
-        if (!(connector instanceof JdbcConnector jdbc) || jdbc.dialect() != SqlDialect.POSTGRESQL) {
+        if (!(connector instanceof JdbcConnector jdbc) || !SqlDialect.POSTGRESQL.equals(jdbc.dialect())) {
             return Outcome.failed("Node " + id + ": this server cannot run SQL on " + s.name());
         }
         SourceConfig config = new SourceConfig(s.name(), s.kind(), s.settings(), sources.secret(s));

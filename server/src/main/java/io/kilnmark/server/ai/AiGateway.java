@@ -353,7 +353,7 @@ public class AiGateway {
                 }
             } catch (RuntimeException e) {
                 boolean timedOut = timedOut(e);
-                if (n >= retries || !retryable(e) || timedOut && !budget.retryTimeouts()) {
+                if (n >= retries || !retryable(e) || (timedOut && !budget.retryTimeouts())) {
                     throw new AiException(timedOut ? Kind.TIMEOUT : Kind.FAILED, explain(e, p), unreachable(e));
                 }
                 LOG.debugf("Model %s: attempt %d failed (%s); retrying", p.name(), n + 1, e.getClass().getSimpleName());
@@ -477,16 +477,16 @@ public class AiGateway {
                 + "from the Kilnmark server.";
         } else if (timedOut(e)) {
             msg = timeoutMessage(p, Budget.BACKGROUND);
-        } else if (e instanceof AuthenticationException || status != null && (status == 401 || status == 403)) {
+        } else if (e instanceof AuthenticationException || (status != null && (status == 401 || status == 403))) {
             msg = p.provider().label() + " refused the API key for model " + p.model() + ". Check the key, and that "
                 + "it may use this model.";
-        } else if (e instanceof ModelNotFoundException || status != null && status == 404) {
+        } else if (e instanceof ModelNotFoundException || (status != null && status == 404)) {
             msg = "The server at " + url + " does not know a model called " + p.model() + ", or the address is wrong. "
                 + "Check the model name, and that the address ends where the API starts (often /v1).";
-        } else if (e instanceof RateLimitException || status != null && status == 429) {
+        } else if (e instanceof RateLimitException || (status != null && status == 429)) {
             msg = p.provider().label() + " is limiting requests (rate limit or quota). Wait a minute, or check the "
                 + "account's quota.";
-        } else if (e instanceof InternalServerException || status != null && status >= 500) {
+        } else if (e instanceof InternalServerException || (status != null && status >= 500)) {
             msg = "The model server failed" + (status == null ? "" : " (HTTP " + status + ")") + ". Check its log.";
         } else if (status != null) {
             msg = "The model server refused the request (HTTP " + status + "): " + shortMessage(e);

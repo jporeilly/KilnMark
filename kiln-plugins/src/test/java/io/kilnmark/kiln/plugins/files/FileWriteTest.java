@@ -312,6 +312,21 @@ class FileWriteTest {
     }
 
     @Test
+    void aPathEndingInASlashNamesNoFile() throws Exception {
+        // Once wrote the folder before the slash as a file (found by static analysis, ADR 0042).
+        Path dir = Files.createDirectories(root.resolve("slash"));
+        try (LocalFileStore store = new LocalFileStore(dir, null, true)) {
+            for (String bad : List.of("a/", "a//", "exports/2025/")) {
+                java.io.IOException e = assertThrows(java.io.IOException.class, () -> store.create(bad, false), bad);
+                assertTrue(e.getMessage().contains("give a file name"), e.getMessage());
+            }
+        }
+        try (Stream<Path> made = Files.list(dir)) {
+            assertEquals(0, made.count(), "nothing is made, not even a folder");
+        }
+    }
+
+    @Test
     void pathsLeadingOutsideTheFolderAreRefused() throws Exception {
         SourceConfig s = folder("escape");
         Path dir = Path.of(s.setting("path"));
@@ -455,7 +470,8 @@ class FileWriteTest {
 
     private static String jsonString(String s) {
         StringBuilder b = new StringBuilder("\"");
-        for (char c : s.toCharArray()) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
             if (c == '"' || c == '\\') {
                 b.append('\\').append(c);
             } else if (c < 0x20) {

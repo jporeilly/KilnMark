@@ -44,7 +44,7 @@ final class CsvEncoder implements RowEncoder {
             return ',';
         }
         char d = setting.equals("\\t") ? '\t' : setting.charAt(0);
-        if (setting.length() != 1 && !setting.equals("\\t") || d == '"' || d == '\r' || d == '\n') {
+        if ((setting.length() != 1 && !setting.equals("\\t")) || d == '"' || d == '\r' || d == '\n') {
             throw new io.kilnmark.kiln.connect.ConnectorException("delimiter: one character other than a quote, "
                 + "such as ; or |, or \\t for a tab; not '" + setting + "'");
         }

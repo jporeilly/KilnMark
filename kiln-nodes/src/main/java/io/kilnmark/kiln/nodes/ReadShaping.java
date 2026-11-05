@@ -140,8 +140,9 @@ public final class ReadShaping {
             if (count == 0 && !keepEmpty) {
                 return null;
             }
-            VectorSchemaRoot kept = count == n ? in : BaseNode.copy(in, rows, count, allocator);
-            if (kept != in) {
+            boolean copied = count != n;
+            VectorSchemaRoot kept = copied ? BaseNode.copy(in, rows, count, allocator) : in;
+            if (copied) {
                 in.close(); // its kept rows are copied
             }
             handedOver = true;

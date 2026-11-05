@@ -19,7 +19,7 @@ import java.util.regex.Pattern;
  * <p>A value only ever fills a value. In an expression it goes in as a literal ({@code 'EMEA'},
  * {@code 0.02}, {@code true}), never as text the expression reads as code; in a text setting it may
  * hold only letters, digits, spaces, {@code _}, {@code -} and {@code .} (not {@code ..}), so it can
- * name part of a path or table but never step outside it. {@code $${} writes a plain {@code ${}.
+ * name part of a path or table but never step outside it. <code>$${</code> writes a plain <code>${</code>.
  */
 public final class Parameters {
 
@@ -37,7 +37,7 @@ public final class Parameters {
     static final double MAX_NUMBER = 1e15;
     static final Set<String> KEYS = Set.of("type", "default", "description");
 
-    /** {@code ${name}}, or {@code $${} for a plain {@code ${}. */
+    /** {@code ${name}}, or <code>$${</code> for a plain <code>${</code>. */
     private static final Pattern REF = Pattern.compile("\\$\\$\\{|\\$\\{([^}]*)}");
     private static final Pattern PLAIN_TEXT = Pattern.compile("[A-Za-z0-9 _.-]{1,200}");
 
@@ -113,7 +113,7 @@ public final class Parameters {
             FlowCondition.Type type = null;
             boolean list = false;
             if (t != null && t.value().value() instanceof String ts) {
-                String words = ts.strip().toLowerCase().replaceAll("\\s+", " ");
+                String words = ts.strip().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
                 list = words.endsWith(" list");
                 type = switch (list ? words.substring(0, words.length() - 5) : words) {
                     case "text" -> FlowCondition.Type.TEXT;
@@ -286,7 +286,7 @@ public final class Parameters {
         }
     }
 
-    /** Whether {@code text} names a parameter ({@code ${...}}; {@code $${} does not count). */
+    /** Whether {@code text} names a parameter ({@code ${...}}; <code>$${</code> does not count). */
     public static boolean refers(String text) {
         if (text == null) {
             return false;

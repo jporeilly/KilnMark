@@ -230,7 +230,7 @@ public class HybridSearch {
         try {
             int a = Integer.parseInt(v[0]);
             int b = v.length > 1 ? Integer.parseInt(v[1]) : 0;
-            return a > major || a == major && b >= minor;
+            return a > major || (a == major && b >= minor);
         } catch (NumberFormatException e) {
             return false;
         }

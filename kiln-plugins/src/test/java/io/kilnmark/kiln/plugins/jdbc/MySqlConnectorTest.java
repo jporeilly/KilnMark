@@ -520,7 +520,7 @@ class MySqlConnectorTest {
         assertTrue(MY.hiddenBlockers(t).text().contains("information_schema.INNODB_FOREIGN "));
         assertTrue(MySqlWriteSql.MARIADB.hiddenBlockers(t).text().contains("information_schema.INNODB_SYS_FOREIGN "));
         assertTrue(MY.allUniqueKeys(t).text().contains("SUB_PART IS NULL"));
-        assertNull(WriteSql.POSTGRESQL.allUniqueKeys(t),
+        assertNull(WriteSql.Postgres.INSTANCE.allUniqueKeys(t),
             "PostgreSQL's ON CONFLICT names its index: other unique indexes fail the row instead");
         assertEquals(new TableName("shop", "orders"), MySqlConnector.asStored(true, new TableName("Shop", "Orders")));
         assertEquals(new TableName("Shop", "Orders"), MySqlConnector.asStored(false, new TableName("Shop", "Orders")));
@@ -554,7 +554,7 @@ class MySqlConnectorTest {
         assertTrue(MY.targetMisfit(number, time0).contains("which takes only times or text"));
         assertNull(MY.targetMisfit(time, time0));
         assertNull(MY.targetMisfit(text, time0));
-        WriteSql pg = WriteSql.POSTGRESQL;
+        WriteSql pg = WriteSql.Postgres.INSTANCE;
         assertEquals(3, pg.fractionDigits(new WritePlan.TargetColumn("at", "timestamp", Kind.TIMESTAMP, 0, 3, 0)));
         assertEquals(0, pg.fractionDigits(new WritePlan.TargetColumn("at", "time", Kind.TIME, 0, 0, 0)));
         assertEquals(-1, pg.fractionDigits(new WritePlan.TargetColumn("at", "timestamptz", Kind.TIMESTAMP_TZ, 0, 6, 0)));

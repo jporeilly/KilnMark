@@ -136,11 +136,11 @@ final class GenericTypes {
         if (name.contains("WITH LOCAL TIME ZONE") || name.equals("TIMESTAMP_LTZ") || name.equals("TIMESTAMPLTZ")) {
             return micros(of(Kind.TIMESTAMP_TZ, Read.TIMESTAMP_TZ), shown, scale);
         }
-        if (jdbcType == Types.TIMESTAMP_WITH_TIMEZONE || timestamp && name.contains("WITH TIME ZONE")
+        if (jdbcType == Types.TIMESTAMP_WITH_TIMEZONE || (timestamp && name.contains("WITH TIME ZONE"))
             || name.equals("TIMESTAMPTZ") || name.equals("TIMESTAMP_TZ") || name.equals("DATETIMEOFFSET")) {
             return micros(of(Kind.TIMESTAMP_TZ, Read.TIMESTAMP_TZ), shown, scale);
         }
-        if (jdbcType == Types.TIME_WITH_TIMEZONE || !timestamp && name.startsWith("TIME") && name.contains("WITH TIME ZONE")
+        if (jdbcType == Types.TIME_WITH_TIMEZONE || (!timestamp && name.startsWith("TIME") && name.contains("WITH TIME ZONE"))
             || name.equals("TIMETZ")) {
             return new Mapped(Kind.TEXT, 0, 0, Read.TEXT, "Read as text: a time of day with a time zone (" + shown
                 + ") has no type of its own in Kilnmark");
@@ -367,7 +367,7 @@ final class GenericTypes {
                 needsLegacy = true;
                 return null;
             } catch (SQLException e) {
-                if ("0A000".equals(e.getSQLState()) || e.getSQLState() == null && looksUnsupported(e)) {
+                if ("0A000".equals(e.getSQLState()) || (e.getSQLState() == null && looksUnsupported(e))) {
                     legacy = true;
                     needsLegacy = true;
                     return null;

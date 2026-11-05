@@ -76,7 +76,7 @@ final class ColumnStats {
             negatives++;
         }
         distinct.update(v);
-        quantiles.update(v);
+        quantiles.update((double) v);
         sum += v;
         if (shape == Shape.INTEGER) {
             topLongs.update(v);

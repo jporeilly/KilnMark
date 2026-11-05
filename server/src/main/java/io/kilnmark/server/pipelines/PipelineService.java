@@ -713,7 +713,9 @@ public class PipelineService {
      * the points were merged.
      */
     public PipelineViews.RunSeries series(long id, long after) {
-        store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No pipeline run " + id));
+        if (store.run(id).isEmpty()) {
+            throw fail(Response.Status.NOT_FOUND, "No pipeline run " + id);
+        }
         PipelineStore.Series s = store.series(id, Math.max(-1, after));
         List<PipelineViews.SeriesPoint> points = s.points().stream()
             .map(p -> new PipelineViews.SeriesPoint(p.t(), tree(p.rates()), tree(p.fills()))).toList();
@@ -1253,7 +1255,7 @@ public class PipelineService {
             finished(run.pipeline(), id, o.status(), score, threshold, lowest == null ? null : lowest.node());
             LOG.infof("Run %d of pipeline %s: %s", id, run.pipeline(), o.status());
         } catch (InterruptedException e) {
-            Thread.interrupted(); // cleared so the run's record can be written
+            // The interrupt status is already clear here, so the run's record can be written.
             if (!ran && c != null && c.graph() != null) {
                 PipelineExecution.closeNodes(c.graph());
             }
@@ -1432,8 +1434,7 @@ public class PipelineService {
                 locked = JobQueue.waitFor(() -> lease.tryLockSource(s.id()), config.pipelines().waitForTarget(),
                     shutdown);
             } catch (InterruptedException e) {
-                Thread.interrupted();
-                locked = false;
+                locked = false; // stopping: leave the catalogue to the next scan
             }
             if (!locked) {
                 note(notes, w.node() + ": a scan of " + w.source() + " was running, so " + w.target() + " is not in "
@@ -1681,7 +1682,7 @@ public class PipelineService {
         List<MetadataEvent> mine = reported(events, w.urn());
         MetadataEvent schema = mine.stream().filter(e -> e.kind() == MetadataEvent.Kind.SCHEMA).findFirst().orElse(null);
         boolean appended = mine.stream().anyMatch(e -> e.kind() == MetadataEvent.Kind.ROW_COUNT
-            && "true".equals(e.attributes().get("appended"))) || schema == null && !w.wholeTarget();
+            && "true".equals(e.attributes().get("appended"))) || (schema == null && !w.wholeTarget());
         if (appended && known != null) {
             // Rows added to a table the catalogue knows: keep what its last scan found.
             graph.saveAsset(s.id(), recordRun, new Records.Asset(w.urn(), known.kind(), known.container(), known.name(),

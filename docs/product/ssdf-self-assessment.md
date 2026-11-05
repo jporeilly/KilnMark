@@ -3,7 +3,8 @@
 How Kilnmark is built against NIST's Secure Software Development Framework (SSDF), SP 800-218
 version 1.1, practice by practice: what is done, where the evidence is, and what is missing. It is a
 self-assessment by the maintainer, not an audit by a third party. Assessed on 4 November 2026, at
-the commit this file arrived in.
+the commit this file arrived in; updated on 5 November 2026 for static analysis and dependency
+verification (ADR 0042).
 
 **Who asks for it.** US federal agencies may ask a vendor for a secure-development attestation
 based on the SSDF (OMB M-26-05, case by case), and banks' vendor-risk teams ask the same questions
@@ -33,7 +34,7 @@ made yet: it waits for the release key (item 2 below). Tags v0.0.7 and v0.0.8 pr
 
 ## Summary
 
-Of the 42 tasks, 22 are met, 17 partly met and 3 not met (PO.2.2, PO.5.2 and RV.3.2). What is
+Of the 42 tasks, 25 are met, 14 partly met and 3 not met (PO.2.2, PO.5.2 and RV.3.2). What is
 missing, in the order worth doing:
 
 **Repository settings and one-off steps, the owner's:**
@@ -53,11 +54,10 @@ missing, in the order worth doing:
 
 **Build and process work, for the backlog:**
 
-5. **Static analysis in CI** (PW.7.2, RV.1.2): a checker for Java (Error Prone or SpotBugs with its
-   security rules) and lint rules for the web UI.
-6. **Verify every component** (PW.4.4, PO.3.2): Gradle dependency verification (checksums of every
-   library, as the web UI's lock file already has), the Gradle wrapper's jar validated in CI, and
-   the base images pinned by digest rather than by tag.
+5. **Lint rules for the web UI**: waits for TypeScript 7's compiler to offer the API linters need
+   (ADR 0042). The Java code is analysed in every compile.
+6. **The base images pinned by digest** rather than by tag (PO.3.2). Every Gradle library is checked
+   by checksum and signature, and the Gradle wrapper's jar in CI (ADR 0042).
 7. **Build provenance** (PS.3.2): a signed statement of how each release was built (SLSA
    provenance), beside the SBOMs.
 8. **A threat model, and design review by a second person** (PW.1.1, PW.2.1): drawn from the
@@ -69,7 +69,9 @@ missing, in the order worth doing:
     and training records.
 
 Done with this assessment: the build tool's download is checked against its published checksum,
-and every action in CI is pinned to an exact commit.
+and every action in CI is pinned to an exact commit. Done since (ADR 0042, 5 November 2026): Error
+Prone static analysis in every compile, failing the build on a finding; every Gradle dependency
+checked by sha256 and, where signed, its signature; the Gradle wrapper's jar validated in CI.
 
 ## Prepare the organisation (PO)
 
@@ -82,7 +84,7 @@ and every action in CI is pinned to an exact commit.
 | PO.2.2 Role-based training | None recorded | | Not met (item 11) |
 | PO.2.3 Management commitment | The owner made bank readiness the current priority on 1 November 2026, and set the order of work | [Backlog](backlog.md), item 2; [Compliance](compliance.md#order-of-work) | Met |
 | PO.3.1 Specify the toolchain | Gradle wrapper, JDK 25 (Temurin), Node 22, Podman or Docker; versions in the repository | `gradle/wrapper`, `gradle/libs.versions.toml`, `.github/workflows` | Met |
-| PO.3.2 Deploy and keep the toolchain secure | CI runs on fresh GitHub-hosted runners with read-only tokens (except the release job, which writes the draft release); actions pinned to commits; Trivy, cosign and the Gradle distribution checked against checksums | `.github/workflows/*.yml`, `gradle/wrapper/gradle-wrapper.properties` | Partly: the wrapper's jar is not validated, base images are pinned by tag (item 6) |
+| PO.3.2 Deploy and keep the toolchain secure | CI runs on fresh GitHub-hosted runners with read-only tokens (except the release job, which writes the draft release); actions pinned to commits; Trivy, cosign and the Gradle distribution checked against checksums; the Gradle wrapper's jar validated in CI; every build tool Gradle downloads (plug-ins, Error Prone) checked by checksum | `.github/workflows/*.yml`, `gradle/wrapper/gradle-wrapper.properties`, `gradle/verification-metadata.xml` | Partly: base images are pinned by tag (item 6) |
 | PO.3.3 Tools produce evidence | CI logs and test reports for each change; SBOMs and scan results for each change and weekly; for a release, signatures and a signed checksum list | `.github/workflows/supply-chain.yml`, `release.yml` | Met |
 | PO.4.1 Criteria for security checks | A change merges only with build, heavy-databases and scan green, and release too when its files change; the scan fails on high or critical vulnerabilities with a fix | [CLAUDE.md](../../CLAUDE.md), `supply-chain.yml` | Partly: kept by practice, not enforced by GitHub (item 1) |
 | PO.4.2 Gather and keep the information | GitHub keeps every pull request, its checks and its review; the changelog and decision records keep the reasoning | Pull requests, [CHANGELOG](../../CHANGELOG.md), `docs/adr` | Met |
@@ -108,12 +110,12 @@ and every action in CI is pinned to an exact commit.
 | PW.2.1 Review the design | The owner decides each design; the AI review reads it with the change that builds it | Pull request reviews | Partly: no review by a person other than its author (item 8) |
 | PW.4.1 Acquire well-secured components | Libraries from Maven Central and npm, current versions, licence-checked; drivers customers add are pinned by checksum | ADR 0007, ADR 0025, `.github/dependabot.yml` | Met |
 | PW.4.2 Build components only when needed | Kilnmark builds what no vetted library does; security functions come from libraries and the platform | PW.1.3 | Met |
-| PW.4.4 Verify components | Every change and every week, the SBOMs are scanned for known vulnerabilities; the web UI's lock file holds each package's checksum | `supply-chain.yml`, `ui/package-lock.json` | Partly: no checksums for Gradle's libraries (item 6) |
+| PW.4.4 Verify components | Every change and every week, the SBOMs are scanned for known vulnerabilities; the web UI's lock file holds each package's checksum; Gradle checks every library it downloads against its sha256 and, where signed, its signature from a trusted key, and fails the build otherwise | `supply-chain.yml`, `ui/package-lock.json`, `gradle/verification-metadata.xml`, ADR 0042 | Met |
 | PW.5.1 Secure coding practices | Written rules: values seen only through `Sights`, SQL a person writes checked and run read-only, generic drivers only with vetted settings, errors that never echo a value or secret, an append-only audit log | [CLAUDE.md](../../CLAUDE.md), "Rules that never bend"; `SightsUseTest` | Met |
 | PW.6.1 Compiler and build features | Java compiled with lint warnings as errors (all but two kinds, about class files and annotation processing); TypeScript in strict mode | `build.gradle.kts` (`-Xlint:all,-classfile,-processing -Werror`), `ui/tsconfig.json` | Met |
 | PW.6.2 Decide the settings | As above, set once for every module | `build.gradle.kts` | Met |
 | PW.7.1 Decide on review and analysis | Every substantial change gets a review by a separate AI agent; security changes until it finds no bypass | [CLAUDE.md](../../CLAUDE.md) | Met |
-| PW.7.2 Review and analyse the code | Reviews are done and their findings fixed in the same pull request, recorded in its description | Pull requests | Partly: no static analysis tool (item 5) |
+| PW.7.2 Review and analyse the code | Reviews are done and their findings fixed in the same pull request, recorded in its description; Error Prone analyses the Java code in every compile and a finding fails the build, each suppression on the narrowest method with its reason; the web UI compiles in TypeScript's strict mode | Pull requests, `build.gradle.kts`, ADR 0042 | Met (lint rules for the web UI later, item 5) |
 | PW.8.1 Decide on testing | Every change ships with its tests; integration tests run against real databases | [CLAUDE.md](../../CLAUDE.md), "How work is done" | Met |
 | PW.8.2 Test the code | Unit and integration tests on every change (about 180 Java test classes, and the web UI's tests), databases in containers, security behaviour tested (refusals, masking, tokens, sign-in, the audit log); restore drills for backup and restore | `.github/workflows/ci.yml`, ADR 0039 | Partly: no penetration test or fuzzing (item 9) |
 | PW.9.1 Secure baseline | The defaults are the safe ones, listed in the decision records and install guide | [INSTALL.md](../../INSTALL.md) | Met |
@@ -124,7 +126,7 @@ and every action in CI is pinned to an exact commit.
 | Task | What Kilnmark does | Evidence | Status |
 | --- | --- | --- | --- |
 | RV.1.1 Gather information on vulnerabilities | Trivy scans of the SBOMs on every change and weekly, a report on the base images; Dependabot alerts and security updates on (checked 4 November 2026), version updates monthly | `supply-chain.yml`, `.github/dependabot.yml`, repository settings | Met |
-| RV.1.2 Review the code for vulnerabilities | The AI review of each change looks for them | Pull requests | Partly: no static analysis (item 5) |
+| RV.1.2 Review the code for vulnerabilities | The AI review of each change looks for them; Error Prone's checks run on every change in CI, among them null unboxing, ignored return values, text handled in the server's locale and values compared by identity | Pull requests, ADR 0042 | Met |
 | RV.1.3 Vulnerability disclosure policy | A private reporting address, timelines to acknowledge and decide, a disclosure date agreed with the reporter | [SECURITY.md](../../SECURITY.md) | Partly: not visible outside the private repository, and the address is a person's (item 3) |
 | RV.2.1 Analyse each vulnerability | By policy, each report is assessed for what an attacker can do and needs; none has been received yet | [SECURITY.md](../../SECURITY.md) | Met |
 | RV.2.2 Plan and make the fix | By policy, fixes in order of severity, shipped in the next release with a changelog entry saying what was fixed | [SECURITY.md](../../SECURITY.md), [CHANGELOG](../../CHANGELOG.md) | Met |

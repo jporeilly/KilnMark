@@ -28,6 +28,59 @@ Gradle is not needed: use the wrapper (`./gradlew`, or `gradlew.bat` on Windows)
 ./gradlew release               # assemble dist/release/kilnmark-<version>
 ```
 
+### Static analysis
+
+Error Prone runs inside every Java compile, main and test ([ADR 0042](adr/0042-static-analysis-and-dependency-verification.md)).
+A finding fails the build like a compiler error, with the check's name and a link to what it
+means. Fix the code. If the code is right as it is, suppress that one place, on the narrowest
+method or class, and say why:
+
+```java
+@SuppressWarnings("ReferenceEquality") // the very definition the id names, not one equal to it
+```
+
+Many checks suggest a fix. To apply a check's suggestions to the sources, then read the diff:
+
+```
+./gradlew compileJava compileTestJava -PskipUi -PepPatch=MissingOverride,OperatorPrecedence
+```
+
+The checks turned off for the whole build, and the files left out until the flow-controls change
+merges, are in `build.gradle.kts`, with the reasons in ADR 0042.
+
+### Dependency verification
+
+Gradle checks every file it downloads (libraries, plug-ins, build tools and their POMs) against
+`gradle/verification-metadata.xml`: a sha256 checksum for each, and for those that are signed,
+a signature from a key in `gradle/verification-keyring.keys`. A file whose checksum differs, or
+that is not listed, fails the build with "Dependency verification failed" and a report saying which.
+Builds never ask a key server.
+
+**When you add or change a dependency** (in `gradle/libs.versions.toml`, a `build.gradle.kts`, or a
+plug-in version), write its checksums and signatures into the metadata, in two steps, checksums
+first so every file has one:
+
+```
+./gradlew --write-verification-metadata sha256 -PskipUi resolveAllDependencies assemble compileTestJava release
+./gradlew --write-verification-metadata pgp,sha256 --export-keys -PskipUi resolveAllDependencies assemble compileTestJava release
+```
+
+`resolveAllDependencies` resolves every configuration of every module, tests included, so nothing a
+later task needs is missed. The second command adds the signer of each new signed file to the
+trusted keys, and its key to `gradle/verification-keyring.keys` (fetched from a key server: only
+writing the metadata does that). Gradle rewrites the whole file each time, so put explanations in
+this guide or ADR 0042, not in XML comments, which it drops. Then:
+
+1. Read the diff of `gradle/verification-metadata.xml`. Each new entry should be a dependency you
+   meant to add, or one it brings; a changed checksum for a version already listed means the file
+   on the server changed, and is a reason to stop and find out why, not to accept it.
+2. Old versions stay listed after an update; that is harmless. To remove them, delete the
+   `<components>` entries and run both commands again.
+3. Commit the metadata and the keyring with the dependency change, in the same pull request.
+
+Dependabot's monthly Gradle pull request does not update the metadata, so it fails CI until someone
+runs the two commands on its branch and pushes the result.
+
 Ports: Kilnmark listens on **8780** (8080 is left for Tomcat and the like) and its
 PostgreSQL is published on **5442**. Change them with `KILNMARK_PORT` and `KILNMARK_DB_PORT` for
 Compose, or `QUARKUS_HTTP_PORT` for the server on its own.

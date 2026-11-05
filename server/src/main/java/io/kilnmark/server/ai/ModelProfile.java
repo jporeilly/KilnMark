@@ -140,7 +140,7 @@ public record ModelProfile(long id, String name, Provider provider, String baseU
             throw new IllegalArgumentException("baseUrl: not a valid address");
         }
         String scheme = u.getScheme() == null ? "" : u.getScheme().toLowerCase(Locale.ROOT);
-        if (!scheme.equals("http") && !scheme.equals("https") || u.getHost() == null) {
+        if ((!scheme.equals("http") && !scheme.equals("https")) || u.getHost() == null) {
             throw new IllegalArgumentException("baseUrl: an http:// or https:// address, for example http://llama:8080/v1");
         }
         if (u.getRawUserInfo() != null || u.getRawQuery() != null || u.getRawFragment() != null) {

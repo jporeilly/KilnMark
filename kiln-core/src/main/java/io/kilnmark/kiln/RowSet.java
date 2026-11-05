@@ -163,7 +163,7 @@ public final class RowSet {
             try {
                 while (!queue.offer(batch, POLL_MILLIS, TimeUnit.MILLISECONDS)) {
                     long now = System.nanoTime();
-                    putWaitNanos += now - last;
+                    waitedToPut(now - last);
                     last = now;
                     if (cancelled) {
                         batch.close();
@@ -174,7 +174,7 @@ public final class RowSet {
                 batch.close(); // it never reached the queue
                 throw e;
             } finally {
-                putWaitNanos += System.nanoTime() - last;
+                waitedToPut(System.nanoTime() - last);
                 writerWaitingSince = 0;
             }
         }
@@ -191,6 +191,17 @@ public final class RowSet {
         }
     }
 
+    // Each total has one writer (the writing or the reading thread), so a plain volatile add is enough.
+    @SuppressWarnings("NonAtomicVolatileUpdate")
+    private void waitedToPut(long nanos) {
+        putWaitNanos += nanos;
+    }
+
+    @SuppressWarnings("NonAtomicVolatileUpdate") // the reading thread only
+    private void waitedToTake(long nanos) {
+        takeWaitNanos += nanos;
+    }
+
     /** No more batches; waits for room for the end, unless the next node has stopped. */
     public void finish() throws InterruptedException {
         if (!cancelled && !queue.offer(END)) {
@@ -199,11 +210,11 @@ public final class RowSet {
             try {
                 while (!cancelled && !queue.offer(END, POLL_MILLIS, TimeUnit.MILLISECONDS)) {
                     long now = System.nanoTime();
-                    putWaitNanos += now - last;
+                    waitedToPut(now - last);
                     last = now;
                 }
             } finally {
-                putWaitNanos += System.nanoTime() - last;
+                waitedToPut(System.nanoTime() - last);
                 writerWaitingSince = 0;
             }
         }
@@ -241,11 +252,11 @@ public final class RowSet {
             try {
                 while ((o = queue.poll(POLL_MILLIS, TimeUnit.MILLISECONDS)) == null) {
                     long now = System.nanoTime();
-                    takeWaitNanos += now - last;
+                    waitedToTake(now - last);
                     last = now;
                 }
             } finally {
-                takeWaitNanos += System.nanoTime() - last;
+                waitedToTake(System.nanoTime() - last);
                 readerWaitingSince = 0;
             }
         }
@@ -308,7 +319,7 @@ public final class RowSet {
             try {
                 o = queue.poll(timeout, unit);
             } finally {
-                takeWaitNanos += System.nanoTime() - since;
+                waitedToTake(System.nanoTime() - since);
                 if (mark) {
                     readerWaitingSince = 0;
                 }
