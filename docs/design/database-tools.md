@@ -130,7 +130,9 @@ save or import that leaves Production out keeps it. The socket timeout is set wi
 `SqlDialect.timeout`. Pools are per source and per use: one for read-only connections, one for
 writable ones, made on first use and dropped when the source's settings change. A connection is
 reset when it returns (PostgreSQL `DISCARD ALL`; closed instead where a database has no reset).
-Query reads, flow `sql` actions and database operations never take a pooled connection. Generic
+Query reads, flow `sql` actions, custom SQL quality rules and database operations never take a
+pooled connection. A source's statement timeout may be lower than the server's setting for its
+kind of work, never higher. Generic
 JDBC keeps its connection opened read-only.
 
 Partitioning: a `read` node of a table may say `split_by: column`, which must be a column of that
@@ -153,7 +155,7 @@ sequenceDiagram
   D->>K: POST plan {operation, asset, columns…}
   K->>DB: read the catalogue and object ids (read-only)
   K-->>D: statements, plan id, needs: typed name? approval?
-  alt Production source (both signed in, no tokens)
+  alt Production database, or identity unreadable (both signed in, no tokens)
     A->>K: approve (another person)
   end
   D->>K: POST run {plan id, typed name}
@@ -165,15 +167,19 @@ sequenceDiagram
 
 **Data.** `db_change_plan` (next free migration): `id`, `source_id`, `operation`, `fields jsonb`
 (the plan's shape: schema, table, columns with kinds, index columns, online or not), `statements
-text[]` (as previewed), `target` (the connection target and server identity when planned),
-`production` (when planned), `fingerprint jsonb` (each object's identity and shape), `seal` (an
+text[]` (as previewed), `target` (the connection target and the database's identity when planned),
+`fingerprint jsonb` (each object's identity and shape), `seal` (an
 HMAC over all of these with the key that seals source passwords), `requested_by`, `requested_key`
-(the provider's issuer and subject; required on a Production source), `requested_at`,
+(the provider's issuer and subject; required when approval is needed), `requested_at`,
 `expires_at`, `needs_approval`, `approved_by`, `approved_key`, `approved_at`, `refused_by`,
 `refused_at`, `cancelled_at`, `ran_at`, `outcome` (`ran`, `failed`), `failure` (statement number,
-SQLSTATE or code; never the database's text). Checks in the table: approved and refused are never
-both set; `ran_at` only after approval when it is needed. `instance` holds one random id, made at
-first start, for the own-database check.
+SQLSTATE or code; never the database's text). The seal covers the plan's id, source, maker, fields,
+statements, target, identity, fingerprint and expiry; `approval_seal` covers the id, the seal, the
+approver and the time. Both are HMACs with a key derived (HKDF) from the key that seals source
+passwords. Checks in the table: approved and refused are never both set. `production_database`
+holds the register: the database's identity (kind and the identity values), the source it was read
+through, who marked it and when, and removals with both people. `instance` holds one random id,
+made at first start, for the own-database check.
 
 **API**, under `/api/v1/sources/{name}/changes`, `@RolesAllowed(DESIGNER)` (admins hold it too):
 
@@ -185,13 +191,16 @@ first start, for the own-database check.
 | `POST .../plans/{id}/run` | `{confirm}` for drop and truncate; runs the plan once |
 
 The operations are the generator's (D2) with a fixed shape each; there is no "run this SQL". At
-run time the server checks the seal, writes the statements again from `fields` and refuses any
-difference from those previewed, checks again Allow changes, the role, sign-in, the source's kind,
-Production (the source's own, and any Production source with the same target) and the target,
-then re-reads the fingerprint on the run's own connection after taking the table's lock where DDL
-is transactional. On a Production source the maker and the approver are both people signed in with
-the provider (tokens get 403), compared by issuer and subject, and only the maker runs the plan. A
-change to the source's settings cancels its open plans. Every database's lock wait is bounded at
+run time the server checks both seals, writes the statements again from `fields` and refuses any
+difference from those previewed, checks again Allow changes, the role, authentication, the
+source's kind and target, and whether approval is needed now; then, on the run's own connection
+inside its transaction, reads the database's identity and the own-database marker again, takes the
+table's lock where DDL is transactional, and re-reads the fingerprint. When approval is needed (the
+database is in the production register, or its identity cannot be read) the maker and the approver
+are both people signed in with the provider (tokens get 403), compared by issuer and subject, never
+the same, and only the maker runs the plan. A change to what the source connects to turns Allow
+changes off and cancels its open plans. Operations act only on the source's own database; a MySQL
+source with no database set gets none. `DROP` and `TRUNCATE` never cascade. Every database's lock wait is bounded at
 10 seconds (PostgreSQL `lock_timeout`, MySQL and MariaDB `lock_wait_timeout`, SQL Server
 `SET LOCK_TIMEOUT`, Oracle `ddl_lock_timeout`).
 
@@ -203,7 +212,10 @@ Production off alone, or clearing it by a save or import that leaves it out; a s
 a Production database; a plan made before a source became Production; an operation on Kilnmark's
 own database; Allow changes on through an import; a plan made when Allow changes was on, run after
 it was turned off; a value in a failure's message (a duplicate key in a unique index); a type name
-or index expression from the catalogue reaching a statement.
+or index expression from the catalogue reaching a statement; retargeting a source (URL, database,
+a driver property) after Allow changes was turned on; another database on the same MySQL server; a
+plan's maker or approval changed in Kilnmark's own database; DNS or a failover moving the run's
+connection to another database.
 
 ## Not in this plan
 
