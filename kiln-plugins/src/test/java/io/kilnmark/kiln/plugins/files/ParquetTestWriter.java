@@ -105,7 +105,7 @@ final class ParquetTestWriter {
             byte[] header = h.bytes();
             out.writeBytes(header);
             out.writeBytes(body);
-            sizes[c] = header.length + body.length;
+            sizes[c] = (long) header.length + body.length;
         }
         Compact f = new Compact();
         f.begin();

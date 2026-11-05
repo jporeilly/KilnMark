@@ -367,8 +367,8 @@ class SafetyTest {
         assertNull(Regexes.find(catastrophic, "a".repeat(40)), "gives up instead of running for ever");
         assertTrue(System.nanoTime() - start < 2_000_000_000L, "and quickly");
         assertNull(Regexes.find(Pattern.compile("x"), "x".repeat(Regexes.MAX_VALUE + 1)), "too long to match");
-        assertEquals(Boolean.TRUE, Regexes.find(Pattern.compile("^a+$"), "aaa"));
-        assertEquals(Boolean.FALSE, Regexes.find(Pattern.compile("^a+$"), "aab"));
+        assertEquals(true, Regexes.find(Pattern.compile("^a+$"), "aaa"));
+        assertEquals(false, Regexes.find(Pattern.compile("^a+$"), "aab"));
     }
 
     @Test

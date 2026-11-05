@@ -60,7 +60,7 @@ public final class DocSlugs {
 
     private static boolean jsSpace(char c) {
         return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\u000B' || c == '\f' || c == '\u00A0'
-            || c == '\uFEFF' || c == '\u1680' || c >= '\u2000' && c <= '\u200A' || c == '\u2028' || c == '\u2029'
+            || c == '\uFEFF' || c == '\u1680' || (c >= '\u2000' && c <= '\u200A') || c == '\u2028' || c == '\u2029'
             || c == '\u202F' || c == '\u205F' || c == '\u3000';
     }
 }

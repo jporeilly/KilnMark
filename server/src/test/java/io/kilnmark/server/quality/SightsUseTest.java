@@ -70,7 +70,7 @@ class SightsUseTest {
         while (m.find()) {
             int open = s.indexOf('{', m.end());
             int semi = s.indexOf(';', m.end());
-            if (open < 0 || semi >= 0 && semi < open) {
+            if (open < 0 || (semi >= 0 && semi < open)) {
                 continue; // abstract, or a field initialiser
             }
             int depth = 0;

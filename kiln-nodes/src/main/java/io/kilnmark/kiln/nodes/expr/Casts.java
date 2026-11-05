@@ -167,7 +167,7 @@ final class Casts {
     }
 
     private static long floatToLong(double d, int pos) throws ExprException {
-        if (Double.isNaN(d) || Double.isInfinite(d) || d >= 9.223372036854775807E18 || d < -9.223372036854775808E18) {
+        if (Double.isNaN(d) || Double.isInfinite(d) || d >= 0x1p63 || d < -0x1p63) {
             throw new ExprException("cannot turn a floating-point value into int64: it is not a number or too large", pos);
         }
         return (long) (d < 0 ? Math.ceil(d - 0.5) : Math.floor(d + 0.5));

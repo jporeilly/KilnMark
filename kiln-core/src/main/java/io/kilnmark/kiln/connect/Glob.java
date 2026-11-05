@@ -38,7 +38,7 @@ final class Glob {
             char lo = Character.toLowerCase(x);
             char up = Character.toUpperCase(x);
             for (int i = 0; i < from.length; i++) {
-                if (lo >= from[i] && lo <= to[i] || up >= from[i] && up <= to[i]) {
+                if ((lo >= from[i] && lo <= to[i]) || (up >= from[i] && up <= to[i])) {
                     return true;
                 }
             }

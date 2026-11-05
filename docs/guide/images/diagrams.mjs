@@ -532,3 +532,24 @@ function svg(name, height, title, sub, body) {
     foot(y3 + 128, "gear", "A for-each node gives each item's run the whole timeout; an item stopped for it counts as failed.");
   svg("flow-timeout", 482, "What a node's timeout does", "On run-pipeline, for-each and sql nodes: the time counts only while the work runs", b);
 }
+
+// ---- Which waiting run starts first ----
+{
+  const rows = [
+    ["4", "Run queued 4th", "priority: high", C.orange, "taken 1st"],
+    ["2", "Run queued 2nd", "priority: normal", C.blue, "taken 2nd"],
+    ["3", "Run queued 3rd", "priority: normal", C.blue, "taken 3rd"],
+    ["1", "Run queued 1st", "priority: low", C.axis, "taken 4th"],
+  ];
+  const top = 106, step = 66, cy = top + (3 * step + 56) / 2;
+  let b = lane(76, 4 * step + 22, "Waiting for a worker", C.quiet);
+  rows.forEach(([n, title, sub, color, taken], i) => {
+    const y = top + i * step;
+    b += card(40, y, 290, { n, color, title, sub });
+    b += arrow([[330, y + 28], [420, y + 28], [420, cy], [500, cy]], color, { noHead: i !== 0 });
+    b += label(374, y + 20, taken, color === C.axis ? C.quiet : color);
+  });
+  b += card(502, cy - 28, 218, { icon: "gear", color: C.green, strong: true, title: "A free worker", sub: "takes them in this order" });
+  b += foot(4 * step + 116, "shield", "Priority never passes a source's limit, a flow's max_parallel or a for-each node's.");
+  svg("flow-priority", 4 * step + 166, "Which waiting run starts first", "Highest priority first; of the same priority, the one queued first", b);
+}

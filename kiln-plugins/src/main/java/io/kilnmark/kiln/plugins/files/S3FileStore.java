@@ -220,7 +220,7 @@ public final class S3FileStore implements FileStore {
     /** One object, by a HEAD request; only within the prefix, as the listing. */
     @Override
     public Entry entry(String key) throws IOException {
-        if (settings.prefix() != null && !key.startsWith(settings.prefix()) || key.endsWith("/")) {
+        if ((settings.prefix() != null && !key.startsWith(settings.prefix())) || key.endsWith("/")) {
             throw new IOException("There is no object " + key + " in this source: it is outside its prefix");
         }
         // Keys are read only in plain form: an empty, "." or ".." part is a second spelling of a path
@@ -427,7 +427,7 @@ public final class S3FileStore implements FileStore {
     @Override
     public Upload create(String key, boolean overwrite) throws IOException {
         if (key == null || key.isBlank() || key.endsWith("/")
-            || settings.prefix() != null && !key.startsWith(settings.prefix())) {
+            || (settings.prefix() != null && !key.startsWith(settings.prefix()))) {
             throw new IOException("Refusing to write '" + key + "': it is outside this source's prefix");
         }
         if (cancelled) {
@@ -452,8 +452,8 @@ public final class S3FileStore implements FileStore {
 
     /** {@link #explain}, with what writing needs when access is denied. */
     private IOException writeError(SdkException e, String key) {
-        if (e instanceof S3Exception s3e && (s3e.statusCode() == 403 || s3e.awsErrorDetails() != null
-            && "AccessDenied".equals(s3e.awsErrorDetails().errorCode()))) {
+        if (e instanceof S3Exception s3e && (s3e.statusCode() == 403 || (s3e.awsErrorDetails() != null
+            && "AccessDenied".equals(s3e.awsErrorDetails().errorCode())))) {
             return new IOException("Cannot write " + describe(key) + ": access denied: give the access key "
                 + "permission to write objects in the bucket '" + settings.bucket() + "' (s3:PutObject and "
                 + "s3:AbortMultipartUpload, and s3:GetObject to check whether the object exists)", e);

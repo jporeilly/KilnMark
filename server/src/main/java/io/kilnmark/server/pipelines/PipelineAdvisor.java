@@ -148,7 +148,7 @@ final class PipelineAdvisor {
             if (feeding == null || est == null || est.cols == null) {
                 continue;
             }
-            for (Suggestion c : candidates(plan, w, feeding, est, taken)) {
+            for (Suggestion c : candidates(w, feeding, est, taken)) {
                 Suggestion tried = tryOut(plan, trace, c, est, RULE_TYPES);
                 if (tried != null) {
                     found.add(tried);
@@ -193,7 +193,7 @@ final class PipelineAdvisor {
 
     // ---- Kilnmark's own candidates ----
 
-    private List<Suggestion> candidates(QualityPredictor.Plan plan, QualityPredictor.PlanNode w,
+    private List<Suggestion> candidates(QualityPredictor.PlanNode w,
                                         QualityPredictor.PlanEdge feeding, QualityPredictor.Est est, Set<String> taken) {
         List<Suggestion> out = new ArrayList<>();
         String from = ref(feeding.fromNode(), feeding.fromPort());

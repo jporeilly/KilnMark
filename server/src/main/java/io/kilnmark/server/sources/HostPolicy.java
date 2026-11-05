@@ -65,7 +65,7 @@ public final class HostPolicy {
         }
         for (String a : allowed) {
             String bare = a.startsWith("[") && a.endsWith("]") ? a.substring(1, a.length() - 1) : a;
-            if (bare.equals(h) || bare.startsWith("*.") && h.endsWith(bare.substring(1))) {
+            if (bare.equals(h) || (bare.startsWith("*.") && h.endsWith(bare.substring(1)))) {
                 return true;
             }
         }

@@ -84,7 +84,7 @@ public final class SmtpMailer {
                 : new InternetAddress(s.fromAddress(), s.fromName(), StandardCharsets.UTF_8.name()));
             m.setRecipient(Message.RecipientType.TO, new InternetAddress(to, true));
             m.setSubject(mail.subject(), StandardCharsets.UTF_8.name());
-            m.setSentDate(new Date());
+            m.setSentDate(Date.from(java.time.Instant.now()));
             m.setHeader("Auto-Submitted", "auto-generated");
             m.setHeader("X-Auto-Response-Suppress", "All");
             MimeBodyPart text = new MimeBodyPart();

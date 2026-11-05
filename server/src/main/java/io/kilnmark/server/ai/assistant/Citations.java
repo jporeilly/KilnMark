@@ -26,7 +26,11 @@ public final class Citations {
     public record Checked(String text, List<Integer> cited) {
     }
 
-    /** @param sent the section numbers that were in the prompt (1 to n) */
+    /**
+     * Checks the answer's citations against the sections that were sent.
+     *
+     * @param sent the section numbers that were in the prompt (1 to n)
+     */
     public static Checked check(String answer, int sent) {
         Set<Integer> cited = new LinkedHashSet<>();
         Matcher m = MARKER.matcher(answer);

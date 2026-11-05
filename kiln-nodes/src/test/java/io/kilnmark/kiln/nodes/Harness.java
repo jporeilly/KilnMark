@@ -141,6 +141,7 @@ final class Harness implements AutoCloseable {
     // ---- running ----
 
     /** Creates, runs and closes the node; collects outputs; checks the node freed all its memory. */
+    @SuppressWarnings("Finally") // a leak fails the test even when the node failed: that failure is kept, suppressed
     Harness run(NodeFactory factory, Map<String, Object> config) throws NodeException {
         assertEquals(List.of(), factory.check(config), "settings should be valid");
         Node node = factory.create(config);

@@ -65,3 +65,10 @@ priority. They build on ADR 0026 (flows) and ADR 0040 (parallel runs and limits)
 - Not decided here: waiting for another flow's run, waiting on a table's freshness from the
   catalogue, approval by a person, and running a flow from a flow. They wait for a customer who
   needs them.
+
+## Amendment (5 November 2026, building C5)
+
+`priority` is on `run-pipeline` and `for-each` nodes only, not `sql`: a sql node runs on its flow's
+own watcher and never waits in the job queue, so a priority there would order nothing. The claim
+orders by priority, then by when the job was queued (not when it is due), keeping ADR 0040's rule
+that a run waiting for a source's place keeps its turn. Awaiting the owner's confirmation.

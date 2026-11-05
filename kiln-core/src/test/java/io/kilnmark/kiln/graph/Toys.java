@@ -324,7 +324,7 @@ public final class Toys {
                 if (b == null) {
                     return false;
                 }
-                if (b.getVector(0).getAllocator() != context.allocator()) {
+                if (!b.getVector(0).getAllocator().equals(context.allocator())) {
                     foreignMemory.set(true);
                 }
                 if (sleepMillis > 0) {

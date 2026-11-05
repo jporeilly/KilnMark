@@ -95,7 +95,8 @@ public record FileTarget(String path, String format) {
 
     private static String printable(String s) {
         StringBuilder b = new StringBuilder();
-        for (char c : s.toCharArray()) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
             b.append(c < 0x20 || c == 0x7f ? String.format("\\u%04x", (int) c) : String.valueOf(c));
         }
         return b.toString();

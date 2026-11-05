@@ -59,7 +59,7 @@ public class ImportBatches {
         long id = db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.import_batch "
                 + "WHERE created_at < now() - make_interval(secs => ?)")) {
-                ps.setDouble(1, KEEP.toSeconds());
+                ps.setDouble(1, (double) KEEP.toSeconds());
                 ps.executeUpdate();
             }
             long batch;
@@ -187,7 +187,7 @@ public class ImportBatches {
             Views.ImportBatch head;
             try (PreparedStatement ps = c.prepareStatement("SELECT status, dry_run, test, scan, created_at, finished_at, "
                 + "updated_at < now() - make_interval(secs => ?) FROM kilnmark.import_batch WHERE id = ?")) {
-                ps.setDouble(1, SILENT_AFTER.toSeconds());
+                ps.setDouble(1, (double) SILENT_AFTER.toSeconds());
                 ps.setLong(2, id);
                 try (ResultSet rs = ps.executeQuery()) {
                     if (!rs.next()) {

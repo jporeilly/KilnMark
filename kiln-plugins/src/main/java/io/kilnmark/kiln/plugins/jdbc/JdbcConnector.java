@@ -90,8 +90,8 @@ public abstract class JdbcConnector implements Connector {
     /** A value as SQL Server reads it: without surrounding braces or quotes. */
     static String bareValue(String value) {
         String v = value == null ? "" : value.strip();
-        while (v.length() >= 2 && (v.startsWith("{") && v.endsWith("}") || v.startsWith("\"") && v.endsWith("\"")
-            || v.startsWith("'") && v.endsWith("'"))) {
+        while (v.length() >= 2 && ((v.startsWith("{") && v.endsWith("}")) || (v.startsWith("\"") && v.endsWith("\""))
+            || (v.startsWith("'") && v.endsWith("'")))) {
             v = v.substring(1, v.length() - 1).strip();
         }
         return v;
@@ -161,7 +161,7 @@ public abstract class JdbcConnector implements Connector {
         }
         boolean denied = DENIED_PROPERTIES.contains(n) || n.endsWith("file") || n.endsWith("path")
             || n.endsWith("factory") || n.endsWith("class") || n.endsWith("classname")
-            || n.equals("authentication") && !AUTHENTICATION_ALLOWED.contains(v);
+            || (n.equals("authentication") && !AUTHENTICATION_ALLOWED.contains(v));
         return denied ? "url: the property " + name + " makes the database driver use this server's own identity, "
             + "files or code, which a source may not do. Take it out of the URL, and give the source its own user "
             + "name and password" : null;
@@ -1017,7 +1017,7 @@ public abstract class JdbcConnector implements Connector {
      * @throws IllegalStateException for a database other than PostgreSQL
      */
     public NodeSpec queryReader(SourceConfig source, String sql, String label, long rowLimit, int batchSize) {
-        if (dialect() != SqlDialect.POSTGRESQL) {
+        if (!SqlDialect.POSTGRESQL.equals(dialect())) {
             throw new IllegalStateException("A query reads only from PostgreSQL sources for now");
         }
         Map<String, String> s = new HashMap<>();

@@ -236,7 +236,7 @@ public class PipelinePreviews {
     }
 
     /** One preview's work on its own thread: create the nodes, wait for the go-ahead, run them. */
-    private final class Job {
+    private static final class Job {
         final CompletableFuture<PipelineCompilerPort.Compilation> created = new CompletableFuture<>();
         /** The columns to mask, to run; null not to run. */
         final CompletableFuture<NodePreview.Hidden> go = new CompletableFuture<>();
@@ -264,7 +264,7 @@ public class PipelinePreviews {
         job.thread.start();
         handedOn.set(true);
         try {
-            PipelineCompilerPort.Compilation c = await(job, job.created, deadline, abandoned, waits);
+            PipelineCompilerPort.Compilation c = await(job.created, deadline, abandoned);
             if (!c.valid() || c.graph() == null) {
                 throw PreviewFailed.of(context.scrub("The preview could not start: " + problems(c.problems())));
             }
@@ -276,13 +276,13 @@ public class PipelinePreviews {
             } catch (NodePreview.Refused e) {
                 throw PipelineService.fail(Response.Status.FORBIDDEN, e.getMessage());
             } catch (RuntimeException e) {
-                checkStop(deadline, abandoned, waits); // out of time while looking: say so, not a server error
+                checkStop(deadline, abandoned); // out of time while looking: say so, not a server error
                 throw e;
             }
-            checkStop(deadline, abandoned, waits);
+            checkStop(deadline, abandoned);
             boolean marked = !viewer.mayUnmask() && hidden.values().stream().anyMatch(s -> !s.isEmpty());
             job.go.complete(masks);
-            NodePreview.Outcome o = await(job, job.done, deadline, abandoned, waits);
+            NodePreview.Outcome o = await(job.done, deadline, abandoned);
             RunResult result = o.result();
             if (result.status() != RunResult.Status.SUCCEEDED) {
                 String at = result.nodes().stream().filter(s -> s.outcome() == RunResult.Outcome.FAILED)
@@ -397,9 +397,9 @@ public class PipelinePreviews {
     }
 
     /** Waits for {@code f} until {@code deadline}, giving up when the request is closed. */
-    private <T> T await(Job job, CompletableFuture<T> f, long deadline, BooleanSupplier abandoned, List<String> waits) {
+    private <T> T await(CompletableFuture<T> f, long deadline, BooleanSupplier abandoned) {
         while (true) {
-            checkStop(deadline, abandoned, waits);
+            checkStop(deadline, abandoned);
             long left = Math.min(deadline - System.nanoTime(), TimeUnit.MILLISECONDS.toNanos(100));
             try {
                 return f.get(Math.max(1, left), TimeUnit.NANOSECONDS);
@@ -422,7 +422,7 @@ public class PipelinePreviews {
         }
     }
 
-    private static void checkStop(long deadline, BooleanSupplier abandoned, List<String> waits) {
+    private static void checkStop(long deadline, BooleanSupplier abandoned) {
         if (System.nanoTime() - deadline >= 0) {
             throw new Stop("timeout");
         }

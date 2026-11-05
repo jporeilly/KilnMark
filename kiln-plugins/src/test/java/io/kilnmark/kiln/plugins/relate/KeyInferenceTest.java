@@ -130,8 +130,8 @@ class KeyInferenceTest {
         assertEquals(Set.of("s.orders.CustomerID>s.Customer.ID", "s.refunds.billing_customer_id>s.Customer.ID"),
             Set.copyOf(found.stream().map(p -> p.from().assetName() + "." + p.from().field() + ">"
                 + p.to().assetName() + "." + p.to().field()).toList()), "a bare id refers to nothing");
-        Proposal plain = found.stream().filter(p -> p.from() == orders).findFirst().orElseThrow();
-        Proposal withPrefix = found.stream().filter(p -> p.from() == prefixed).findFirst().orElseThrow();
+        Proposal plain = found.stream().filter(p -> p.from().equals(orders)).findFirst().orElseThrow();
+        Proposal withPrefix = found.stream().filter(p -> p.from().equals(prefixed)).findFirst().orElseThrow();
         assertEquals("table name and id", plain.evidence().rule());
         assertEquals("table name and id, with a prefix", withPrefix.evidence().rule());
         assertTrue(plain.confidence() > withPrefix.confidence());
@@ -231,7 +231,7 @@ class KeyInferenceTest {
             sketches.put(t.ref(), sketch(LongStream.rangeClosed(1, 100)));
             many.add(t);
         }
-        long fromX = infer(many).proposals().stream().filter(p -> p.from() == from).count();
+        long fromX = infer(many).proposals().stream().filter(p -> p.from().equals(from)).count();
         assertEquals(3, fromX);
     }
 

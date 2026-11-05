@@ -245,7 +245,7 @@ public class ApiTokens {
     /** {@code t} with the expiry it really has: its own, or its creation plus the longest lifetime, whichever is sooner. */
     private Token limited(Token t) {
         Instant limited = expiry(t.createdBy(), t.createdAt(), t.expiresAt());
-        return limited == t.expiresAt() ? t : new Token(t.id(), t.name(), t.role(), t.unmask(), t.createdBy(),
+        return java.util.Objects.equals(limited, t.expiresAt()) ? t : new Token(t.id(), t.name(), t.role(), t.unmask(), t.createdBy(),
             t.createdAt(), limited, t.lastUsedAt(), t.revokedAt(), t.revokedReason(), t.unmaskRequestedBy(),
             t.unmaskApprovedBy());
     }

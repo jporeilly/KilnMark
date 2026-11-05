@@ -50,7 +50,7 @@ public final class Masking {
          * about one, can hold any column under any name.
          */
         public boolean anyHidden() {
-            return !data || !unmasked && !sensitive.isEmpty();
+            return !data || (!unmasked && !sensitive.isEmpty());
         }
     }
 
@@ -157,7 +157,7 @@ public final class Masking {
     /** The rule as {@code s} may see it; webhook addresses only for roles that may see data. */
     public static Rule rule(Rule r, Sight s) {
         JsonNode p = params(r, s);
-        if (s.data() && p == r.params()) {
+        if (s.data() && java.util.Objects.equals(p, r.params())) {
             return r;
         }
         return new Rule(r.id(), r.assetUrn(), r.field(), r.name(), r.type(), r.dimension(),

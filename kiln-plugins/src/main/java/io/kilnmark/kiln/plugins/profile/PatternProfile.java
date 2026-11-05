@@ -22,6 +22,7 @@ import org.apache.datasketches.hash.MurmurHash3;
  * real data: they are kept only when {@code keepValues} is on, and reported apart from the profile
  * (in the {@code SAMPLE} event), so they can be stored under the same controls as row samples.
  */
+@SuppressWarnings("EnumOrdinal") // counts per format in an array by ordinal: no map in the profiling loop
 final class PatternProfile {
 
     /** Shapes reported, with counts; the rest are counted together. */

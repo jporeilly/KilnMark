@@ -127,7 +127,7 @@ public final class ArrowIO {
         if (target == null) {
             throw new IllegalArgumentException("Expressions cannot write a column of type " + field.getType());
         }
-        Col c = col.type.equals(target) || target.kind() == Type.Kind.DECIMAL && col.type.kind() == Type.Kind.DECIMAL
+        Col c = col.type.equals(target) || (target.kind() == Type.Kind.DECIMAL && col.type.kind() == Type.Kind.DECIMAL)
             ? col : Casts.convert(col, target, 0);
         int n = c.rows;
         FieldVector v = field.createVector(allocator);

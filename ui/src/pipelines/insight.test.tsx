@@ -191,7 +191,7 @@ describe("a run's timeline", () => {
     expect(rowWords(clean)).toBe("Started at 15 ms, waiting for its first row, still running");
   });
 
-  test("drawn with words: an aria label, Slowest as a word, and a table", () => {
+  test("drawn with words: a summary, each row a button saying how it ran, Slowest as a word, and a table", () => {
     const html = renderToStaticMarkup(
       <RunTimeline
         detail={detail({
@@ -202,14 +202,19 @@ describe("a run's timeline", () => {
         clock={{ now: T0 + 2500, fetchedAt: T0 + 2000 }}
       />,
     );
-    expect(html).toContain('role="img"');
+    expect(html).toContain('class="visually-hidden">Timeline of');
     expect(html).toContain("the slowest node now is tidy");
+    expect(html).toContain("Choose a row for everything recorded about it.");
     expect(html).toContain(">Slowest<");
     expect(html).toContain("Show the timeline as a table");
     expect(html).toContain("Waiting for rows");
     const done = renderToStaticMarkup(<RunTimeline detail={detail()} />);
     expect(done).toContain("pl-tl-bar is-failed");
     expect(done).toContain(">Failed<");
+    // A row for the run itself, chosen at first, with its details below; each node's time at its bar's end.
+    expect(done).toMatch(/<button[^>]*aria-current="true"[^>]*>customer-copy<\/button>/);
+    expect(done).toContain(">Run of customer-copy</h3>");
+    expect(done).toContain('class="run-took"');
   });
 
   test("round ticks on the axis", () => {
@@ -353,7 +358,7 @@ describe("the critical path and the run at a glance", () => {
     expect(slowestNode(live)?.node).toBe("tidy");
   });
 
-  test("tiles, the path highlighted with a toggle, and quality markers in words", () => {
+  test("tiles, the path behind a toggle (off at first), and quality in words after each time", () => {
     const d = withEdges([
       ["customers", "tidy"],
       ["tidy", "clean"],
@@ -395,10 +400,11 @@ describe("the critical path and the run at a glance", () => {
     expect(html).toContain("Most nodes at once");
     expect(html).toContain("customers → tidy → clean, 99% of the run");
     expect(html).toContain("Show the critical path");
-    expect((html.match(/pl-tl-row is-critical/g) ?? []).length).toBe(3);
-    expect(html).toContain("the critical path is customers, tidy, clean");
-    expect(html).toContain(">Quarantined 229<");
-    expect(html).toContain(">Quality 99% (Good)<");
+    // Off at first: the chart stays calm until someone asks for the path.
+    expect(html).not.toContain("pl-tl-row is-critical");
+    expect(html).not.toContain("the critical path is");
+    expect(html).toContain("> · Quarantined 229<");
+    expect(html).toContain("> · Quality 99% (Good)<");
     expect(qualityMark(d.quality[0])).toEqual({ text: "Quarantined 229", tone: "orange" });
     expect(qualityMark(undefined)).toBeNull();
   });

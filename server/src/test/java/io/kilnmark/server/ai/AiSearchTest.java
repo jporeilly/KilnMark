@@ -463,13 +463,12 @@ class AiSearchTest {
         route("embed", "s-embed-gone");
         waitForBackground();
 
-        long start = System.currentTimeMillis();
         String note = as(viewer).queryParam("q", "buyers").get("/api/v1/search").then().statusCode(200)
             .body("mode", equalTo("keyword")).extract().path("note");
         assertTrue(note.contains("An admin can see why under AI usage"), note);
         assertFalse(note.contains("127.0.0.1") || note.contains("Cannot reach") || note.contains("fake-embed"), note);
         // The model failed moments ago, so the next search does not wait for it again.
-        start = System.currentTimeMillis();
+        long start = System.currentTimeMillis();
         as(viewer).queryParam("q", "buyers").get("/api/v1/search").then().statusCode(200).body("mode", equalTo("keyword"));
         assertTrue(System.currentTimeMillis() - start < 1500, "skipped the model that is down");
 
