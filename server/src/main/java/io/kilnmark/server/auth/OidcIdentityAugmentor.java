@@ -79,6 +79,33 @@ public class OidcIdentityAugmentor implements SecurityIdentityAugmentor {
         return PREFIX + shown + (sub != null && !sub.equals(name) ? " (" + clean(sub) + ")" : "");
     }
 
+    /**
+     * The name the screen greets a provider sign-in by: the person's name as the provider gives it
+     * ({@code name}, or {@code given_name} and {@code family_name}), else their user name or email.
+     * Only for showing to the person themself: the audit log, usage records and "created by" columns
+     * keep {@link #actorName}, which no chosen name can imitate.
+     */
+    public static String displayName(JsonWebToken token) {
+        String shown = text(token, "name");
+        if (shown.isEmpty()) {
+            shown = (text(token, "given_name") + " " + text(token, "family_name")).strip();
+        }
+        if (shown.isEmpty()) {
+            shown = text(token, "preferred_username");
+        }
+        if (shown.isEmpty()) {
+            shown = text(token, "email");
+        }
+        return shown.isEmpty() ? clean(token.getSubject()) : shown;
+    }
+
+    /** A claim as text, cleaned; empty when it is missing or not text. */
+    private static String text(JsonWebToken token, String claim) {
+        Object v = token.getClaim(claim);
+        String s = v instanceof String str ? str : v instanceof jakarta.json.JsonString js ? js.getString() : null;
+        return clean(s);
+    }
+
     private static String clean(String s) {
         // control, format (bidi, zero-width) and unassigned characters: none may make one name look like another
         String c = s == null ? "" : s.replaceAll("[\\p{C}\\p{Zl}\\p{Zp}]", "?").strip();

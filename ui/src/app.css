@@ -2279,6 +2279,13 @@ a.km-stat--link:hover {
   margin: 4px 8px 6px;
 }
 
+/* The sso: name Kilnmark records them by, under the name it greets them by. */
+.km-popover-recorded {
+  display: block;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .km-popover-row {
   padding: 4px 8px 8px;
   border-bottom: 1px solid var(--km-divider);

@@ -86,6 +86,7 @@ export function UserMenu({ me, extra }: { me: Me; extra?: ReactNode }) {
     if (returnFocus) button.current?.focus();
   }, []);
   useDismiss(open, panel, button, close);
+  const shown = me.displayName || me.name;
   return (
     <div className="km-popover-wrap who">
       <button
@@ -97,19 +98,24 @@ export function UserMenu({ me, extra }: { me: Me; extra?: ReactNode }) {
         onClick={() => setOpen(!open)}
       >
         <span className="avatar" aria-hidden="true">
-          {initials(me.name)}
+          {initials(shown)}
         </span>
         <span className="user-name">
           {me.signInRequired ? <span className="visually-hidden">Signed in as </span> : null}
-          <strong>{me.name}</strong> <span className="user-role">· {me.role}</span>
+          <strong>{shown}</strong> <span className="user-role">· {me.role}</span>
         </span>
         <Icon name="chevron-down" size={16} />
       </button>
       {open && (
         <div ref={panel} id={`${id}-menu`} className="km-popover km-popover--menu" role="group" aria-label="Your account">
           <p className="km-popover-who">
-            <strong>{me.name}</strong>
+            <strong>{shown}</strong>
             <span className="muted"> · {me.role}</span>
+            {shown !== me.name && (
+              <span className="muted km-popover-recorded" title="The name Kilnmark records your changes under">
+                {me.name}
+              </span>
+            )}
           </p>
           <div className="km-popover-row">
             <ThemeQuickSwitch />
