@@ -13,6 +13,7 @@ import io.kilnmark.server.pipelines.PipelineService;
 import io.kilnmark.server.pipelines.PipelineViews;
 import io.kilnmark.server.pipelines.PredictionViews;
 import io.quarkus.security.identity.SecurityIdentity;
+import io.smallrye.common.annotation.RunOnVirtualThread;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
@@ -47,6 +48,14 @@ public class PipelineResource {
     /** Who is looking: a failed run's messages may quote values from the data (see PipelineService). */
     @jakarta.inject.Inject
     io.kilnmark.server.quality.Sights sights;
+
+    /** Waiting for a run to end ({@code ?wait=}), with the cap and the limit on waits at once (ADR 0047). */
+    @jakarta.inject.Inject
+    RunWaits waits;
+
+    /** Request keys ({@code Idempotency-Key}): a retried start gives the run the first one started. */
+    @jakarta.inject.Inject
+    RunRequestKeys keys;
 
     public PipelineResource(PipelineService pipelines, SecurityIdentity identity) {
         this.pipelines = pipelines;
@@ -310,21 +319,54 @@ public class PipelineResource {
     @POST
     @Path("{name}/runs")
     @Consumes({MediaType.APPLICATION_JSON, MediaType.WILDCARD})
+    @Produces({MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN})
     @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RunOnVirtualThread
     @Operation(summary = "Run a pipeline", description = "Queues a run of one version (the latest when version is "
         + "left out) for a worker. The version is checked again first, since sources may have changed: one with "
-        + "problems, or one writing to a source that does not allow writing, is refused. Role: steward.")
+        + "problems, or one writing to a source that does not allow writing, is refused. With wait (whole seconds, "
+        + "at most kilnmark.api.max-wait, 15 minutes by default) the answer comes when the run has ended (200) or "
+        + "when the wait is up (202): read the run with wait to go on waiting. With an Idempotency-Key header (1 to "
+        + "200 printable characters), the same key from the same token or person for the same pipeline within 24 "
+        + "hours gives the run the first request started (200, with Idempotent-Replayed: true) instead of "
+        + "another, so a retry never runs the work twice. A request that could not start a run keeps no key. With "
+        + "Accept: text/plain the run comes as name: value lines (id, kind, name, status, ended, page, message). "
+        + "Role: steward.")
     @APIResponses({
-        @APIResponse(responseCode = "202", description = "Queued; the body is the run, and Location its address"),
+        @APIResponse(responseCode = "200", description = "The run ended within the wait, or the key had started it; "
+            + "the body is the run, and Location its address"),
+        @APIResponse(responseCode = "202", description = "Queued (and, with wait, still going when the wait was "
+            + "up); the body is the run, and Location its address"),
+        @APIResponse(responseCode = "400", description = "A wait that is not a whole number of seconds, or a key "
+            + "that is not 1 to 200 printable characters"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "403", description = "Not a steward"),
         @APIResponse(responseCode = "404", description = "No such pipeline or version"),
-        @APIResponse(responseCode = "409", description = "The version has problems that stop it running")})
-    public Response run(@PathParam("name") String name, PipelineViews.RunRequest body) {
-        AccessRole role = AccessRole.highest(identity::hasRole);
-        PipelineViews.RunSummary run = pipelines.queueRun(name, body == null ? null : body.version(),
-            body == null || body.parameters() == null ? Map.of() : body.parameters(), who(), role);
-        return Response.accepted(run).location(URI.create("/api/v1/pipeline-runs/" + run.id())).build();
+        @APIResponse(responseCode = "409", description = "The version has problems that stop it running, or a run "
+            + "is already queued or running"),
+        @APIResponse(responseCode = "422", description = "The key started a run of another pipeline or flow in the "
+            + "last 24 hours"),
+        @APIResponse(responseCode = "503", description = "With wait: as many requests as allowed are waiting; ask "
+            + "again after Retry-After seconds. No run was started")})
+    public Response run(@PathParam("name") String name, @QueryParam("wait") String wait,
+                        @HeaderParam(RunWaits.KEY_HEADER) String key, PipelineViews.RunRequest body,
+                        @jakarta.ws.rs.core.Context jakarta.ws.rs.core.HttpHeaders headers,
+                        @jakarta.ws.rs.core.Context io.vertx.core.http.HttpServerRequest request) {
+        java.time.Duration waitFor = waits.parse(wait);
+        String checkedKey = RunRequestKeys.check(key);
+        try (RunWaits.Place _ = waits.enter(waitFor)) {
+            AccessRole role = AccessRole.highest(identity::hasRole);
+            java.util.function.LongSupplier queue = () -> pipelines.queueRun(name, body == null ? null : body.version(),
+                body == null || body.parameters() == null ? Map.of() : body.parameters(), who(), role).id();
+            RunRequestKeys.Started started = checkedKey == null ? new RunRequestKeys.Started(queue.getAsLong(), false)
+                : keys.start(RunRequestKeys.caller(identity), checkedKey, "pipeline", name, queue);
+            long id = started.runId();
+            waits.until(() -> RunWaits.endedOrGone(pipelines.runStatus(id)), waitFor, RunWaits.gone(request));
+            PipelineViews.RunSummary run = pipelines.runSummary(id, sights);
+            return RunWaits.started(run, RunWaits.plain(headers)
+                ? RunWaits.text("pipeline", id, run.pipeline(), run.status(), run.error()) : null,
+                run.status(), started.repeated(), URI.create("/api/v1/pipeline-runs/" + id));
+        }
     }
 
     @GET

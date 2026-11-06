@@ -1,6 +1,8 @@
 package io.kilnmark.server.api;
 
 import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.media.Content;
+import org.eclipse.microprofile.openapi.annotations.media.Schema;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
 
@@ -8,13 +10,16 @@ import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.flows.FlowService;
 import io.kilnmark.server.flows.FlowViews;
 import io.quarkus.security.identity.SecurityIdentity;
+import io.smallrye.common.annotation.RunOnVirtualThread;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
 
 /** One flow run with each of its nodes; and cancelling it. */
 @Path("/api/v1/flow-runs")
@@ -29,6 +34,10 @@ public class FlowRunResource {
     @jakarta.inject.Inject
     io.kilnmark.server.quality.Sights sights;
 
+    /** Waiting for a run to end ({@code ?wait=}), with the cap and the limit on waits at once (ADR 0047). */
+    @jakarta.inject.Inject
+    RunWaits waits;
+
     public FlowRunResource(FlowService flows, SecurityIdentity identity) {
         this.flows = flows;
         this.identity = identity;
@@ -36,6 +45,8 @@ public class FlowRunResource {
 
     @GET
     @Path("{id}")
+    @Produces({MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN})
+    @RunOnVirtualThread
     @Operation(summary = "A flow run", description = "The run's status, timings, the parameter values it started with "
         + "and, for every node of its version in order: its status (pending until it starts, then running, "
         + "succeeded, failed, cancelled or skipped), when it started and ended, its message, what it reported, and "
@@ -44,13 +55,37 @@ public class FlowRunResource {
         + "could not be queued) and pipeline run with its times. Messages are in Kilnmark's words, never a "
         + "pipeline's error: the pipeline run's own page shows that to those who may see it. Viewers do not see "
         + "the values the run started with, nor messages quoting them, nor items that came from those values, "
-        + "which can hold server variables. Role: viewer.")
+        + "which can hold server variables. With wait (whole seconds, at most kilnmark.api.max-wait, 15 minutes by "
+        + "default) the answer comes when the run has ended or when the wait is up, whichever is first; the status "
+        + "says which. With Accept: text/plain the run comes as name: value lines (id, kind, name, status, ended, "
+        + "page, message). Role: viewer.")
     @APIResponses({
-        @APIResponse(responseCode = "200", description = "The run"),
+        @APIResponse(responseCode = "200", description = "The run", content = @Content(
+            mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = FlowViews.RunDetail.class))),
+        @APIResponse(responseCode = "400", description = "A wait that is not a whole number of seconds"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
-        @APIResponse(responseCode = "404", description = "No such run")})
-    public FlowViews.RunDetail get(@PathParam("id") long id) {
-        return flows.runDetail(id, sights.data());
+        @APIResponse(responseCode = "404", description = "No such run"),
+        @APIResponse(responseCode = "503", description = "With wait, on a run still going: as many requests as "
+            + "allowed are waiting; ask again after Retry-After seconds")})
+    public Response get(@PathParam("id") long id, @QueryParam("wait") String wait,
+                        @jakarta.ws.rs.core.Context jakarta.ws.rs.core.HttpHeaders headers,
+                        @jakarta.ws.rs.core.Context io.vertx.core.http.HttpServerRequest request) {
+        java.time.Duration waitFor = waits.parse(wait);
+        if (!RunWaits.endedOrGone(waitFor.isZero() ? null : status(id))) {
+            try (RunWaits.Place _ = waits.enter(waitFor)) {
+                waits.until(() -> RunWaits.endedOrGone(status(id)), waitFor, RunWaits.gone(request));
+            }
+        }
+        if (RunWaits.plain(headers)) {
+            FlowViews.RunSummary run = flows.runView(id, sights.data());
+            return RunWaits.read(null, RunWaits.text("flow", id, run.flow(), run.status(), run.error()));
+        }
+        return RunWaits.read(flows.runDetail(id, sights.data()), null);
+    }
+
+    /** The run's status now, or null when there is no such run. */
+    private String status(long id) {
+        return flows.run(id).map(io.kilnmark.server.flows.FlowStore.Run::status).orElse(null);
     }
 
     @POST

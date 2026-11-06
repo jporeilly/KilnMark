@@ -14,6 +14,7 @@ import io.kilnmark.server.flows.FlowStore;
 import io.kilnmark.server.flows.FlowViews;
 import io.kilnmark.server.pipelines.PipelineService;
 import io.quarkus.security.identity.SecurityIdentity;
+import io.smallrye.common.annotation.RunOnVirtualThread;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
@@ -44,6 +45,14 @@ public class FlowResource {
     /** Who is saving: only a caller who may see unmasked values saves a flow with a sql node. */
     @jakarta.inject.Inject
     io.kilnmark.server.quality.Sights sights;
+
+    /** Waiting for a run to end ({@code ?wait=}), with the cap and the limit on waits at once (ADR 0047). */
+    @jakarta.inject.Inject
+    RunWaits waits;
+
+    /** Request keys ({@code Idempotency-Key}): a retried start gives the run the first one started. */
+    @jakarta.inject.Inject
+    RunRequestKeys keys;
 
     public FlowResource(FlowService flows, SecurityIdentity identity) {
         this.flows = flows;
@@ -181,25 +190,57 @@ public class FlowResource {
     @POST
     @Path("{name}/runs")
     @Consumes({MediaType.APPLICATION_JSON, MediaType.WILDCARD})
+    @Produces({MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN})
     @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RunOnVirtualThread
     @Operation(summary = "Run a flow", description = "Queues a run of one version (the latest when version is left "
         + "out) with values for its parameters (the others take their defaults; one with no default must be given). "
         + "The version is checked again first, since pipelines may have changed: one with problems is refused, and "
         + "so is a second run while one is queued or running. The pipelines it runs run as you, with your role. "
-        + "Role: steward.")
+        + "With wait (whole seconds, at most kilnmark.api.max-wait, 15 minutes by default) the answer comes when "
+        + "the run has ended (200) or when the wait is up (202): read the run with wait to go on waiting. With an "
+        + "Idempotency-Key header (1 to 200 printable characters), the same key from the same token or person for "
+        + "the same flow within 24 hours gives the run the first request started (200, with Idempotent-Replayed: "
+        + "true) instead of another, so a retry never runs the work twice. A request that could not start a run "
+        + "keeps no key. With Accept: text/plain the run comes as name: value lines (id, kind, name, status, "
+        + "ended, page, message). Role: steward.")
     @APIResponses({
-        @APIResponse(responseCode = "202", description = "Queued; the body is the run, and Location its address"),
+        @APIResponse(responseCode = "200", description = "The run ended within the wait, or the key had started it; "
+            + "the body is the run, and Location its address"),
+        @APIResponse(responseCode = "202", description = "Queued (and, with wait, still going when the wait was "
+            + "up); the body is the run, and Location its address"),
         @APIResponse(responseCode = "400", description = "A parameter it does not declare, a value of the wrong "
-            + "kind, or a parameter with no default left out"),
+            + "kind, a parameter with no default left out, a wait that is not a whole number of seconds, or a key "
+            + "that is not 1 to 200 printable characters"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "403", description = "Not a steward"),
         @APIResponse(responseCode = "404", description = "No such flow or version"),
         @APIResponse(responseCode = "409", description = "The version has problems that stop it running, or a run "
-            + "is already queued or running")})
-    public Response run(@PathParam("name") String name, FlowViews.RunRequest body) {
-        FlowViews.RunSummary run = flows.queueRunView(name, body == null ? null : body.version(),
-            body == null || body.parameters() == null ? Map.of() : body.parameters(), who(), role());
-        return Response.accepted(run).location(URI.create("/api/v1/flow-runs/" + run.id())).build();
+            + "is already queued or running"),
+        @APIResponse(responseCode = "422", description = "The key started a run of another pipeline or flow in the "
+            + "last 24 hours"),
+        @APIResponse(responseCode = "503", description = "With wait: as many requests as allowed are waiting; ask "
+            + "again after Retry-After seconds. No run was started")})
+    public Response run(@PathParam("name") String name, @QueryParam("wait") String wait,
+                        @HeaderParam(RunWaits.KEY_HEADER) String key, FlowViews.RunRequest body,
+                        @jakarta.ws.rs.core.Context jakarta.ws.rs.core.HttpHeaders headers,
+                        @jakarta.ws.rs.core.Context io.vertx.core.http.HttpServerRequest request) {
+        java.time.Duration waitFor = waits.parse(wait);
+        String checkedKey = RunRequestKeys.check(key);
+        try (RunWaits.Place _ = waits.enter(waitFor)) {
+            AccessRole role = role();
+            java.util.function.LongSupplier queue = () -> flows.queueRun(name, body == null ? null : body.version(),
+                body == null || body.parameters() == null ? Map.of() : body.parameters(), who(), role).id();
+            RunRequestKeys.Started started = checkedKey == null ? new RunRequestKeys.Started(queue.getAsLong(), false)
+                : keys.start(RunRequestKeys.caller(identity), checkedKey, "flow", name, queue);
+            long id = started.runId();
+            waits.until(() -> RunWaits.endedOrGone(flows.run(id).map(FlowStore.Run::status).orElse(null)), waitFor,
+                RunWaits.gone(request));
+            FlowViews.RunSummary run = flows.runView(id, sights.data());
+            return RunWaits.started(run, RunWaits.plain(headers)
+                ? RunWaits.text("flow", id, run.flow(), run.status(), run.error()) : null,
+                run.status(), started.repeated(), URI.create("/api/v1/flow-runs/" + id));
+        }
     }
 
     @GET

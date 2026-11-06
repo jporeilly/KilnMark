@@ -722,10 +722,12 @@ public class FlowService {
         return view(cancel(id, by, role), true);
     }
 
-    /** Queues a run, as {@link #queueRun}, answering as the API shows runs. */
-    public FlowViews.RunSummary queueRunView(String name, Integer version, Map<String, Object> parameters, String by,
-                                             AccessRole role) {
-        return view(queueRun(name, version, parameters, by, role), true);
+    /**
+     * One run as the API lists runs; without {@code values} (viewers), the values it started with are
+     * left out. 404 when there is no such run.
+     */
+    public FlowViews.RunSummary runView(long id, boolean values) {
+        return view(store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No flow run " + id)), values);
     }
 
     private FlowStore.Flow flow(String name) {

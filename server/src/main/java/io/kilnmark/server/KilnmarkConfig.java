@@ -42,6 +42,9 @@ public interface KilnmarkConfig {
 
     Worker worker();
 
+    /** The API: how long a request may wait for a run to end, and how many may wait at once (ADR 0047). */
+    Api api();
+
     /** Settings for the {@code files} connector and Parquet reading. */
     Files files();
 
@@ -373,6 +376,20 @@ public interface KilnmarkConfig {
         /** On shutdown, how long running jobs may take to finish before they are stopped and requeued. */
         @WithDefault("30s")
         Duration shutdownTimeout();
+    }
+
+    /** The API role: requests that wait for a run to end (docs/guide/external-schedulers.md). */
+    interface Api {
+        /** The longest one request waits for a run to end; a longer {@code wait} is cut to this. */
+        @WithDefault("15m")
+        Duration maxWait();
+
+        /**
+         * Requests that may wait for a run at the same time, on each process with the api role. One
+         * more is refused with 503 and Retry-After, so waiting schedulers cannot crowd out the API.
+         */
+        @WithDefault("100")
+        int maxWaiting();
     }
 
     interface Files {

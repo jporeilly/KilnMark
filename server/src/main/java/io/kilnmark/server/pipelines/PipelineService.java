@@ -696,6 +696,21 @@ public class PipelineService {
         return runs.stream().map(r -> summary(r, sights)).toList();
     }
 
+    /**
+     * A run's status now, or null when there is no such run: one row read, for a request that waits
+     * for the run to end (ADR 0047).
+     */
+    public String runStatus(long id) {
+        return store.run(id).map(PipelineStore.Run::status).orElse(null);
+    }
+
+    /** One run as the API lists runs, its error as the caller may see it; 404 when there is no such run. */
+    public PipelineViews.RunSummary runSummary(long id, Sights sights) {
+        PipelineStore.Run r = store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No pipeline run " + id));
+        prepare(List.of(r), sights);
+        return summary(r, sights);
+    }
+
     public PipelineViews.RunDetail run(long id, Sights sights) {
         PipelineStore.Run r = store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No pipeline run " + id));
         String withheld = withheld(r, sights);
