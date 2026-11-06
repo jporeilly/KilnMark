@@ -5,7 +5,52 @@ details.
 
 ## Unreleased
 
+### What's new
+
+- **The Starter Pack**, for trials, demonstrations and training: an admin turns it on under
+  **Settings**, **Starter Pack**, and Kilnmark adds example data in a database of its own, every
+  sample ready to run in the Library and, where your settings allow it, five example people to sign
+  in as, one per role. A banner tells everyone while it is on. Turning it off takes all of it out
+  again. A new install can have it at once: `kilnmark.sh install --starter`. It is refused on an
+  install marked as production (`KILNMARK_PRODUCTION=true`).
+- **A writable files folder on every install**: `/srv/files` is now a volume Kilnmark can write
+  to, so file sources with **Allow writing** work out of the box. Put your own folder there with
+  `KILNMARK_FILES_DIR` in `config/.env`.
+
 ### Details
+
+- **Starter Pack** ([ADR 0051](docs/adr/0051-starter-pack.md)): `GET /api/v1/starter-pack`
+  (everyone; drives the banner), `GET /api/v1/starter-pack/details`, `POST /api/v1/starter-pack`
+  (`?force=true` on production, API only) and `DELETE /api/v1/starter-pack` with
+  `{"confirm": "DELETE"}` (admins). Turning it on adds the sources `starter-samples-db` (on
+  `kilnmark_samples`, Allow writing and Allow SQL on) and `starter-samples-files` (on
+  `/srv/files/starter-pack`), creates the sample tables, adds the samples and, with
+  `KILNMARK_STARTER=allowed`, the example people; each step's outcome comes back and shows on the
+  page. Turning it off removes the samples in the Library, those sources, the tables (the database
+  stays, empty), the pack's files and the people it marked as its own. Both are safe to repeat.
+- **A database of its own**: the release's compose runs a one-off, `samples-db`, at every start,
+  which makes or keeps the empty database `kilnmark_samples` and its login `kilnmark_samples` (its
+  password is `KILNMARK_SAMPLES_DB_PASSWORD`, made by the control script on install, up and
+  upgrade). That login can connect to its own database only; every other database on the server,
+  Kilnmark's included, is closed to everyone but its owner, again at every start, so a database a
+  restore makes is closed too. Kilnmark's backups hold its own database only. The server checks on
+  every connection that it is in `kilnmark_samples`, over TLS, as a login that is not a superuser.
+- **Example people through a narrow service account**: with `KILNMARK_STARTER=allowed` and the
+  bundled Keycloak, the control script sets `KILNMARK_KEYCLOAK_STARTER_SECRET` and `keycloak-setup`
+  makes the client `kilnmark-starter`, which may manage people and groups in the `kilnmark` realm
+  and nothing else; without the setting the secret is emptied and the client deleted. The five
+  people carry the attribute `kilnmark_starter_pack`, which only admins can set; their shared
+  password is shown once and kept nowhere.
+- **Guard rails**: the banner, the audit events `starter.added`, `starter.removed`,
+  `starter.people_added` and `starter.people_removed`, the access review's new
+  `example` column (kilnmark.com accounts, marked **Example account** on the page), and the new
+  setting `KILNMARK_PRODUCTION` (`kilnmark.production`, off by default).
+- **Control script**: `install --starter` (`-Starter`), which shows the example people's password
+  on the terminal only, never in `logs`; `up` adds secrets a newer version needs to `config/.env`
+  before starting. `install --auth` with other ports now also sets `KILNMARK_KEYCLOAK_URL` and
+  `KILNMARK_URL` to match them, so a second install's sign-in never goes to the first one's
+  Keycloak. The server image makes `/srv/files` its user's, and the
+  database image carries `kilnmark-samples-db.sh`.
 
 - **Quieter start and stop**: `kilnmark.sh` and `kilnmark.cmd` no longer show Podman's notice
   that it runs an external compose tool (they set `PODMAN_COMPOSE_WARNING_LOGS=false` for their

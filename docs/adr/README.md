@@ -51,3 +51,4 @@ Add a new record rather than editing an accepted one; mark the old one supersede
 | [0046](0046-scheduler.md) | One built-in scheduler for pipelines and flows | Accepted |
 | [0047](0047-external-schedulers.md) | External schedulers start runs and wait for them, with request keys and a run script | Accepted |
 | [0048](0048-deleting-a-flow.md) | Deleting a flow: its runs and schedules go, the pipeline runs it started stay | Accepted |
+| [0051](0051-starter-pack.md) | The Starter Pack: example data and people, turned on and off by an admin, in a database of its own | Accepted |

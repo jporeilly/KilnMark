@@ -195,8 +195,29 @@ them as `kilnmark-<version>-images.tar.gz`; `build` makes the same locally. Opti
 reaches it inside the stack), `KILNMARK_SOURCES_HOST_MAP` and `KILNMARK_VAR_<NAME>`, which sets the
 server variable `<name>` as text when the server starts, unless it is set already (see the guide's
 "Parameters and server variables"). Nothing is scanned until a source is added. For folder sources,
-uncomment the example volume and mount the customer's folder at `/srv/files`; there is no default
-folder. The AI profiles work as described in [AI models](#ai-models).
+`/srv/files` is the writable `files` volume, or the customer's own folder when `KILNMARK_FILES_DIR`
+names it. The AI profiles work as described in [AI models](#ai-models).
+
+**The Starter Pack** (ADR 0051; INSTALL.md, "Try Kilnmark with the Starter Pack"). The release's
+compose also runs `samples-db` at every start: a one-off in the `kilnmark-postgres` image that runs
+`kilnmark-samples-db.sh` as the database's superuser, making or keeping the empty database
+`kilnmark_samples` and its login, and closing every other database to everyone but its owner. The
+server turns the pack on and off itself (`StarterPack`, `/api/v1/starter-pack`). Its settings:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `KILNMARK_SAMPLES_DB_PASSWORD` (`kilnmark.samples-db.password`) | none | Password of the login `kilnmark_samples`, which can connect to the database `kilnmark_samples` only. The control script makes one; unset, `samples-db` makes nothing and the pack cannot be turned on |
+| `kilnmark.samples-db.url` (`KILNMARK_SAMPLES_DB_URL`) | `kilnmark_samples` on the server of Kilnmark's own database, with `sslmode=require` | Where the pack's database is. Whatever it says, the pack works only in a database called `kilnmark_samples`, over TLS, as a login that is not a superuser, with none of Kilnmark's tables there |
+| `kilnmark.samples-db.username` | `kilnmark_samples` | The pack's login |
+| `KILNMARK_PRODUCTION` (`kilnmark.production`) | `false` | `true` marks the install as production: turning the pack on is refused (409) unless an admin calls the API with `force=true`, and the control script will not make the service account's secret |
+| `KILNMARK_FILES_DIR` (compose only) | the `files` volume | The customer's own folder for `/srv/files`, writable by uid 1001. The pack writes in `/srv/files/starter-pack` only |
+| `KILNMARK_STARTER` (`kilnmark.starter.people`, compose passes it as `KILNMARK_STARTER_PEOPLE`) | unset | `allowed`: the pack may add and remove its five example people in the bundled Keycloak. The control script then sets `KILNMARK_KEYCLOAK_STARTER_SECRET`, and empties it otherwise |
+| `KILNMARK_KEYCLOAK_STARTER_SECRET` (`kilnmark.starter.keycloak.client-secret`, as `KILNMARK_STARTER_KEYCLOAK_CLIENT_SECRET`) | none | Secret of the Keycloak client `kilnmark-starter`, whose service account manages people and groups in the `kilnmark` realm only; `keycloak-setup` makes the client while it and `KILNMARK_STARTER=allowed` are set, and deletes it otherwise |
+| `kilnmark.starter.keycloak.client-id` | `kilnmark-starter` | That client |
+
+The isolation is tested against the real image (`SamplesDatabaseIsolationTest`, which needs
+`kilnmark-postgres:dev` built as CI builds it) and the service account against the Keycloak image
+compose pins (`StarterKeycloakTest`); both use Testcontainers.
 
 On a developer machine, the source checkout's `compose.yaml` already uses the project name
 `kilnmark`: try a release there with `KILNMARK_PROJECT=kmtry` and other ports (INSTALL.md, "The

@@ -53,27 +53,26 @@ A release is `kilnmark-<version>.tar.gz` (or `.zip`). It ships with
    - makes the install root (`/opt/kilnmark` or `C:\Kilnmark`; another with `--root` or `-Root`,
      a folder without spaces);
    - copies the release into it;
-   - writes `config/.env` with a new database password and admin token. Only your account can
-     read it, and nothing ships with a default. An existing `.env` is kept as it is;
+   - writes `config/.env` with a new database password, admin token and password for the
+     Starter Pack's database login (below). Only your account can read it, and nothing ships with
+     a default. An existing `.env` is kept as it is;
    - gets the images: it loads the offline file or pulls them, checking their signatures, or
      builds them with `--build`;
    - starts Kilnmark and waits until it answers.
 
-   With `--auth` (`-Auth`), install also turns on Keycloak with new secrets (below). To use other ports, set them first, for example
+   With `--auth` (`-Auth`), install also turns on Keycloak with new secrets (below). With
+   `--starter` (`-Starter`), it then turns the Starter Pack on, for a trial (below, "Try Kilnmark
+   with the Starter Pack"). To use other ports, set them first, for example
    `KILNMARK_PORT=9780 ./kilnmark.sh install`.
 4. **Open** http://localhost:8780 and sign in with the admin token: it is `KILNMARK_ADMIN_TOKEN` in
    `config/.env`. Under **API tokens**, make a permanent admin token for yourself and keep it safe.
 5. **Add a source** under **Sources**: nothing is scanned until you do.
-6. **To try the samples**, small pipelines that each show one idea, open the **Library** and choose
-   **Add samples**: they stay in the Library, apart from your own pipelines.
-   - **Add the starter pack** creates Kilnmark's sample tables in a database and schema you
-     pick, and adds every sample reading them. It needs a database source and a file source that
-     allow writing (an admin turns that on under **Sources**).
-   - Or pick your own sources for the placeholders the samples use (`crm-db`, `shop-db`,
-     `files`).
-
-   See [samples/README.md](samples/README.md). The samples are also in the release's `samples`
-   folder.
+6. **To try the samples**, small pipelines that each show one idea, an admin turns the
+   **Starter Pack** on under **Settings** (below, "Try Kilnmark with the Starter Pack"): every
+   sample is then in the **Library**, ready to run, apart from your own pipelines. Or, in the
+   **Library**, choose **Add samples** and pick your own sources for the placeholders the samples
+   use (`crm-db`, `shop-db`, `files`). See [samples/README.md](samples/README.md). The samples are
+   also in the release's `samples` folder.
 7. **Schedule a daily backup**: `kilnmark.sh backup` (`kilnmark.cmd backup`), from cron or Task
    Scheduler (below, "Back up and restore").
 
@@ -91,8 +90,8 @@ kilnmark/                  /opt/kilnmark or C:\Kilnmark
   logs/                    what each install, start, upgrade and backup said
 ```
 
-Kilnmark's data is in the compose project's volumes (`kilnmark_pgdata`, `kilnmark_keys`, and
-`kilnmark_keycloak-pgdata` with Keycloak), not in the root. Every long-running container restarts
+Kilnmark's data is in the compose project's volumes (`kilnmark_pgdata`, `kilnmark_keys`,
+`kilnmark_files`, and `kilnmark_keycloak-pgdata` with Keycloak), not in the root. Every long-running container restarts
 by itself after a reboot: on Linux with rootless Podman, prepare turns on lingering for the
 kilnmark account and install turns on its `podman-restart` service. On Linux, run each command
 below as that account: `sudo -iu kilnmark /opt/kilnmark/kilnmark.sh <command>`.
@@ -111,7 +110,7 @@ written `-Offline`, `-Root`, `-SkipVerify` and so on.
 | Command | What it does |
 | --- | --- |
 | `prepare` | Linux, once, with sudo: makes the kilnmark account and the install root (above) |
-| `up` | Starts Kilnmark (and Keycloak when `.env` turns on the `auth` profile), waits until it answers, and opens it in the browser |
+| `up` | Starts Kilnmark (and Keycloak when `.env` turns on the `auth` profile), waits until it answers, and opens it in the browser. First it adds to `.env` any secret this version needs that it lacks (such as `KILNMARK_SAMPLES_DB_PASSWORD`), and sets or empties the Starter Pack's Keycloak secret as `KILNMARK_STARTER` says |
 | `down` | Stops it. Every volume, so all data, is kept |
 | `restart [service]` | Restarts everything, or one service |
 | `status` | Version, containers, health, and the last backup |
@@ -121,7 +120,7 @@ written `-Offline`, `-Root`, `-SkipVerify` and so on.
 | `load-images FILE` | Checks and loads an offline images file |
 | `pull` | Pulls this version's images and checks their signatures |
 | `build` | Builds the images from the release's `containers` folder instead |
-| `backup [DIR]` | Backs up the database and the keys, into `backups` by default |
+| `backup [DIR]` | Backs up Kilnmark's own database and the keys, into `backups` by default (never `kilnmark_samples`, nor the files folder) |
 | `restore BACKUP --yes` | Puts Kilnmark back to a backup |
 | `upgrade ARCHIVE [--offline IMAGES]` | Checks the new release, backs up, puts it beside this one, and starts it. If the new version does not answer, the old one is current again, and the script says how to restore |
 | `uninstall [--purge]` | Stops Kilnmark. `--purge` also deletes its volumes and images, once you type `DELETE` |
@@ -345,9 +344,10 @@ first, then in `.env`.
 Each person sets up a one-time code (any authenticator app) on their first sign-in. Keycloak does
 not count setting it up as using it, so Kilnmark then asks them to sign in once more, with the code.
 
-For a demonstration, also set `KILNMARK_KEYCLOAK_DEMO_PASSWORD`: `keycloak-setup` then adds five
-example people, one per role, at `kilnmark.com` addresses (Documentation, "Signing in, roles and
-tokens"). Never set it where real data is.
+For a demonstration, the Starter Pack can add five example people (above, "Try Kilnmark with the
+Starter Pack"). Without it, setting `KILNMARK_KEYCLOAK_DEMO_PASSWORD` has `keycloak-setup` add the
+same five, at `kilnmark.com` addresses (Documentation, "Signing in, roles and tokens"); the pack
+leaves those alone. Never set either where real data is.
 
 On one machine, `http://localhost` works as it is: browsers treat localhost as secure, so
 Kilnmark's session cookie (sent over HTTPS only) still works there. Keycloak is published on this
@@ -361,11 +361,87 @@ Keycloak keeps compressed copies of its pages: after changing the theme in
 `containers/keycloak/themes`, recreate it
 (`podman compose --profile auth up -d --force-recreate keycloak`).
 
+### The files folder
+
+File sources read, and with **Allow writing** on write, the folder `/srv/files` inside Kilnmark's
+container (`KILNMARK_FILES_ROOTS`). Every install has one: the `files` volume (`kilnmark_files`),
+writable by Kilnmark. To use a folder of your own instead, such as a share, set its full path in
+`.env` and apply it with `kilnmark.sh up`:
+
+```
+KILNMARK_FILES_DIR=/srv/kilnmark-files
+```
+
+Kilnmark's user in the container (uid 1001) must be able to write there: with rootless Podman,
+`podman unshare chown 1001:1001 /srv/kilnmark-files`; with Docker, `sudo chown 1001:1001
+/srv/kilnmark-files`. Never edit `versions/<version>/compose.yaml`: upgrades replace it. In
+Kilnmark, add a source of kind **files** with path `/srv/files`, or a folder inside it.
+
+`kilnmark.sh backup` does not back the files folder up: back up your own folder, or the volume,
+as you back up other files.
+
+### Try Kilnmark with the Starter Pack
+
+The **Starter Pack** is for trials, demonstrations and training: example data, every sample ready
+to run and, where allowed, five example people to sign in as
+([ADR 0051](docs/adr/0051-starter-pack.md)). It is never for an install that holds real data.
+
+![What the Starter Pack adds: on Kilnmark's PostgreSQL server, Kilnmark's own database and the separate kilnmark_samples database, whose own login can open no other; the pack's folder in the files folder; and, in Keycloak, five example people managed through a service account that can manage people and groups only](docs/guide/images/starter-pack.svg)
+
+**Turn it on.** An admin opens **Settings**, **Starter Pack** and chooses **Turn on**. Kilnmark
+then, by itself:
+
+- adds a database source on `kilnmark_samples` and a files source on `/srv/files/starter-pack`,
+  both allowing writing;
+- creates the sample tables there (the `sample-tables` pipeline) and adds every sample to the
+  **Library**, reading them;
+- adds the five example people, when the people are managed here (below);
+- shows a banner to everyone: "Starter Pack: example data and accounts, not for production".
+
+The page shows each step and how it went. For a new trial install, `kilnmark.sh install --starter`
+(`kilnmark.cmd install -Starter`) does the same right after installing; add `--auth` (`-Auth`)
+for Keycloak and the example people.
+
+**Its database.** Every install has an empty database, `kilnmark_samples`, on Kilnmark's own
+PostgreSQL server, with a login of its own, `kilnmark_samples`, whose password is
+`KILNMARK_SAMPLES_DB_PASSWORD` in `.env` (the control script makes one on install, up and
+upgrade). That login can connect to `kilnmark_samples` only: not to Kilnmark's own database, which
+it cannot even open. The `samples-db` service makes or checks both at every start, then stops
+(`kilnmark.sh logs samples-db` says what it did). Kilnmark's backups hold Kilnmark's own database
+only: after a restore, turn the pack off and on again to recreate the samples.
+
+**The example people.** With the bundled Keycloak (`--auth`), set `KILNMARK_STARTER=allowed` in
+`.env` (install `--auth --starter` does) and run `kilnmark.sh up`. The control script then makes
+`KILNMARK_KEYCLOAK_STARTER_SECRET`, and Keycloak gets a service account, `kilnmark-starter`, that
+can manage people and groups in Kilnmark's realm and nothing else; Keycloak's own admin password
+never reaches Kilnmark. Turning the pack on then adds `vera.lane` (viewer), `sam.okafor`
+(steward), `dana.reyes` (designer), `priya.shah` (designer, sees sensitive values) and
+`alex.morgan` (admin), all `@kilnmark.com`, which receives no mail from here. They share one new
+password, which the page (or `install --starter`, on the terminal only, never in `logs`) shows
+**once**: Kilnmark keeps it nowhere. Each
+sets up a one-time code on first sign-in. Without the setting, the page says the people are not
+managed here, and no Keycloak credential reaches Kilnmark. Remove `KILNMARK_STARTER=allowed` and
+run `up` again to take the service account away.
+
+**Turn it off.** Under **Settings**, **Starter Pack**, choose **Turn off** and type `DELETE`.
+Kilnmark removes every sample in the Library, the pack's sources, the tables in `kilnmark_samples`
+(the database stays, empty), the files in `/srv/files/starter-pack` and the example people it
+added (only those it marked as its own: a real person with one of those addresses is never
+touched), and the banner goes. Nothing else changes. Both turning on and off are in the audit log,
+and the access review marks kilnmark.com accounts as example accounts.
+
+**On production.** Set `KILNMARK_PRODUCTION=true` in `.env` on an install that holds real data.
+The Starter Pack is then refused there, and the control script will not make the service
+account's secret. Through the API only, an admin can still force it
+(`POST /api/v1/starter-pack?force=true`), which the audit log records.
+
 ### Review who has access
 
 **Settings**, **Access review** lists every API token (role, whether it sees sensitive values,
 expiry, last use) and everyone who signs in with your identity provider, with the role of their last
 sign-in. **Download CSV** keeps it as evidence for your auditors; each download is in the audit log.
+Every kilnmark.com account that has signed in is marked **Example account** (the Starter Pack's
+people): there should be none on an install with real data.
 
 To limit how long tokens last, set `KILNMARK_TOKEN_MAX_LIFETIME` in `.env`, for example `90d`, and
 restart. New tokens must then expire within it, and **tokens already older than it stop working**:

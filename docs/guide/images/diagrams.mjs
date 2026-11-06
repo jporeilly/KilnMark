@@ -819,3 +819,27 @@ function svg(name, height, title, sub, body) {
     foot(y4 + 112, "book", "Every settings table in the reference is made from the catalogue the server uses, and the build checks it.");
   svg("component-families", y4 + 162, "The components a pipeline or flow is built from", "Connectors reach the data, nodes do the work, expressions and rules check it, flow nodes order it", b);
 }
+
+// ---- What the Starter Pack adds ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 216, y3 = 328;
+  const b =
+    lane(y1, 124, "Kilnmark's PostgreSQL server", C.navy) +
+    card(X[0], y1 + 30, W, { icon: "db", color: C.blue, strong: true, title: "kilnmark", sub: "Kilnmark's own; backed up" }) +
+    card(X[1], y1 + 30, W, { icon: "key", color: C.orange, title: "Login kilnmark_samples", sub: "its own password, in .env" }) +
+    card(X[2], y1 + 30, W, { icon: "db", color: C.orange, strong: true, title: "kilnmark_samples", sub: "the sample tables only" }) +
+    arrow([[X[1] + W, y1 + 58], [X[2] - 2, y1 + 58]], C.good) +
+    label((X[1] + W + X[2]) / 2, y1 + 100, "connects, over TLS", C.good) +
+    arrow([[X[1], y1 + 58], [X[0] + W + 2, y1 + 58]], C.bad, { dash: "4 3" }) +
+    label((X[0] + W + X[1]) / 2, y1 + 100, "cannot even connect", C.bad) +
+    lane(y2, 96, "The files folder", C.green) +
+    card(X[0], y2 + 30, W, { icon: "file", color: C.green, title: "/srv/files", sub: "a volume, or your own folder" }) +
+    card(X[1], y2 + 30, W + 236, { icon: "file", color: C.green, strong: true, title: "starter-pack/", sub: "the samples write here, and only here" }) +
+    lane(y3, 96, "Keycloak, where .env allows it", C.violet) +
+    card(X[0], y3 + 30, W, { icon: "shield", color: C.violet, title: "kilnmark-starter", sub: "people and groups only" }) +
+    card(X[1], y3 + 30, W + 236, { icon: "person", color: C.violet, strong: true, title: "Five example people", sub: "kilnmark.com, one per role, marked as the pack's" }) +
+    arrow([[X[0] + W, y3 + 58], [X[1] - 2, y3 + 58]], C.violet) +
+    foot(y3 + 112, "lock", "An admin turns it on and off under Settings; a banner shows while it is on. Backups hold kilnmark only.");
+  svg("starter-pack", y3 + 162, "What the Starter Pack adds", "Example data in a database of its own, files in a folder of its own, and example people where allowed", b);
+}

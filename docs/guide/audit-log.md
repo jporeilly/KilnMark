@@ -29,6 +29,10 @@ it (behind a proxy, as its forwarding settings say).
 | Schedule set (`schedule.set`) | A designer or admin added or changed a schedule ([Running pipelines and flows on a schedule](schedules.md)); the event is on `schedule <id>` | The pipeline or flow, the cron expression, the zone, the role its runs act as, and whether it is on. Never the values its runs start with |
 | Schedule paused (`schedule.paused`) | A schedule stopped because whoever set it no longer has its role: their token was revoked or expired, or a sign-in gave them less of a role ([Running pipelines and flows on a schedule](schedules.md#when-the-person-who-set-it-loses-the-role)). By the admin who revoked the token, the person signing in, or the server at the schedule's time | As for Schedule set, with why |
 | Schedule deleted (`schedule.deleted`) | A schedule was deleted, by itself or with its pipeline or flow | As for Schedule set, and `via: pipeline deleted` or `via: flow deleted` when its pipeline or flow was deleted |
+| Starter Pack turned on (`starter.added`) | An admin turned the Starter Pack on (example data, samples and, where allowed, example people; INSTALL.md, "Try Kilnmark with the Starter Pack") | How each step went, and whether it was forced on an install marked production |
+| Starter Pack turned off (`starter.removed`) | An admin turned the Starter Pack off, removing what it added | How each step went |
+| Example people added (`starter.people_added`) | The Starter Pack added its example people to Keycloak, or gave them a new password | Their addresses, and any address it left alone because someone else has it. Never the password |
+| Example people removed (`starter.people_removed`) | The Starter Pack removed the example people it had added | Their addresses |
 | Column marked sensitive (`mark.set`) | A column was marked | The column |
 | Sensitive mark cleared (`mark.cleared`) | A mark was cleared: the column's values are no longer masked | The column |
 | Source deleted (`source.deleted`) | A source and what was recorded about it were deleted | Its assets and runs, and whether it had marks (deleting it cleared them) |
