@@ -80,6 +80,12 @@ class RunListenerTest {
             notes.add(level + " " + node + ": " + text);
         }
 
+        @Override
+        public void nodeNote(String node, String text, Instant at) {
+            assertNotNull(at);
+            notes.add("own " + node + ": " + text);
+        }
+
         List<String> of(String node) {
             synchronized (calls) {
                 return calls.stream().filter(c -> c.startsWith(node + " ")).map(c -> c.substring(node.length() + 1))
@@ -117,6 +123,44 @@ class RunListenerTest {
         assertEquals(RunProgress.State.ENDED, end.node("gen").state());
         assertEquals(2, end.edges().size());
         assertEquals(2_000, end.edges().get(1).rows());
+    }
+
+    /** A pass-through node that reports writing to disk and says so in its own words. */
+    private static final class Spilling implements Node {
+        private final Pass pass = new Pass();
+
+        @Override
+        public String type() {
+            return "spilling";
+        }
+
+        @Override
+        public void init(io.kilnmark.kiln.NodeContext context) {
+            pass.init(context);
+        }
+
+        @Override
+        public boolean process(io.kilnmark.kiln.NodeContext context) throws io.kilnmark.kiln.NodeException {
+            boolean more = pass.process(context);
+            if (more) {
+                context.spilled(1_000);
+            } else {
+                context.note("Wrote some rows to disk.");
+            }
+            return more;
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void aNodeCountsWhatItWroteToDiskAndAddsItsOwnLine() throws Exception {
+        Heard heard = new Heard();
+        RunResult r = new KilnGraphRunner(64L << 20, 4, Duration.ofSeconds(30), Duration.ofMillis(50))
+            .run(line(new Generate(5, 100), new Spilling(), new Collect()), e -> { }, heard);
+        assertTrue(r.succeeded(), r.error());
+        assertEquals(5_000, r.node("pass").spilledBytes());
+        assertEquals(0, r.node("gen").spilledBytes());
+        assertEquals(List.of("own pass: Wrote some rows to disk."), heard.notes);
     }
 
     @Test

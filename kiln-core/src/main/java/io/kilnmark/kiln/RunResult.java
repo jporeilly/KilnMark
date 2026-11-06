@@ -50,11 +50,13 @@ public record RunResult(String pipeline, Status status, Instant startedAt, Insta
      * @param waitingForRowsNanos time it spent waiting for a batch on its inputs
      * @param heldUpNanos   time it spent waiting for room on its outputs: held up by the nodes after it
      *                      (back-pressure; a copy for several readers counts against the node writing)
+     * @param spilledBytes  bytes it wrote to disk because its rows did not fit in its memory limit (a sort
+     *                      or a join), as it reported them ({@link NodeContext#spilled}); 0 for none
      */
     public record NodeResult(String name, String type, long rowsOut, long peakMemoryBytes, String error,
                              long rowsIn, Map<String, Long> rowsInByPort, Map<String, Long> rowsOutByPort,
                              Outcome outcome, Instant startedAt, Instant firstRowAt, Instant lastRowAt,
-                             Instant finishedAt, long waitingForRowsNanos, long heldUpNanos) {
+                             Instant finishedAt, long waitingForRowsNanos, long heldUpNanos, long spilledBytes) {
 
         public NodeResult {
             rowsInByPort = copy(rowsInByPort);
@@ -62,12 +64,21 @@ public record RunResult(String pipeline, Status status, Instant startedAt, Insta
             outcome = error != null ? Outcome.FAILED : outcome != null ? outcome : Outcome.FINISHED;
         }
 
+        /** A node that wrote nothing to disk. */
+        public NodeResult(String name, String type, long rowsOut, long peakMemoryBytes, String error,
+                          long rowsIn, Map<String, Long> rowsInByPort, Map<String, Long> rowsOutByPort,
+                          Outcome outcome, Instant startedAt, Instant firstRowAt, Instant lastRowAt,
+                          Instant finishedAt, long waitingForRowsNanos, long heldUpNanos) {
+            this(name, type, rowsOut, peakMemoryBytes, error, rowsIn, rowsInByPort, rowsOutByPort, outcome, startedAt,
+                firstRowAt, lastRowAt, finishedAt, waitingForRowsNanos, heldUpNanos, 0);
+        }
+
         /** A node not timed. */
         public NodeResult(String name, String type, long rowsOut, long peakMemoryBytes, String error,
                           long rowsIn, Map<String, Long> rowsInByPort, Map<String, Long> rowsOutByPort,
                           Outcome outcome) {
             this(name, type, rowsOut, peakMemoryBytes, error, rowsIn, rowsInByPort, rowsOutByPort, outcome, null, null,
-                null, null, 0, 0);
+                null, null, 0, 0, 0);
         }
 
         /**

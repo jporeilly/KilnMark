@@ -65,4 +65,12 @@ public interface RunListener {
     default void note(Level level, String node, String text, Instant at) {
         note(level, node, text);
     }
+
+    /**
+     * A line a node added about its own work ({@code NodeContext.note}), such as how much a sort
+     * wrote to disk: Kilnmark's words, never values from the data. By default an {@code INFO} note.
+     */
+    default void nodeNote(String node, String text, Instant at) {
+        note(Level.INFO, node, text, at);
+    }
 }
