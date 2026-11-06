@@ -379,6 +379,36 @@ public interface Connector {
             .orElseThrow(() -> new ConnectorException("There is no table or file " + path + " in " + source.name()));
     }
 
+    // ------------------------------------------------------------------ Explore (ADR 0045)
+
+    /** Whether this connector can show a table's columns, keys and indexes ({@link #explore}). */
+    default boolean explores() {
+        return false;
+    }
+
+    /**
+     * One table or view of the source, by its path, with its columns, keys, indexes and the
+     * database's estimate of its rows, read live from the catalogue on a read-only connection.
+     * Never reads a row. {@code timeout} bounds the connection and each query; null for the
+     * driver's own.
+     *
+     * @throws ConnectorException when there is no such table, or the catalogue cannot be read
+     */
+    default TableDetail explore(SourceConfig source, String path, java.time.Duration timeout)
+        throws ConnectorException {
+        throw new ConnectorException("Explore shows the tables of database sources only");
+    }
+
+    /**
+     * The exact number of rows of a table or view, by its path, counted by the database on a
+     * read-only connection within {@code timeout}.
+     *
+     * @throws ConnectorException when there is no such table, or the count fails or takes too long
+     */
+    default long countRows(SourceConfig source, String path, java.time.Duration timeout) throws ConnectorException {
+        throw new ConnectorException("Explore counts the rows of database sources only");
+    }
+
     /**
      * The first {@code rows} rows of an asset (at most {@value Preview#MAX_ROWS}), read live with
      * {@link #reader} and a row limit, so every connector has a preview without writing one.

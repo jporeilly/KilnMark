@@ -345,6 +345,41 @@ export type ContainerList = {
   warnings: string[];
 };
 export type HistoryRun = { run: Run; attempts: number | null; jobError: string | null };
+
+/** One table as Explore shows it (ADR 0045): names and types only, never a value. */
+export type TableColumn = {
+  name: string;
+  position: number;
+  sourceType: string;
+  size: number | null;
+  scale: number | null;
+  nullable: boolean;
+  hasDefault: boolean;
+  generated: boolean;
+  /** How Kilnmark reads it (int32, text…), or null when not known. */
+  kind: string | null;
+};
+export type TableForeignKey = { name: string | null; table: string; columns: string[]; toTable: string; toColumns: string[] };
+export type TableIndex = {
+  name: string;
+  columns: string[];
+  unique: boolean;
+  primaryKey: boolean;
+  method: string | null;
+  /** It covers only the rows a condition picks; the condition itself is never shown. */
+  partial: boolean;
+};
+export type TableDetail = {
+  path: string;
+  kind: string;
+  columns: TableColumn[];
+  primaryKey: string[];
+  foreignKeys: TableForeignKey[];
+  referencedBy: TableForeignKey[];
+  indexes: TableIndex[];
+  estimatedRows: number | null;
+};
+export type RowCount = { asset: string; rows: number };
 export type Deleted = { name: string; assets: number; runs: number };
 
 export type ImportRow = {
@@ -638,6 +673,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify(form),
     }),
+  /** One table's columns, keys, indexes and estimated rows, read live (Explore). */
+  explore: (name: string, asset: string) =>
+    call<TableDetail>(`/api/v1/sources/${encodeURIComponent(name)}/explore?asset=${encodeURIComponent(asset)}`),
+  /** The exact number of rows of one table, counted by the database. */
+  countRows: (name: string, asset: string) =>
+    call<RowCount>(`/api/v1/sources/${encodeURIComponent(name)}/explore/count?asset=${encodeURIComponent(asset)}`),
   scan: (name: string) => call<Run>(`/api/v1/sources/${encodeURIComponent(name)}/scans`, { method: "POST" }),
   run: (id: number) => call<Run>(`/api/v1/runs/${id}`),
   search: (q: string) => call<{ query: string; hits: SearchHit[] }>(`/api/v1/search?q=${encodeURIComponent(q)}`),

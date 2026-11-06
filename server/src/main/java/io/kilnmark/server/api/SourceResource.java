@@ -234,6 +234,31 @@ public class SourceResource {
         return SourceService.noStore(sources.preview(sources.connector(s.kind()), config, asset, rows));
     }
 
+    /**
+     * One table or view of the saved source with its columns, keys, indexes and the database's
+     * estimate of its rows, read live (Explore, ADR 0045). Names and types only, never a value.
+     */
+    @GET
+    @Path("{name}/explore")
+    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    public Response explore(@PathParam("name") String name, @QueryParam("asset") String asset) {
+        Records.Source s = find(name);
+        SourceConfig config = sources.config(s);
+        sources.checkHosts(sources.connector(s.kind()), config);
+        return SourceService.noStore(sources.explore(sources.connector(s.kind()), config, asset));
+    }
+
+    /** The exact number of rows of one table of the saved source, counted by the database. */
+    @GET
+    @Path("{name}/explore/count")
+    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    public Response countRows(@PathParam("name") String name, @QueryParam("asset") String asset) {
+        Records.Source s = find(name);
+        SourceConfig config = sources.config(s);
+        sources.checkHosts(sources.connector(s.kind()), config);
+        return SourceService.noStore(sources.countRows(sources.connector(s.kind()), config, asset));
+    }
+
     /** The source's latest runs with their jobs' attempts and errors, newest first. */
     @GET
     @Path("{name}/history")

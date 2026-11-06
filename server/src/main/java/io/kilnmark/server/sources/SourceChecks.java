@@ -195,8 +195,9 @@ public class SourceChecks {
             if (cause instanceof ConnectorException ce) {
                 message = ce.getMessage();
             } else {
-                LOG.debugf(cause, "Check of %s failed", source.name());
-                message = "Kilnmark could not " + doing + ": " + cause;
+                // only the kind of failure: its text can be the database's, quoting a value (ADR 0045)
+                LOG.debugf("Check of %s failed: %s", source.name(), cause.getClass().getName());
+                message = "Kilnmark could not " + doing + " (" + cause.getClass().getSimpleName() + ").";
             }
             throw new CheckFailed(scrub(message, source.secret()), false);
         }

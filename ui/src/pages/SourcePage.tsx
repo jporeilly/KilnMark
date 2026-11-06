@@ -21,6 +21,7 @@ import { settingText } from "../components/settingKinds";
 import { Icon } from "../components/icons";
 import { Button, Card, DataTable, EmptyState, PageHeader } from "../components/ui";
 import { go, href } from "../router";
+import { SourceExplore } from "./SourceExplore";
 
 const COMMON = new Set(["description", "ai_egress", "include", "exclude", "allow_writing", "allow_sql", "max_runs"]);
 const AI = { local_only: "Local models only", allowed: "Any configured model", none: "No AI models" } as Record<
@@ -29,7 +30,17 @@ const AI = { local_only: "Local models only", allowed: "Any configured model", n
 >;
 
 /** One source: its settings (never its password), what it scans, its runs, and what a steward can do with it. */
-export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
+export function SourcePage({
+  name,
+  role,
+  schema = null,
+  table = null,
+}: {
+  name: string;
+  role: AccessRole;
+  schema?: string | null;
+  table?: string | null;
+}) {
   const [source, setSource] = useState<Source | null>(null);
   const [connector, setConnector] = useState<Connector | null>(null);
   const [history, setHistory] = useState<HistoryRun[]>([]);
@@ -240,6 +251,10 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
           </dl>
         </section>
 
+
+      {canChange && connector?.category === "databases" && (
+        <SourceExplore source={source.name} schema={schema} table={table} />
+      )}
 
       <section aria-labelledby="runs-h" className="panel">
         <h2 id="runs-h">Scans</h2>

@@ -17,12 +17,19 @@ details.
   that a source can be reached and holds the tables or files the flow needs, keeping no data, and
   fails at once, naming what is missing, if not. Its `missing` value can go in a notice.
   ([Checking a source before the work starts](docs/guide/flows.md#checking-a-source-before-the-work-starts))
+- **Explore a database source** ([Database tools](docs/guide/database-tools.md), ADR 0045). A
+  database source's page shows its schemas, the tables and views of one, and a table's columns,
+  keys (both ways), indexes and the database's estimate of its rows, read live; **Count exactly**
+  counts them now, and **Preview** shows the first rows, masked as everywhere. For stewards,
+  designers and admins; no default's text, index expression or database error text is shown, as
+  each can quote a value.
 - **Database tools are decided** ([ADR 0045](docs/adr/0045-database-tools.md),
   [design](docs/design/database-tools.md)): Explore a source's schemas, tables, columns, keys and
   indexes with a masked preview; generate `CREATE TABLE`, `ALTER`, `CREATE INDEX` and `DROP` in
   each database's dialect; connection settings on tabs; and operations that change a database,
   behind a per-source Allow changes switch, previewed, confirmed and audited, with a second
-  person's approval on production sources. Nothing is built yet; ADR 0045 amends ADR 0028.
+  person's approval on production sources. ADR 0045 amends ADR 0028. Explore is built (above);
+  the rest follows.
 
 ### Details
 
