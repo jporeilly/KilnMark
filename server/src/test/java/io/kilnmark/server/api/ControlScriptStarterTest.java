@@ -124,8 +124,9 @@ class ControlScriptStarterTest {
         // the people's password goes to keycloak-setup only, from the control script's own environment
         String setup = c.substring(c.indexOf("\n  keycloak-setup:\n"), c.indexOf("\n  # AI models"));
         assertTrue(setup.contains("KILNMARK_STARTER_PEOPLE_PASSWORD: ${KILNMARK_STARTER_PEOPLE_PASSWORD}\n"), "no default");
-        assertTrue(c.indexOf("KILNMARK_STARTER_PEOPLE_PASSWORD") == c.indexOf("      KILNMARK_STARTER_PEOPLE_PASSWORD: ")
-            && c.indexOf("KILNMARK_STARTER_PEOPLE_PASSWORD") > c.indexOf("\n  keycloak-setup:\n"), "keycloak-setup only");
+        assertEquals(c.indexOf("KILNMARK_STARTER_PEOPLE_PASSWORD"), c.lastIndexOf("KILNMARK_STARTER_PEOPLE_PASSWORD: "),
+            "named once, as keycloak-setup's setting");
+        assertTrue(setup.contains("KILNMARK_STARTER_PEOPLE_PASSWORD: "), "keycloak-setup only");
         for (String f : List.of("../containers/release.env.example")) {
             assertFalse(Files.readString(Path.of(f)).contains("KILNMARK_STARTER_PEOPLE_PASSWORD"), "never a setting in .env");
         }
