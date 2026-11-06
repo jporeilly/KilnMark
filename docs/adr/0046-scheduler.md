@@ -88,18 +88,27 @@ Three things make a schedule different from what a pipeline or flow says:
    - a person must have it as the access review reads their sign-ins: their latest sign-in's role,
      unless a later sign-in was refused because none of their groups has a role any more. Other
      refusals (no second factor, say) take nothing away, as in the access review, so one sign-in
-     on the wrong device does not stop a team's nightly work. That role is lowered to what the
-     groups their sign-in recorded give under the group-to-role settings now, so changing the
-     mapping takes effect at the next fire. And their latest sign-in must be within
-     `kilnmark.schedules.signed-in-within` (30 days): someone who has left and is disabled at the
-     provider never signs in again, so their schedules stop after 30 days at most, saying
+     on the wrong device does not stop a team's nightly work, however many there are. Sign-ins are
+     taken in the order the database stored them, not by the times different servers' clocks gave
+     them. That role is lowered to what the person's groups give under the group-to-role settings
+     now, so changing the mapping takes effect at the next fire. For that, a sign-in records **only
+     the groups the settings map to a role**, never the person's other groups: in a bank a group's
+     name can say more than it should (a deal team behind an information barrier, an HR or health
+     matter), and the audit log, the SIEM and the audit API would keep it for ever. Since the check
+     only lowers a role, the mapped groups are all it needs. And their latest sign-in must be
+     within `kilnmark.schedules.signed-in-within` (30 days): someone who has left and is disabled
+     at the provider never signs in again, so their schedules stop after 30 days at most, saying
      `paused: the person who set it has not signed in for 30 days`.
 
    If not, nothing runs: the schedule is paused (off, no next fire), its outcome is
    `paused: the person who set it no longer has the role` (viewers see `paused`), and the audit
    log records `schedule.paused` with the reason. It is also paused at once, without waiting for a
    fire, when the token is revoked, or when a sign-in gives the person less of a role than a
-   schedule of theirs (or none); that never fails the sign-in. The check and the queueing happen
+   schedule of theirs (or none). That pause runs off the sign-in's thread and waits at most two
+   seconds for a schedule a fire holds, so a sign-in never waits on it; the check before each fire
+   is the guarantee. If the database is out when someone signs in with less of a role, that
+   sign-in's event and its pause can both be lost, and their schedules then stand on the previous
+   sign-in until the next one, or 30 days. The check and the queueing happen
    under the schedule's row lock, so a revoke or pause either comes before (nothing runs) or after
    the run is queued and recorded. A pause never cancels a run already queued or running. A designer or admin resumes it by saving it, which makes them its
    setter, checked against their own role. The server's environment admin token

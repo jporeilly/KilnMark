@@ -93,12 +93,17 @@ details.
   the schedule is paused with `paused: the person who set it no longer has the role` and
   `schedule.paused` is recorded. Revoking a token, or a sign-in with less of a role, pauses that
   identity's schedules at once (never failing the sign-in). Saving a paused schedule makes the
-  person saving it its setter. A person's role is lowered to what the groups their sign-in recorded
-  (now `groups` in sign-in events) give under today's mapping, and their latest sign-in must be
+  person saving it its setter. A person's role is lowered to what their groups give under today's
+  mapping (sign-in events now record, in `groups`, only the groups the settings map to a role, never
+  others), and their latest sign-in must be
   within `kilnmark.schedules.signed-in-within` (30 days), else
   `paused: the person who set it has not signed in for 30 days`. Sign-ins are read by the person's
-  key through two partial indexes on `audit_event`. The check and the queueing hold the schedule's
-  row lock, so a revoke or pause comes wholly before or after a run; a pause never cancels a run.
+  key, in the order stored, through two partial indexes on `audit_event`; refusals other than for
+  want of a group are never read. The check and the queueing hold the schedule's row lock, so a
+  revoke or pause comes wholly before or after a run; a pause never cancels a run. The pause at
+  sign-in runs off the sign-in's thread, locks only what will pause and waits at most two seconds.
+  Upgrading builds the two indexes over the whole audit log, holding its writes back meanwhile
+  (requests do not wait: the audit log is written by a thread of its own).
 - **The scheduler's pages** (ui/src/schedules, docs/design/schedules.md section 12). The panel under
   a pipeline or flow has a Schedules tab (`SchedulesSection`), and the line under its name gives
   the next scheduled run. Each schedule shows its cron in words where it is a common shape

@@ -49,11 +49,12 @@ CREATE INDEX schedule_person_idx ON schedule (set_by_person) WHERE set_by_person
 -- What the scheduler reads every poll: the schedules that are due.
 CREATE INDEX schedule_due_idx ON schedule (next_at) WHERE enabled;
 
--- Before every fire, a schedule a person set is checked against their latest sign-in (ADR 0046):
--- the sign-in events by the person's key, and by name for those recorded before the key was.
--- Building them reads the audit log once; its rows are written by a thread of their own, so no
--- request waits meanwhile.
-CREATE INDEX audit_event_sign_in_person_idx ON audit_event ((detail ->> 'person'), at DESC, id DESC)
+-- Before every fire, a schedule a person set is checked against their sign-ins (ADR 0046): the
+-- latest by the person's key, and by name for those recorded before the key was, in the order the
+-- database stored them (id). They are built without CONCURRENTLY (Flyway runs each migration in a
+-- transaction), so on a large audit log the upgrade holds audit writes back while they build; the
+-- audit log's rows are written by a thread of their own, so no request waits meanwhile.
+CREATE INDEX audit_event_sign_in_person_idx ON audit_event ((detail ->> 'person'), id DESC)
     WHERE action IN ('auth.sign_in', 'auth.sign_in_refused');
-CREATE INDEX audit_event_sign_in_actor_idx ON audit_event (actor, at DESC, id DESC)
+CREATE INDEX audit_event_sign_in_actor_idx ON audit_event (actor, id DESC)
     WHERE action IN ('auth.sign_in', 'auth.sign_in_refused');

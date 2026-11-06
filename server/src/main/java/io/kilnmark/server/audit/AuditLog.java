@@ -181,46 +181,71 @@ public class AuditLog {
     public record Standing(AccessRole role, List<String> groups, Instant at) {
     }
 
-    /** The sign-in actions, written into the queries so their partial indexes (V36) serve them. */
-    private static final String SIGN_INS = "action IN ('" + SIGN_IN + "', '" + SIGN_IN_REFUSED + "')";
+    /**
+     * The latest successful sign-in of a person, by their key; the actions are literals, so the
+     * partial index on sign-ins (V36) serves it. Shared with the test that reads its plan.
+     */
+    public static final String LATEST_SIGN_IN_BY_KEY = "SELECT id, detail::text, at FROM kilnmark.audit_event "
+        + "WHERE action = '" + SIGN_IN + "' AND detail ->> 'person' = ? ORDER BY id DESC LIMIT 1";
+    /** As {@link #LATEST_SIGN_IN_BY_KEY}, by name, among sign-ins recorded before the key was. */
+    public static final String LATEST_SIGN_IN_BY_NAME = "SELECT id, detail::text, at FROM kilnmark.audit_event "
+        + "WHERE action = '" + SIGN_IN + "' AND actor = ? AND detail ->> 'person' IS NULL ORDER BY id DESC LIMIT 1";
+    /** Whether the person, by key, was refused for want of a group after sign-in event {@code id}. */
+    public static final String NO_GROUP_AFTER_BY_KEY = "SELECT 1 FROM kilnmark.audit_event WHERE action = '"
+        + SIGN_IN_REFUSED + "' AND detail ->> 'person' = ? AND id > ? AND detail ->> 'reason' = ? LIMIT 1";
+    /** As {@link #NO_GROUP_AFTER_BY_KEY}, by name, among refusals recorded before the key was. */
+    public static final String NO_GROUP_AFTER_BY_NAME = "SELECT 1 FROM kilnmark.audit_event WHERE action = '"
+        + SIGN_IN_REFUSED + "' AND actor = ? AND detail ->> 'person' IS NULL AND id > ? AND detail ->> 'reason' = ? "
+        + "LIMIT 1";
 
     /**
-     * A person's standing now: their latest sign-in with a role, unless a later sign-in was refused
-     * because none of their groups has a role any more; other refusals (no second factor, say) take
-     * nothing away. Empty when they hold no role or Kilnmark has no sign-in of theirs. Read by
-     * {@code person}, the key sign-ins record ({@code OidcIdentityAugmentor.personRef}); only when
-     * none carries it, by {@code actor}, their name, among sign-ins recorded before the key was.
+     * A person's standing now: their latest successful sign-in (by their key, {@code person};
+     * only when none carries it, by their name, {@code actor}, among sign-ins recorded before the
+     * key was), unless a later sign-in was refused because none of their groups has a role any
+     * more. Other refusals (no second factor, say) take nothing away, however many there are. Events
+     * are ordered by their id, the order the database stored them, not by the times different
+     * servers' clocks gave them. Empty when they hold no role or Kilnmark has no sign-in of theirs.
      */
     public Optional<Standing> providerStanding(String person, String actor) {
         return db.tx(c -> {
-            Optional<Optional<Standing>> byKey = standing(c, "detail ->> 'person' = ?", person);
-            if (byKey.isPresent()) {
-                return byKey.get();
+            boolean keyed = true;
+            Object[] latest = latest(c, LATEST_SIGN_IN_BY_KEY, person);
+            if (latest == null) {
+                keyed = false;
+                latest = latest(c, LATEST_SIGN_IN_BY_NAME, actor);
             }
-            return standing(c, "actor = ? AND detail ->> 'person' IS NULL", actor).orElse(Optional.empty());
+            if (latest == null) {
+                return Optional.<Standing>empty();
+            }
+            long id = (Long) latest[0];
+            if (refusedAfter(c, NO_GROUP_AFTER_BY_KEY, person, id)
+                || (!keyed && refusedAfter(c, NO_GROUP_AFTER_BY_NAME, actor, id))) {
+                return Optional.<Standing>empty();
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> d = (Map<String, Object>) latest[1];
+            return Optional.of(new Standing(knownRole(d.get("role")), groupNames(d.get("groups")), (Instant) latest[2]));
         });
     }
 
-    /** The standing the matching sign-ins give, newest first; empty when there are none. */
-    private Optional<Optional<Standing>> standing(java.sql.Connection c, String where, String value)
-        throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT action, detail::text, at FROM kilnmark.audit_event "
-            + "WHERE " + SIGN_INS + " AND " + where + " ORDER BY at DESC, id DESC LIMIT 500")) {
+    /** {id, detail, at} of the one sign-in {@code sql} finds, or null. */
+    private static Object[] latest(java.sql.Connection c, String sql, String value) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, value);
             try (ResultSet rs = ps.executeQuery()) {
-                boolean any = false;
-                while (rs.next()) {
-                    any = true;
-                    Map<String, Object> d = detail(rs.getString(2));
-                    if (SIGN_IN.equals(rs.getString(1))) {
-                        return Optional.of(Optional.of(new Standing(knownRole(d.get("role")), groupNames(d.get("groups")),
-                            Db.instant(rs.getTimestamp(3)))));
-                    }
-                    if (OidcAccess.NO_GROUP.equals(d.get("reason"))) {
-                        return Optional.of(Optional.<Standing>empty());
-                    }
-                }
-                return any ? Optional.of(Optional.<Standing>empty()) : Optional.empty();
+                return rs.next() ? new Object[] {rs.getLong(1), detail(rs.getString(2)), Db.instant(rs.getTimestamp(3))}
+                    : null;
+            }
+        }
+    }
+
+    private static boolean refusedAfter(java.sql.Connection c, String sql, String value, long id) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, value);
+            ps.setLong(2, id);
+            ps.setString(3, OidcAccess.NO_GROUP);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
             }
         }
     }

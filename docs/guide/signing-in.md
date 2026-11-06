@@ -175,7 +175,8 @@ Schedules follow what the access review shows: a schedule runs only while the to
 set it still has its role, and a person must have signed in within 30 days; it is paused when that
 stops being so ([Running pipelines and flows on a schedule](schedules.md#when-the-person-who-set-it-loses-the-role)).
 Revoking a token pauses the schedules set with it at once; a person's tokens are separate from the
-schedules they set while signed in. The review does not yet list the schedules each one set: use
+schedules they set while signed in. For this, each sign-in records, in the audit log, only those of
+the person's groups that your settings map to a role, never their other groups. The review does not yet list the schedules each one set: use
 `GET /api/v1/schedules` and its `updatedBy`.
 
 ## Two people for sensitive values

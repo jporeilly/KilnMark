@@ -182,19 +182,25 @@ hold at least its `run_as`.
   their latest `auth.sign_in`'s role, unless a later `auth.sign_in_refused` says none of their
   groups has a role (`OidcAccess.NO_GROUP`); other refusals take nothing away; a role this server
   does not know counts as none. Then `Setters.personProblem`:
-  - **today's mapping:** sign-ins record the person's group names (`groups`); the role is lowered
-    to what those groups give under the settings now (`OidcAccess.roleOf`), never raised. A sign-in
+  - **today's mapping:** a sign-in records, in `groups`, only those of the person's groups that the
+    group-to-role settings name (`OidcAccess.mappedGroups`, each cleaned as logged text), never
+    their other groups, whose names can be sensitive. The role is lowered to what those groups give
+    under the settings now (`OidcAccess.roleOf`), never raised, so the mapped groups are all the
+    check needs, and none is dropped: there are only as many as the settings name. A sign-in
     recorded before groups were keeps its recorded role;
   - **a recent sign-in:** the latest must be within `kilnmark.schedules.signed-in-within` (30 days),
     else the outcome is `paused: the person who set it has not signed in for 30 days`. Someone who
     has left and is disabled at the provider never signs in again; this bounds how long their
     schedules run.
 
-  Sign-ins are found by the person's key (`detail ->> 'person'`, served by
-  `audit_event_sign_in_person_idx`); only when none carries the key, by the person's name among
-  sign-ins recorded without one (`audit_event_sign_in_actor_idx`), so another person who shares a
-  name never counts. Both indexes are partial, on the two sign-in actions, which the query writes
-  as literals so the indexes serve it (a test reads the plan).
+  `AuditLog.providerStanding` reads two things, in the order the database stored events (`id`),
+  not by their times, which servers with different clocks gave them: the person's latest
+  successful sign-in (by their key; only when none carries it, by their name among sign-ins
+  recorded without one, so a namesake never counts), and whether a sign-in refused for want of a
+  group came after it. Other refusals are never read, however many there are. Each query is one
+  of `AuditLog`'s constants (`LATEST_SIGN_IN_BY_KEY` and the others), with the actions written as
+  literals so the partial indexes `audit_event_sign_in_person_idx` and
+  `audit_event_sign_in_actor_idx` serve them; a test reads the plan of those same constants.
 - **Neither**: only while sign-in is off.
 
 **Under the row lock.** `ScheduleStore.fire` locks the schedule's row (`FOR UPDATE`) only while
@@ -211,14 +217,22 @@ lock the flow's schedules first in the same way.
 
 If the check fails, nothing is queued: the row is turned off, its next fire cleared,
 `last_at` set to now, and the outcome written; `schedule.paused` is recorded by the server with the
-reason. If the check itself cannot be made (the database is unreachable), the fire fails and the
-schedule stays on.
+reason, describing the schedule as it is now (a change saved before the fire took the row
+included). If the check itself cannot be made (the database is unreachable), the fire fails and
+the schedule stays on. If the outcome cannot be written after the run was queued, the scheduler
+writes it again in a transaction of its own, up to three times, only over `starting`, so a run
+that started never reads as a lost fire.
 
 **At once, too.** `TokenResource.revoke` pauses every schedule the token set
 (`ScheduleService.tokenRevoked`). `SignInEvents` pauses every schedule the person set whose role is
 above what their sign-in just gave them, or all of them when the sign-in was refused for want of a
-group (`ScheduleService.personSignedIn`); a failure there is logged at ERROR and never fails the
-sign-in, since each schedule is checked again before it runs. Both set `last_at` to now, as a pause
+group (`ScheduleService.personSignedIn`). That runs on a virtual thread of its own, never on the
+thread that delivered the sign-in (which can be an event loop), locks only the schedules that will
+pause (their role is in the query), and waits at most two seconds (`lock_timeout`) for one a fire
+holds; a failure is logged at ERROR and never fails the sign-in, since each schedule is checked
+again before it runs. **A database outage at sign-in** can lose both the sign-in's event and this
+pause; the person's schedules then stand on their previous sign-in until the next one, or until
+`signed-in-within` passes. Both set `last_at` to now, as a pause
 at a fire does. Each is recorded as `schedule.paused`, by the admin who
 revoked the token or by the person signing in. Saving a paused schedule (a designer or admin, with
 `enabled` true) makes them its setter, checked against their own role; nothing resumes by itself

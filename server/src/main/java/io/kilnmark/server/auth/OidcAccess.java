@@ -130,9 +130,23 @@ public final class OidcAccess {
         return role;
     }
 
-    /** The groups a sign-in's claims name, as {@link #decide} reads them. */
-    public static List<String> groupsOf(KilnmarkConfig.Oidc config, Function<String, Object> claim) {
-        return strings(claim.apply(config.groupsClaim()));
+    /**
+     * Of the groups a sign-in's claims name, only those the group-to-role settings name now, as the
+     * settings write them, sorted: what a sign-in records for checking a person's schedules
+     * (ADR 0046). Other groups are never recorded: in a bank a group's name can say more than it
+     * should (a deal team, a health or HR matter). Bounded by the settings, so none is dropped.
+     */
+    public static List<String> mappedGroups(KilnmarkConfig.Oidc config, Function<String, Object> claim) {
+        Set<String> groups = Set.copyOf(strings(claim.apply(config.groupsClaim())));
+        java.util.TreeSet<String> out = new java.util.TreeSet<>();
+        for (AccessRole r : AccessRole.values()) {
+            for (String w : groupsFor(config, r)) {
+                if (w != null && !w.isBlank() && groups.contains(w.strip())) {
+                    out.add(w.strip());
+                }
+            }
+        }
+        return List.copyOf(out);
     }
 
     private static List<String> groupsFor(KilnmarkConfig.Oidc config, AccessRole role) {
