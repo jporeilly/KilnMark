@@ -7,6 +7,10 @@ details.
 
 ### Details
 
+- **Dev mode starts again**: `./gradlew :server:quarkusDev` needs two POMs the build itself does
+  not (`org.jboss:jboss-parent:37`, `org.jboss.slf4j:slf4j-jboss-logmanager:1.1.0.Final`); their
+  checksums, matched against Maven Central, are now in `gradle/verification-metadata.xml`
+  (ADR 0042).
 - **Release images signed on the local runner**: `release.yml` signs the digest the registry
   stores for each image, read back by tag after the push. On a Podman engine the digest recorded
   locally is not the registry's, and signing it failed, which stopped the 0.0.10 release.
