@@ -13,6 +13,8 @@
 # - the Kilnmark sign-in page (themes/kilnmark).
 # With KILNMARK_KEYCLOAK_DEMO_PASSWORD set, also five example people, one per role, at
 # kilnmark.com addresses that receive no mail. Never set it for real use.
+# With KILNMARK_STARTER=allowed and KILNMARK_KEYCLOAK_STARTER_SECRET set, the Starter Pack's service
+# account (the client kilnmark-starter), which manages people and groups only; removed otherwise.
 #
 # Each part is checked on its own and made if it is missing, so a run that stopped half way is
 # finished by the next. What is there is kept, except the client's address and secret, which follow
@@ -35,8 +37,15 @@ REALM=kilnmark
 FLOW="kilnmark browser"
 FORMS="kilnmark sign-in"
 ROLE_GROUPS="kilnmark-viewers kilnmark-stewards kilnmark-designers kilnmark-admins kilnmark-sensitive-data"
+# The Starter Pack's service account (below): made only while both are set.
+STARTER_ALLOWED="${KILNMARK_STARTER:-}"
+STARTER_SECRET="${KILNMARK_KEYCLOAK_STARTER_SECRET:-}"
+if [ "$STARTER_ALLOWED" = allowed ] && [ -n "$STARTER_SECRET" ] && [ "${#STARTER_SECRET}" -lt 32 ]; then
+  echo "keycloak-setup: KILNMARK_KEYCLOAK_STARTER_SECRET must be at least 32 characters" >&2
+  exit 1
+fi
 export KC_CLI_PASSWORD="$KC_ADMIN_PASSWORD"
-unset KC_ADMIN_PASSWORD KILNMARK_KEYCLOAK_DEMO_PASSWORD
+unset KC_ADMIN_PASSWORD KILNMARK_KEYCLOAK_DEMO_PASSWORD KILNMARK_KEYCLOAK_STARTER_SECRET
 
 kc() { /opt/keycloak/bin/kcadm.sh "$@"; }
 say() { echo "keycloak-setup: $*"; }
@@ -168,6 +177,41 @@ printf '{"redirectUris":[%s],"webOrigins":[%s],"attributes":{"post.logout.redire
   "$(json "$KILNMARK_URL/api/v1/auth/login")" "$(json "$KILNMARK_URL")" "$(json "$KILNMARK_URL/")" \
   "$(json "$KILNMARK_OIDC_CLIENT_SECRET")" | kc update "clients/$client" -r "$REALM" -f -
 say "the client kilnmark signs in to $KILNMARK_URL"
+
+# The Starter Pack's service account (ADR 0051): the client kilnmark-starter, made while
+# KILNMARK_STARTER=allowed and KILNMARK_KEYCLOAK_STARTER_SECRET is set, and removed on the next run
+# once either is not. Kilnmark signs in as it (client credentials) to add and remove the pack's five
+# example people. Its service account holds realm-management's manage-users, view-users and
+# query-groups in this realm, and nothing else: no role in master, no realm, client or sign-in flow
+# management, not even the realm's default roles. The people it adds carry the attribute
+# kilnmark_starter_pack; attributes the user profile does not declare are seen and set by admins
+# only (ADMIN_EDIT), so no one can put the mark on themselves.
+STARTER_CLIENT=kilnmark-starter
+starter="$(kc get clients -r "$REALM" -q clientId="$STARTER_CLIENT" --fields id --format csv --noquotes | one)"
+if [ "$STARTER_ALLOWED" = allowed ] && [ -n "$STARTER_SECRET" ]; then
+  if [ -z "$starter" ]; then
+    say "creating the client $STARTER_CLIENT (the Starter Pack's service account)"
+    kc create clients -r "$REALM" -s clientId="$STARTER_CLIENT" -s name="Kilnmark Starter Pack" \
+      -s protocol=openid-connect -s publicClient=false -s clientAuthenticatorType=client-secret \
+      -s serviceAccountsEnabled=true -s standardFlowEnabled=false -s directAccessGrantsEnabled=false \
+      -s implicitFlowEnabled=false -s frontchannelLogout=false > /dev/null
+    starter="$(kc get clients -r "$REALM" -q clientId="$STARTER_CLIENT" --fields id --format csv --noquotes | one)"
+  fi
+  printf '{"secret":%s}' "$(json "$STARTER_SECRET")" | kc update "clients/$starter" -r "$REALM" -f -
+  account="service-account-$STARTER_CLIENT"
+  kc add-roles -r "$REALM" --uusername "$account" --cclientid realm-management \
+    --rolename manage-users --rolename view-users --rolename query-groups
+  kc remove-roles -r "$REALM" --uusername "$account" --rolename "default-roles-$REALM" 2> /dev/null || true
+  profile="$(kc get users/profile -r "$REALM")"
+  case "$profile" in
+    *'"unmanagedAttributePolicy"'*) ;;
+    *) printf '{"unmanagedAttributePolicy":"ADMIN_EDIT",%s' "${profile#*\{}" | kc update users/profile -r "$REALM" -f - ;;
+  esac
+  say "the client $STARTER_CLIENT manages people and groups in $REALM only"
+elif [ -n "$starter" ]; then
+  kc delete "clients/$starter" -r "$REALM"
+  say "removed the client $STARTER_CLIENT: KILNMARK_STARTER is not allowed, or its secret is not set"
+fi
 
 # Example people, one per role, only when asked for. A person already there keeps their password;
 # one an earlier run left without a password or a group gets them now.

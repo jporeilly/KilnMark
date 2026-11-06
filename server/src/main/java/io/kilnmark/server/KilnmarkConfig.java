@@ -85,6 +85,55 @@ public interface KilnmarkConfig {
     /** Kilnmark's own database (ADR 0032). */
     Database database();
 
+    /**
+     * Whether this install is production ({@code KILNMARK_PRODUCTION=true}): the Starter Pack,
+     * example data and example people, is then refused (ADR 0051). Off unless set.
+     */
+    @WithDefault("false")
+    boolean production();
+
+    /** The Starter Pack's database, kilnmark_samples, on Kilnmark's own PostgreSQL server (ADR 0051). */
+    SamplesDb samplesDb();
+
+    interface SamplesDb {
+        /**
+         * Where it is, as the samples' database source reaches it. Unset (the default): the database
+         * kilnmark_samples on the server of Kilnmark's own database, reached as Kilnmark reaches its
+         * own, over TLS.
+         */
+        Optional<String> url();
+
+        /** Its own login, which can connect to that database only. */
+        @WithDefault("kilnmark_samples")
+        String username();
+
+        /** The login's password ({@code KILNMARK_SAMPLES_DB_PASSWORD}); unset, the pack cannot be turned on. */
+        Optional<String> password();
+    }
+
+    /** The Starter Pack's example people (ADR 0051). */
+    Starter starter();
+
+    interface Starter {
+        /**
+         * {@code allowed} ({@code KILNMARK_STARTER=allowed} in config/.env): the pack may add and
+         * remove its example people in the bundled Keycloak, through {@link #keycloak()}. Anything
+         * else, or unset: it may not, and no Keycloak credentials are used.
+         */
+        Optional<String> people();
+
+        /** The service account that manages people and groups in the realm of the sign-in issuer. */
+        StarterKeycloak keycloak();
+    }
+
+    interface StarterKeycloak {
+        @WithDefault("kilnmark-starter")
+        String clientId();
+
+        /** Its secret, set only while {@code KILNMARK_STARTER=allowed}; never Keycloak's admin password. */
+        Optional<String> clientSecret();
+    }
+
     interface Database {
         /**
          * Stop the server at start unless its own database is reached over TLS: the connection must
