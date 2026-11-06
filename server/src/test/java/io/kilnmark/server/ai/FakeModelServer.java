@@ -52,6 +52,12 @@ public final class FakeModelServer {
     private volatile int failStatus = 500;
     private volatile long delayMs;
     private volatile Function<String, String> chat = user -> "{\"ok\": true}";
+    /**
+     * Bumped by {@link #clear()}. A request answers with the reply set when it arrived, and only while
+     * no clear() has happened since: a slow request left by one test (see {@link #delay}) must never
+     * reach the next test's {@link #chatReplies} after it sets them.
+     */
+    private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
 
     private FakeModelServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
@@ -101,6 +107,7 @@ public final class FakeModelServer {
     }
 
     public void clear() {
+        generation.incrementAndGet();
         seen.clear();
         failures.set(0);
         delayMs = 0;
@@ -131,9 +138,14 @@ public final class FakeModelServer {
     }
 
     private void chat(HttpExchange x) throws IOException {
+        long arrived = generation.get();
+        Function<String, String> reply = chat;
         JsonNode req = read(x);
         if (fail(x)) {
             return;
+        }
+        if (generation.get() != arrived) {
+            reply = user -> "{\"ok\": true}"; // a test cleared the fake while this request waited
         }
         String user = "";
         for (JsonNode m : req.path("messages")) {
@@ -152,7 +164,7 @@ public final class FakeModelServer {
         choice.put("finish_reason", "stop");
         ObjectNode msg = choice.putObject("message");
         msg.put("role", "assistant");
-        msg.put("content", chat.apply(user));
+        msg.put("content", reply.apply(user));
         ObjectNode usage = r.putObject("usage");
         usage.put("prompt_tokens", 11);
         usage.put("completion_tokens", 7);
