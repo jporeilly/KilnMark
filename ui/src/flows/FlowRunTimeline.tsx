@@ -21,6 +21,7 @@ function rowIcon(r: TreeRow): string | null {
     case "for-each":
       return "pipelines";
     case "sql":
+    case "check-source":
       return "database";
     case "wait":
       return "clock";

@@ -233,6 +233,64 @@ nodes:
 
 ![The flow close-of-day on the diagram: products, a run-pipeline node saying "products-copy, high priority", then totals saying "category-totals, low priority", then a notice. The products node is chosen, and its Settings tab shows Pipeline products-copy, a blank Version and Timeout, and Priority High](images/flow-node-priority.png)
 
+## Checking a source before the work starts
+
+A `check-source` node checks that a source can be reached and holds the tables or files the work
+needs, before anything runs. Put it first, with a `failure` connection to a notice, so a source that
+is down or a file that has not arrived stops the flow at once, saying why, instead of failing a
+pipeline halfway.
+
+```yaml
+nodes:
+  - id: ready
+    type: check-source
+    source: warehouse
+    tables: [sales.orders, sales.customers]   # as the catalogue names them: schema.table
+    timeout: 2m                               # optional
+
+  - id: arrived
+    type: check-source
+    source: landing                           # a file or object-store source
+    files: [incoming/orders.csv]              # paths below the source's folder
+
+  - id: load
+    type: run-pipeline
+    pipeline: orders-load
+
+  - id: tell
+    type: notify
+    severity: high
+    title: Not everything the load needs is there; it did not run
+
+connections:
+  - { from: ready, to: arrived }
+  - { from: arrived, to: load }
+  - { from: ready, to: tell, when: failure }
+```
+
+![What a check-source node does: it connects to the source as its test does; if it cannot, the node fails saying it could not reach the source. Then it looks up each table or file the node names, reading no rows. If all are there it succeeds with missing 0 and the next node runs; if any is missing it fails, naming them and reporting missing, and its failure connection is taken](images/flow-check-source.svg)
+
+- **It keeps and shows no data.** It connects as the source's **Test** button does, then looks
+  each name up as a scan would: a table's columns from the database's own lists, never a row; a
+  file's columns from its start, as a scan reads it (up to 1 MiB). It holds a connection only while
+  it checks (a database is logged in to once for each table), and no worker: it runs beside the
+  flow, as a `sql` node does.
+- **It succeeds when everything it names is there**, and fails when something is not: "2 of 3
+  tables are missing on warehouse: sales.orders, sales.returns". A source it cannot reach fails it
+  with "Could not reach warehouse". Its messages hold only the names you wrote, never what the
+  source or its driver said, which can name hosts and users.
+- **`missing`** is how many were not there, for conditions and notices (`${ready.missing}`). It
+  has no value when the source could not be reached, as nothing was looked for.
+- With neither `tables` nor `files`, it checks only that the source can be reached. Together the
+  two lists name at most 50.
+- **Checked when saved:** the source must exist; `tables` need a database source, and `files` a
+  file or object-store source.
+- It takes a `timeout`, as in [Stopping a node that takes too long](#stopping-a-node-that-takes-too-long);
+  with none, a check that hangs is stopped after 10 minutes. A file path copied from the catalogue
+  (`%23` for `#`) finds the file, as a read node does.
+
+![A run of morning-orders: the check-source node arrived, "2 files on sample-data", is outlined red as Failed; its on failure connection led to the notice tell, which succeeded, and the load node was skipped. The Nodes table says arrived failed with "1 of 2 files is missing on sample-data: incoming/orders-today.csv"](images/flow-check-source-run.png)
+
 ## The diagram
 
 The **Diagram** tab draws the flow as you write it. Each node is a card, as on a pipeline's

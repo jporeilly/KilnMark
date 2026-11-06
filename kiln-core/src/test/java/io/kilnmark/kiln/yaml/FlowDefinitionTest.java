@@ -503,4 +503,65 @@ class FlowDefinitionTest {
         assertTrue(firstProblem(SQL.replace("    title: \"Emptied", "    priority: high\n    title: \"Emptied"))
             .contains("has no setting 'priority'"));
     }
+
+    // ---- check-source (ADR 0041) ----
+
+    static final String CHECK = """
+        kilnmark: flow/v1
+        name: check-first
+        nodes:
+          - id: ready
+            type: check-source
+            source: warehouse
+            tables: [sales.orders, sales.customers]
+            files: [incoming/today.csv]
+            timeout: 2m
+          - id: load
+            type: run-pipeline
+            pipeline: orders-load
+          - id: tell
+            type: notify
+            title: "${ready.missing} missing"
+        connections:
+          - { from: ready, to: load, when: "ready.missing = 0" }
+          - { from: ready, to: tell, when: failure }
+        """;
+
+    @Test
+    void readsACheckSourceNode() {
+        FlowDefinition.Parsed p = FlowDefinition.parse(CHECK);
+        assertTrue(p.valid(), p.problems().toString());
+        FlowDefinition.Node ready = p.definition().node("ready");
+        assertEquals("warehouse", ready.source());
+        assertEquals(List.of("sales.orders", "sales.customers"), ready.check().tables());
+        assertEquals(List.of("incoming/today.csv"), ready.check().files());
+        assertEquals(Duration.ofMinutes(2), ready.timeout());
+        assertEquals(FlowCondition.Type.NUMBER, FlowDefinition.nodeValueType(p.definition(), "ready.missing"));
+        // Neither list: it checks only that the source can be reached.
+        FlowDefinition.Parsed bare = FlowDefinition.parse(CHECK.replace("    tables: [sales.orders, sales.customers]\n",
+            "").replace("    files: [incoming/today.csv]\n", ""));
+        assertTrue(bare.valid(), bare.problems().toString());
+        assertTrue(bare.definition().node("ready").check().tables().isEmpty());
+    }
+
+    @Test
+    void checksACheckSourceNode() {
+        assertTrue(firstProblem(CHECK.replace("    source: warehouse\n", "")).contains("needs a source"));
+        assertTrue(firstProblem(CHECK.replace("[sales.orders, sales.customers]", "sales.orders"))
+            .contains("tables is a list"));
+        assertTrue(firstProblem(CHECK.replace("[sales.orders, sales.customers]", "[\"sales.${x}\"]"))
+            .contains("${...} cannot be used"));
+        assertTrue(firstProblem(CHECK.replace("[sales.orders, sales.customers]", "[sales.orders, sales.orders]"))
+            .contains("names sales.orders twice"));
+        assertTrue(firstProblem(CHECK.replace("[sales.orders, sales.customers]", "[\"\"]"))
+            .contains("Each of tables is a table as the catalogue names it"));
+        String many = "[" + String.join(", ", java.util.stream.IntStream.range(0, 50).mapToObj(i -> "s.t" + i).toList())
+            + "]";
+        assertTrue(firstProblem(CHECK.replace("[sales.orders, sales.customers]", many))
+            .contains("names 51 tables and files: at most 50"));
+        assertTrue(firstProblem(CHECK.replace("    timeout: 2m\n", "    priority: high\n"))
+            .contains("has no setting 'priority'"));
+        assertTrue(firstProblem(CHECK.replace("ready.missing = 0", "ready.rows_written = 0"))
+            .contains("rows_written"));
+    }
 }

@@ -19,7 +19,7 @@ flowchart TD
   R -- "no" --> F(["Node failed"])
 ```
 
-## C1. `check-source` (planned)
+## C1. `check-source` (built)
 
 ```yaml
   - id: ready
@@ -30,14 +30,36 @@ flowchart TD
     timeout: 2m                               # optional (C3)
 ```
 
-- Connects as the source's own test does (`SourceChecks.test`), then looks each table or file up
-  through the connector's listing, never reading rows. A table name is `schema.table` as the
-  catalogue writes it.
-- Succeeds when all are there. Fails with "Could not reach warehouse" or "2 of 3 tables are
-  missing: sales.orders, ..." (names the flow wrote; never the driver's text). Results: `missing`.
-- Checked when saved: the source exists and the flow's starter may use it; at most 50 names.
-- Runs on the flow's watcher, not in a worker slot; it holds a connection only while it checks.
+- `CheckSource.run` (server/flows): the saved source, its connector and secret, the allowed hosts as
+  they are now, then `Connector.test` within `kilnmark.sources.check-timeout` (15 s), as a person's
+  test. Then each name through `Connector.asset(config, path)`, which reads a name's fields as the
+  catalogue would record them, never rows. A table is `schema.table` as the catalogue writes it; a
+  file is its path below the source's folder.
+- `asset` fails the same way for a name that is not there and for a source that stops answering, so
+  reachability is decided by the test first; after it, a name the connector cannot show counts as
+  missing (a login without rights on a schema's metadata too). When nothing is found at all, the
+  test runs again, so a source that stopped answering reads as unreachable. A file path as the
+  catalogue records it (`%23`) is tried on disk too, as `ReadNodeFactory.describe` does.
+- What it reads: a table's columns from metadata (JDBC opens one connection per name); a file's
+  columns from its start (`FileInspector`, up to 1 MiB; a spreadsheet whole). Nothing is kept or
+  shown.
+- Succeeds when all are there ("warehouse can be reached; the 3 tables it names are there"). Fails
+  with "Could not reach warehouse", or "2 of 3 tables are missing on warehouse: a, b" (at most five
+  names, then "and n more"). Only names the flow wrote and the source's name: never the driver's
+  text, which can name hosts and users. Results: `missing` (a number; none when unreachable).
+- Checked when saved (`CheckSource.sourceRefusal`): the source exists, has a connector, and holds
+  tables (category `databases`) to look for tables and files (category `files`) for files. At most
+  50 names, each written once, with no ${...}. Who may run the flow may use its sources, as for
+  pipelines; no further check.
+- Runs on a virtual thread beside the flow's watcher, as a sql node: no worker slot, and a
+  connection only while it checks. Cancelling or stopping the flow interrupts it (the node ends
+  cancelled) at once; its `timeout` (C3) ends it at once, failed ("Took longer than 2m and was
+  stopped"), and with no timeout `CheckSource.DEFAULT_LIMIT` (10 minutes) does. Either way the node
+  does not wait for the thread, which a hung driver may not let stop: it is interrupted and left.
+- A `require-tls` refusal and an allowed-hosts refusal are said apart, in the flow's words.
 - Pairs with `failure` connections: check, then notify and stop if anything is missing.
+- Not a sample yet: the samples library takes a flow's `source:` as a sql node's and asks for a
+  source with Allow SQL on.
 
 ## C2. `wait-for` (planned)
 
