@@ -27,6 +27,7 @@ import { FlowRunFacts, took } from "./FlowRunSummary";
 import { connect, setPositions, type Change } from "./edit";
 import { readFlowGraph, type FlowGraph } from "./graph";
 import { FlowRunStatus, RunFlowButton } from "./RunFlow";
+import { DELETE_BUTTON_ID, DeleteFlowButton, DeleteFlowConfirm } from "./DeleteFlow";
 import { starterFlow } from "./template";
 import "../pipelines/pipelines.css";
 
@@ -56,7 +57,8 @@ const FLOW_DOCK_KEY = "kilnmark.flow.panel";
  * caret to its line in the YAML) and saving. The YAML is checked a moment after each change.
  * Designers save it with a message, and can change the flow on its diagram and in the panel: each
  * change there is a change to the YAML, which stays the one record. Stewards run the saved version,
- * with a dialog for its parameters. With name null, a new flow from a starter or from a Library
+ * with a dialog for its parameters; designers and admins delete it, after a confirmation that says
+ * what goes and what stays. With name null, a new flow from a starter or from a Library
  * template ({@code template}, its file); with a version, that saved version, read-only.
  */
 export function FlowPage({
@@ -91,6 +93,7 @@ export function FlowPage({
   const [conflict, setConflict] = useState(false);
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [versions, setVersions] = useState<FlowVersionSummary[] | null>(null);
   const [runs, setRuns] = useState<FlowRun[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -460,6 +463,13 @@ export function FlowPage({
               onQueued={queued}
               onError={(m) => fail(new Error(m))}
             />
+            <DeleteFlowButton
+              role={role}
+              onAsk={() => {
+                setError(null);
+                setConfirmDelete(true);
+              }}
+            />
           </div>
         )}
       </div>
@@ -467,6 +477,23 @@ export function FlowPage({
         <p id="fl-run-hint" className="small muted pl-run-hint">
           {unsavedRun ? `Run now runs the saved version ${detail?.latestVersion}, not your unsaved changes.` : ""}
         </p>
+      )}
+      {confirmDelete && name && !viewing && (
+        <DeleteFlowConfirm
+          name={name}
+          title={title}
+          sample={detail?.library === "sample"}
+          onCancel={() => {
+            setConfirmDelete(false);
+            document.getElementById(DELETE_BUTTON_ID)?.focus();
+          }}
+          onError={(e) => {
+            // A run that is going is the usual reason; it is not a save conflict.
+            setConfirmDelete(false);
+            setError((e as Error).message);
+            setFailures((n) => n + 1);
+          }}
+        />
       )}
       {detail?.description && <p className="lead">{detail.description}</p>}
       {isNew && (
