@@ -33,6 +33,11 @@ details.
   Sign in again." with its cookie cleared, so later requests do not ask the provider again.
   New `KILNMARK_OIDC_SCOPES` (`quarkus.oidc.authentication.scopes`) for providers that issue a
   refresh token only for `offline_access`. The bundled Keycloak keeps its 5-minute tokens.
+- **A tidier node settings panel**: each setting's box now sits straight under its name, with its
+  help under the box, so the boxes of a row line up however long each one's help is. A write
+  node that names its table with `table:` (or its file with `path:`) no longer shows an empty
+  "Table or file" box beside it. A setting with several controls, such as Key columns, no longer
+  draws a rule and padding above itself, and its box comes before the list of what is chosen.
 - **A refactoring plan** on the backlog (item 21): one run lifecycle for pipelines and flows first,
   then the UI's API file split by area, one form-field building block, and the two largest server
   classes split. Each step changes no behaviour.
