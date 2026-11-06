@@ -62,7 +62,10 @@ run timelines).
    functions. With them, **AI in pipelines** ([ADR 0050](../adr/0050-ai-in-pipelines.md)): an `ai`
    node (classify, extract, summarise, translate, find personal data) and an `embed` node, after
    `mask` so sensitive columns can be masked first; then explaining failed runs, drafting a
-   pipeline from a description, suggesting quality rules, and run tools on the MCP server.
+   pipeline from a description, suggesting quality rules, and run tools on the MCP server, as
+   agents that propose and people approve ([ADR 0052](../adr/0052-agents.md)): failed runs first,
+   then drafting a pipeline, stewardship overnight, outside agents through MCP, and agents people
+   build.
 10. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
    pre-run checks, flags on slow pipelines. Run tools on the MCP server fold in here (parked item
    in Plan & Scope). **Benchmarks come first** (owner, 6 November 2026; planned in

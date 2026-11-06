@@ -278,6 +278,16 @@ details.
   say designers and admins turn writing on, as the server enforces. A diagram of the component
   families joins the guides.
 
+- **Agents are decided** ([ADR 0052](docs/adr/0052-agents.md)): agents work at design time and in
+  operations, never inside a run; in flows a model chooses only between fixed branches, through an
+  `ai` node's `classify` and a `route` or `gate`, with low-confidence rows sent to a person. Each
+  agent acts as its own token (`agent:`), with the least role, never admin or the unmask grant, and
+  with the lesser of its role and the person's who started it. Every change it would make is a
+  proposal a person approves; database operations, SQL text, tokens and settings are never an
+  agent's. Its tools are Kilnmark's own API through `Sights`; what it reads is data, never orders;
+  each task has limits, a record of every step, and an off switch. The order: failed runs, drafting
+  a pipeline, stewardship overnight, outside agents through MCP, agents people build. A diagram,
+  `agents.svg`, drawn by `diagrams.mjs`. Nothing is built yet.
 - **AI in pipelines is decided** ([ADR 0050](docs/adr/0050-ai-in-pipelines.md)): an `ai` node
   with the tasks classify, extract, summarise, translate and find personal data, and an `embed`
   node, under the model rules of ADR 0012 (local by default, a model per feature, JSON answers,

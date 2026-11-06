@@ -55,7 +55,8 @@ asked on 6 November 2026 for "the whole AI piece" alongside more nodes
 
 ## Beyond nodes
 
-The same work makes room for AI around pipelines, each its own change on the backlog:
+The same work makes room for AI around pipelines, each its own change on the backlog. The agents among them,
+and the rules every agent keeps, are decided in [ADR 0052](0052-agents.md).
 
 - **Explain a failed run** in plain words, from its record, with the built-in playbook as the
   fallback (ADR 0012).

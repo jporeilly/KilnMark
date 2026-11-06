@@ -882,3 +882,30 @@ function svg(name, height, title, sub, body) {
     foot(y2 + 112, "file", "Rows come out in order of their keys; a key on 3 left rows and 2 right rows gives 6 pairs.");
   svg("join-kinds", y2 + 162, "The four kinds of join", "Which rows a join keeps: the pairs whose keys are equal, and the rows of either side with no match", b);
 }
+
+// ---- How an agent works: it proposes, a person decides ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 188, y3 = 316;
+  const cy1 = y1 + 58, cy2 = y2 + 58;
+  const b =
+    lane(y1, 96, "The agent works", C.violet) +
+    card(X[0], y1 + 30, W, { icon: "play", color: C.violet, title: "A task starts", sub: "by a person or an event" }) +
+    arrow([[248, cy1], [274, cy1]], C.violet) +
+    card(X[1], y1 + 30, W, { icon: "chip", color: C.violet, title: "It reads and tries", sub: "with its own token's role" }) +
+    arrow([[484, cy1], [510, cy1]], C.violet) +
+    card(X[2], y1 + 30, W, { icon: "pencil", color: C.violet, strong: true, title: "A proposal", sub: "a diff with its reasons" }) +
+    arrow([[616, y1 + 86], [616, y2 + 28]], C.violet) +
+    lane(y2, 110, "A person decides", C.good) +
+    card(X[2], y2 + 30, W, { icon: "person", color: C.good, strong: true, title: "A person reviews", sub: "in the proposals inbox" }) +
+    arrow([[512, cy2], [486, cy2]], C.good) +
+    card(X[1], y2 + 30, W, { icon: "check", color: C.good, title: "Approved", sub: "made as that person" }) +
+    arrow([[616, y2 + 86], [616, y2 + 98], [144, y2 + 98], [144, y2 + 88]], C.quiet, { dash: "4 3" }) +
+    card(X[0], y2 + 30, W, { icon: "cross", color: C.axis, title: "Rejected or edited", sub: "the reason kept with it" }) +
+    lane(y3, 96, "Never an agent's", C.bad) +
+    card(X[0], y3 + 30, W, { icon: "eye", color: C.bad, dash: "4 3", title: "Unmasked values", sub: "a model never sees them" }) +
+    card(X[1], y3 + 30, W, { icon: "lock", color: C.bad, dash: "4 3", title: "Admin powers", sub: "no unmask, SQL or DB tools" }) +
+    card(X[2], y3 + 30, W, { icon: "shield", color: C.bad, dash: "4 3", title: "Orders found in data", sub: "read as data, not obeyed" }) +
+    foot(y3 + 112, "log", "Every step and model call is kept; a task stops at its limits; an admin can switch any agent off.");
+  svg("agents", y3 + 162, "How an agent works", "An agent proposes and a person decides; some things are never an agent's", b);
+}

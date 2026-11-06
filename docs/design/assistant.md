@@ -77,3 +77,7 @@ source through `EgressPolicy`, exactly as search and ask do now.
    discovery work merges.
 2. Catalogue domain, reusing search, ask and the quality API under each source's egress rule.
 3. Pipelines domain, with round 3.
+
+The assistant answers once and stops. Agents, which work in steps and end with a proposal a
+person approves, are decided in [ADR 0052](../adr/0052-agents.md); the failed-run agent grows
+from run diagnosis and its built-in playbook (ADR 0012).

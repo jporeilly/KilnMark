@@ -113,13 +113,16 @@ Also needed, not yet scheduled:
   production: promoting versions between stages, reviews before promotion, and who may promote.
 - **AI as nodes in pipelines and flows.** Pipelines and flows are already graphs of nodes and
   connections, so AI can join them the way graph-based AI builders do: nodes that call a model
-  (classify, extract, summarise, embed, generate), nodes for prompts, memory and tools, and agents
-  that choose the next step in a flow. They must keep ADR 0012 and ADR 0016: local models by default,
-  one egress gate, columns marked sensitive never sent to a model, and people approve what AI changes.
+  (classify, extract, summarise, embed, generate), nodes for prompts, memory and tools. They must
+  keep ADR 0012 and ADR 0016: local models by default, one egress gate, columns marked sensitive
+  never sent to a model, and people approve what AI changes. Decided in ADR 0050; agents that
+  choose a flow's next step freely are not built: a model chooses only between a flow's fixed
+  branches, and low-confidence rows go to a person (ADR 0052).
 - **Building agents.** People create their own agents: a model, instructions, tools, memory and
   limits, saved and versioned like a pipeline or flow. Their tools are Kilnmark's own actions
   (search, read a source, run a pipeline or flow, check quality), under the caller's role and the
-  same masking, so an agent can do no more than the person who runs it.
+  same masking, so an agent can do no more than the person who runs it. Decided in ADR 0052, last
+  of its agents, under the same rules: its own token, proposals a person approves, limits.
 - **Run tools for agents, and an optimisation agent (parked).** Pipeline and flow runs on the MCP
   server (timings, rows, peak memory, quarantine share, model tokens), read through the model's
   sight, then an agent that finds the slowest pipelines and says why. Folded into the Optimise work
