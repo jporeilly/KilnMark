@@ -11,6 +11,24 @@ second in memory, and under 1 million rows a second reading PostgreSQL. That was
 on one machine. Nothing has yet measured a whole pipeline from source to target, at volume, next
 to anything else.
 
+### First data points: sort and join (not a benchmark)
+
+When `sort` and `join` were built (ADR 0049), one rough timing each was taken on the owner's
+machine, to know the order of magnitude and that spilling to disk costs little more than sorting
+in memory. One run each, after a warm-up, in the engine alone (a generating node, the node, a
+counting node, with `KilnGraphRunner`; no database, no files read or written but the spill), so
+these are not the end-to-end figures this note is about. Machine: Intel Core i9-9900K (8 cores),
+48 GB of memory, an NVMe disk, Windows 11, Temurin 25. Rows: an id, a random whole-number key, a
+name of 10-14 characters and a decimal amount. Rerun them with
+`KILNMARK_TIMING=1 ./gradlew :kiln-nodes:test --tests "*SortJoinTiming*" -i`.
+
+| Node | Rows | `memory_limit_mb` | Seconds | Rows a second | Spilled | Peak Arrow memory |
+| --- | --- | --- | --- | --- | --- | --- |
+| sort, by the key | 1 million | 4,096 (in memory) | 1.0 | 1.0 million | none | 85 MB |
+| sort, by the key | 1 million | 16 (spilling) | 2.5 | 0.4 million | 61 MB | 12 MB |
+| sort, by the key | 10 million | 8,192 (in memory) | 11.8 | 0.85 million | none | 840 MB |
+| sort, by the key | 10 million | 256 (spilling) | 15.1 | 0.66 million | 606 MB | 182 MB |
+
 ## 1. What we want to know
 
 - How many rows and megabytes a second a pipeline moves, end to end, for the common shapes of

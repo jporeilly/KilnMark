@@ -1,13 +1,13 @@
 # Pipeline nodes and expressions
 
 This guide describes the nodes that change rows in a pipeline (filter, compute, select, lookup,
-aggregate, union, dedupe, route and limit) and the expression language several of them share. Each
-node has a YAML example you can copy into a pipeline. Every node, with each setting's type and
-default, is also in [Reference: pipeline nodes](reference-pipeline-nodes.md).
+aggregate, union, dedupe, route, limit and sort) and the expression language several of them
+share. Each node has a YAML example you can copy into a pipeline. Every node, with each setting's
+type and default, is also in [Reference: pipeline nodes](reference-pipeline-nodes.md).
 
 ## How nodes connect
 
-![A pipeline on the canvas with the Nodes panel open: nodes grouped by what they do, and a pipeline of a read, an aggregate and a write, each joined from its out port to the next node's in port](images/node-palette.png)
+![A pipeline on the canvas with the Nodes panel open: nodes grouped by what they do, the Transform folder open showing Compute columns, Select columns and Sort rows, and a pipeline of a read, a sort and a write, each joined from its out port to the next node's in port](images/node-palette.png)
 
 Every node has named **ports**. Most nodes read from `in` and write to `out`; some have more:
 
@@ -22,6 +22,7 @@ Every node has named **ports**. Most nodes read from `in` and write to `out`; so
 | `dedupe` | `in` | `out`, `rejected` |
 | `route` | `in` | one port per route, and `out` |
 | `limit` | `in` | `out` |
+| `sort` | `in` | `out` |
 | `gate` | `in` | `out`, `quarantine`: see [Quality gates](pipelines.md#quality-gates) |
 
 In YAML, `input: tidy` reads the `out` port of the node called `tidy`, and `input: tidy.rejected`
@@ -247,6 +248,47 @@ it stops reading, and nodes before it that feed nothing else stop too.
 | Setting | What it does |
 | --- | --- |
 | `rows` | How many rows to pass on. Required. |
+
+## sort
+
+Orders rows by one or more columns, each ascending or descending. Write each column as in SQL's
+`order by`: the column, then perhaps `desc` for largest first, then perhaps `nulls first`.
+
+```yaml
+- id: ordered
+  type: sort
+  input: orders
+  by: [country, amount desc, ordered_at nulls first]
+```
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `by` | The columns to order by, the first deciding most. Required. | |
+| `memory_limit_mb` | The most memory rows may take while they are sorted. Past it, the sort carries on on disk. | 256 |
+
+On the canvas, each column in **Order by** has its direction (Smallest first or Largest first) and
+where its empty values go, and **Up** moves it before the column above:
+
+![The settings of a sort node: Order by lists status smallest first, shipping_fee largest first and ordered_at smallest first, each with empty values last, with Up and Remove beside each, and the memory limit of 256 MB](images/sort-settings.png)
+
+Good to know:
+
+- Empty (null) values go last, ascending or descending, unless the column says `nulls first`.
+- Values order as conditions compare them (`<`, `>`): numbers by value, dates and timestamps in
+  time, `false` before `true`. Text is ordered by Unicode code point, not by any language's rules:
+  capital letters come before small ones (`B` before `a`), and accented letters after `z`. To sort
+  ignoring case, add a column with `lower(name)` in a `compute` node and sort by that.
+- Rows with equal values keep the order they arrived in (the sort is stable), so sorting by
+  `region` keeps each region's rows in their earlier order.
+- A sort passes nothing on until all its rows have arrived.
+- Any number of rows can be sorted. Up to `memory_limit_mb` the sort works in memory; past it, it
+  writes sorted parts to a temporary folder on the server and merges them at the end. The files
+  are encrypted with a key only the running node holds, and deleted when the node ends, fails or
+  is stopped. The run's log says how much was written.
+
+  ![How a sort carries on on disk: rows arrive and are held in memory up to memory_limit_mb; past the limit they are sorted and written as a run; when the input ends the runs are merged, 64 at a time, into rows in order for the next node](images/sort-spill.svg)
+- A table read in a fixed order is not guaranteed to arrive in that order. Sort just before a
+  write when the order matters, for example for a file someone reads.
 
 ## Expressions
 

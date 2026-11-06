@@ -522,6 +522,7 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
 | `dedupe` | `in` → `out`, `rejected` | Keeps the first row per key |
 | `route` | `in` → named outputs, `out` | Sends each row to the first matching condition's port, others to `out` |
 | `limit` | `in` → `out` | First N rows, for trying a pipeline out |
+| `sort` | `in` → `out` | Orders rows by columns, spilling to disk past its memory limit |
 | `gate` | `in` → `out`, `quarantine` | Checks rows against the asset's rules and its own in the stream; stops the run, quarantines failing rows or warns (docs/design/data-quality.md section 7) |
 | `write` | `in` → | Writes to a database table or a file in a saved source |
 
@@ -559,6 +560,57 @@ found through `ServiceLoader`. Settings, with defaults:
 - `route`: `routes` (port → condition, in order; port names are lower case, not `in` or `out`).
 - `limit`: `rows`. Stops reading once it has its rows; the runner ends the nodes before it that
   feed nothing else.
+- `sort`: `by` (kind `ORDER`: a list of `column [asc|desc] [nulls first|last]`, as SQL writes it;
+  the UI writes the same text), `memory_limit_mb` (256). See "Sorting, and spilling to disk" below.
+
+### Sorting, and spilling to disk (ADR 0049)
+
+`sort` (and each side of a `join`) is an external merge sort, `ExternalSorter` in `kiln-nodes`:
+
+- **Keys as bytes.** Each row's key is encoded once, as it arrives, into bytes whose unsigned
+  order is the order of the values (`KeyCodec`): whole numbers, dates and timestamps as eight
+  bytes with the sign bit flipped; floating point as eight bytes in `Double.compare` order, -0.0
+  made 0.0 and every NaN one value after +infinity; decimals by value at the column's scale (sign,
+  length, magnitude, inverted when negative); text as its UTF-8 bytes (code point order) with zero
+  bytes escaped and a two-byte end, so no key is the start of another; booleans as one byte. Each
+  part starts with a byte placing its null first or last; a descending part inverts its value's
+  bytes, never that byte. Sorting and merging then compare bytes only, whatever the types.
+- **Ordering decisions.** The order is the expression language's `<` (section 3), so a sort agrees
+  with a filter's comparisons. Text has **no collation**: Unicode code point order, the order of
+  UTF-8 bytes (`B` before `a`, `é` after `z`), the same on every server and the order PostgreSQL's
+  `C` collation gives. A collation per locale is left for when a customer needs one; `lower(x)` in
+  a compute node gives a case-blind order today. **Nulls go last** by default in both directions
+  (unlike PostgreSQL, which puts them first when descending), so the rows with values are always
+  what a reader sees first; `nulls first` says otherwise.
+- **Stable.** In memory, a bottom-up merge sort of row references (with each key's first eight
+  bytes alongside, so most comparisons never touch the key) keeps equal rows in arrival order.
+  Runs on disk hold rows that arrived before those of later runs, and merging takes the earlier
+  run's row on a tie, and merges runs next to each other only, so the whole sort is stable.
+- **Memory.** Rows are held as their Arrow batches, moved into an allocator of the sorter's own,
+  plus their keys on the heap. When those (and 24 bytes a row for the sort's arrays) pass
+  `memory_limit_mb`, the rows held are sorted and written as one **run**, and let go. At the end,
+  with nothing spilled, rows are gathered in order straight from memory, 8,192 a batch. Otherwise
+  what is held is written as a last run and the runs are merged, at most 64 at a time (more runs
+  are first merged into fewer, bigger ones, keeping their order). Runs are written in batches small
+  enough that 64 of them take a quarter of the limit, so a merge holds about that much.
+- **Files.** A run is an Arrow IPC stream of the rows with the key as an extra binary column. Each
+  file is encrypted with AES in counter mode, under a 256-bit key made for the node and held only
+  in its memory, with a random IV at the head of the file: rows from a source whose columns are
+  marked sensitive are never on disk in clear, and a file a crash leaves behind cannot be read.
+  Files go in a folder of the node's own (owner-only on POSIX) inside one per process,
+  `kilnmark-spill-<pid>-*`, under the system property `kilnmark.spill-dir` or else
+  `java.io.tmpdir`; folders of processes no longer running are deleted when a node next spills. A
+  run's files are deleted as the merge finishes with them, and the node's folder when it closes:
+  after it finishes, fails or is stopped (an interrupt ends the sort, the merge and file reads,
+  which use interruptible channels).
+- **What a run shows.** The node counts the bytes it wrote (`NodeContext.spilled`, on the run's
+  `NodeResult.spilledBytes`) and adds a line to the run's log (`NodeContext.note`): how many rows
+  were sorted on disk, in how many parts, and how many megabytes. The bytes are not yet stored with
+  the node's other figures in the database.
+- **Preview.** A sort is previewable and counts as a node holding rows (its `memory_limit_mb` is
+  clamped to its share of the preview's); it may spill there too, on the API process. It looks
+  at the values of the columns it orders by, so a preview refuses it for a caller who may not
+  see a hidden column it orders by: the order would give the values' order away.
 
 Memory: a node closes every batch it takes or hands it on, and splits batches by copying only
 when rows go to more than one port (a batch whose rows all go one way is handed on whole).
@@ -809,7 +861,9 @@ asset's previous profile.
   each snapshot and at the end: the run starting and ending, each node starting, its first row in
   and out, its last row out and how it ended, the engine's notes (stamped with when the engine
   noticed them), a gate starting to set rows aside (`gate_quarantining`: the first rows a gate node
-  sends anywhere but `out`), each gate's verdict (`gate_verdict`: "Gate check quarantined 229 rows (email
+  sends anywhere but `out`), a node's own words about its work (`node_note`, from
+  `NodeContext.note` through `RunListener.nodeNote`: "Node ordered: Sorted 60,000 rows on disk ...",
+  Kilnmark's words, never values, so they are the text), each gate's verdict (`gate_verdict`: "Gate check quarantined 229 rows (email
   format: 229)": rule names and counts, as the run's quality section shows everyone; a rule's
   message and a stop reason are the detail, as they can hold values) and the run's own notes, as
   information or warnings as each is. At most 10,000 events a run, then one `log_truncated`;
