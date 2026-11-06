@@ -7,6 +7,12 @@ details.
 
 ### What's new
 
+- **Wait until a file arrives or a query is true** (ADR 0041). A flow's new `wait-for` node looks
+  every so often, holding no worker in between, until enough files matching a pattern are on a file
+  source, or a read-only query on a PostgreSQL source with Allow SQL on returns true, then lets the
+  flow go on; after its timeout it gives up and fails.
+  ([Waiting until a file arrives or a query is true](docs/guide/flows.md#waiting-until-a-file-arrives-or-a-query-is-true))
+
 - **Check a source before the work starts** (ADR 0041). A flow's new `check-source` node checks
   that a source can be reached and holds the tables or files the flow needs, keeping no data, and
   fails at once, naming what is missing, if not. Its `missing` value can go in a notice.
@@ -19,6 +25,25 @@ details.
   person's approval on production sources. Nothing is built yet; ADR 0045 amends ADR 0028.
 
 ### Details
+
+- **The `wait-for` flow node** (ADR 0041, docs/design/flow-controls.md, C2). It takes `source` and
+  either `file` (a pattern with `*` and `?` in its last part; `at_least`, 1 by default) or `query`,
+  plus `every` (30s to 1h, 5m) and `timeout` (up to 24h, 1h). It looks at once, then every `every`,
+  on a thread beside the flow's watcher: a file by listing its folder and matching whole paths, a
+  query as custom SQL rules run (ADR 0028): PostgreSQL with Allow SQL on, checked by
+  `checkCustomSql`, read-only, 30 seconds at most, never as a superuser, true when its first value
+  is, nothing kept. A flow with a query wait counts as having SQL: saved only with the unmask grant,
+  and each run that waits on one records `flow.sql`. It reports `found` and `waited_s`; a look that
+  cannot be made is tried again, one that never can fails it. A file look lists one folder within
+  the check timeout, keeping to the source's include and exclude patterns and below an object
+  store's prefix. The diagram, Settings tab and run timeline show it.
+
+- **A flow version records whether its author may write SQL.** `sql_checked` is now whether whoever
+  saved the version held the unmask grant (it was always true), and a `query:` in a wait-for node
+  counts as SQL even when it does not read as one. Migration V34 adds `query_checked`, false for
+  every version saved before it: before this release a wait-for node was an unknown type, which
+  anyone who could save a flow could write, so an older version's query runs only once a designer
+  who may see unmasked values saves it again.
 
 - **The `check-source` flow node** (ADR 0041, docs/design/flow-controls.md, C1). It takes `source`,
   `tables` and `files` (lists, at most 50 names together, no ${...}) and `timeout`. It connects with

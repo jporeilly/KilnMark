@@ -61,7 +61,7 @@ flowchart TD
 - Not a sample yet: the samples library takes a flow's `source:` as a sql node's and asks for a
   source with Allow SQL on.
 
-## C2. `wait-for` (planned)
+## C2. `wait-for` (built)
 
 ```mermaid
 flowchart LR
@@ -99,6 +99,35 @@ flowchart LR
   shown. Results: `found` (1 or 0).
 - Waits on the flow's watcher, holding no slot and no connection between checks. Cancelling the
   flow ends the wait. Results also: `waited_s`.
+- Built as: `FlowDefinition.Until` (file, at_least, query, every) with the node's `timeout`;
+  `WaitFor.look` (server/flows) makes one look on a virtual thread, as a check-source node does,
+  and `FlowService.pollWait` schedules the next (`now + every` after a look ends). A look that cannot
+  be made (`Look.problem`) is tried again; one that never can (`Look.refused`: the source gone, its
+  kind or Allow SQL changed, a superuser login, the simple protocol) fails the node at once.
+- File: the pattern's folder must be literal (`*` and `?` only in the last part, no `..`, `/` or
+  `\` at the start). `FileSourceConnector.filesBelow(source, folder, timeout)` lists the files below
+  that folder within `kilnmark.sources.check-timeout`, as the source's include and exclude patterns
+  keep them, relative to the source's prefix (an S3 bucket's `prefix`); each path is matched whole
+  (`*` → `[^/]*`, `?` → `[^/]`). The pattern is never opened as a path, only compared.
+- Query: refused when saved unless the source is PostgreSQL with Allow SQL on (Allow writing is not
+  needed) and `SqlTokens.checkCustomSql` accepts it. A flow with one counts as having SQL
+  (`FlowService.hasSql`): saved only by a designer with the unmask grant, run only from a version
+  saved with that check (`sql_checked`), and each run that starts the node records `flow.sql` in
+  the audit log (target `flow/run/node`, details the source and `query: true`, never the text).
+  `hasSql` looks for a `query` key as parsed, so a draft whose query the parser refused is gated
+  too. `FlowStore.save` records `sql_checked` as whether the saver held the unmask grant (it was
+  always true, V29), so a version saved without it never runs SQL, whatever a later Kilnmark reads
+  in it. Before this node existed, anyone who could save a flow could have saved one as an unknown
+  type, with `sql_checked` true; the YAML's text cannot say which (keys and values may be quoted,
+  with escapes such as `"que\x72y"`), so V34 adds `query_checked`, false for every older version and
+  since then the saver's grant. A version with a wait-for query runs only with both true.
+- What a query shows: only `found` (1 or 0) on the run, to whoever may read the run, as a sql node's
+  `rows_affected` is. Nothing it returns is stored; its errors give only their SQLSTATE.
+- The flow's watcher, holding the flow job (`kilnmark.worker.flows` places), keeps polling while a
+  node waits, as for `wait`: no pipeline worker slot and no connection between looks. At
+  run time: the URL's rules again, TLS and hosts, no simple protocol, `RuleRunner.privileged`, a
+  read-only transaction with the dialect's read-only and timeout settings (30 s), conforming
+  strings, `setMaxRows(1)`, then a rollback. A failed query's message gives only its SQLSTATE.
 
 ## C3. `timeout` (built)
 

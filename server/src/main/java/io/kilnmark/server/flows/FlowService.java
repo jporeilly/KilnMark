@@ -131,6 +131,16 @@ public class FlowService {
                     sqlProblems(s, problems);
                     continue;
                 }
+                if (FlowDefinition.WAIT_FOR.equals(s.type())) {
+                    if (s.source() != null && (s.until().file() != null || s.until().query() != null)) {
+                        String why = WaitFor.refusal(s, sqlSources);
+                        if (why != null) {
+                            Position at = s.at(s.until().query() != null ? "query" : "source");
+                            problems.add(new Problem(at.line(), at.column(), s.id(), why));
+                        }
+                    }
+                    continue;
+                }
                 if (FlowDefinition.CHECK_SOURCE.equals(s.type())) {
                     if (s.source() != null) {
                         String why = CheckSource.sourceRefusal(s, sqlSources);
@@ -264,7 +274,9 @@ public class FlowService {
 
     /** Whether a flow has a sql node. */
     static boolean hasSql(FlowDefinition def) {
-        return def != null && def.nodes().stream().anyMatch(n -> FlowDefinition.SQL.equals(n.type()));
+        // A wait-for node's query as written, even one the parser refused: a draft may become runnable later.
+        return def != null && def.nodes().stream().anyMatch(n -> FlowDefinition.SQL.equals(n.type())
+            || (FlowDefinition.WAIT_FOR.equals(n.type()) && n.keys().containsKey("query")));
     }
 
     /** The refusal when someone who may not see unmasked values saves a flow with a sql node (ADR 0028). */
@@ -444,8 +456,10 @@ public class FlowService {
         String problems = problemsJson(check.problems());
         boolean exists = !create && store.find(check.name()).isPresent();
         try {
+            // sql_checked records whether the saver may write a person's SQL: a version saved without the grant
+            // never runs SQL, even if a later Kilnmark reads a node in it that this one did not know.
             return store.save(check.name(), expected, !exists, check.name(), description, yaml, message, by,
-                check.valid(), problems, library);
+                check.valid(), problems, library, mayUnmask);
         } catch (FlowStore.Exists e) {
             throw fail(Response.Status.CONFLICT, "A flow called " + check.name() + " exists already");
         } catch (FlowStore.Changed e) {
@@ -507,7 +521,7 @@ public class FlowService {
                 + "fixed: " + String.join("; ", first.stream().map(p -> "line " + p.line() + ": " + p.message()).toList()));
         }
         FlowDefinition def = FlowDefinition.parse(v.yaml()).definition();
-        if (hasSql(def) && !store.sqlChecked(name, n)) {
+        if (!sqlChecked(def, name, n)) {
             throw fail(Response.Status.CONFLICT, SQL_NOT_CHECKED.formatted(n, name));
         }
         Map<String, Object> vars = variables();
@@ -523,8 +537,23 @@ public class FlowService {
     }
 
     /** Why a version saved before sql nodes were checked (V29) does not run. */
-    static final String SQL_NOT_CHECKED = "Version %d of %s has a sql node and was saved before Kilnmark checked who "
-        + "writes them. A designer whose token sees unmasked values saves it again, then it can run";
+    static final String SQL_NOT_CHECKED = "Version %d of %s has SQL (a sql node, or a wait-for node's query) and was "
+        + "saved before Kilnmark checked who writes them. A designer whose token sees unmasked values saves it again, "
+        + "then it can run";
+
+    /**
+     * Whether a version may run the SQL it holds: none, or saved by someone who may write it. A wait-for
+     * query also needs {@code query_checked} (V34): the versions saved before it may hold one nobody
+     * with the grant wrote.
+     */
+    private boolean sqlChecked(FlowDefinition def, String name, int n) {
+        if (!hasSql(def)) {
+            return true;
+        }
+        boolean query = def.nodes().stream().anyMatch(x -> FlowDefinition.WAIT_FOR.equals(x.type())
+            && x.keys().containsKey("query"));
+        return store.sqlChecked(name, n) && (!query || store.queryChecked(name, n));
+    }
 
     /** The values a run starts with: each parameter as given or by default, checked against its type. */
     static Map<String, Object> resolveParameters(FlowDefinition def, Map<String, Object> given) {
@@ -864,6 +893,7 @@ public class FlowService {
             // A sql node still running must not commit after the run is recorded as failed.
             execution.sqlControls.values().forEach(SqlAction.Control::stop);
             execution.checkThreads.values().forEach(Thread::interrupt);
+            execution.lookThreads.values().forEach(Thread::interrupt);
             // Not the exception's text: it could quote anything. The class is enough for the log.
             LOG.errorf("Flow run %d failed with %s", id, e.getClass().getName());
             String why = "The flow could not be run to the end: an internal error. Look at the server's log.";
@@ -899,6 +929,12 @@ public class FlowService {
         private final Map<String, Thread> checkThreads = new HashMap<>();
         /** Check-source nodes stopped because the flow was cancelled or stopped. */
         private final Set<String> checksStopped = new HashSet<>();
+        /** Each wait-for node's look in progress, on a thread of its own, and when it looks next (ADR 0041). */
+        private final Map<String, java.util.concurrent.CompletableFuture<WaitFor.Look>> looks = new HashMap<>();
+        private final Map<String, Thread> lookThreads = new HashMap<>();
+        private final Map<String, Instant> nextLook = new HashMap<>();
+        /** What each wait-for node found at its last look. */
+        private final Map<String, Integer> lastFound = new HashMap<>();
         private boolean nodeWasCancelled;
         /** What ${...} reads: the run's parameters and the variables it started with (vars.name). */
         private Map<String, Object> scope = Map.of();
@@ -926,7 +962,7 @@ public class FlowService {
                 told(run.flow(), run.id(), "failed", why);
                 return;
             }
-            if (hasSql(def) && !store.sqlChecked(run.flow(), run.version())) {
+            if (!sqlChecked(def, run.flow(), run.version())) {
                 String why = "The flow could not start: " + SQL_NOT_CHECKED.formatted(run.version(), run.flow());
                 store.finishRun(run.id(), "failed", why);
                 told(run.flow(), run.id(), "failed", why);
@@ -955,6 +991,7 @@ public class FlowService {
                 if (shutdown.getAsBoolean()) {
                     sqlControls.values().forEach(SqlAction.Control::stop);
                     checkThreads.values().forEach(Thread::interrupt);
+                    lookThreads.values().forEach(Thread::interrupt);
                     for (String s : engine.running()) {
                         if (sqlRuns.containsKey(s)) {
                             save(def, s, "failed", null, Instant.now(), stoppedSql(s), Map.of());
@@ -1089,6 +1126,17 @@ public class FlowService {
             }
             if (FlowDefinition.CHECK_SOURCE.equals(s.type())) {
                 startCheck(def, s);
+                return;
+            }
+            if (FlowDefinition.WAIT_FOR.equals(s.type())) {
+                save(def, node, "running", null, null, "Waiting for " + waitingFor(s), Map.of());
+                if (s.until().query() != null && audit != null) {
+                    // A person's SQL runs on a schedule (ADR 0028, 0029): who, the flow and run, the source; never the query.
+                    audit.record(new io.kilnmark.server.audit.AuditLog.Actor(run.requestedBy(), null),
+                        io.kilnmark.server.audit.AuditLog.FLOW_SQL, run.flow() + "/" + run.id() + "/" + s.id(),
+                        Map.of("source", s.source(), "query", true, "version", run.version()));
+                }
+                startLook(s);
                 return;
             }
             if (FlowDefinition.FOR_EACH.equals(s.type())) {
@@ -1502,6 +1550,96 @@ public class FlowService {
                 o.message(), reported);
         }
 
+        /** What a wait-for node waits for, in the flow's words. */
+        private static String waitingFor(FlowDefinition.Node s) {
+            return s.until().file() != null
+                ? (s.until().atLeast() == 1 ? "a file" : s.until().atLeast() + " files") + " matching " + s.until().file()
+                    + " on " + s.source()
+                : "a query on " + s.source() + " to be true";
+        }
+
+        /** Starts one look by a wait-for node, on a thread of its own: it holds a connection only while it looks. */
+        private void startLook(FlowDefinition.Node s) {
+            Duration connect = config == null ? Duration.ofSeconds(15) : config.sources().checkTimeout();
+            java.util.concurrent.CompletableFuture<WaitFor.Look> done = new java.util.concurrent.CompletableFuture<>();
+            looks.put(s.id(), done);
+            lookThreads.put(s.id(), Thread.ofVirtual().name("flow-" + run.id() + "-wait-" + s.id()).start(() -> {
+                try {
+                    done.complete(WaitFor.look(s, sqlSources, connect));
+                } catch (RuntimeException e) {
+                    LOG.errorf("Flow run %d, wait-for node %s failed with %s", run.id(), s.id(), e.getClass().getName());
+                    done.complete(WaitFor.Look.problem("The look could not be made: an internal error. Look at the "
+                        + "server's log."));
+                }
+            }));
+        }
+
+        /**
+         * A wait-for node: looks at once, then every {@code every}, until it finds what it waits for
+         * (succeeded) or its {@code timeout} passes (failed, saying it gave up). A look that could not be
+         * made is tried again at the next; one that never can (the source gone, SQL no longer allowed)
+         * fails it at once. Cancelling or stopping the flow ends the wait at once. It reports
+         * {@code found} and {@code waited_s}.
+         */
+        private void pollWait(FlowDefinition def, FlowEngine engine, FlowDefinition.Node s, boolean cancelling) {
+            String node = s.id();
+            Instant now = Instant.now();
+            double waited = Duration.between(started.get(node), now).toMillis() / 1000.0;
+            java.util.concurrent.CompletableFuture<WaitFor.Look> f = looks.get(node);
+            if (cancelling || engine.halted()) {
+                stopLooking(node);
+                end(def, engine, node, FlowEngine.State.CANCELLED, null, "Stopped waiting: the flow was stopped", Map.of());
+                return;
+            }
+            Map<String, Object> reported = new LinkedHashMap<>();
+            reported.put("found", (double) lastFound.getOrDefault(node, 0));
+            reported.put("waited_s", Math.floor(waited));
+            boolean past = Duration.between(started.get(node), now).compareTo(s.timeout()) >= 0;
+            if (f != null && f.isDone()) {
+                WaitFor.Look look = f.join();
+                looks.remove(node);
+                lookThreads.remove(node);
+                if (look.refused() != null) {
+                    end(def, engine, node, FlowEngine.State.FAILED, null, look.refused(), Map.of());
+                    return;
+                }
+                if (look.problem() == null) {
+                    lastFound.put(node, look.found());
+                    reported.put("found", (double) look.found());
+                    if (look.found() >= (s.until().file() != null ? s.until().atLeast() : 1)) {
+                        end(def, engine, node, FlowEngine.State.SUCCEEDED, null, (s.until().file() != null
+                            ? look.found() + (look.found() == 1 ? " file matches " : " files match ") + s.until().file()
+                            : "The query on " + s.source() + " is true") + " after waiting " + pretty(Duration.ofSeconds(
+                                (long) waited)), reported);
+                        return;
+                    }
+                }
+                nextLook.put(node, now.plus(s.until().every()));
+                String so = look.problem() != null ? look.problem() + "; looking again"
+                    : s.until().file() != null ? look.found() + " of " + s.until().atLeast() + " so far"
+                    : "Not yet true";
+                save(def, node, "running", null, null, "Waiting for " + waitingFor(s) + ". " + so, reported);
+            }
+            if (past) {
+                stopLooking(node);
+                end(def, engine, node, FlowEngine.State.FAILED, null, "Waited " + pretty(s.timeout()) + " for "
+                    + waitingFor(s) + ", and gave up", reported);
+                return;
+            }
+            if (!looks.containsKey(node) && !now.isBefore(nextLook.getOrDefault(node, now))) {
+                startLook(s);
+            }
+        }
+
+        /** Ends a wait-for node's look in progress, if any: the thread is interrupted and left. */
+        private void stopLooking(String node) {
+            Thread t = lookThreads.remove(node);
+            if (t != null) {
+                t.interrupt();
+            }
+            looks.remove(node);
+        }
+
         /** Ends a sql node whose thread has finished: with the rows it changed, or why it did not. */
         private void pollSql(FlowDefinition def, FlowEngine engine, String node, boolean cancelling) {
             if (sqlWaiting.contains(node)) {
@@ -1693,6 +1831,10 @@ public class FlowService {
             }
             if (FlowDefinition.CHECK_SOURCE.equals(s.type())) {
                 pollCheck(def, engine, node, cancelling);
+                return;
+            }
+            if (FlowDefinition.WAIT_FOR.equals(s.type())) {
+                pollWait(def, engine, s, cancelling);
                 return;
             }
             if (FlowDefinition.FOR_EACH.equals(s.type())) {

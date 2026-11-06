@@ -210,3 +210,18 @@ nodes:
     ]);
   });
 });
+
+describe("a wait-for node's summary", () => {
+  test("says what it waits for, where and how often", () => {
+    const r = readFlowGraph(`kilnmark: flow/v1
+name: f
+nodes:
+  - { id: a, type: wait-for, source: landing, file: "incoming/*.csv", every: 2m }
+  - { id: b, type: wait-for, source: warehouse, query: "select true" }
+`);
+    expect(r.ok && r.graph.nodes.map((n) => [n.summary, TYPE_WORDS[n.type]])).toEqual([
+      ["incoming/*.csv on landing, every 2m", "Waits for a file or a query"],
+      ["A query on warehouse, every 5m", "Waits for a file or a query"],
+    ]);
+  });
+});

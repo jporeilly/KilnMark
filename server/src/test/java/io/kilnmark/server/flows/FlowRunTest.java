@@ -1104,4 +1104,61 @@ class FlowRunTest {
         assertTrue(files.stream().anyMatch(m -> m.startsWith("Node ready looks for files, but fl-src is not a file")),
             files.toString());
     }
+
+    // ---- wait-for a file (ADR 0041, C2) ----
+
+    @Test
+    @Order(26)
+    void aWaitForFileNodeLooksAgainUntilEnoughFilesMatch() throws Exception {
+        java.nio.file.Path roots = java.nio.file.Files.createDirectories(java.nio.file.Path.of(
+            System.getProperty("java.io.tmpdir"), "kilnmark-test-files"));
+        java.nio.file.Path dir = java.nio.file.Files.createTempDirectory(roots, "fl-landing");
+        java.nio.file.Files.createDirectories(dir.resolve("incoming/old"));
+        java.nio.file.Files.writeString(dir.resolve("incoming/orders-1.csv"), "id\n1\n");
+        java.nio.file.Files.writeString(dir.resolve("incoming/old/orders-0.csv"), "id\n0\n");
+        java.nio.file.Files.writeString(dir.resolve("incoming/returns-1.csv"), "id\n1\n");
+        admin().contentType(ContentType.JSON).body(Map.of("name", "fl-landing", "kind", "files",
+            "settings", Map.of("path", dir.toString()))).post("/api/v1/sources").then().statusCode(201);
+        save("""
+            kilnmark: flow/v1
+            name: fl-wait-file
+            nodes:
+              - id: arrived
+                type: wait-for
+                source: fl-landing
+                file: "incoming/orders-*.csv"
+                at_least: 2
+                every: 30s
+                timeout: 5m
+            """);
+        FlowStore.Run run = start("fl-wait-file", Map.of());
+        // The first look finds one: the other file is in a folder below, and returns-1.csv does not match.
+        FlowStore.NodeRun waiting = await("the first look", () -> node(run.id(), "arrived"),
+            n -> n != null && n.message() != null && n.message().contains("so far"));
+        assertEquals("running", waiting.status());
+        assertTrue(waiting.message().endsWith("1 of 2 so far"), waiting.message());
+        java.nio.file.Files.writeString(dir.resolve("incoming/orders-2.csv"), "id\n2\n");
+        FlowStore.Run done = waitForFlow(run.id(), "succeeded");
+        FlowStore.NodeRun arrived = node(run.id(), "arrived");
+        assertTrue(arrived.message().startsWith("2 files match incoming/orders-*.csv after waiting"), arrived.message());
+        assertTrue(arrived.reported().replace(" ", "").contains("\"found\":2.0"), arrived.reported());
+        assertTrue(Duration.between(arrived.startedAt(), arrived.finishedAt()).toSeconds() >= 25,
+            "it looked again after its every, not at once");
+        assertNull(done.error());
+
+        // Checked when saved: a file needs a file source, and * only in the file's name.
+        String yaml = """
+            kilnmark: flow/v1
+            name: fl-wait-saved
+            nodes:
+              - { id: arrived, type: wait-for, source: fl-src, file: "incoming/a.csv" }
+            """;
+        List<String> wrongSource = flows.validate(yaml).problems().stream().map(io.kilnmark.kiln.yaml.Problem::message)
+            .toList();
+        assertTrue(wrongSource.contains("Node arrived waits for a file, but fl-src is not a file or object-store source"),
+            wrongSource.toString());
+        List<String> query = flows.validate(yaml.replace("file: \"incoming/a.csv\"", "query: \"select true\""))
+            .problems().stream().map(io.kilnmark.kiln.yaml.Problem::message).toList();
+        assertTrue(query.stream().anyMatch(m -> m.contains("a query runs only on PostgreSQL sources")), query.toString());
+    }
 }
