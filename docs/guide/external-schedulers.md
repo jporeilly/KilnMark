@@ -82,7 +82,7 @@ Request key: daily-load-20261106-4411
 Run: 42
 Page: https://kilnmark.example.com:8443/#/pipeline-runs/42
 Status: failed
-Message: Node out failed: the table lab.orders is locked by another run
+Message: Node out failed: the table sales.orders is locked by another run
 ```
 
 The script never prints the token. If Kilnmark cannot be reached for a moment, the script tries
