@@ -83,6 +83,9 @@ services:
       QUARKUS_OIDC_CREDENTIALS_SECRET: ${KILNMARK_OIDC_CLIENT_SECRET}
       # true behind a proxy that ends TLS, so the redirect URI the provider sees is https://
       QUARKUS_OIDC_AUTHENTICATION_FORCE_REDIRECT_HTTPS_SCHEME: ${KILNMARK_OIDC_BEHIND_TLS_PROXY:-false}
+      # Scopes asked for beside openid: offline_access where the provider issues a refresh token only
+      # then (Entra ID, Okta), so a sign-in renews rather than ending with its first ID token. Never for Keycloak.
+      QUARKUS_OIDC_AUTHENTICATION_SCOPES: ${KILNMARK_OIDC_SCOPES:-}
       KILNMARK_AUTH_OIDC_PROVIDER_NAME: ${KILNMARK_OIDC_PROVIDER_NAME:-your organisation}
       KILNMARK_AUTH_OIDC_GROUPS_CLAIM: ${KILNMARK_OIDC_GROUPS_CLAIM:-groups}
       KILNMARK_AUTH_OIDC_VIEWER_GROUPS: ${KILNMARK_OIDC_VIEWER_GROUPS:-}
