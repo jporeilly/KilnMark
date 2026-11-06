@@ -483,10 +483,11 @@ run with `?wait=` wait on the api role, on virtual threads, until the run ends o
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `kilnmark.api.max-wait` (`KILNMARK_API_MAX_WAIT`) | `15m` | The longest one request waits; a longer `wait` is cut to it |
-| `kilnmark.api.max-waiting` (`KILNMARK_API_MAX_WAITING`) | `100` | Requests that may wait at once on one process; one more gets 503 with `Retry-After: 5` |
+| `kilnmark.api.max-waiting` (`KILNMARK_API_MAX_WAITING`) | `100` | Requests that may wait at once on one process; one more read gets 503 with `Retry-After: 5`, and a start answers at once |
+| `kilnmark.api.max-waiting-per-caller` (`KILNMARK_API_MAX_WAITING_PER_CALLER`) | `10` | Of those, how many one token or person may hold |
 
-Request keys (`Idempotency-Key`) are kept 24 hours in `run_request_key` and deleted every hour by
-processes with the scheduler role.
+Request keys (`Idempotency-Key`) are kept 24 hours in `run_request_key`, written in one transaction
+with their run (`Db.together`), and deleted every hour by processes with the scheduler role.
 
 **Source limits** (ADR 0040, docs/design/parallel-runs.md). A source's `max_runs` caps the pipeline
 runs and flow `sql` nodes using it at once. Before a pipeline run starts, its worker takes one place

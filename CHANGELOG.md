@@ -35,23 +35,26 @@ details.
   seconds) on `POST /api/v1/pipelines/{name}/runs`, `POST /api/v1/flows/{name}/runs`,
   `GET /api/v1/pipeline-runs/{id}` and `GET /api/v1/flow-runs/{id}` answers when the run has ended
   (a start 200, a read 200) or the wait is up (a start 202, a read 200 with the run still going).
-  Waits run on virtual threads and look at the run once a second; `kilnmark.api.max-wait` (15
-  minutes) cuts each one, and `kilnmark.api.max-waiting` (100) limits how many wait at once, one
-  more getting 503 with `Retry-After`. The `Idempotency-Key` header on the two starts (1 to 200
-  printable characters) gives back the run the same key started, from the same token or person,
-  for the same pipeline or flow, within 24 hours (200, `Idempotent-Replayed: true`); the same key
-  for another is 422, and a refused start keeps no key. Keys are in `run_request_key` (migration
-  V37, after the built-in scheduler's V36); two requests with one key at once start one run, and
-  the scheduler role deletes keys after 24 hours. With `Accept: text/plain` the four endpoints
+  Waits run on virtual threads, look at the run once a second, and end when the caller goes;
+  `kilnmark.api.max-wait` (15 minutes) cuts each one, `kilnmark.api.max-waiting` (100) limits how
+  many wait at once and `kilnmark.api.max-waiting-per-caller` (10) how many one token or person
+  holds. A read beyond them gets 503 with `Retry-After`; a start is never refused, and answers at
+  once (202). The `Idempotency-Key` header on the two starts (1 to 200 printable characters) gives
+  back the run the same key started, from the same token or person, for the same request (pipeline
+  or flow, version and parameter values), within 24 hours (200, `Idempotent-Replayed: true`); the
+  same key for a different request is 422. Keys are in `run_request_key` (migration V37, after the
+  built-in scheduler's V36), written in one transaction with their run; two requests with one key
+  at once start one run, and the scheduler role deletes keys after 24 hours. With `Accept: text/plain` the four endpoints
   answer with the run as `name: value` lines. The two reads now say so in the API docs.
 - **`kilnmark-run.sh`, `kilnmark-run.ps1` and `kilnmark-run.cmd`** in the release's root, beside
   `kilnmark.sh` (ADR 0044). The shell edition needs only POSIX `sh` and `curl`; the PowerShell one
   Windows PowerShell 5.1. Both read the token from the file `KILNMARK_TOKEN_FILE` names, never
   from the command line or the environment, accept a private CA in `KILNMARK_CA_FILE`, never turn
-  certificate checks off, and refuse plain `http://` except to the same machine. They retry a lost
-  connection and a busy server with the same key. Tests run the shell edition against a test server
-  (and the PowerShell one where `KILNMARK_TEST_POWERSHELL` is set), and check the Windows files are
-  ASCII.
+  certificate checks off, and refuse plain `http://` except to the same machine. They wait 50
+  seconds at a time (under common proxy timeouts), retry a lost connection with the same key, give
+  up on a server that stays busy after about five minutes, and send each parameter exactly as typed
+  (`007` as text, long numbers unrounded). Tests run both editions against a test server and a stub,
+  and check the Windows files are ASCII.
 - **Dev mode starts again**: `./gradlew :server:quarkusDev` needs two POMs the build itself does
   not (`org.jboss:jboss-parent:37`, `org.jboss.slf4j:slf4j-jboss-logmanager:1.1.0.Final`); their
   checksums, matched against Maven Central, are now in `gradle/verification-metadata.xml`

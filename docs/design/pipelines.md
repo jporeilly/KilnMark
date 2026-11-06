@@ -876,22 +876,26 @@ its run ends, and a retried start never to run the work twice.
 - **`wait`** (whole seconds) on `POST .../pipelines/{name}/runs`, `POST .../flows/{name}/runs`,
   `GET /api/v1/pipeline-runs/{id}` and `GET /api/v1/flow-runs/{id}`. The request answers when the
   run's status is final or the wait is up: a start with 200 (ended) or 202 (still going), a read
-  with 200 and the run as it is. `RunWaits` looks at the run's row (`runStatus`, one row) once a
-  second, on a virtual thread (`@RunOnVirtualThread`), so a waiting request holds no worker
-  thread. `kilnmark.api.max-wait` (15 minutes) cuts every wait; `kilnmark.api.max-waiting` (100)
-  places are taken before anything starts, and one request more gets 503 with `Retry-After: 5`. A
-  read with no wait, or of a run that has ended, takes no place. A waiting request whose caller
-  has gone (its connection closed) stops waiting.
+  with 200 and the run as it is. `RunRequests` does both for pipelines and flows; `RunWaits` looks at
+  the run's row (`runStatus`, one row) once a second, on a virtual thread (`@RunOnVirtualThread`),
+  so a waiting request holds no worker thread. `kilnmark.api.max-wait` (15 minutes) cuts every
+  wait. A wait takes one of `kilnmark.api.max-waiting` (100) places, and one of its caller's
+  `kilnmark.api.max-waiting-per-caller` (10); a read that finds none gets 503 with
+  `Retry-After: 5`, and a start that finds none answers at once (202), its run started. A read with
+  no wait, or of a run that has ended, takes no place. A waiting request whose connection has
+  closed stops waiting within about a second (a test holds a place with a raw connection, closes
+  it, and takes the place again).
 - **`Idempotency-Key`** on the two starts (`RunRequestKeys`, table `run_request_key`, V37): keyed
-  by caller (`token:<id>`, or `user:<name>` for a provider sign-in) and key, holding the kind
-  (pipeline or flow), the name and the run (a foreign key to `pipeline_run` or `flow_run`, deleted
-  with it). In one transaction: delete this caller's key if older than 24 hours; insert it with
-  `ON CONFLICT DO NOTHING`; if inserted, queue the run (its own transaction) and set its id on the
-  row; else read the row: the same kind and name give its run back (200,
-  `Idempotent-Replayed: true`), another give 422. A second request with the same key waits on the
-  first's uncommitted row, so two at once start one run. A start that throws rolls the key back.
-  Four keyed starts at most at once per process, each holding two connections for a moment. The
-  scheduler role deletes keys older than 24 hours every hour.
+  by caller (`token:<id>`, or `user:oidc:<issuer>|<subject>` for a provider sign-in) and key,
+  holding the kind (pipeline or flow), the name, `request_hash` (SHA-256 of kind, name, version and
+  parameters as sent, map keys sorted) and the run (a foreign key to `pipeline_run` or `flow_run`,
+  deleted with it). In one transaction (`Db.together`, which the run's own `Db.tx` calls join):
+  delete this caller's key if older than 24 hours; insert it with `ON CONFLICT DO NOTHING`; if
+  inserted, queue the run and set its id on the row, all committing together; else read the row:
+  the same kind, name and hash give its run back (200, `Idempotent-Replayed: true`), anything else
+  gives 422. A second request with the same key waits on the first's uncommitted row, so two at
+  once start one run. A start that throws rolls back the key and the run. The scheduler role
+  deletes keys older than 24 hours every hour.
 - **`Accept: text/plain`** on the four answers with `id`, `kind`, `name`, `status`, `ended`,
   `page` and `message` lines, the message on one line and as the caller may see it (Sights, as the
   JSON's `error`). Errors stay JSON.
