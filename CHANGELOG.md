@@ -34,6 +34,11 @@ details.
   New `KILNMARK_OIDC_SCOPES` (`quarkus.oidc.authentication.scopes`) for providers that issue a
   refresh token only for `offline_access`. The bundled Keycloak keeps its 5-minute tokens.
 
+- **Quieter start and stop**: `kilnmark.sh` and `kilnmark.cmd` no longer show Podman's notice
+  that it runs an external compose tool (they set `PODMAN_COMPOSE_WARNING_LOGS=false` for their
+  own compose commands), and `up` and `down` show compose's container ids and names only when
+  compose fails. Their own lines still say what happened.
+
 ## 0.1.1 (6 November 2026)
 
 ### What's new
