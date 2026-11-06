@@ -6,7 +6,7 @@ import type { Value } from "./model";
 
 /** What a control needs besides its setting: the columns it can offer, sources, and assets. */
 export type ControlContext = {
-  /** Columns arriving at the node (for a lookup: main and lookup sides); null when not known. */
+  /** Columns arriving at the node (for a lookup: main and lookup sides; for a join: left and right); null when not known. */
   columns: { main: PipelineColumn[] | null; lookup: PipelineColumn[] | null };
   /** Which side a column setting names; the right-hand side of a column map may name the other. */
   side: "main" | "lookup" | null;
@@ -782,6 +782,7 @@ function pairLabels(kind: PairKind, nodeType: string | null, key: string): [stri
     return ["Column", nodeType === "aggregate" ? "Summary" : "Expression", "Add a column"];
   }
   if (nodeType === "lookup") return ["Main column", "Lookup column", "Add a key"];
+  if (nodeType === "join") return ["Left column", "Right column", "Add a key"];
   if (key === "rename") return ["Column", "New name", "Add a rename"];
   return ["From", "To", "Add a pair"];
 }
@@ -803,7 +804,7 @@ function PairsControl(p: ControlProps & { kind: PairKind }) {
     }
   }, [key]);
   const [left, right, addLabel] = pairLabels(p.kind, p.context.nodeType, p.spec.key);
-  const valueIsColumn = p.kind === "column-map" && p.context.nodeType === "lookup";
+  const valueIsColumn = p.kind === "column-map" && (p.context.nodeType === "lookup" || p.context.nodeType === "join");
   const leftIsColumn = p.kind === "column-map" || (p.kind === "expressions" && p.spec.key === "cast");
   const dupes = new Set(rows.map((r) => r[0]).filter((n, i, all) => n !== "" && all.indexOf(n) !== i));
   const commit = (next: [string, string][]) => {

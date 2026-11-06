@@ -144,8 +144,11 @@ export function SettingsPanel({
   const assetName = typeof node.settings.asset === "string" ? node.settings.asset : null;
   const tableColumns = useAssetColumns(node.type === "read" && sourceName && assetName ? `urn:kilnmark:${sourceName}:${assetName}` : null);
   const columns = {
-    main: node.type === "read" ? tableColumns : arrivingColumns(check, node.id, node.type === "lookup" ? "main" : undefined),
-    lookup: node.type === "lookup" ? arrivingColumns(check, node.id, "lookup") : null,
+    main:
+      node.type === "read"
+        ? tableColumns
+        : arrivingColumns(check, node.id, node.type === "lookup" ? "main" : node.type === "join" ? "left" : undefined),
+    lookup: node.type === "lookup" ? arrivingColumns(check, node.id, "lookup") : node.type === "join" ? arrivingColumns(check, node.id, "right") : null,
   };
   const bySetting = new Map<string, string[]>();
   const general: PipelineProblem[] = [];

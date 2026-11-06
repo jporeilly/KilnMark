@@ -180,6 +180,10 @@ describe("each setting kind gets its control, with help and default", () => {
     expect(out).toContain("Main column 1");
     expect(out).toContain("Lookup column 1");
     expect(out).toMatch(/<option value="id" selected="">id \(int64\)<\/option>/);
+    const join = html(spec("on", "column_map"), { customer_id: "id" }, { nodeType: "join" });
+    expect(join).toContain("Left column 1");
+    expect(join).toContain("Right column 1");
+    expect(join).toMatch(/<option value="id" selected="">id \(int64\)<\/option>/); // from the right input
     const rename = html(spec("rename", "column_map"), { status: "state" }, { nodeType: "select" });
     expect(rename).toContain("New name 1");
     expect(rename).toContain('value="state"');
@@ -214,6 +218,8 @@ describe("what the canvas says about nodes", () => {
     expect(nodeSummary(node({ type: "compute", settings: { columns: { x: "1", y: "2" } } }))).toBe("x, y");
     expect(nodeSummary(node({ type: "lookup", settings: { on: { a: "b" } } }))).toBe("on a = b");
     expect(nodeSummary(node({ type: "sort", settings: { by: ["region", "amount desc"] } }))).toBe("by region, amount desc");
+    expect(nodeSummary(node({ type: "join", settings: { on: { customer_id: "id" }, how: "left" } }))).toBe("left on customer_id = id");
+    expect(nodeSummary(node({ type: "join", settings: { on: { a: "b" } } }))).toBe("inner on a = b");
     expect(nodeSummary(node({ type: "write", settings: { source: "w", path: "x.csv", mode: "replace" } }))).toBe("w · x.csv · replace");
     expect(nodeSummary(node({ type: "read", settings: { source: "db", asset: 2024.1 }, texts: { asset: "2024.10" } }))).toBe("db · 2024.10");
   });
