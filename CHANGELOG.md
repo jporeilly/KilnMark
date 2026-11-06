@@ -43,8 +43,10 @@ details.
   back the run the same key started, from the same token or person, for the same request (pipeline
   or flow, version and parameter values), within 24 hours (200, `Idempotent-Replayed: true`); the
   same key for a different request is 422. Keys are in `run_request_key` (migration V37, after the
-  built-in scheduler's V36), written in one transaction with their run; two requests with one key
-  at once start one run, and the scheduler role deletes keys after 24 hours. With `Accept: text/plain` the four endpoints
+  built-in scheduler's V36), written in one transaction with their run after the run is checked, so
+  many starts at once never use up the database pool; two requests with one key at once start one
+  run, a start never deadlocks with a delete of its pipeline, and the scheduler role deletes keys
+  after 24 hours. With `Accept: text/plain` the four endpoints
   answer with the run as `name: value` lines. The two reads now say so in the API docs.
 - **`kilnmark-run.sh`, `kilnmark-run.ps1` and `kilnmark-run.cmd`** in the release's root, beside
   `kilnmark.sh` (ADR 0044). The shell edition needs only POSIX `sh` and `curl`; the PowerShell one
@@ -52,8 +54,8 @@ details.
   from the command line or the environment, accept a private CA in `KILNMARK_CA_FILE`, never turn
   certificate checks off, and refuse plain `http://` except to the same machine. They wait 50
   seconds at a time (under common proxy timeouts), retry a lost connection with the same key, give
-  up on a server that stays busy after about five minutes, and send each parameter exactly as typed
-  (`007` as text, long numbers unrounded). Tests run both editions against a test server and a stub,
+  up on a server that stays busy after about five minutes, never pause past `--timeout` or for more
+  than a minute, and send each parameter exactly as typed (`007` as text, long numbers unrounded). Tests run both editions against a test server and a stub,
   and check the Windows files are ASCII.
 - **Dev mode starts again**: `./gradlew :server:quarkusDev` needs two POMs the build itself does
   not (`org.jboss:jboss-parent:37`, `org.jboss.slf4j:slf4j-jboss-logmanager:1.1.0.Final`); their

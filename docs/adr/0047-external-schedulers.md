@@ -53,10 +53,18 @@ The API could already start a run and read it. Three things made it unfit for a 
    - A key names one intended run. A fixed key (`daily-load`) would give back yesterday's run; a key
      built from a rerun count would start a second run on a rerun. The guide says to build keys
      from the job and its order or business date.
-   - The key and its run are written in one transaction: the key's row is inserted first, and the
-     run is queued on the same connection (`Db.together`, which every `Db.tx` on the thread joins).
-     Either both are kept or neither is, so no run is ever left without its key for a retry to miss.
-     A start that is refused keeps no key, so the same key works once the cause is fixed.
+   - A retry looks its key up first and gets its run without any check, even if the pipeline has
+     changed since. A new key's run is checked first (its version compiled, its values resolved),
+     outside any transaction: checking reads the catalogue on connections of its own, and a start
+     holding one connection while it waits for another would, with a batch window's many starts at
+     once, use up the pool.
+   - Then the key and its run are written in one transaction, which touches the key's row and the
+     run's tables only: the run is queued on the same connection (`Db.together`, which every
+     `Db.tx` on the thread joins). Either both are kept or neither is, so no run is ever left
+     without its key for a retry to miss. A start that is refused keeps no key.
+   - Locks are taken in the order deleting a pipeline takes them: the pipeline's (or flow's) row,
+     then the key's. A key older than 24 hours is taken over in place, never deleted by a start, so
+     a start and a delete of its pipeline cannot deadlock.
    - Race-safe: a second request with the same key waits on the first's uncommitted row, then finds
      the run. A test holds the first inside its transaction to show the second waits.
    - Keys are in `run_request_key` (migration V37), deleted with their run, and cleaned up after
@@ -77,12 +85,15 @@ The API could already start a run and read it. Three things made it unfit for a 
      Few and fixed, so a scheduler's rules stay short.
    - Lost connections are retried with the same key, so a retry never starts a second run. After a
      busy answer (503) the script reads the run without waiting, which is never refused for being
-     busy, and gives up with 5 after about five minutes of busy answers. An answer that is not
+     busy, and gives up with 5 after about five minutes of busy answers. A pause is never longer
+     than a minute, whatever `Retry-After` says, nor runs past `--timeout`. An answer that is not
      Kilnmark's (a proxy's sign-in page) is 5 at once, never "failed".
    - A parameter is sent exactly as typed, by one rule in both editions: a JSON number literal,
      `true` or `false` as such; JSON text in quotes, or a list of those, as written; anything else
      as text. `007` is text and a 17-digit number is never rounded: the PowerShell edition builds the
      JSON itself rather than reading values into numbers.
+   - The shell edition writes the token only with a here-document, never as an argument: `printf`
+     is not built into every `sh` (ksh88 on AIX and HP-UX), and a command's arguments show in `ps`.
    - The shell edition keeps curl's settings in a new folder only its account can open: from
      `mktemp -d`, or, where that is missing (older AIX, HP-UX), made with a random name by
      `mkdir -m 700`, never one that exists already, and removed on exit, hang-up or interrupt.

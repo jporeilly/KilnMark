@@ -75,12 +75,14 @@ On Windows, run `kilnmark-run.cmd` with the same arguments.
     are `north` and `two words`.
 
   Line breaks, tabs and other control characters are refused.
-- `--version N` runs that version; the latest by default.
+- `--version N` runs that version, a whole number from 1 written without a leading 0; the latest by
+  default.
 - `--timeout` stops waiting after that long: `90` (seconds), `30s`, `10m`, `2h` or `1d`. The run
   goes on unless you add `--cancel-on-timeout`. With no timeout, the script waits until the run
   ends.
-- `--key` gives the request key: 1 to 200 printable characters. Left out, the script makes one up.
-  Either way it prints the key first. See [Choosing a request key](#choosing-a-request-key).
+- `--key` gives the request key: 1 to 200 printable characters, not only spaces. Left out, the
+  script makes one up. Either way it prints the key first. See
+  [Choosing a request key](#choosing-a-request-key).
 
 What it prints:
 
@@ -96,7 +98,8 @@ The script never prints the token. It asks Kilnmark to wait 50 seconds at a time
 in between closes a quiet connection (see [Proxies and load balancers](#proxies-and-load-balancers)).
 If Kilnmark cannot be reached for a moment, the script tries again, with the same key, up to five
 times, ten seconds apart. If Kilnmark is busy (too many requests already waiting), the script reads
-the run without waiting and asks again; after about five minutes of busy answers it gives up with 5.
+the run without waiting and asks again when Kilnmark says (never more than a minute later); after
+about five minutes of busy answers it gives up with 5. No pause runs past `--timeout`.
 If the answer is not Kilnmark's own, for example a sign-in page from a proxy, it stops with 5 at once.
 
 ## Exit codes
@@ -117,7 +120,8 @@ every rerun of that one job gets the same key, and a run you mean to start anoth
 one. Then:
 
 - the same key, from the same token, for the same request (pipeline or flow, version and parameter
-  values), within 24 hours, always gives back the run it started first, finished or not;
+  values), within 24 hours, always gives back the run it started first, finished or not, even if
+  the pipeline or flow has changed since;
 - the same key with a different request is refused (exit code 2), so a key can never start the
   wrong work;
 - a start that was refused keeps no key, so the same key can be used once the cause is fixed.

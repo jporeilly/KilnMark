@@ -889,13 +889,17 @@ its run ends, and a retried start never to run the work twice.
   by caller (`token:<id>`, or `user:oidc:<issuer>|<subject>` for a provider sign-in) and key,
   holding the kind (pipeline or flow), the name, `request_hash` (SHA-256 of kind, name, version and
   parameters as sent, map keys sorted) and the run (a foreign key to `pipeline_run` or `flow_run`,
-  deleted with it). In one transaction (`Db.together`, which the run's own `Db.tx` calls join):
-  delete this caller's key if older than 24 hours; insert it with `ON CONFLICT DO NOTHING`; if
-  inserted, queue the run and set its id on the row, all committing together; else read the row:
-  the same kind, name and hash give its run back (200, `Idempotent-Replayed: true`), anything else
-  gives 422. A second request with the same key waits on the first's uncommitted row, so two at
-  once start one run. A start that throws rolls back the key and the run. The scheduler role
-  deletes keys older than 24 hours every hour.
+  deleted with it). First the key is looked up without locks (`find`): a live row for the same
+  request gives its run back at once (200, `Idempotent-Replayed: true`), with no check; one for
+  another request gives 422. Otherwise the run is checked (`checkRun`: the version compiled, the
+  values resolved) outside any transaction, since the compile reads the catalogue on connections
+  of its own. Then, in one transaction (`Db.together`, which `queueChecked`'s `Db.tx` joins), on
+  the key's row and the run's tables only: lock the pipeline's or flow's row (the order a delete
+  takes); insert the key, or take over one older than 24 hours in place (`ON CONFLICT DO UPDATE
+  ... WHERE` expired, never a delete); if it is ours, queue the run and set its id on the row, all
+  committing together; else read the row as above. A second request with the same key waits on the
+  first's uncommitted row, so two at once start one run. A start that throws rolls back the key
+  and the run. The scheduler role deletes keys older than 24 hours every hour.
 - **`Accept: text/plain`** on the four answers with `id`, `kind`, `name`, `status`, `ended`,
   `page` and `message` lines, the message on one line and as the caller may see it (Sights, as the
   JSON's `error`). Errors stay JSON.
