@@ -172,6 +172,10 @@ export function shownSettings(
   const specs = type.settings.filter((spec) => {
     const set = spec.key in node.settings;
     if (type.type === "write" && KEY_OF_TARGET.has(spec.key)) return set;
+    // One place names where a write goes: `target`, or `table` or `path` in its stead, never two boxes.
+    if (type.type === "write" && spec.key === "target" && !set && [...KEY_OF_TARGET].some((k) => k in node.settings)) {
+      return false;
+    }
     if (writerKeys.has(spec.key) && !allowed.has(spec.key) && !set) {
       writerHidden++;
       return false;

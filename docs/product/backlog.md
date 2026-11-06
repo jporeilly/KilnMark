@@ -100,6 +100,19 @@ dependency verification (ADR 0042, #99) and signed images with an offline instal
     (docs/development.md, "CI on a local runner"; review of #111).
 20. **The server tests on Windows**: Testcontainers cannot reach Podman from the tool shell, so
     server tests run only in CI there.
+21. **Refactoring, in small steps** (owner, 6 November 2026): each its own pull request that changes
+    no behaviour, with every test green before and after. In order:
+    1. **One run lifecycle for pipelines and flows**: checking, queueing, request keys, schedules
+       and deleting are written twice today, in `PipelineService` (about 2,000 lines) and
+       `FlowService` (about 2,400), and every change to one had to be made to the other
+       (#124, #128 and the scheduler). First, before the `sort` and `join` nodes (item 9), which
+       touch the same code.
+    2. **`ui/src/api.ts` split by area** (about 2,100 lines of every API type and call), so UI
+       changes stop meeting in one file.
+    3. **One form-field building block and form styles for the whole UI**: the node panel's
+       layout faults (#133) came from fields laid out separately and from app-wide fieldset rules
+       leaking into forms; the panel layout sweep starts this.
+    4. **`FlowService` and `QualityPredictor` (about 2,600 lines) split** into focused parts.
 
 ## Owner's items
 
