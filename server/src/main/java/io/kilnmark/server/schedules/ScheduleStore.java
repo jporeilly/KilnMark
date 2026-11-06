@@ -219,6 +219,56 @@ public class ScheduleStore {
         });
     }
 
+    /** What a schedule runs: a pipeline or a flow, each named by a column of its own. */
+    public enum Target {
+        PIPELINE("pipeline"),
+        FLOW("flow");
+
+        private final String column;
+
+        Target(String column) {
+            this.column = column;
+        }
+    }
+
+    /** A schedule deleted with its pipeline or flow (ADR 0046), as the audit log records it. */
+    public record Gone(long id, String cron, String zone, String runAs, boolean enabled) {
+    }
+
+    /**
+     * Locks the schedules of a pipeline or flow that is being deleted, in {@code c}'s transaction.
+     * Call it before locking the pipeline's or flow's own row: a schedule's fire holds its row while
+     * it queues a run, which locks the pipeline or flow, so the other order could deadlock
+     * (docs/design/schedules.md, "Locks").
+     */
+    public static void lockFor(Connection c, Target target, String name) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+            "SELECT 1 FROM kilnmark.schedule WHERE " + target.column + " = ? ORDER BY id FOR UPDATE")) {
+            ps.setString(1, name);
+            ps.executeQuery().close();
+        }
+    }
+
+    /**
+     * Deletes the schedules of a pipeline or flow in {@code c}'s transaction, returning exactly those
+     * it deleted, so each can be recorded: one added meanwhile is either deleted and returned here,
+     * or not deleted at all.
+     */
+    public static List<Gone> deleteFor(Connection c, Target target, String name) throws SQLException {
+        List<Gone> gone = new ArrayList<>();
+        try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.schedule WHERE " + target.column
+            + " = ? RETURNING id, cron, zone, run_as, enabled")) {
+            ps.setString(1, name);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    gone.add(new Gone(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4),
+                        rs.getBoolean(5)));
+                }
+            }
+        }
+        return gone;
+    }
+
     /** Deletes schedule {@code id}; returns it as it was, or empty when there was none. */
     public Optional<Schedule> delete(long id) {
         return db.tx(c -> {

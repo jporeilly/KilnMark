@@ -527,10 +527,10 @@ public class PipelineService {
     }
 
     /** Deletes the pipeline as {@link #delete} does; returns the schedules deleted with it, to record. */
-    public List<PipelineStore.GoneSchedule> deleteWithSchedules(String name, String by) {
+    public List<io.kilnmark.server.schedules.ScheduleStore.Gone> deleteWithSchedules(String name, String by) {
         try {
-            List<PipelineStore.GoneSchedule> gone = store.deleteWithSchedules(name).orElseThrow(() ->
-                fail(Response.Status.NOT_FOUND, "No pipeline called " + name));
+            List<io.kilnmark.server.schedules.ScheduleStore.Gone> gone = store.deleteWithSchedules(name)
+                .orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No pipeline called " + name));
             LOG.infof("Pipeline %s deleted by %s, with %d schedules", name, by, gone.size());
             return gone;
         } catch (PipelineStore.Busy e) {

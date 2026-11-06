@@ -12,6 +12,7 @@ import java.util.Optional;
 
 import io.kilnmark.server.Db;
 import io.kilnmark.server.jobs.JobQueue;
+import io.kilnmark.server.schedules.ScheduleStore;
 import jakarta.enterprise.context.ApplicationScoped;
 
 /**
@@ -330,31 +331,23 @@ public class PipelineStore {
         return deleteWithSchedules(name).isPresent();
     }
 
-    /** A schedule deleted with its pipeline (ADR 0046), as the audit log records it. */
-    public record GoneSchedule(long id, String cron, String zone, String runAs, boolean enabled) {
-    }
-
     /**
      * Deletes the pipeline and, in the same transaction, its schedules, returning exactly those, so
      * each can be recorded; empty when there is no such pipeline.
      *
      * @throws Busy when a run is queued or running
      */
-    public Optional<List<GoneSchedule>> deleteWithSchedules(String name) {
+    public Optional<List<ScheduleStore.Gone>> deleteWithSchedules(String name) {
         return db.tx(c -> {
             // the schedules' rows first, then the pipeline's: a schedule's fire holds its row while it
             // queues a run, which locks the pipeline, so the other order could deadlock
-            try (PreparedStatement ps = c.prepareStatement(
-                "SELECT 1 FROM kilnmark.schedule WHERE pipeline = ? ORDER BY id FOR UPDATE")) {
-                ps.setString(1, name);
-                ps.executeQuery().close();
-            }
+            ScheduleStore.lockFor(c, ScheduleStore.Target.PIPELINE, name);
             try (PreparedStatement ps = c.prepareStatement(
                 "SELECT 1 FROM kilnmark.pipeline WHERE name = ? FOR UPDATE")) {
                 ps.setString(1, name);
                 try (ResultSet rs = ps.executeQuery()) {
                     if (!rs.next()) {
-                        return Optional.<List<GoneSchedule>>empty();
+                        return Optional.<List<ScheduleStore.Gone>>empty();
                     }
                 }
             }
@@ -367,17 +360,7 @@ public class PipelineStore {
                     }
                 }
             }
-            List<GoneSchedule> gone = new ArrayList<>();
-            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.schedule WHERE pipeline = ? "
-                + "RETURNING id, cron, zone, run_as, enabled")) {
-                ps.setString(1, name);
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        gone.add(new GoneSchedule(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4),
-                            rs.getBoolean(5)));
-                    }
-                }
-            }
+            List<ScheduleStore.Gone> gone = ScheduleStore.deleteFor(c, ScheduleStore.Target.PIPELINE, name);
             try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.pipeline WHERE name = ?")) {
                 ps.setString(1, name);
                 ps.executeUpdate();

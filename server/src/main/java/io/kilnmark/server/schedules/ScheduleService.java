@@ -352,6 +352,21 @@ public class ScheduleService {
         return d;
     }
 
+    /**
+     * Records {@code schedule.deleted} for each schedule deleted with a pipeline or flow, in that
+     * delete's own transaction (ADR 0029, ADR 0046), with {@code via} saying which was deleted.
+     */
+    public static void recordDeletedWith(AuditLog audit, AuditLog.Actor actor, ScheduleStore.Target target,
+                                         String name, List<ScheduleStore.Gone> gone) {
+        boolean flow = target == ScheduleStore.Target.FLOW;
+        for (ScheduleStore.Gone s : gone) {
+            Map<String, Object> detail = auditDetail(flow ? null : name, flow ? name : null, s.cron(), s.zone(),
+                s.runAs(), s.enabled());
+            detail.put("via", flow ? "flow deleted" : "pipeline deleted");
+            audit.record(actor, AuditLog.SCHEDULE_DELETED, "schedule " + s.id(), detail);
+        }
+    }
+
     /** The values a schedule's runs start with. */
     Map<String, Object> parameters(ScheduleStore.Schedule s) {
         try {
