@@ -5,6 +5,8 @@ details.
 
 ## Unreleased
 
+## 0.1.1 (6 November 2026)
+
 ### What's new
 
 - **Delete a flow** (ADR 0048). Designers and admins delete a flow from its page, after a warning
@@ -78,6 +80,11 @@ details.
   ([Running from an external scheduler](docs/guide/external-schedulers.md))
 
 ### Details
+
+- **Version numbers count like digits**: each part goes from 0 to 9 and carries into the part
+  before it, so 0.0.9 is followed by 0.1.0 and 0.9.9 by 1.0.0. The release tagged 0.0.10 counts as
+  0.1.0, so this one is 0.1.1. `gradle.properties`, `docs/development.md` and the plan say so;
+  milestones are named, not numbered.
 
 - **A plan for benchmarks** (docs/design/benchmarks.md, planned; nothing built yet). How volume and
   throughput will be measured: generated data at 1 million to 1 billion rows (TPC-H-derived, wide,

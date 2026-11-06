@@ -1205,7 +1205,9 @@ they stay sharp at GitHub's width.
 
 ## Rules
 
-- Versions go up by exactly 0.0.1 per release.
+- Versions count like digits: each release adds one to the last part, and each part counts from 0 to 9 like a digit, carrying into the part before it (0.0.9 is followed by 0.1.0, 0.1.9 by 0.2.0 and 0.9.9 by
+  1.0.0). No part is ever 10 or more; the release tagged 0.0.10 counts as 0.1.0, so the next was
+  0.1.1. Milestones have names, not numbers.
 - Run the full regression suite before every package.
 - Anything hard to reverse gets a [decision record](adr/README.md).
 - Code adapted from Kettle 10.2 is logged in [provenance.md](legal/provenance.md).
