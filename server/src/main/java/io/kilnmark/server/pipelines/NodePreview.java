@@ -370,7 +370,8 @@ final class NodePreview {
                 Map<String, String> on = texts(config.get("on"));
                 uses(id, "join", l, new ArrayList<>(on.keySet()), "matches rows by");
                 uses(id, "join", r, new ArrayList<>(on.values()), "matches rows by");
-                out.put(id, l.plus(joinRight(r, config, inputColumns(c, nodes, id, "left"))));
+                out.put(id, l.plus(joinRight(r, config, inputColumns(c, nodes, id, "left"),
+                    inputColumns(c, nodes, id, "right"))));
                 continue;
             }
             out.put(id, through(s.id(), s.type(), config, in, any, readHidden.getOrDefault(id, Set.of()), gate));
@@ -403,7 +404,8 @@ final class NodePreview {
             }
             if ("join".equals(nodes.get(id).type())) {
                 out.put(id, in.getOrDefault("left", Hidden.NONE).plus(joinRight(in.getOrDefault("right", Hidden.NONE),
-                    c.configs().getOrDefault(id, Map.of()), inputColumns(c, nodes, id, "left"))));
+                    c.configs().getOrDefault(id, Map.of()), inputColumns(c, nodes, id, "left"),
+                    inputColumns(c, nodes, id, "right"))));
                 continue;
             }
             out.put(id, marking(nodes.get(id).type(), c.configs().getOrDefault(id, Map.of()), in, any,
@@ -631,24 +633,38 @@ final class NodePreview {
     }
 
     /**
-     * A join's right columns as they leave it: a right column whose name a left column has (ignoring
-     * case) leaves as {@code right_prefix} and its name, as the join node names it. When the left's
-     * columns are not known, a hidden right column is hidden under both names.
+     * A join's right columns as they leave it, named by the join node's own walk
+     * ({@code JoinFactory.rightNames}): a right column whose name a left column, or an earlier right
+     * column, has already left by (ignoring case) leaves as {@code right_prefix} and its name. When
+     * either side's columns are not known before the run (or the names clash, so the join will not
+     * run), a hidden right column is hidden under both names.
      */
-    static Hidden joinRight(Hidden right, Map<String, Object> config, List<String> leftColumns) {
+    static Hidden joinRight(Hidden right, Map<String, Object> config, List<String> leftColumns,
+                            List<String> rightColumns) {
         if (right.all()) {
             return Hidden.ALL;
         }
         Object p = config.get("right_prefix");
         String prefix = p == null || String.valueOf(p).isBlank() ? "right_" : String.valueOf(p);
-        Set<String> left = leftColumns == null ? null : new HashSet<>(leftColumns.stream().map(NodePreview::key).toList());
+        List<String> names = null;
+        if (leftColumns != null && rightColumns != null) {
+            try {
+                names = io.kilnmark.kiln.nodes.JoinFactory.rightNames(leftColumns, rightColumns, prefix);
+            } catch (IllegalArgumentException e) {
+                names = null;
+            }
+        }
         Set<String> out = new HashSet<>();
-        for (String n : right.names()) {
-            if (left == null || left.contains(n)) {
+        if (names == null) {
+            for (String n : right.names()) {
+                out.add(n);
                 out.add(prefix + n);
             }
-            if (left == null || !left.contains(n)) {
-                out.add(n);
+            return new Hidden(out, false);
+        }
+        for (int i = 0; i < rightColumns.size(); i++) {
+            if (right.hides(rightColumns.get(i))) {
+                out.add(names.get(i));
             }
         }
         return new Hidden(out, false);

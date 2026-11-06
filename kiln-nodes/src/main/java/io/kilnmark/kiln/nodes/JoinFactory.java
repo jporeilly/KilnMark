@@ -95,8 +95,9 @@ public final class JoinFactory implements NodeFactory {
             SettingSpec.required("on", "Match on", SettingSpec.Kind.COLUMN_MAP,
                 "Key columns: each left column and the right column it must equal."),
             SettingSpec.choice("how", "Join", false, "inner",
-                "inner keeps the pairs of rows that match; left also keeps left rows with no match, right keeps right "
-                    + "rows with none, and full keeps both, with the other side's columns empty.", HOWS),
+                "Which rows are kept: inner keeps the pairs of rows that match; left also keeps left rows with no "
+                    + "match, right keeps right rows with none, and full keeps both, with the other side's columns "
+                    + "empty.", HOWS),
             SettingSpec.optional("right_prefix", "Right prefix", SettingSpec.Kind.TEXT, DEFAULT_PREFIX,
                 "Put in front of the name of a right column that the left already has (ignoring case), so both are "
                     + "kept.").withParameters(SettingSpec.Parameters.NONE),
@@ -178,30 +179,53 @@ public final class JoinFactory implements NodeFactory {
             rk.add(new KeyCodec.Part(e.getValue(), rt, false, false));
         }
         List<Field> fields = new ArrayList<>();
-        Set<String> taken = new HashSet<>();
         for (Field f : left.getFields()) {
             fields.add(s.keepRight() ? BaseNode.nullable(f) : f);
-            taken.add(f.getName().toLowerCase(Locale.ROOT));
         }
-        Set<String> rightNames = new HashSet<>();
-        right.getFields().forEach(f -> rightNames.add(f.getName().toLowerCase(Locale.ROOT)));
-        for (Field f : right.getFields()) {
-            String name = f.getName();
+        List<String> names;
+        try {
+            names = rightNames(BaseNode.names(left), BaseNode.names(right), s.prefix());
+        } catch (IllegalArgumentException e) {
+            throw new NodeException(e.getMessage(), e);
+        }
+        for (int i = 0; i < right.getFields().size(); i++) {
+            Field f = right.getFields().get(i);
+            fields.add(new Field(names.get(i), new FieldType(s.keepLeft() || f.isNullable(), f.getType(),
+                f.getDictionary(), f.getMetadata()), f.getChildren()));
+        }
+        return new Plan(new Schema(fields), new KeyCodec(lk, true), new KeyCodec(rk, true));
+    }
+
+    /**
+     * The names the right columns leave a join by, in order: a right column whose name (ignoring
+     * case) the left has, or an earlier right column has already left by, gets {@code prefix} in
+     * front. The one walk both the node and anything following its columns (a preview's masking,
+     * marks) use, so they always agree.
+     *
+     * @throws IllegalArgumentException naming a clash the prefix cannot clear
+     */
+    public static List<String> rightNames(List<String> left, List<String> right, String prefix) {
+        Set<String> taken = new HashSet<>();
+        left.forEach(n -> taken.add(n.toLowerCase(Locale.ROOT)));
+        Set<String> rightLow = new HashSet<>();
+        right.forEach(n -> rightLow.add(n.toLowerCase(Locale.ROOT)));
+        List<String> out = new ArrayList<>();
+        for (String original : right) {
+            String name = original;
             if (taken.contains(name.toLowerCase(Locale.ROOT))) {
-                name = s.prefix() + name;
+                name = prefix + name;
                 String low = name.toLowerCase(Locale.ROOT);
-                if (taken.contains(low) || rightNames.contains(low)) {
-                    throw new NodeException("right_prefix: the right column '" + f.getName() + "' would be called '"
-                        + name + "', which " + (taken.contains(low) ? "the output has already" : "the right input has too")
-                        + "; choose another right_prefix, or rename a column with a select node first");
+                if (taken.contains(low) || rightLow.contains(low)) {
+                    throw new IllegalArgumentException("right_prefix: the right column '" + original + "' would be "
+                        + "called '" + name + "', which " + (taken.contains(low) ? "the output has already"
+                        : "the right input has too") + "; choose another right_prefix, or rename a column with a "
+                        + "select node first");
                 }
             }
             taken.add(name.toLowerCase(Locale.ROOT));
-            Field renamed = new Field(name, new FieldType(s.keepLeft() || f.isNullable(), f.getType(), f.getDictionary(),
-                f.getMetadata()), f.getChildren());
-            fields.add(renamed);
+            out.add(name);
         }
-        return new Plan(new Schema(fields), new KeyCodec(lk, true), new KeyCodec(rk, true));
+        return out;
     }
 
     private static Type keyType(Schema in, String column, String side) throws NodeException {
@@ -231,6 +255,9 @@ public final class JoinFactory implements NodeFactory {
         private boolean merged;
         /** Keys whose right rows were more than a quarter of the limit, so were held on disk. */
         private int groupsOnDisk;
+        /** Right rows copied to be joined to their key's left rows (none when the right side is in memory). */
+        private long groupRowsCopied;
+        private Group group;
 
         JoinNode(Settings settings) {
             super(TYPE);
@@ -241,6 +268,10 @@ public final class JoinFactory implements NodeFactory {
             return groupsOnDisk;
         }
 
+        long groupRowsCopied() {
+            return groupRowsCopied;
+        }
+
         /** The folders its files are in, once each side has spilled; for tests. */
         List<java.nio.file.Path> spillFolders() {
             List<java.nio.file.Path> out = new ArrayList<>();
@@ -248,6 +279,9 @@ public final class JoinFactory implements NodeFactory {
                 if (s != null && s.folder() != null) {
                     out.add(s.folder());
                 }
+            }
+            if (group != null && group.folder() != null) {
+                out.add(group.folder());
             }
             return out;
         }
@@ -265,6 +299,12 @@ public final class JoinFactory implements NodeFactory {
                 if (merged) {
                     return false;
                 }
+                if (nothingCanComeOut()) {
+                    // an inner join with an empty side, or the side every row comes from empty: the
+                    // other side need not be read at all
+                    merged = true;
+                    return false;
+                }
                 RowSet.Taken t = RowSet.takeAny(List.of(left, right), ctx.allocator());
                 if (t != null) {
                     add(t.index() == 0, t.batch(), ctx);
@@ -274,7 +314,7 @@ public final class JoinFactory implements NodeFactory {
                 merged = true;
                 return false;
             } catch (IOException e) {
-                throw fail("could not use the temporary folder for rows that do not fit in memory: " + e.getMessage());
+                throw SortFactory.spillFailed(e);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new NodeException("Interrupted", e);
@@ -283,6 +323,18 @@ public final class JoinFactory implements NodeFactory {
 
         private long limit() {
             return megabytes(settings.limitMb());
+        }
+
+        /** Whether a side has ended with no rows where that means no row can come out. */
+        private boolean nothingCanComeOut() {
+            boolean leftEmpty = left.atEnd() && (leftSorter == null || leftSorter.rows() == 0);
+            boolean rightEmpty = right.atEnd() && (rightSorter == null || rightSorter.rows() == 0);
+            return switch (settings.how()) {
+                case "inner" -> leftEmpty || rightEmpty;
+                case "left" -> leftEmpty;
+                case "right" -> rightEmpty;
+                default -> leftEmpty && rightEmpty;
+            };
         }
 
         /** Adds a batch to its side's sorter, checking the plan once both sides' columns are known. */
@@ -354,15 +406,17 @@ public final class JoinFactory implements NodeFactory {
             int leftColumns = l.getFields().size();
             try (Cursor lc = new Cursor(ls); Cursor rc = new Cursor(rs);
                  Output out = new Output(plan.out(), leftColumns, ctx);
-                 Group group = new Group(r, ctx.allocator(), Math.max(1L << 20, limit() / 4))) {
-                join(lc, rc, out, group);
+                 Group g = new Group(r, ctx.allocator(), Math.max(1L << 20, limit() / 4))) {
+                group = g;
+                join(lc, rc, out, g);
                 out.flush();
-                groupsOnDisk = group.filesWritten;
-                if (group.bytesWritten > 0) {
-                    ctx.spilled(group.bytesWritten);
+                groupsOnDisk = g.filesWritten;
+                groupRowsCopied = g.rowsCopied;
+                if (g.bytesWritten > 0) {
+                    ctx.spilled(g.bytesWritten);
                     ctx.note(count(groupsOnDisk) + (groupsOnDisk == 1 ? " key had" : " keys had") + " more right rows than "
                         + "a quarter of the memory limit, so they were held on disk ("
-                        + SortFactory.megabytesText(group.bytesWritten) + ") while the left rows were joined to them.");
+                        + SortFactory.megabytesText(g.bytesWritten) + ") while the left rows were joined to them.");
                 }
             }
         }
@@ -436,7 +490,7 @@ public final class JoinFactory implements NodeFactory {
                     }
                     group.clear();
                     while (r.has() && !r.nullKey() && r.sameKey(key)) {
-                        group.add(r.rows(), r.pos);
+                        group.add(r.rows(), r.pos, r.source());
                         r.advance();
                     }
                     group.seal();
@@ -517,6 +571,11 @@ public final class JoinFactory implements NodeFactory {
 
         VectorSchemaRoot rows() {
             return chunk.rows();
+        }
+
+        /** Where the rows of the batch at hand are held, when they come from memory; else null. */
+        ExternalSorter.RowSource source() {
+            return chunk.source();
         }
 
         boolean nullKey() {
@@ -655,8 +714,10 @@ public final class JoinFactory implements NodeFactory {
     }
 
     /**
-     * The right rows of one key, copied from the sorted stream so the left rows of that key can be
-     * joined to each of them; written to disk past {@code budget} bytes.
+     * The right rows of one key, so the left rows of that key can be joined to each of them. Rows
+     * still held by the right side's sorter (it did not spill) are only pointed at; others are
+     * copied, and the copies written to disk (encrypted, as runs are) once they pass {@code budget}
+     * bytes, checked as each row is added.
      */
     static final class Group implements AutoCloseable {
         private static final int GROUP_ROWS = 1024;
@@ -664,16 +725,22 @@ public final class JoinFactory implements NodeFactory {
         private final Schema schema;
         private final BufferAllocator memory;
         private final long budget;
+        private final List<VectorSchemaRoot> heldRoots = new ArrayList<>();
+        private int[] heldRows = new int[16];
         private final List<VectorSchemaRoot> batches = new ArrayList<>();
         private List<FieldVector> building;
         private int buildingRows;
         private SpillFolder spill;
+        private java.nio.file.Path folder;
         private java.nio.file.Path file;
-        private java.io.OutputStream fileOut;
+        private SpillFolder.Out fileOut;
         private VectorSchemaRoot fileRoot;
         private org.apache.arrow.vector.ipc.ArrowStreamWriter writer;
+        private long fileRows;
+        private byte[] fileDigest;
         int filesWritten;
         long bytesWritten;
+        long rowsCopied;
 
         interface Visitor {
             void row(VectorSchemaRoot root, int row) throws NodeException;
@@ -685,9 +752,27 @@ public final class JoinFactory implements NodeFactory {
             this.budget = budget;
         }
 
+        /** The folder its file goes in, once it has written one; for tests. */
+        java.nio.file.Path folder() {
+            return folder;
+        }
+
+        /** Whether its rows are going to disk. */
+        boolean onDisk() {
+            return file != null;
+        }
+
+        /** Lets every row go, and its file. Never throws. */
         void clear() {
             closeWriter();
-            batches.forEach(VectorSchemaRoot::close);
+            heldRoots.clear();
+            for (VectorSchemaRoot b : batches) {
+                try {
+                    b.close();
+                } catch (RuntimeException e) {
+                    // the allocator says so when it closes
+                }
+            }
             batches.clear();
             if (building != null) {
                 building.forEach(FieldVector::close);
@@ -701,9 +786,20 @@ public final class JoinFactory implements NodeFactory {
                 }
                 file = null;
             }
+            fileRows = 0;
+            fileDigest = null;
         }
 
-        void add(VectorSchemaRoot from, int row) throws IOException {
+        void add(VectorSchemaRoot from, int row, ExternalSorter.RowSource source) throws IOException {
+            if (source != null && building == null && batches.isEmpty() && file == null) {
+                // still held by the sorter: point at it
+                if (heldRoots.size() == heldRows.length) {
+                    heldRows = java.util.Arrays.copyOf(heldRows, heldRows.length * 2);
+                }
+                heldRows[heldRoots.size()] = source.row(row);
+                heldRoots.add(source.root(row));
+                return;
+            }
             if (building == null) {
                 building = new ArrayList<>();
                 for (Field f : schema.getFields()) {
@@ -717,7 +813,8 @@ public final class JoinFactory implements NodeFactory {
             for (int c = 0; c < building.size(); c++) {
                 building.get(c).copyFromSafe(row, buildingRows, from.getVector(c));
             }
-            if (++buildingRows == GROUP_ROWS) {
+            rowsCopied++;
+            if (++buildingRows == GROUP_ROWS || (file == null && memory.getAllocatedMemory() > budget)) {
                 finishBatch();
             }
         }
@@ -742,6 +839,7 @@ public final class JoinFactory implements NodeFactory {
         private void startFile() throws IOException {
             if (spill == null) {
                 spill = SpillFolder.create();
+                folder = spill.path();
             }
             file = spill.newFile("group");
             fileOut = spill.write(file);
@@ -750,10 +848,18 @@ public final class JoinFactory implements NodeFactory {
                 new org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider(),
                 java.nio.channels.Channels.newChannel(fileOut));
             writer.start();
-            for (VectorSchemaRoot b : batches) {
-                write(b);
-            }
+            List<VectorSchemaRoot> waiting = new ArrayList<>(batches);
             batches.clear();
+            for (int i = 0; i < waiting.size(); i++) {
+                try {
+                    write(waiting.get(i));
+                } catch (IOException | RuntimeException e) {
+                    for (int j = i + 1; j < waiting.size(); j++) {
+                        waiting.get(j).close();
+                    }
+                    throw e;
+                }
+            }
         }
 
         private void write(VectorSchemaRoot b) throws IOException {
@@ -763,6 +869,7 @@ public final class JoinFactory implements NodeFactory {
                 }
                 fileRoot.setRowCount(b.getRowCount());
                 writer.writeBatch();
+                fileRows += b.getRowCount();
             }
         }
 
@@ -771,33 +878,50 @@ public final class JoinFactory implements NodeFactory {
             finishBatch();
             if (writer != null) {
                 writer.end();
+                SpillFolder.Out o = fileOut;
                 closeWriter();
+                fileDigest = o.digest();
                 filesWritten++;
                 bytesWritten += java.nio.file.Files.size(file);
             }
         }
 
+        /**
+         * Closes the file being written, each part on its own: after a stop or a full disk the writer
+         * fails again as it closes, and the rest must still be closed. Never throws.
+         */
         private void closeWriter() {
-            if (writer != null) {
-                writer.close();
-                writer = null;
-            }
-            if (fileRoot != null) {
-                fileRoot.close();
-                fileRoot = null;
-            }
-            if (fileOut != null) {
-                try {
-                    fileOut.close();
-                } catch (IOException e) {
-                    // the file is deleted with the group
+            try {
+                if (writer != null) {
+                    writer.close();
                 }
-                fileOut = null;
+            } catch (RuntimeException e) {
+                // a stop or a full disk: the file is deleted with the group
             }
+            writer = null;
+            try {
+                if (fileRoot != null) {
+                    fileRoot.close();
+                }
+            } catch (RuntimeException e) {
+                // the allocator says so when it closes
+            }
+            fileRoot = null;
+            try {
+                if (fileOut != null) {
+                    fileOut.close();
+                }
+            } catch (IOException | RuntimeException e) {
+                // the file is deleted with the group
+            }
+            fileOut = null;
         }
 
         /** Every row, in the order added. */
         void forEach(Visitor v) throws NodeException, IOException, InterruptedException {
+            for (int i = 0; i < heldRoots.size(); i++) {
+                v.row(heldRoots.get(i), heldRows[i]);
+            }
             if (file == null) {
                 for (VectorSchemaRoot b : batches) {
                     for (int i = 0; i < b.getRowCount(); i++) {
@@ -806,7 +930,8 @@ public final class JoinFactory implements NodeFactory {
                 }
                 return;
             }
-            try (java.io.InputStream in = spill.read(file);
+            long read = 0;
+            try (SpillFolder.In in = spill.read(file);
                  org.apache.arrow.vector.ipc.ArrowStreamReader reader =
                      new org.apache.arrow.vector.ipc.ArrowStreamReader(in, memory)) {
                 VectorSchemaRoot root = reader.getVectorSchemaRoot();
@@ -814,18 +939,30 @@ public final class JoinFactory implements NodeFactory {
                     for (int i = 0; i < root.getRowCount(); i++) {
                         v.row(root, i);
                     }
+                    read += root.getRowCount();
                     ExternalSorter.checkInterrupt();
+                }
+                if (read != fileRows || !in.matches(fileDigest)) {
+                    throw new IOException("A temporary file of a join's rows was cut short or changed while it was "
+                        + "on disk");
                 }
             }
         }
 
+        /** Frees everything and deletes its folder, whatever went wrong before. */
         @Override
         public void close() {
-            clear();
-            if (spill != null) {
-                spill.close();
+            try {
+                clear();
+            } finally {
+                try {
+                    if (spill != null) {
+                        spill.close();
+                    }
+                } finally {
+                    memory.close();
+                }
             }
-            memory.close();
         }
     }
 }

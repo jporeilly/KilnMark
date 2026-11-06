@@ -49,9 +49,14 @@ details.
 - **`join` is a sort-merge join** on `sort`'s `ExternalSorter` (docs/design/pipelines.md, "Joining
   two inputs of any size"): both inputs read at once and sorted by their keys within one
   `memory_limit_mb`, the larger spilling first; then merged, rows out in key order with null keys
-  last. Join keys are encoded by family (numbers by exact value, dates as timestamps at midnight),
-  so each side is encoded without the other's types. A key's right rows are joined from the batch
-  at hand, or held in a group that goes to disk past a quarter of the limit. Settings `on`, `how`
+  last. Join keys are encoded by family (numbers by exact value, unsigned ones as unsigned, floats
+  by their shortest decimal; dates and timestamps as the instant to the nanosecond, a date at its
+  midnight), so each side is encoded without the other's types. A key's right rows are joined
+  from the batch at hand, pointed at while the right side's sorter holds them, or copied into a
+  group that goes to disk past a quarter of the limit (in bytes, checked row by row), with its
+  rows and digest checked when read back. A join that can give no rows (an `inner` join with an
+  empty input) stops reading at once. Right columns' new names come from one walk the node and
+  the preview's masking share. Settings `on`, `how`
   (`inner` by default), `right_prefix` (`right_`), `memory_limit_mb` (256). A preview runs it,
   refuses one matching on a hidden column, and masks a hidden right column under its new name;
   marks follow the rename to what a write writes. The canvas shows Left column and Right column

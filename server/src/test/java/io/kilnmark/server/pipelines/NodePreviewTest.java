@@ -454,12 +454,17 @@ class NodePreviewTest {
         assertEquals(List.of("name", "right_name"), v.masked());
         // known, only under the name it leaves by
         NodePreview.Hidden right = NodePreview.Hidden.of(Set.of("name", "email"));
-        assertEquals(Set.of("right_name", "email"), NodePreview.joinRight(right, Map.of(), List.of("id", "NAME")).names());
+        assertEquals(Set.of("right_name", "email"),
+            NodePreview.joinRight(right, Map.of(), List.of("id", "NAME"), List.of("id", "name", "email")).names());
         assertEquals(Set.of("r_name", "email"),
-            NodePreview.joinRight(right, Map.of("right_prefix", "r_"), List.of("name")).names());
+            NodePreview.joinRight(right, Map.of("right_prefix", "r_"), List.of("name"), List.of("name", "email")).names());
+        // two right columns differing only in case: the second leaves as right_name, so a hidden
+        // "name" (any case) is hidden under both names it leaves by
+        assertEquals(Set.of("name", "right_name"), NodePreview.joinRight(NodePreview.Hidden.of(Set.of("name")),
+            Map.of(), List.of("id"), List.of("Name", "name")).names());
         assertEquals(Set.of("name", "right_name", "email", "right_email"),
-            NodePreview.joinRight(right, Map.of(), null).names());
-        assertTrue(NodePreview.joinRight(NodePreview.Hidden.ALL, Map.of(), List.of()).all());
+            NodePreview.joinRight(right, Map.of(), null, List.of("name", "email")).names());
+        assertTrue(NodePreview.joinRight(NodePreview.Hidden.ALL, Map.of(), List.of(), List.of()).all());
         assertEquals(List.of("1", "1"), List.of(v.rows().get(0).get(0), v.rows().get(0).get(2)));
         assertEquals(List.of("Node x (join) reads every row of both its inputs before it passes any on, so every row "
             + "before it was read."), v.waits());

@@ -864,7 +864,7 @@ Joins the rows of a `left` and a `right` input whose key columns are equal, as S
 | Setting | Type | Required | Default | Parameters | What it does |
 | --- | --- | --- | --- | --- | --- |
 | `on` | column to column | yes |  | no | Key columns: each left column and the right column it must equal. |
-| `how` | choice | no | `inner` | no | inner keeps the pairs of rows that match; left also keeps left rows with no match, right keeps right rows with none, and full keeps both, with the other side's columns empty. One of `inner`, `left`, `right`, `full`. |
+| `how` | choice | no | `inner` | no | Which rows are kept: inner keeps the pairs of rows that match; left also keeps left rows with no match, right keeps right rows with none, and full keeps both, with the other side's columns empty. One of `inner`, `left`, `right`, `full`. |
 | `right_prefix` | text | no | `right_` | no | Put in front of the name of a right column that the left already has (ignoring case), so both are kept. |
 | `memory_limit_mb` | number | no | `256` | whole value | The most memory the two inputs may take while they are sorted. Past it, they are sorted on disk. |
 
@@ -873,8 +873,9 @@ Joins the rows of a `left` and a `right` input whose key columns are equal, as S
 **What to know.** `inner` keeps the pairs of rows that match; `left` also keeps left rows with no
 match, `right` right rows with none, and `full` both, with the other side's columns empty. Every
 pair comes out: a key on three left rows and two right rows gives six. Keys match by value, as a
-lookup's do (`1`, `1.0` and `1.00` match; a date matches a timestamp at midnight); text never
-matches a number; an empty (null) key matches nothing, not even another empty key. Every column of
+lookup's do (`1`, `1.0` and `1.00` match; a date matches a timestamp at midnight; a float matches
+by its shortest decimal, so a very large one may not match the whole number it holds; timestamps
+match to the nanosecond); text never matches a number; an empty (null) key matches nothing, not even another empty key. Every column of
 both inputs comes out with its type, the left's first; a right column whose name a left column
 already has, ignoring case, is renamed with `right_prefix` (`right_customer_id`). Rows come out in
 order of their keys, rows with an empty key last. Both inputs are sorted by their keys within

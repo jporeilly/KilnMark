@@ -163,8 +163,10 @@ Good to know:
 
 - Every pair comes out: a key on three left rows and two right rows gives six rows.
 - Keys match by value, as a lookup's do: `1`, `1.0` and `1.00` match, and a date matches a
-  timestamp at midnight. Text never matches a number; change one with `select` first. Several key
-  columns must all be equal.
+  timestamp at midnight. A floating-point number matches by its shortest decimal, so a very large
+  float may not match the whole number it holds; cast it with `select` to match exactly.
+  Timestamps match to the nanosecond. Text never matches a number; change one with `select`
+  first. Several key columns must all be equal.
 - An empty (null) key never matches anything, not even another empty key, as in SQL.
 - Every column of both inputs comes out with its type, the left's first. A right column whose
   name a left column already has (ignoring case) is renamed with `right_prefix`, so a join on
@@ -175,7 +177,9 @@ Good to know:
 - Any number of rows can be joined: both inputs are sorted by their keys, in memory up to
   `memory_limit_mb` between them and on disk past it, as a sort does. A key with more right rows
   than a quarter of that limit holds them on disk while its left rows are joined to them. Nothing
-  is passed on until both inputs have ended. The run's log says how much was written to disk.
+  is passed on until both inputs have ended, except that a join that can give no rows (an `inner`
+  join with an empty input, say) stops as soon as it knows. The run's log says how much was
+  written to disk.
 
 **join or lookup?** A `lookup` reads its lookup input into memory and streams the main input past
 it, keeping the main rows' order: quickest when one side is small, such as a table of codes.

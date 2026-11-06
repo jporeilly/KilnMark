@@ -420,4 +420,168 @@ class JoinNodeTest {
             assertTrue(folders.stream().noneMatch(Files::exists), "its temporary folders are deleted when it fails");
         }
     }
+
+    // ---- review fixes ----
+
+    private static org.apache.arrow.vector.VectorSchemaRoot nanos(Harness h, long... values) {
+        Schema ns = schema(field("ts", new org.apache.arrow.vector.types.pojo.ArrowType.Timestamp(
+            org.apache.arrow.vector.types.TimeUnit.NANOSECOND, "UTC")), field("n", INT64));
+        org.apache.arrow.vector.VectorSchemaRoot b = org.apache.arrow.vector.VectorSchemaRoot.create(ns, h.source);
+        b.allocateNew();
+        for (int i = 0; i < values.length; i++) {
+            ((org.apache.arrow.vector.TimeStampNanoTZVector) b.getVector(0)).set(i, values[i]);
+            ((org.apache.arrow.vector.BigIntVector) b.getVector(1)).set(i, i);
+        }
+        b.setRowCount(values.length);
+        return b;
+    }
+
+    @Test
+    void nanosecondTimestampsMatchOnlyTheSameNanosecondAndUnsignedNumbersByValue() throws Exception {
+        try (Harness h = new Harness()) {
+            // two instants in the same microsecond, a nanosecond apart, and one equal
+            h.input("left", nanos(h, 1_000_000_001L, 86_400_000_000_000L))
+                .input("right", nanos(h, 1_000_000_002L, 1_000_000_001L)).connect("out");
+            h.run(new JoinFactory(), config("on", Map.of("ts", "ts")));
+            assertEquals(List.of(0L), h.column("out", "n"));
+            assertEquals(List.of(1L), h.column("out", "right_n"));
+        }
+        try (Harness h = new Harness()) {
+            // a date matches a nanosecond timestamp at its midnight, and nothing a nanosecond after
+            Schema d = schema(field("ts", DATE), field("n", INT64));
+            h.input("left", h.batch(d, row(LocalDate.of(1970, 1, 2), 7L)))
+                .input("right", nanos(h, 86_400_000_000_001L, 86_400_000_000_000L)).connect("out");
+            h.run(new JoinFactory(), config("on", Map.of("ts", "ts")));
+            assertEquals(List.of(1L), h.column("out", "right_n"));
+        }
+        try (Harness h = new Harness()) {
+            Schema u = schema(field("k", new org.apache.arrow.vector.types.pojo.ArrowType.Int(64, false)), field("a", INT64));
+            org.apache.arrow.vector.VectorSchemaRoot b = org.apache.arrow.vector.VectorSchemaRoot.create(u, h.source);
+            b.allocateNew();
+            ((org.apache.arrow.vector.UInt8Vector) b.getVector(0)).set(0, Long.MIN_VALUE); // 2^63
+            ((org.apache.arrow.vector.UInt8Vector) b.getVector(0)).set(1, 5L);
+            ((org.apache.arrow.vector.BigIntVector) b.getVector(1)).set(0, 1L);
+            ((org.apache.arrow.vector.BigIntVector) b.getVector(1)).set(1, 2L);
+            b.setRowCount(2);
+            Schema r = schema(field("k", decimal(20, 0)), field("b", INT64));
+            h.input("left", b).input("right", h.batch(r, row(dec("9223372036854775808"), 10L),
+                row(dec("-9223372036854775808"), 20L), row(dec("5"), 30L))).connect("out");
+            h.run(new JoinFactory(), config("on", Map.of("k", "k")));
+            assertEquals(List.of(2L, 1L), h.column("out", "a"), "5, then 2^63; never -2^63");
+            assertEquals(List.of(30L, 10L), h.column("out", "b"));
+        }
+    }
+
+    @Test
+    void aKeysRightRowsInMemoryAreJoinedWithoutCopies() throws Exception {
+        Schema l = schema(field("k", INT64), field("a", INT64));
+        Schema r = schema(field("k", INT64), field("b", INT64));
+        try (Harness h = new Harness()) {
+            List<VectorSchemaRoot> rights = new ArrayList<>();
+            for (int b = 0; b < 4; b++) {
+                Object[][] rows = new Object[5000][];
+                for (int i = 0; i < rows.length; i++) {
+                    rows[i] = row(1L, (long) (b * 5000 + i));
+                }
+                rights.add(h.batch(r, rows));
+            }
+            // 20,000 right rows of one key: more than a batch handed back, so the key's rows span batches
+            h.input("left", h.batch(l, row(1L, 1L), row(1L, 2L))).input("right", rights.toArray(VectorSchemaRoot[]::new))
+                .connect("out");
+            h.run(new JoinFactory(), config("on", Map.of("k", "k")));
+            assertEquals(40_000, h.rows.get("out").size());
+            assertEquals(0L, ((JoinFactory.JoinNode) h.node).groupRowsCopied(), "held by the sorter: pointed at");
+            assertEquals(19_999L, h.column("out", "b").get(19_999));
+        }
+    }
+
+    @Test
+    void aGroupGoesToDiskByBytesNotEveryThousandRows() throws Exception {
+        Schema r = schema(field("k", INT64), field("b", UTF8));
+        String wide = "w".repeat(50_000);
+        try (Harness h = new Harness()) {
+            VectorSchemaRoot src = Harness.batch(h.nodeMemory, r, row(1L, wide));
+            try (JoinFactory.Group g = new JoinFactory.Group(r, h.nodeMemory, 1 << 20)) {
+                int rows = 0;
+                while (!g.onDisk() && rows < 1000) {
+                    g.add(src, 0, null);
+                    rows++;
+                }
+                assertTrue(g.onDisk());
+                assertTrue(rows < 40, rows + " rows of 50 KB before it went to disk past 1 MB");
+                g.seal();
+                int[] seen = {0};
+                g.forEach((root, row) -> seen[0]++);
+                assertEquals(rows, seen[0]);
+            } finally {
+                src.close();
+            }
+            assertEquals(0, h.nodeMemory.getAllocatedMemory());
+        }
+    }
+
+    @Test
+    void aGroupStoppedWhileWritingToDiskLeavesNothing() throws Exception {
+        Schema r = schema(field("k", INT64), field("b", UTF8));
+        try (Harness h = new Harness()) {
+            VectorSchemaRoot src = Harness.batch(h.nodeMemory, r, row(1L, "x".repeat(2_000)));
+            Path folder;
+            JoinFactory.Group g = new JoinFactory.Group(r, h.nodeMemory, 64 * 1024);
+            Exception stopped = null;
+            try {
+                for (int i = 0; i < 200_000 && stopped == null; i++) {
+                    if (g.onDisk()) {
+                        Thread.currentThread().interrupt(); // a stop: the file's channel closes on the next write
+                    }
+                    try {
+                        g.add(src, 0, null);
+                    } catch (java.io.IOException e) {
+                        stopped = e;
+                    }
+                }
+            } finally {
+                Thread.interrupted();
+            }
+            assertTrue(stopped != null, "writing should have been stopped");
+            folder = g.folder();
+            assertTrue(folder != null && Files.exists(folder));
+            g.close(); // the writer fails again as it closes; the rest is still closed
+            src.close();
+            assertFalse(Files.exists(folder), "its folder and file are deleted");
+            assertEquals(0, h.nodeMemory.getAllocatedMemory(), "and its memory freed");
+        }
+    }
+
+    @Test
+    void anInnerJoinWithAnEmptySideStopsReadingTheOther() throws Exception {
+        Schema l = schema(field("k", INT64), field("a", INT64));
+        for (String how : List.of("inner", "left")) {
+            try (Harness h = new Harness()) {
+                List<VectorSchemaRoot> rights = new ArrayList<>();
+                for (int b = 0; b < 200; b++) {
+                    rights.add(h.batch(l, row((long) b, (long) b)));
+                }
+                h.input("left").input("right", rights.toArray(VectorSchemaRoot[]::new)).connect("out");
+                h.declare("left", l).declare("right", l);
+                h.run(new JoinFactory(), config("on", Map.of("k", "k"), "how", how));
+                assertEquals(List.of(), h.rows.get("out"));
+                assertTrue(h.unread() > 100, how + ": the right side need not be read");
+            }
+        }
+        try (Harness h = new Harness()) {
+            h.input("left").input("right", h.batch(l, row(1L, 1L))).connect("out");
+            h.declare("left", l).declare("right", l);
+            h.run(new JoinFactory(), config("on", Map.of("k", "k"), "how", "right"));
+            assertEquals(List.of(1L), h.column("out", "right_k"), "a right join still keeps the right's rows");
+        }
+    }
+
+    @Test
+    void namesFollowOneWalkWhereverTheyAreWorkedOut() {
+        assertEquals(List.of("Name", "right_name", "right_ID"),
+            JoinFactory.rightNames(List.of("id"), List.of("Name", "name", "ID"), "right_"));
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+            () -> JoinFactory.rightNames(List.of("id", "right_id"), List.of("id"), "right_"));
+        assertTrue(e.getMessage().startsWith("right_prefix: the right column 'id' would be called 'right_id'"));
+    }
 }

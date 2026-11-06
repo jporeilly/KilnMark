@@ -58,7 +58,6 @@ final class KeyCodec {
     private static final byte VALUE = 1;
     private static final byte NULL_FIRST = 0;
     private static final byte NULL_LAST = 2;
-    private static final long MICROS_PER_DAY = 86_400_000_000L;
 
     private final List<Part> parts;
     private final boolean joinKeys;
@@ -142,6 +141,26 @@ final class KeyCodec {
         if (own.kind() == Type.Kind.UTF8) {
             return reader(v, Type.UTF8);
         }
+        if (own.kind() == Type.Kind.DATE || own.kind() == Type.Kind.TIMESTAMP) {
+            // the instant to the nanosecond, whatever the unit: a date is its midnight, and every
+            // date Arrow can hold fits
+            return temporal(v);
+        }
+        if (v instanceof UInt8Vector u) {
+            return (row, part, out) -> {
+                if (u.isNull(row)) {
+                    return false;
+                }
+                long raw = u.get(row);
+                out.put(VALUE);
+                if (raw < 0) {
+                    number(new BigDecimal(Long.toUnsignedString(raw)), out); // 2^63 and above
+                } else {
+                    number(raw, out);
+                }
+                return true;
+            };
+        }
         Col c = ArrowIO.read(v);
         return (row, part, out) -> {
             if (c.isNull(row)) {
@@ -162,16 +181,8 @@ final class KeyCodec {
                         number(BigDecimal.valueOf(d), out);
                     }
                 }
-                case DATE -> {
-                    long days = (Long) value;
-                    if (Math.abs(days) > Long.MAX_VALUE / MICROS_PER_DAY) {
-                        return false; // too far away for a timestamp: no timestamp can equal it
-                    }
-                    out.putLong(days * MICROS_PER_DAY ^ Long.MIN_VALUE);
-                }
-                case TIMESTAMP -> out.putLong((Long) value ^ Long.MIN_VALUE);
                 case BOOLEAN -> out.put((Boolean) value ? (byte) 1 : (byte) 0);
-                case UTF8, NULL -> {
+                case DATE, TIMESTAMP, UTF8, NULL -> {
                     return false;
                 }
             }

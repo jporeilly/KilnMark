@@ -643,11 +643,15 @@ found through `ServiceLoader`. Settings, with defaults:
   for a skewed key anyway, and the small-side case is what `lookup` is for. Sort-merge gives a
   defined order and one code path that is already proven to spill.
 - **Keys encoded by family, not by the other side's type.** A join key part is encoded without
-  knowing the other side (`KeyCodec`, join mode): numbers by exact value (sign, power of ten,
-  digits without trailing zeros, so `1`, `1.0` and `1.00` and the float `1.0` are one key; a float
-  as its shortest decimal, as `lookup` matches it; NaN and infinities apart), dates and timestamps
-  as microseconds (a date at midnight), text as UTF-8, booleans as a byte. So each side starts
-  sorting with its first batch. The check refuses keys of different families (text and a number)
+  knowing the other side (`KeyCodec`, join mode): whole numbers and decimals by exact value (sign,
+  power of ten, digits without trailing zeros, so `1`, `1.0` and `1.00` are one key; unsigned
+  64-bit numbers as unsigned); a float as its shortest decimal, as `lookup` matches it, so `1.0`
+  matches `1` but a float is not always its exact binary value (the float 2^60 does not match the
+  whole number 1152921504606846976, as its shortest decimal is 1.15292150460684698E18); NaN and
+  the infinities apart. Dates and timestamps as the instant to the nanosecond whatever their unit
+  (a date at its midnight; every date Arrow can hold fits), so nanosecond timestamps match only
+  the same nanosecond. Text as UTF-8, booleans as a byte. So each side starts sorting with its
+  first batch. The check refuses keys of different families (text and a number)
   before the run, with "cast one of them first", as `lookup` does.
 - **Nulls never match** (SQL). A key with any null part is encoded as one marker byte that sorts
   after every other key, and the merge never pairs such rows: they come out last, unmatched, the
@@ -655,10 +659,17 @@ found through `ServiceLoader`. Settings, with defaults:
 - **The merge.** Right rows with a smaller key than the left's come out alone (`right`, `full`);
   for an equal key, the right rows of that key (the group) are joined to each left row of that
   key, in arrival order on both sides; left rows with no match come out alone (`left`, `full`).
-  An inner join stops as soon as either side is used up. When a key's right rows all lie in the
-  batch at hand they are joined from it directly; otherwise they are copied into a group, which
-  is written to disk (encrypted, as runs are) past a quarter of the limit and read back once per
-  left row of that key: a many-to-many key costs about what its output costs.
+  An inner join stops as soon as either side is used up, and when one input ends with no rows
+  while the other is still arriving, a join that cannot give a row (`inner` with either side
+  empty, `left` with its left empty, `right` with its right empty) stops reading at once. When a
+  key's right rows all lie in the batch at hand they are joined from it directly. Otherwise they
+  form a group: rows the right side's sorter still holds (it did not spill) are pointed at, never
+  copied, so the join keeps to its limit; rows read back from disk are copied, and the copies
+  are written to disk (encrypted, with their rows and digest checked as runs are) once they pass
+  a quarter of the limit, measured in bytes as each row is added. A group's file is read back
+  once per left row of that key: a many-to-many key costs about what its output costs. Closing a
+  group closes each of its parts on its own, so a stop or a full disk part-way through a write
+  (when the writer fails again as it closes) still frees its memory and deletes its file.
 - **Names and types.** Output columns are the left's, then the right's, each with its Arrow type
   and metadata; a right column whose name a left column has (ignoring case, as a database target
   would) is renamed with `right_prefix`, and a clash that renaming cannot clear is refused by name
@@ -666,8 +677,10 @@ found through `ServiceLoader`. Settings, with defaults:
 - **What it shows, and preview.** Bytes written count in `spilledBytes` and the run's log says how
   much each side wrote (and how many keys held their right rows on disk). A preview runs a join
   with its share of memory, refuses one matching on a column hidden from the caller, and masks a
-  hidden right column under its new name (both names when the left's columns are not known before
-  the run); marks follow the rename the same way, so a write carries them to `right_name`.
+  hidden right column under the name it leaves by, worked out by the node's own walk
+  (`JoinFactory.rightNames`, so two right columns differing only in case are followed too), or
+  under both names when either side's columns are not known before the run; marks follow the
+  rename the same way, so a write carries them to `right_name`.
 - **Quality predictor.** It does not yet estimate a join (rows depend on how keys repeat): the
   join's output columns are known, its rows are reported as not known.
 
