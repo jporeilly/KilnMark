@@ -62,13 +62,10 @@ function Field({
       {spec.required ? <span className="cv-required"> (required)</span> : null}
     </>
   );
+  // The box straight under its name and the help under the box, so the boxes of a row line up
+  // however long each one's help is.
   const body = (
     <>
-      <p id={`${id}-help`} className="hint">
-        {spec.help}
-        {spec.help && !/[.!?]$/.test(spec.help) ? "." : ""}
-        {def != null && <span className="cv-default"> Default: {def}.</span>}
-      </p>
       {children(described, problems.length > 0)}
       {problems.length > 0 && (
         <ul id={`${id}-problems`} className="cv-field-problems">
@@ -77,6 +74,11 @@ function Field({
           ))}
         </ul>
       )}
+      <p id={`${id}-help`} className="hint">
+        {spec.help}
+        {spec.help && !/[.!?]$/.test(spec.help) ? "." : ""}
+        {def != null && <span className="cv-default"> Default: {def}.</span>}
+      </p>
     </>
   );
   return group ? (
@@ -561,29 +563,7 @@ function ColumnsControl(p: ControlProps) {
     <Field spec={p.spec} id={p.id} problems={p.problems} group>
       {(describedBy, invalid) => (
         <>
-          {chosen.length > 0 ? (
-            <ul className="cv-chosen" id={p.id} aria-describedby={describedBy}>
-              {chosen.map((c, i) => (
-                <li key={`${c}-${i}`} className="cv-chip-row">
-                  <span className="mono">{c}</span>
-                  {!p.readOnly && (
-                    <button
-                      type="button"
-                      className="cv-mini"
-                      aria-label={`Remove ${c} from ${p.spec.label}`}
-                      onClick={() => p.onChange(chosen.filter((_, j) => j !== i))}
-                    >
-                      Remove
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="small muted" id={p.id}>
-              None chosen.
-            </p>
-          )}
+          {/* The box first, under the name as in every other setting; what is chosen under it. */}
           {!p.readOnly && (
             <div className="cv-add-row">
               {rest && rest.length > 0 ? (
@@ -625,6 +605,29 @@ function ColumnsControl(p: ControlProps) {
                 </>
               )}
             </div>
+          )}
+          {chosen.length > 0 ? (
+            <ul className="cv-chosen" id={p.id} aria-describedby={describedBy}>
+              {chosen.map((c, i) => (
+                <li key={`${c}-${i}`} className="cv-chip-row">
+                  <span className="mono">{c}</span>
+                  {!p.readOnly && (
+                    <button
+                      type="button"
+                      className="cv-mini"
+                      aria-label={`Remove ${c} from ${p.spec.label}`}
+                      onClick={() => p.onChange(chosen.filter((_, j) => j !== i))}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="small muted" id={p.id}>
+              None chosen.
+            </p>
           )}
         </>
       )}

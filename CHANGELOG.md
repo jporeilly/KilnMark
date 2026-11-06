@@ -7,6 +7,12 @@ details.
 
 ### Details
 
+- **A tidier node settings panel**: each setting's box now sits straight under its name, with its
+  help under the box, so the boxes of a row line up however long each one's help is. A write
+  node that names its table with `table:` (or its file with `path:`) no longer shows an empty
+  "Table or file" box beside it. A setting with several controls, such as Key columns, no longer
+  draws a rule and padding above itself, and its box comes before the list of what is chosen.
+
 - **Quieter start and stop**: `kilnmark.sh` and `kilnmark.cmd` no longer show Podman's notice
   that it runs an external compose tool (they set `PODMAN_COMPOSE_WARNING_LOGS=false` for their
   own compose commands), and `up` and `down` show compose's container ids and names only when

@@ -662,6 +662,24 @@
   padding: 0;
 }
 
+/*
+ * A setting with several controls is a fieldset; inside a panel the app draws fieldsets as titled
+ * sections with a rule above them. A node's setting is one field like the others: no rule, no
+ * padding, its name where a label would be, so it lines up with the settings beside it.
+ */
+.cv-section fieldset.cv-field {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.cv-section fieldset.cv-field > legend.cv-label {
+  margin: 0;
+  padding: 0;
+  font-size: inherit;
+}
+
 .cv-required {
   font-weight: 400;
   color: var(--km-muted);
