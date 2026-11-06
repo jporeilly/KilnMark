@@ -49,6 +49,10 @@ Kilnmark control script.
                        First setup: checks, folders, settings with new secrets, images, start.
                        -Starter then turns the Starter Pack on (example data; with -Auth,
                        example people too): for trials, demos and training, never production.
+  starter people [-NewPassword | -Remove]
+                       The Starter Pack's five example people in the bundled Keycloak (with
+                       KILNMARK_STARTER=allowed): add them, give them all a new password, or remove
+                       them. The password shows once on this console and is kept nowhere.
   up [-NoBrowser]      Start Kilnmark (and Keycloak when .env turns on the auth profile); wait
                        until it answers; open it in the browser. The default command.
   down                 Stop. Every volume, so all data, is kept.
@@ -425,10 +429,8 @@ function New-Settings([string]$Example) {
     Write-Host ('Wrote ' + $env + ' with new secrets (readable by you only).')
 }
 
-# Secrets later versions added, and the Starter Pack's service account (ADR 0051), as config\.env
-# now asks: run before every start, so upgrade and up keep them right. Each new secret is random.
-# KILNMARK_KEYCLOAK_STARTER_SECRET is set only while KILNMARK_STARTER=allowed, with Keycloak on and
-# the install not marked production, and emptied otherwise, so it reaches Kilnmark only then.
+# Secrets later versions added, as config\.env now asks: run before every start, so upgrade and up
+# keep them right. Each new secret is random.
 function Update-Settings {
     $env = Join-Path $script:Root 'config\.env'
     if (-not (Test-Path $env)) { return }
@@ -436,22 +438,11 @@ function Update-Settings {
         Set-Line $env 'KILNMARK_SAMPLES_DB_PASSWORD' (New-RandomValue)
         Write-Host "Added KILNMARK_SAMPLES_DB_PASSWORD to config\.env: the Starter Pack's database login (ADR 0051)."
     }
-    $profiles = ',' + ((Get-Setting 'COMPOSE_PROFILES') -replace '\s', '') + ','
-    $want = $false
-    if ((Get-Setting 'KILNMARK_STARTER') -eq 'allowed') {
-        if ((Get-Setting 'KILNMARK_PRODUCTION') -eq 'true') {
-            Write-Host 'Warning: KILNMARK_STARTER=allowed is ignored: this install is marked production (KILNMARK_PRODUCTION=true).' -ForegroundColor Yellow
-        } elseif (-not $profiles.Contains(',auth,')) {
-            Write-Host 'Note: KILNMARK_STARTER=allowed needs the bundled Keycloak (the auth profile); the example people are not managed.'
-        } else {
-            $want = $true
-        }
-    }
-    if ($want) {
-        if (-not (Get-Setting 'KILNMARK_KEYCLOAK_STARTER_SECRET')) { Set-Line $env 'KILNMARK_KEYCLOAK_STARTER_SECRET' (New-RandomValue) }
-    } elseif (Get-Setting 'KILNMARK_KEYCLOAK_STARTER_SECRET') {
-        Set-Line $env 'KILNMARK_KEYCLOAK_STARTER_SECRET' ''
-        Write-Host "Emptied KILNMARK_KEYCLOAK_STARTER_SECRET: the Starter Pack's service account is removed from Keycloak at this start."
+    # The example people are made one way now (ADR 0051): this setting is no longer read.
+    if (Get-Setting 'KILNMARK_KEYCLOAK_DEMO_PASSWORD') {
+        Set-Line $env 'KILNMARK_KEYCLOAK_DEMO_PASSWORD' ''
+        Write-Host 'Emptied KILNMARK_KEYCLOAK_DEMO_PASSWORD, no longer used: the example people come with KILNMARK_STARTER=allowed'
+        Write-Host 'and kilnmark.cmd starter people. People it made before are left in Keycloak: remove them in its console.'
     }
 }
 
@@ -580,7 +571,10 @@ function Invoke-Install([string[]]$Options) {
     Get-ImagesFor $v
     if ($start) {
         Invoke-Up @('-NoBrowser')
-        if ($script:WithStarter) { Invoke-StarterOn }
+        if ($script:WithStarter) {
+            Invoke-StarterOn
+            if ($script:WithAuth) { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:Root 'kilnmark.ps1') starter people }
+        }
     }
     $envFile = Join-Path $script:Root 'config\.env'
     Write-Host ''
@@ -672,8 +666,8 @@ function Invoke-Uninstall([string[]]$Options) {
 
 # --- the Starter Pack (ADR 0051) ----------------------------------------------------------------
 
-# Waits for a one-off service (samples-db, keycloak-setup) of this start to finish; false when it
-# failed or did not finish in 5 minutes. By compose's labels, which Docker and Podman both set.
+# Waits for a one-off service (samples-db) of this start to finish; false when it failed or did not
+# finish in 5 minutes. By compose's labels, which Docker and Podman both set.
 function Wait-OneOff([string]$Service) {
     Select-Engine
     for ($i = 0; $i -lt 150; $i++) {
@@ -686,17 +680,12 @@ function Wait-OneOff([string]$Service) {
     return $false
 }
 
-# Turns the Starter Pack on through Kilnmark's own API, as Settings > Starter Pack does: Kilnmark
-# does the work. The admin token reaches curl in a settings file in a new folder only this account
-# can open, deleted at once, never on a command line (Windows PowerShell can add a byte-order mark
-# to what it pipes, which curl would not read); the people's password, when there is one, is shown
-# here once and kept nowhere.
+# Turns the Starter Pack's example data on through Kilnmark's own API, as Settings > Starter Pack
+# does: Kilnmark does the work. The admin token reaches curl in a settings file in a new folder only
+# this account can open, deleted at once, never on a command line (Windows PowerShell can add a
+# byte-order mark to what it pipes, which curl would not read).
 function Invoke-StarterOn {
     if (-not (Wait-OneOff 'samples-db')) { Write-Host 'Warning: samples-db did not finish well, so the Starter Pack may not find its database. See: kilnmark.cmd logs samples-db' -ForegroundColor Yellow }
-    $profiles = ',' + ((Get-Setting 'COMPOSE_PROFILES') -replace '\s', '') + ','
-    if ($profiles.Contains(',auth,')) {
-        if (-not (Wait-OneOff 'keycloak-setup')) { Write-Host 'Warning: keycloak-setup did not finish well, so the example people may not be added. See: kilnmark.cmd logs keycloak-setup' -ForegroundColor Yellow }
-    }
     Write-Host 'Turning the Starter Pack on ...'
     $work = Join-Path ([IO.Path]::GetTempPath()) ('kilnmark-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory $work | Out-Null
@@ -722,12 +711,56 @@ function Invoke-StarterOn {
         return
     }
     foreach ($st in $answer.steps) { Write-Host ('  ' + $st.step + ': ' + $st.outcome) }
-    Write-Host 'The Starter Pack is on: example data and accounts, not for production. Turn it off under Settings > Starter Pack.'
-    if ($answer.peoplePassword) {
-        # Straight to the console, past the transcript: what this script says otherwise goes to logs\ too.
-        [Console]::WriteLine('The example people (vera.lane, sam.okafor, dana.reyes, priya.shah and alex.morgan, @kilnmark.com) sign in')
-        [Console]::WriteLine('with this password, shown only now and kept nowhere, not even in logs\: ' + $answer.peoplePassword)
+    Write-Host 'The Starter Pack is on: example data, not for production. Turn it off under Settings > Starter Pack.'
+}
+
+# The Starter Pack's five example people, made and removed by keycloak-setup with Keycloak's own
+# admin: Kilnmark holds no Keycloak credential. Their password is new, made here, handed to that one
+# run of keycloak-setup through compose's environment (never a command line, never config\.env), and shown once
+# on the console, past the transcript, never in logs\. People already there keep theirs unless -NewPassword.
+function Invoke-Starter([string[]]$Options) {
+    $what = $null; $action = 'add'
+    foreach ($o in $Options) {
+        switch ($o) {
+            'people' { $what = 'people' }
+            '-NewPassword' { $action = 'new-password' }
+            '-Remove' { $action = 'remove' }
+            default { Fail ('Unknown option ' + $o + ': only -NewPassword and -Remove.') }
+        }
     }
+    if ($what -ne 'people') { Fail 'Say what: kilnmark.cmd starter people [-NewPassword | -Remove]' }
+    [void](Get-CurrentVersion)
+    Update-Settings
+    $profiles = ',' + ((Get-Setting 'COMPOSE_PROFILES') -replace '\s', '') + ','
+    if (-not $profiles.Contains(',auth,')) { Fail 'The example people need the bundled Keycloak: the auth profile (INSTALL.md, "Keycloak, if you have no identity provider").' }
+    $password = ''
+    if ($action -ne 'remove') {
+        if ((Get-Setting 'KILNMARK_PRODUCTION') -eq 'true') { Fail 'This install is marked production (KILNMARK_PRODUCTION=true): no example people here. Nothing was changed.' }
+        if ((Get-Setting 'KILNMARK_STARTER') -ne 'allowed') { Fail 'Set KILNMARK_STARTER=allowed in config\.env first: the example people are only for trials and training.' }
+        $password = New-RandomValue
+    }
+    if ($action -eq 'remove') { Write-Host 'Asking keycloak-setup to remove the example people ...' } else { Write-Host 'Asking keycloak-setup to add the example people ...' }
+    $base = Get-ComposeArgs
+    $env:KILNMARK_STARTER_PEOPLE_ACTION = $action
+    $env:KILNMARK_STARTER_PEOPLE_PASSWORD = $password
+    try {
+        & $script:Engine @base run --rm -T keycloak-setup | Out-Host
+        $ok = ($LASTEXITCODE -eq 0)
+    } finally {
+        Remove-Item Env:KILNMARK_STARTER_PEOPLE_PASSWORD -ErrorAction SilentlyContinue
+        Remove-Item Env:KILNMARK_STARTER_PEOPLE_ACTION -ErrorAction SilentlyContinue
+    }
+    if (-not $ok) { Fail 'keycloak-setup did not finish: see what it said above. Nothing more was done.' }
+    if ($action -eq 'remove') {
+        Write-Host 'The example people the Starter Pack made are removed from Keycloak; anyone else is left as they are.'
+        return
+    }
+    # Straight to the console, past the transcript: what this script says otherwise goes to logs\ too.
+    if ($action -eq 'new-password') { [Console]::WriteLine('The example people now all sign in with this password,') }
+    else { [Console]::WriteLine('The example people added just now sign in with this password,') }
+    [Console]::WriteLine('shown only now and kept nowhere, not even in logs\: ' + $password)
+    if ($action -ne 'new-password') { [Console]::WriteLine('(Any that were there already keep theirs: -NewPassword gives them all a new one.)') }
+    $password = $null
 }
 
 # --- backup and restore (as backup.sh and restore.sh do on Linux) ------------------------------
@@ -926,6 +959,7 @@ switch ($Command) {
     }
     'build' { Build-Images (Get-CurrentVersion) }
     'backup' { Start-Log 'backup'; Invoke-Backup $Rest; Stop-Log }
+    'starter' { Start-Log 'starter'; Invoke-Starter $Rest; Stop-Log }
     'restore' { Start-Log 'restore'; Invoke-Restore $Rest; Stop-Log }
     'upgrade' { Invoke-Upgrade $Rest }
     'uninstall' { Invoke-Uninstall $Rest }

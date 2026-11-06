@@ -376,6 +376,19 @@ kbd {
   font-size: 0.9rem;
 }
 
+/* Settings › Starter Pack: the control script's commands for the example people. */
+.km-starter-commands {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 0 0 12px;
+}
+
+.km-starter-commands dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 /* The top bar. */
 .topbar {
   position: sticky;

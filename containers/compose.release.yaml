@@ -87,14 +87,9 @@ services:
       # The Starter Pack (ADR 0051; Settings, Starter Pack): the samples' database login, made by
       # samples-db above. No default, as for every secret.
       KILNMARK_SAMPLES_DB_PASSWORD: ${KILNMARK_SAMPLES_DB_PASSWORD}
-      # true marks this install as production: the Starter Pack is then refused.
+      # true marks this install as production: the Starter Pack is then refused. Kilnmark holds no
+      # Keycloak credential: the pack's example people are made by keycloak-setup (below).
       KILNMARK_PRODUCTION: ${KILNMARK_PRODUCTION:-false}
-      # allowed: the Starter Pack may add and remove its five example people in the bundled
-      # Keycloak, through a service account that manages users and groups in the kilnmark realm
-      # only. Its secret is set by the control script while KILNMARK_STARTER=allowed, and emptied
-      # when it is not, so it reaches Kilnmark only then. Never Keycloak's admin password.
-      KILNMARK_STARTER_PEOPLE: ${KILNMARK_STARTER:-}
-      KILNMARK_STARTER_KEYCLOAK_CLIENT_SECRET: ${KILNMARK_KEYCLOAK_STARTER_SECRET}
       # Optional host names bulk import rewrites when asked to (remapHosts=true), as from=to pairs,
       # for example localhost=host.docker.internal. Unset by default.
       KILNMARK_SOURCES_HOST_MAP: ${KILNMARK_SOURCES_HOST_MAP:-}
@@ -247,12 +242,17 @@ services:
       KILNMARK_OIDC_CLIENT_SECRET: ${KILNMARK_OIDC_CLIENT_SECRET}
       # The address browsers reach Kilnmark at: Keycloak sends people back there after sign-in.
       KILNMARK_URL: ${KILNMARK_URL:-http://localhost:8780}
-      # Only for a demonstration: five example people, one per role (see .env.example).
-      KILNMARK_KEYCLOAK_DEMO_PASSWORD: ${KILNMARK_KEYCLOAK_DEMO_PASSWORD}
-      # The Starter Pack's service account (ADR 0051): made while KILNMARK_STARTER=allowed and its
-      # secret is set, removed when not.
+      # The Starter Pack's five example people (ADR 0051), only for trials and training: made when
+      # the control script asks (kilnmark.sh starter people, which hands this one run their new
+      # password), while KILNMARK_STARTER=allowed and the install is not marked production, and
+      # removed at the next start once either stops being so.
       KILNMARK_STARTER: ${KILNMARK_STARTER:-}
-      KILNMARK_KEYCLOAK_STARTER_SECRET: ${KILNMARK_KEYCLOAK_STARTER_SECRET}
+      KILNMARK_PRODUCTION: ${KILNMARK_PRODUCTION:-false}
+      # Set by the control script's starter people for that one run only, from its own environment,
+      # never from .env: what to do (add, new-password, remove) and the people's new password. Unset
+      # on every other run, so compose may note that the password is not set; that is all.
+      KILNMARK_STARTER_PEOPLE_ACTION: ${KILNMARK_STARTER_PEOPLE_ACTION:-}
+      KILNMARK_STARTER_PEOPLE_PASSWORD: ${KILNMARK_STARTER_PEOPLE_PASSWORD}
     volumes:
       - ./containers/keycloak/setup.sh:/opt/kilnmark/setup.sh:ro,Z
     depends_on:

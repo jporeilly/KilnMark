@@ -53,7 +53,11 @@ const details: StarterPackDetails = {
   files: "/srv/files/starter-pack",
   tablesRun: null,
   samples: 0,
-  people: { allowed: false, why: "Not managed here: the example people need KILNMARK_STARTER=allowed", present: [], presentError: null },
+  people: {
+    add: "kilnmark.sh starter people   (Windows: kilnmark.cmd starter people)",
+    remove: "kilnmark.sh starter people --remove   (Windows: kilnmark.cmd starter people -Remove)",
+    signedIn: [],
+  },
 };
 
 describe("the Starter Pack banner", () => {
@@ -86,6 +90,18 @@ describe("the Starter Pack banner", () => {
 });
 
 describe("Settings, Starter Pack", () => {
+  test("shows the control script's commands for the example people, and who of them has signed in", async () => {
+    server({
+      "GET /api/v1/starter-pack/details": () =>
+        json({ ...details, people: { ...details.people, signedIn: ["sso:alex.morgan@kilnmark.com (3f2a)"] } }),
+    });
+    await show(<StarterPackPage />);
+    expect(host.textContent).toContain("kilnmark.sh starter people --remove");
+    expect(host.textContent).toContain("Example accounts have signed in here: sso:alex.morgan@kilnmark.com (3f2a)");
+    expect(host.textContent).toContain("turning the pack off here does not remove them");
+    expect(host.textContent).not.toMatch(/password: /i);
+  });
+
   test("lives under Settings", () => {
     expect(parse("#/settings/starter-pack")).toEqual({ page: "starter-pack" });
   });
@@ -101,7 +117,7 @@ describe("Settings, Starter Pack", () => {
   test("turns off only once DELETE is typed", async () => {
     const fetch = server({
       "GET /api/v1/starter-pack/details": () => json({ ...details, on: true }),
-      "DELETE /api/v1/starter-pack": () => json({ on: false, steps: [], tablesRun: null, people: [], peoplePassword: null }),
+      "DELETE /api/v1/starter-pack": () => json({ on: false, steps: [], tablesRun: null }),
       "GET /api/v1/starter-pack": () => json({ on: false, since: null, by: null }),
     });
     HTMLDialogElement.prototype.showModal ??= function (this: HTMLDialogElement) {
@@ -130,25 +146,22 @@ describe("Settings, Starter Pack", () => {
     expect(JSON.parse(String(call[1]!.body))).toEqual({ confirm: "DELETE" });
   });
 
-  test("shows each step, and the people's password once", async () => {
+  test("shows each step, and never a password", async () => {
     await show(
       <Steps
         result={{
           on: true,
           steps: [
             { step: "database source", outcome: "done", detail: "added" },
-            { step: "example people", outcome: "skipped", detail: "Not managed here" },
+            { step: "files source", outcome: "skipped", detail: "Not needed" },
           ],
           tablesRun: null,
-          people: [],
-          peoplePassword: "abc-123_XYZ-456_def-789x",
         }}
       />,
     );
     expect(host.textContent).toContain("Database source");
     expect(host.textContent).toContain("Skipped");
-    expect(host.textContent).toContain("abc-123_XYZ-456_def-789x");
-    expect(host.textContent).toContain("Kilnmark keeps it nowhere");
+    expect(host.textContent).not.toMatch(/password/i);
     expect(stepLabel("sample tables")).toBe("Sample tables");
   });
 });

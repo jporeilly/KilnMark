@@ -40,6 +40,10 @@ Kilnmark control script.
                        First setup: checks, folders, settings with new secrets, images, start.
                        --starter then turns the Starter Pack on (example data; with --auth,
                        example people too): for trials, demos and training, never production.
+  starter people [--new-password | --remove]
+                       The Starter Pack's five example people in the bundled Keycloak (with
+                       KILNMARK_STARTER=allowed): add them, give them all a new password, or remove
+                       them. The password shows once on this terminal and is kept nowhere.
   up [--no-browser]    Start Kilnmark (and Keycloak when .env turns on the auth profile); wait
                        until it answers; open it in the browser. The default command.
   down                 Stop. Every volume, so all data, is kept.
@@ -336,32 +340,20 @@ make_settings() {
   echo "Wrote $env with new secrets (readable by you only)."
 }
 
-# Secrets later versions added, and the Starter Pack's service account (ADR 0051), as config/.env
-# now asks: run before every start, so upgrade and up keep them right. Each new secret is random.
-# KILNMARK_KEYCLOAK_STARTER_SECRET is set only while KILNMARK_STARTER=allowed, with Keycloak on and
-# the install not marked production, and emptied otherwise, so it reaches Kilnmark only then.
+# Secrets later versions added, as config/.env now asks: run before every start, so upgrade and up
+# keep them right. Each new secret is random.
 ensure_settings() {
-  local env="$root/config/.env" profiles want=false
+  local env="$root/config/.env"
   [ -f "$env" ] || return 0
   if [ -z "$(setting KILNMARK_SAMPLES_DB_PASSWORD)" ]; then
     set_line "$env" KILNMARK_SAMPLES_DB_PASSWORD "$(random_value)"
     echo "Added KILNMARK_SAMPLES_DB_PASSWORD to config/.env: the Starter Pack's database login (ADR 0051)."
   fi
-  profiles="$(setting COMPOSE_PROFILES | tr -d '[:space:]')"
-  if [ "$(setting KILNMARK_STARTER)" = allowed ]; then
-    if [ "$(setting KILNMARK_PRODUCTION)" = true ]; then
-      echo "Warning: KILNMARK_STARTER=allowed is ignored: this install is marked production (KILNMARK_PRODUCTION=true)."
-    elif [[ ",$profiles," != *",auth,"* ]]; then
-      echo "Note: KILNMARK_STARTER=allowed needs the bundled Keycloak (the auth profile); the example people are not managed."
-    else
-      want=true
-    fi
-  fi
-  if $want; then
-    [ -n "$(setting KILNMARK_KEYCLOAK_STARTER_SECRET)" ] || set_line "$env" KILNMARK_KEYCLOAK_STARTER_SECRET "$(random_value)"
-  elif [ -n "$(setting KILNMARK_KEYCLOAK_STARTER_SECRET)" ]; then
-    set_line "$env" KILNMARK_KEYCLOAK_STARTER_SECRET ""
-    echo "Emptied KILNMARK_KEYCLOAK_STARTER_SECRET: the Starter Pack's service account is removed from Keycloak at this start."
+  # The example people are made one way now (ADR 0051): this setting is no longer read.
+  if [ -n "$(setting KILNMARK_KEYCLOAK_DEMO_PASSWORD)" ]; then
+    set_line "$env" KILNMARK_KEYCLOAK_DEMO_PASSWORD ""
+    echo "Emptied KILNMARK_KEYCLOAK_DEMO_PASSWORD, no longer used: the example people come with KILNMARK_STARTER=allowed"
+    echo "and ./kilnmark.sh starter people. People it made before are left in Keycloak: remove them in its console."
   fi
 }
 
@@ -590,7 +582,10 @@ cmd_install() {
   boot_start
   if $start; then
     "$root/kilnmark.sh" up --no-browser
-    if [ "${with_starter:-false}" = true ]; then starter_on; fi
+    if [ "${with_starter:-false}" = true ]; then
+      starter_on
+      [ "${with_auth:-false}" != true ] || "$root/kilnmark.sh" starter people || true
+    fi
   fi
   cat <<EOF
 
@@ -678,11 +673,8 @@ cmd_uninstall() {
 
 # --- the Starter Pack (ADR 0051) ----------------------------------------------------------------
 
-# Turns the Starter Pack on through Kilnmark's own API, as Settings > Starter Pack does: Kilnmark
-# does the work. The admin token goes to curl in a file only this account can read, never on a
-# command line; the people's password, when there is one, is shown here once and kept nowhere.
-# Waits for a one-off service (samples-db, keycloak-setup) of this start to finish; false when it
-# failed or did not finish in 5 minutes. By compose's labels, which Docker and Podman both set.
+# Waits for a one-off service (samples-db) of this start to finish; false when it failed or did not
+# finish in 5 minutes. By compose's labels, which Docker and Podman both set.
 one_off_done() {
   local i state
   for i in $(seq 1 150); do
@@ -697,27 +689,30 @@ one_off_done() {
   return 1
 }
 
+# Turns the Starter Pack's example data on through Kilnmark's own API, as Settings > Starter Pack
+# does: Kilnmark does the work. The admin token goes to curl in a file in a new folder only this
+# account can open, never on a command line; the folder goes however the script ends.
+starter_work=""
 starter_on() {
-  local work answer code pw profiles
+  local answer code
   set_compose
   one_off_done samples-db \
     || echo "Warning: samples-db did not finish well, so the Starter Pack may not find its database. See: ./kilnmark.sh logs samples-db"
-  profiles="$(setting COMPOSE_PROFILES | tr -d '[:space:]')"
-  if [[ ",$profiles," == *",auth,"* ]]; then
-    one_off_done keycloak-setup \
-      || echo "Warning: keycloak-setup did not finish well, so the example people may not be added. See: ./kilnmark.sh logs keycloak-setup"
-  fi
-  work="$(mktemp -d)" || die "Could not make a private folder for the request."
+  trap '[ -z "$starter_work" ] || rm -rf "$starter_work"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  starter_work="$(mktemp -d)" || die "Could not make a private folder for the request."
   {
     cat <<EOF
 header = "Authorization: Bearer $(setting KILNMARK_ADMIN_TOKEN)"
 EOF
-  } > "$work/curl.conf"
+  } > "$starter_work/curl.conf"
   echo "Turning the Starter Pack on ..."
-  code="$(curl -k -s --config "$work/curl.conf" -X POST --max-time 600 -o "$work/answer" -w '%{http_code}' \
-    "$(local_url)/api/v1/starter-pack")" || code=000
-  answer="$(cat "$work/answer" 2> /dev/null || true)"
-  rm -rf "$work"
+  code="$(curl -k -s --config "$starter_work/curl.conf" -X POST --max-time 600 -o "$starter_work/answer" \
+    -w '%{http_code}' "$(local_url)/api/v1/starter-pack")" || code=000
+  answer="$(cat "$starter_work/answer" 2> /dev/null || true)"
+  rm -rf "$starter_work"; starter_work=""
   if [ "$code" != 200 ]; then
     echo "The Starter Pack was not turned on (HTTP $code): $(sed -n 's/^{"error":"\(.*\)"}$/\1/p' <<< "$answer")" >&2
     echo "Turn it on later under Settings > Starter Pack." >&2
@@ -725,18 +720,58 @@ EOF
   fi
   # Each step, one a line: "step: outcome".
   grep -o '"step":"[^"]*","outcome":"[^"]*"' <<< "$answer" | sed 's/"step":"\([^"]*\)","outcome":"\([^"]*\)"/  \1: \2/'
-  pw="$(sed -n 's/.*"peoplePassword":"\([A-Za-z0-9_-]*\)".*/\1/p' <<< "$answer")"
-  echo "The Starter Pack is on: example data and accounts, not for production. Turn it off under Settings > Starter Pack."
-  # Straight to the terminal: what this script says otherwise goes to logs/ too.
-  if [ -n "$pw" ] && { : > /dev/tty; } 2> /dev/null; then
-    {
-      echo "The example people (vera.lane, sam.okafor, dana.reyes, priya.shah and alex.morgan, @kilnmark.com) sign in"
-      echo "with this password, shown only now and kept nowhere, not even in logs/: $pw"
-    } > /dev/tty
-  elif [ -n "$pw" ]; then
-    echo "The example people's password is shown on a terminal only, never in logs/: turn the pack on again under"
-    echo "Settings > Starter Pack to give them a new one, shown there."
+  echo "The Starter Pack is on: example data, not for production. Turn it off under Settings > Starter Pack."
+}
+
+# The Starter Pack's five example people, made and removed by keycloak-setup with Keycloak's own
+# admin: Kilnmark holds no Keycloak credential. Their password is new, made here, handed to that one
+# run of keycloak-setup through compose's environment (compose.yaml reads it from there; never a
+# command line, never config/.env), and shown once on the terminal, never in logs/. People already
+# there keep theirs unless --new-password.
+cmd_starter() {
+  local what="${1:-}" action=add a profiles password=""
+  [ $# -eq 0 ] || shift
+  [ "$what" = people ] || die "Say what: ./kilnmark.sh starter people [--new-password | --remove]"
+  for a in "$@"; do
+    case "$a" in
+      --new-password) action=new-password ;;
+      --remove) action=remove ;;
+      *) die "Unknown option $a: only --new-password and --remove." ;;
+    esac
+  done
+  current_version > /dev/null; ensure_settings
+  profiles="$(setting COMPOSE_PROFILES | tr -d '[:space:]')"
+  [[ ",$profiles," == *",auth,"* ]] \
+    || die "The example people need the bundled Keycloak: the auth profile (INSTALL.md, \"Keycloak, if you have no identity provider\")."
+  if [ "$action" != remove ]; then
+    [ "$(setting KILNMARK_PRODUCTION)" != true ] \
+      || die "This install is marked production (KILNMARK_PRODUCTION=true): no example people here. Nothing was changed."
+    [ "$(setting KILNMARK_STARTER)" = allowed ] \
+      || die "Set KILNMARK_STARTER=allowed in config/.env first: the example people are only for trials and training."
+    password="$(random_value)"
   fi
+  set_compose
+  echo "Asking keycloak-setup to $( [ "$action" = remove ] && echo remove || echo add ) the example people ..."
+  if ! KILNMARK_STARTER_PEOPLE_ACTION="$action" KILNMARK_STARTER_PEOPLE_PASSWORD="$password" \
+    "${compose[@]}" run --rm -T keycloak-setup; then
+    die "keycloak-setup did not finish: see what it said above. Nothing more was done."
+  fi
+  if [ "$action" = remove ]; then
+    echo "The example people the Starter Pack made are removed from Keycloak; anyone else is left as they are."
+    return 0
+  fi
+  # Straight to the terminal: what this script says otherwise goes to logs/ too.
+  if { : > /dev/tty; } 2> /dev/null; then
+    {
+      echo "The example people $( [ "$action" = new-password ] && echo "now all sign in" || echo "added just now sign in" ) with this password,"
+      echo "shown only now and kept nowhere, not even in logs/: $password"
+      [ "$action" = new-password ] || echo "(Any that were there already keep theirs: --new-password gives them all a new one.)"
+    } > /dev/tty
+  else
+    echo "There is no terminal to show the password on (it never goes to logs/): run this again from one,"
+    echo "with --new-password."
+  fi
+  password=""
 }
 
 # --- backup and restore (the scripts beside compose.yaml) --------------------------------------
@@ -795,6 +830,7 @@ case "$command" in
     pull_images "$(current_version)" ;;
   build) build_images "$(current_version)" ;;
   backup) start_log backup; cmd_backup "$@" ;;
+  starter) start_log starter; cmd_starter "$@" ;;
   restore) start_log restore; cmd_restore "$@" ;;
   upgrade) cmd_upgrade "$@" ;;
   uninstall) cmd_uninstall "$@" ;;

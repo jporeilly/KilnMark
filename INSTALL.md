@@ -110,7 +110,7 @@ written `-Offline`, `-Root`, `-SkipVerify` and so on.
 | Command | What it does |
 | --- | --- |
 | `prepare` | Linux, once, with sudo: makes the kilnmark account and the install root (above) |
-| `up` | Starts Kilnmark (and Keycloak when `.env` turns on the `auth` profile), waits until it answers, and opens it in the browser. First it adds to `.env` any secret this version needs that it lacks (such as `KILNMARK_SAMPLES_DB_PASSWORD`), and sets or empties the Starter Pack's Keycloak secret as `KILNMARK_STARTER` says |
+| `up` | Starts Kilnmark (and Keycloak when `.env` turns on the `auth` profile), waits until it answers, and opens it in the browser. First it adds to `.env` any secret this version needs that it lacks (such as `KILNMARK_SAMPLES_DB_PASSWORD`) |
 | `down` | Stops it. Every volume, so all data, is kept |
 | `restart [service]` | Restarts everything, or one service |
 | `status` | Version, containers, health, and the last backup |
@@ -123,6 +123,7 @@ written `-Offline`, `-Root`, `-SkipVerify` and so on.
 | `backup [DIR]` | Backs up Kilnmark's own database and the keys, into `backups` by default (never `kilnmark_samples`, nor the files folder) |
 | `restore BACKUP --yes` | Puts Kilnmark back to a backup |
 | `upgrade ARCHIVE [--offline IMAGES]` | Checks the new release, backs up, puts it beside this one, and starts it. If the new version does not answer, the old one is current again, and the script says how to restore |
+| `starter people [--new-password \| --remove]` | The Starter Pack's five example people in the bundled Keycloak, with `KILNMARK_STARTER=allowed`: adds them, gives them all a new password, or removes them. The password shows once on the terminal and is kept nowhere (below, "Try Kilnmark with the Starter Pack") |
 | `uninstall [--purge]` | Stops Kilnmark. `--purge` also deletes its volumes and images, once you type `DELETE` |
 
 Every command writes what it said to `logs`, and ends with a failure code when it fails, so it can
@@ -362,10 +363,10 @@ a group, shows within 5 minutes); Kilnmark renews them while the person works. K
 for the realm ends after 2 hours unused or 8 hours at most, and the person then signs in again.
 Signing out of Kilnmark ends the Keycloak session too.
 
-For a demonstration, the Starter Pack can add five example people (above, "Try Kilnmark with the
-Starter Pack"). Without it, setting `KILNMARK_KEYCLOAK_DEMO_PASSWORD` has `keycloak-setup` add the
-same five, at `kilnmark.com` addresses (Documentation, "Signing in, roles and tokens"); the pack
-leaves those alone. Never set either where real data is.
+For a demonstration, `kilnmark.sh starter people` adds five example people (below, "Try Kilnmark
+with the Starter Pack"). Never where real data is. `KILNMARK_KEYCLOAK_DEMO_PASSWORD`, the earlier
+way, is no longer read: `up` empties it, and people it made carry no mark, so the Starter Pack
+leaves them alone; remove them in Keycloak's console (realm **kilnmark**, **Users**).
 
 On one machine, `http://localhost` works as it is: browsers treat localhost as secure, so
 Kilnmark's session cookie (sent over HTTPS only) still works there. Keycloak is published on this
@@ -404,7 +405,7 @@ The **Starter Pack** is for trials, demonstrations and training: example data, e
 to run and, where allowed, five example people to sign in as
 ([ADR 0051](docs/adr/0051-starter-pack.md)). It is never for an install that holds real data.
 
-![What the Starter Pack adds: on Kilnmark's PostgreSQL server, Kilnmark's own database and the separate kilnmark_samples database, whose own login can open no other; the pack's folder in the files folder; and, in Keycloak, five example people managed through a service account that can manage people and groups only](docs/guide/images/starter-pack.svg)
+![What the Starter Pack adds: on Kilnmark's PostgreSQL server, Kilnmark's own database and the separate kilnmark_samples database, whose own login can open no other; the pack's folder in the files folder; and, in Keycloak, five example people made by keycloak-setup with Keycloak's own admin, and no Keycloak credential in Kilnmark](docs/guide/images/starter-pack.svg)
 
 **Turn it on.** An admin opens **Settings**, **Starter Pack** and chooses **Turn on**. Kilnmark
 then, by itself:
@@ -413,12 +414,12 @@ then, by itself:
   both allowing writing;
 - creates the sample tables there (the `sample-tables` pipeline) and adds every sample to the
   **Library**, reading them;
-- adds the five example people, when the people are managed here (below);
 - shows a banner to everyone: "Starter Pack: example data and accounts, not for production".
 
 The page shows each step and how it went. For a new trial install, `kilnmark.sh install --starter`
 (`kilnmark.cmd install -Starter`) does the same right after installing; add `--auth` (`-Auth`)
-for Keycloak and the example people.
+for Keycloak and the example people (below). A source called `starter-samples-db` or
+`starter-samples-files` that the pack did not make, your own, is left as it is: the page says so.
 
 **Its database.** Every install has an empty database, `kilnmark_samples`, on Kilnmark's own
 PostgreSQL server, with a login of its own, `kilnmark_samples`, whose password is
@@ -429,29 +430,41 @@ it cannot even open. The `samples-db` service makes or checks both at every star
 only: after a restore, turn the pack off and on again to recreate the samples.
 
 **The example people.** With the bundled Keycloak (`--auth`), set `KILNMARK_STARTER=allowed` in
-`.env` (install `--auth --starter` does) and run `kilnmark.sh up`. The control script then makes
-`KILNMARK_KEYCLOAK_STARTER_SECRET`, and Keycloak gets a service account, `kilnmark-starter`, that
-can manage people and groups in Kilnmark's realm and nothing else; Keycloak's own admin password
-never reaches Kilnmark. Turning the pack on then adds `vera.lane` (viewer), `sam.okafor`
-(steward), `dana.reyes` (designer), `priya.shah` (designer, sees sensitive values) and
-`alex.morgan` (admin), all `@kilnmark.com`, which receives no mail from here. They share one new
-password, which the page (or `install --starter`, on the terminal only, never in `logs`) shows
-**once**: Kilnmark keeps it nowhere. Each
-sets up a one-time code on first sign-in. Without the setting, the page says the people are not
-managed here, and no Keycloak credential reaches Kilnmark. Remove `KILNMARK_STARTER=allowed` and
-run `up` again to take the service account away.
+`.env` (install `--auth --starter` does), then, as the account that runs Kilnmark:
+
+| | Linux | Windows |
+| --- | --- | --- |
+| Add them | `kilnmark.sh starter people` | `kilnmark.cmd starter people` |
+| Give them all a new password | `kilnmark.sh starter people --new-password` | `kilnmark.cmd starter people -NewPassword` |
+| Remove them | `kilnmark.sh starter people --remove` | `kilnmark.cmd starter people -Remove` |
+
+`keycloak-setup`, with Keycloak's own admin, adds `vera.lane` (viewer), `sam.okafor` (steward),
+`dana.reyes` (designer), `priya.shah` (designer, sees sensitive values) and `alex.morgan` (admin),
+all `@kilnmark.com`, which receives no mail from here, each marked as the pack's. They share one new
+password, which the command shows **once**, on the terminal only: it is never in `.env`, `logs` or
+Kilnmark. Adding them again keeps the password of anyone already there. Each sets up a one-time
+code on first sign-in. Kilnmark holds no Keycloak credential, in any setting: its Settings page only
+shows these commands and which example accounts have signed in. Anyone who runs the command, or has
+the password, can sign in as an example admin or as a designer who sees sensitive values: that is
+why they are only for trials and training ([ADR 0051](docs/adr/0051-starter-pack.md)).
+
+To take them out for good, remove `KILNMARK_STARTER=allowed` from `.env` (or mark the install
+production) and run `kilnmark.sh up`: `keycloak-setup` then deletes the five people it marked, and
+never anyone else with one of those addresses. Keycloak records each change to the people as an
+admin event (its console, realm **kilnmark**, **Events**, **Admin events**).
 
 **Turn it off.** Under **Settings**, **Starter Pack**, choose **Turn off** and type `DELETE`.
 Kilnmark removes every sample in the Library, the pack's sources, the tables in `kilnmark_samples`
-(the database stays, empty), the files in `/srv/files/starter-pack` and the example people it
-added (only those it marked as its own: a real person with one of those addresses is never
-touched), and the banner goes. Nothing else changes. Both turning on and off are in the audit log,
+(the database stays, empty) and the files in `/srv/files/starter-pack`, and the banner goes once all
+of it is gone. Nothing else changes. The example people stay until you remove them with the
+command above: the page says so if any has signed in. Both turning on and off are in the audit log,
 and the access review marks kilnmark.com accounts as example accounts.
 
 **On production.** Set `KILNMARK_PRODUCTION=true` in `.env` on an install that holds real data.
-The Starter Pack is then refused there, and the control script will not make the service
-account's secret. Through the API only, an admin can still force it
-(`POST /api/v1/starter-pack?force=true`), which the audit log records.
+Kilnmark then refuses the Starter Pack's example data, and `keycloak-setup` refuses the example
+people and deletes any it made, at the next start. Through the API only, an admin can still force
+the example data (`POST /api/v1/starter-pack?force=true`), which the audit log records; nothing
+forces the people.
 
 ### Review who has access
 

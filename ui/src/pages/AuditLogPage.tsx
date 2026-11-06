@@ -28,8 +28,6 @@ export const ACTIONS: { value: string; label: string; tone: Tone }[] = [
   { value: "schedule.paused", label: "Schedule paused", tone: "warn" },
   { value: "starter.added", label: "Starter Pack turned on", tone: "warn" },
   { value: "starter.removed", label: "Starter Pack turned off", tone: "neutral" },
-  { value: "starter.people_added", label: "Example people added", tone: "warn" },
-  { value: "starter.people_removed", label: "Example people removed", tone: "neutral" },
   { value: "api.request", label: "Request", tone: "neutral" },
   { value: "api.refused", label: "Request refused", tone: "bad" },
 ];
@@ -78,10 +76,6 @@ export function describe(e: AuditEvent): string {
     const failed = Object.entries(steps).filter(([, v]) => v === "failed").map(([k]) => k);
     const forced = d.forced ? "Forced on an install marked production. " : "";
     return `${forced}${failed.length ? `Not every step worked: ${failed.join(", ")}` : "Every step worked"}`;
-  }
-  if (e.action === "starter.people_added" || e.action === "starter.people_removed") {
-    const people = Array.isArray(d.people) ? (d.people as unknown[]).map(String) : [];
-    return people.length ? people.join(", ") : "No one";
   }
   if (e.action === "api.request" || e.action === "api.refused") {
     const call = `${String(d.method ?? "")} ${String(d.status ?? "")}`.trim();

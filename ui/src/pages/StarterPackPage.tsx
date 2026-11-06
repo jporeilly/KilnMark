@@ -21,7 +21,6 @@ const STEP_LABELS: Record<string, string> = {
   "files source": "Files source",
   "sample tables": "Sample tables",
   samples: "Samples in the Library",
-  "example people": "Example people",
   "sample flows": "Sample flows",
   "sample pipelines": "Sample pipelines",
   sources: "Sources",
@@ -40,14 +39,13 @@ export function stepLabel(step: string): string {
   return STEP_LABELS[step] ?? step;
 }
 
-/** The control script's command to run with KILNMARK_STARTER=allowed, for both editions. */
-export const PEOPLE_COMMAND = "kilnmark.sh up   (Windows: kilnmark.cmd up)";
 
 /**
- * Settings › Starter Pack, for admins (ADR 0051): example data, the samples ready to run and, where
- * allowed, example people, for trials, demos and training. Kilnmark does the work itself; this page
- * turns it on, shows each step and how it went, and turns it off again after the admin types DELETE.
- * Refused on an install marked production.
+ * Settings › Starter Pack, for admins (ADR 0051): example data and the samples ready to run, for
+ * trials, demos and training. Kilnmark does the work itself; this page turns it on, shows each step
+ * and how it went, and turns it off again after the admin types DELETE. Refused on an install marked
+ * production. The example people are the control script's: this page shows its commands and which
+ * example accounts have signed in, and never a password.
  */
 export function StarterPackPage() {
   useTitle("Starter Pack");
@@ -118,7 +116,7 @@ export function StarterPackPage() {
       <PageHeader
         title="Starter Pack"
         crumbs={[{ label: "Settings", href: href.settings() }, { label: "Starter Pack" }]}
-        lead="Example data, the samples ready to run and, where allowed, example people, for trials, demos and training. Kilnmark adds it all itself, in a database and a folder of its own, and takes it all out again when you turn it off. Not for an install that holds real data."
+        lead="Example data and the samples ready to run, for trials, demos and training. Kilnmark adds it all itself, in a database and a folder of its own, and takes it all out again when you turn it off. Not for an install that holds real data."
         actions={
           d &&
           (d.on ? (
@@ -189,8 +187,7 @@ export function StarterPackPage() {
               a database source and a files source on it, both allowing writing, with the files in{" "}
               <span className="mono">{d.files ?? "the files folder"}</span>;
             </li>
-            <li>every sample, in the Library, ready to run ({d.samples} there now);</li>
-            <li>five example people, one per role, when the people are managed here (below).</li>
+            <li>every sample, in the Library, ready to run ({d.samples} there now).</li>
           </ul>
           {d.tablesRun && (
             <p>
@@ -203,38 +200,33 @@ export function StarterPackPage() {
           )}
           <p className="hint">
             Turning it off removes every sample in the Library, the pack&apos;s sources, its tables (the database stays,
-            empty), its files and the example people it added, and nothing else. Both are in the audit log.
+            empty) and its files, and nothing else. Both are in the audit log.
           </p>
         </Card>
       )}
       {d && (
         <Card title="Example people" titleId="starter-people" className="km-section">
-          {d.people.allowed ? (
-            <>
-              <p>
-                Turning the pack on adds five people at kilnmark.com addresses, which receive no mail, to Keycloak:
-                vera.lane (viewer), sam.okafor (steward), dana.reyes (designer), priya.shah (designer, sees sensitive
-                values) and alex.morgan (admin). They share one new password, shown here once; each sets up a one-time
-                code on first sign-in.
-              </p>
-              <p>
-                {d.people.presentError
-                  ? `Kilnmark could not tell who is in Keycloak now: ${d.people.presentError}`
-                  : d.people.present.length
-                    ? `In Keycloak now: ${d.people.present.join(", ")}.`
-                    : "None of them is in Keycloak now."}
-              </p>
-            </>
+          <p>
+            Five people at kilnmark.com addresses, one per role, for trying the roles out: vera.lane (viewer),
+            sam.okafor (steward), dana.reyes (designer), priya.shah (designer, sees sensitive values) and
+            alex.morgan (admin). The person who runs Kilnmark makes them with the control script, with the bundled
+            Keycloak and <span className="mono">KILNMARK_STARTER=allowed</span> in config/.env; their password
+            shows once on that terminal. Kilnmark holds no Keycloak credential, and turning the pack off here does
+            not remove them.
+          </p>
+          <dl className="km-starter-commands">
+            <dt>To add them</dt>
+            <dd className="mono">{d.people.add}</dd>
+            <dt>To remove them</dt>
+            <dd className="mono">{d.people.remove}</dd>
+          </dl>
+          {d.people.signedIn.length ? (
+            <p className="warning" role="note">
+              Example accounts have signed in here: {d.people.signedIn.join(", ")}. They stay in Keycloak until removed
+              with the command above.
+            </p>
           ) : (
-            <>
-              <p>{d.people.why}.</p>
-              <p className="hint">
-                To have Kilnmark manage them, with the bundled Keycloak, set{" "}
-                <span className="mono">KILNMARK_STARTER=allowed</span> in config/.env and run{" "}
-                <span className="mono">{PEOPLE_COMMAND}</span>. Kilnmark then gets a service account that manages
-                people and groups in Kilnmark&apos;s realm only.
-              </p>
-            </>
+            <p className="hint">No example account has signed in here.</p>
           )}
         </Card>
       )}
@@ -245,9 +237,8 @@ export function StarterPackPage() {
           <p>This removes, for good:</p>
           <ul>
             <li>every sample pipeline and flow in the Library, with their runs and schedules;</li>
-            <li>the pack&apos;s two sources, and Kilnmark&apos;s sample data source unless your own pipelines read it;</li>
-            <li>the tables in kilnmark_samples (the database stays, empty) and the pack&apos;s files;</li>
-            <li>the example people the pack added. People it did not add are never touched.</li>
+            <li>the pack&apos;s two sources, and Kilnmark&apos;s sample data source unless your own pipelines or flows read it;</li>
+            <li>the tables in kilnmark_samples (the database stays, empty) and the pack&apos;s files.</li>
           </ul>
           <label>
             Type {CONFIRM} to go on
@@ -273,7 +264,7 @@ export function StarterPackPage() {
   );
 }
 
-/** Each step of the last turn on or off, and how it went; the people's password, once. */
+/** Each step of the last turn on or off, and how it went. */
 export function Steps({ result }: { result: StarterPackResult }) {
   return (
     <Card title={result.on ? "Turned on" : "Turned off"} titleId="starter-steps" className="km-section">
@@ -297,17 +288,6 @@ export function Steps({ result }: { result: StarterPackResult }) {
           ))}
         </tbody>
       </DataTable>
-      {result.peoplePassword && (
-        <div className="km-callout" role="note">
-          <p>
-            The example people&apos;s password: <span className="mono">{result.peoplePassword}</span>
-          </p>
-          <p>
-            Write it down now: Kilnmark keeps it nowhere and shows it only this once. Turning the pack on again gives
-            them a new one.
-          </p>
-        </div>
-      )}
     </Card>
   );
 }

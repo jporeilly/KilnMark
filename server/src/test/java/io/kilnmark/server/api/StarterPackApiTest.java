@@ -140,7 +140,8 @@ class StarterPackApiTest {
         JsonPath d = admin().get("/api/v1/starter-pack/details").then().statusCode(200).extract().jsonPath();
         assertTrue(d.getBoolean("ready"), d.prettify());
         assertFalse(d.getBoolean("production"));
-        assertFalse(d.getBoolean("people.allowed"), "no KILNMARK_STARTER=allowed here");
+        assertTrue(d.getString("people.add").startsWith("kilnmark.sh starter people"), "people are the control script's");
+        assertEquals(List.of(), d.getList("people.signedIn"));
     }
 
     @Test
@@ -152,8 +153,8 @@ class StarterPackApiTest {
         for (String step : List.of("database", "database source", "files source", "sample tables", "samples")) {
             assertEquals("done", r.getString("steps.find { it.step == '" + step + "' }.outcome"), step + ": " + r.prettify());
         }
-        assertEquals("skipped", r.getString("steps.find { it.step == 'example people' }.outcome"));
-        assertEquals(null, r.getString("peoplePassword"), "no people, no password");
+        assertEquals(null, r.getString("steps.find { it.step == 'example people' }"), "Kilnmark makes no people");
+        assertFalse(r.prettify().contains("assword"), "and hands out no password");
         Tokens.as(Tokens.newToken("viewer", false)).get("/api/v1/starter-pack").then().statusCode(200)
             .body("on", equalTo(true));
         eventually(AuditLog.STARTER_PACK_ADDED, added + 1);
@@ -207,6 +208,16 @@ class StarterPackApiTest {
     @Order(5)
     void turnedOffEverythingItAddedIsGoneAndTheDatabaseStaysEmpty() throws Exception {
         assertTrue(tables() >= Samples.TABLES.size());
+        // A flow of the team's own, outside the Library, still reads Kilnmark's sample data: kept.
+        admin().contentType(ContentType.JSON).body(Map.of("yaml", """
+            kilnmark: flow/v1
+            name: own-checks-the-sample-data
+            nodes:
+              - { id: ready, type: check-source, source: sample-data, tables: [crm/customers.csv] }
+              - { id: done, type: stop, message: Checked }
+            connections:
+              - { from: ready, to: done }
+            """)).post("/api/v1/flows").then().statusCode(201);
         int removed = events(AuditLog.STARTER_PACK_REMOVED);
         JsonPath r = admin().contentType(ContentType.JSON).body(Map.of("confirm", "DELETE")).delete("/api/v1/starter-pack")
             .then().statusCode(200).extract().jsonPath();
@@ -214,9 +225,13 @@ class StarterPackApiTest {
         assertEquals(List.of(), r.getList("steps.findAll { it.outcome == 'failed' }"), r.prettify());
         eventually(AuditLog.STARTER_PACK_REMOVED, removed + 1);
         admin().get("/api/v1/starter-pack").then().body("on", equalTo(false));
-        for (String s : List.of(StarterPack.DATABASE_SOURCE, StarterPack.FILES_SOURCE, Samples.SAMPLE_DATA)) {
+        for (String s : List.of(StarterPack.DATABASE_SOURCE, StarterPack.FILES_SOURCE)) {
             admin().get("/api/v1/sources/" + s).then().statusCode(404);
         }
+        assertTrue(r.getString("steps.find { it.step == 'sources' }.detail").contains("sample-data"), r.prettify());
+        admin().get("/api/v1/sources/" + Samples.SAMPLE_DATA).then().statusCode(200);
+        admin().delete("/api/v1/flows/own-checks-the-sample-data").then().statusCode(204);
+        admin().delete("/api/v1/sources/" + Samples.SAMPLE_DATA).then().statusCode(200);
         assertEquals(List.of(), admin().get("/api/v1/pipelines").then().statusCode(200).extract().jsonPath()
             .getList("findAll { it.library == 'sample' }.name"));
         assertEquals(List.of(), admin().get("/api/v1/flows").then().statusCode(200).extract().jsonPath()
@@ -229,6 +244,27 @@ class StarterPackApiTest {
         JsonPath again = admin().contentType(ContentType.JSON).body(Map.of("confirm", "DELETE"))
             .delete("/api/v1/starter-pack").then().statusCode(200).extract().jsonPath();
         assertEquals(List.of(), again.getList("steps.findAll { it.outcome == 'failed' }"), again.prettify());
+    }
+
+    @Test
+    @Order(6)
+    void aSourceOfThePacksNameThatIsNotThePacksIsNeverChangedOrDeleted() throws Exception {
+        Path mine = Files.createDirectories(Path.of(roots.split(",")[0].strip()).resolve("mine"));
+        admin().contentType(ContentType.JSON).body(Map.of("name", StarterPack.FILES_SOURCE, "kind", "files", "settings",
+            Map.of("path", mine.toString().replace('\\', '/')))).post("/api/v1/sources").then().statusCode(201);
+        JsonPath on = admin().post("/api/v1/starter-pack").then().statusCode(200).extract().jsonPath();
+        assertEquals("failed", on.getString("steps.find { it.step == 'files source' }.outcome"), on.prettify());
+        assertTrue(on.getString("steps.find { it.step == 'files source' }.detail").contains("did not make"), on.prettify());
+        JsonPath src = admin().get("/api/v1/sources/" + StarterPack.FILES_SOURCE).then().statusCode(200).extract().jsonPath();
+        assertEquals(null, src.getString("settings.allow_writing"), "not repointed, not made writable");
+        assertTrue(src.getString("settings.path").endsWith("/mine"), src.prettify());
+
+        JsonPath off = admin().contentType(ContentType.JSON).body(Map.of("confirm", "DELETE")).delete("/api/v1/starter-pack")
+            .then().statusCode(200).extract().jsonPath();
+        assertTrue(off.getString("steps.find { it.step == 'sources' }.detail").contains(StarterPack.FILES_SOURCE), off.prettify());
+        admin().get("/api/v1/sources/" + StarterPack.FILES_SOURCE).then().statusCode(200);
+        admin().get("/api/v1/sources/" + StarterPack.DATABASE_SOURCE).then().statusCode(404);
+        admin().delete("/api/v1/sources/" + StarterPack.FILES_SOURCE).then().statusCode(200);
     }
 
     @AfterAll

@@ -209,15 +209,14 @@ server turns the pack on and off itself (`StarterPack`, `/api/v1/starter-pack`).
 | `KILNMARK_SAMPLES_DB_PASSWORD` (`kilnmark.samples-db.password`) | none | Password of the login `kilnmark_samples`, which can connect to the database `kilnmark_samples` only. The control script makes one; unset, `samples-db` makes nothing and the pack cannot be turned on |
 | `kilnmark.samples-db.url` (`KILNMARK_SAMPLES_DB_URL`) | `kilnmark_samples` on the server of Kilnmark's own database, with `sslmode=require` | Where the pack's database is. Whatever it says, the pack works only in a database called `kilnmark_samples`, over TLS, as a login that is not a superuser, with none of Kilnmark's tables there |
 | `kilnmark.samples-db.username` | `kilnmark_samples` | The pack's login |
-| `KILNMARK_PRODUCTION` (`kilnmark.production`) | `false` | `true` marks the install as production: turning the pack on is refused (409) unless an admin calls the API with `force=true`, and the control script will not make the service account's secret |
+| `KILNMARK_PRODUCTION` (`kilnmark.production`) | `false` | `true` marks the install as production: turning the pack on is refused (409) unless an admin calls the API with `force=true`; `keycloak-setup` (which gets it too) refuses the example people and deletes those it made |
 | `KILNMARK_FILES_DIR` (compose only) | the `files` volume | The customer's own folder for `/srv/files`, writable by uid 1001. The pack writes in `/srv/files/starter-pack` only |
-| `KILNMARK_STARTER` (`kilnmark.starter.people`, compose passes it as `KILNMARK_STARTER_PEOPLE`) | unset | `allowed`: the pack may add and remove its five example people in the bundled Keycloak. The control script then sets `KILNMARK_KEYCLOAK_STARTER_SECRET`, and empties it otherwise |
-| `KILNMARK_KEYCLOAK_STARTER_SECRET` (`kilnmark.starter.keycloak.client-secret`, as `KILNMARK_STARTER_KEYCLOAK_CLIENT_SECRET`) | none | Secret of the Keycloak client `kilnmark-starter`, whose service account manages people and groups in the `kilnmark` realm only; `keycloak-setup` makes the client while it and `KILNMARK_STARTER=allowed` are set, and deletes it otherwise |
-| `kilnmark.starter.keycloak.client-id` | `kilnmark-starter` | That client |
+| `KILNMARK_STARTER` (`keycloak-setup` only) | unset | `allowed`: `kilnmark.sh starter people` may have `keycloak-setup` make the five example people; unset (or production), `keycloak-setup` deletes those it marked at every run. Never passed to Kilnmark, which holds no Keycloak credential |
+| `KILNMARK_STARTER_PEOPLE_ACTION`, `KILNMARK_STARTER_PEOPLE_PASSWORD` (`keycloak-setup` only) | none | Set by `starter people` in compose's own environment for that one run, which `compose.yaml` passes to `keycloak-setup`: `add`, `new-password` or `remove`, and the new password. Never in `.env`; unset on every other run, when compose may note the password is not set |
 
 The isolation is tested against the real image (`SamplesDatabaseIsolationTest`, which runs this tree's
-script in it, so a `kilnmark-postgres:dev` other work has tagged meanwhile cannot stand in) and the service account against the Keycloak image
-compose pins (`StarterKeycloakTest`); both use Testcontainers.
+script in it, so a `kilnmark-postgres:dev` other work has tagged meanwhile cannot stand in) and the people against the Keycloak image
+compose pins, with `setup.sh` (`StarterPeopleSetupTest`); both use Testcontainers.
 
 On a developer machine, the source checkout's `compose.yaml` already uses the project name
 `kilnmark`: try a release there with `KILNMARK_PROJECT=kmtry` and other ports (INSTALL.md, "The

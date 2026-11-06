@@ -68,8 +68,6 @@ group("the audit log page", () => {
         "schedule.paused",
         "starter.added",
         "starter.removed",
-        "starter.people_added",
-        "starter.people_removed",
         "flow.sql",
         "mark.cleared",
         "mark.set",

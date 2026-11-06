@@ -91,7 +91,7 @@ public class AccessReviewResource {
             out.add(new Entry("provider", p.name(), p.role(), p.unmask(), p.refused() == null
                 ? "signs in with the identity provider" : p.role() == null ? "no group gives a role any more"
                 : "last sign-in refused: " + p.refused(), null, null, null, p.lastSignIn(), p.signIns(), null,
-                io.kilnmark.server.starter.KeycloakPeople.isExample(p.name())));
+                io.kilnmark.server.starter.ExampleAccounts.isExample(p.name())));
         }
         Long days = tokens.maxLifetime().map(d -> d.toDays()).orElse(null);
         return new Review(now, days, out);

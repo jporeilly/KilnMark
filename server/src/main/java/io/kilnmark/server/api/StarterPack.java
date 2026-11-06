@@ -42,31 +42,35 @@ import io.kilnmark.server.pipelines.PipelineService;
 import io.kilnmark.server.pipelines.PipelineViews;
 import io.kilnmark.server.pipelines.Samples;
 import io.kilnmark.server.quality.Sights;
-import io.kilnmark.server.sources.HostPolicy;
-import io.kilnmark.server.starter.KeycloakPeople;
+import io.kilnmark.server.starter.ExampleAccounts;
 import io.kilnmark.server.variables.VariableService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.Response;
 
 /**
- * The Starter Pack (ADR 0051): example data and, where allowed, example people, for trials, demos
- * and training, turned on and off by an admin under Settings. Kilnmark does all of it itself:
+ * The Starter Pack (ADR 0051): example data for trials, demos and training, turned on and off by an
+ * admin under Settings. Kilnmark does all of it itself:
  *
  * <ul>
  * <li>on: a database source on {@code kilnmark_samples} (the empty database every install has on
  * Kilnmark's own PostgreSQL server, reached with its own login, which can connect to that database
  * only) and a files source on a folder of its own in the files folder, both with Allow writing on;
- * the sample tables, the samples in the Library reading them, and, with
- * {@code KILNMARK_STARTER=allowed} and the bundled Keycloak, five example people; then the banner;</li>
+ * the sample tables and the samples in the Library reading them; then the banner;</li>
  * <li>off, once the admin has typed DELETE: the samples, those sources, the tables in
- * kilnmark_samples (the database stays, empty), the files in the pack's folder, and the people the
- * pack added (only those carrying its mark).</li>
+ * kilnmark_samples (the database stays, empty) and the files in the pack's folder.</li>
  * </ul>
  *
- * <p>Refused on an install marked production ({@code KILNMARK_PRODUCTION=true}) unless forced
- * through the API. Each turn is one audit event, and so is each change to the people. Both are
- * safe to repeat: what is already there is kept, what is already gone is skipped.
+ * <p>Kilnmark holds no Keycloak credential: the pack's example people are made and removed by the
+ * control script and keycloak-setup, with Keycloak's own admin, so no Kilnmark admin ever learns the
+ * password of an example admin or of a designer who sees sensitive values. Kilnmark only shows which
+ * kilnmark.com accounts have signed in, from its own audit log, and the commands.
+ *
+ * <p>The pack's two sources are remembered by their ids in its setting: a source of either name that
+ * is not the pack's own is never changed or deleted. Refused on an install marked production
+ * ({@code KILNMARK_PRODUCTION=true}) unless forced through the API. Each turn is one audit event,
+ * with every step's outcome. Both are safe to repeat: what is already there is kept, what is
+ * already gone is skipped.
  */
 @ApplicationScoped
 public class StarterPack {
@@ -95,9 +99,16 @@ public class StarterPack {
     public record State(boolean on, Instant since, String by) {
     }
 
-    /** The example people: whether the pack may manage them here, why not, and which of them are in Keycloak. */
-    public record People(boolean allowed, String why, List<String> present, String presentError) {
+    /**
+     * The example people, which the control script makes and removes, never Kilnmark: the commands,
+     * and the kilnmark.com accounts that have signed in here, as Kilnmark's audit log knows them.
+     */
+    public record People(String add, String remove, List<String> signedIn) {
     }
+
+    /** The control script's commands for the example people, both editions. */
+    public static final String PEOPLE_ADD = "kilnmark.sh starter people   (Windows: kilnmark.cmd starter people)";
+    public static final String PEOPLE_REMOVE = "kilnmark.sh starter people --remove   (Windows: kilnmark.cmd starter people -Remove)";
 
     /** The pack in full, for admins on Settings, Starter Pack. */
     public record Details(boolean on, Instant since, String by, boolean production, boolean ready, String notReady,
@@ -105,9 +116,8 @@ public class StarterPack {
                           People people) {
     }
 
-    /** What turning the pack on or off did: each step, the sample tables' run, and the people's password once. */
-    public record Result(boolean on, List<Step> steps, PipelineViews.RunSummary tablesRun,
-                         List<KeycloakPeople.Outcome> people, String peoplePassword) {
+    /** What turning the pack on or off did: each step, and the sample tables' run. */
+    public record Result(boolean on, List<Step> steps, PipelineViews.RunSummary tablesRun) {
     }
 
     private final KilnmarkConfig config;
@@ -142,25 +152,45 @@ public class StarterPack {
     // ---- state ----
 
     public State state() {
-        Optional<String> v = settings.get(SETTING);
-        if (v.isEmpty()) {
-            return new State(false, null, null);
-        }
+        JsonNode n = stored();
+        boolean on = n.path("on").asBoolean(false);
         try {
-            JsonNode n = JSON.readTree(v.get());
-            boolean on = n.path("on").asBoolean(false);
             return new State(on, on && n.hasNonNull("since") ? Instant.parse(n.get("since").asText()) : null,
                 on ? n.path("by").asText(null) : null);
-        } catch (IOException | RuntimeException e) {
-            return new State(false, null, null);
+        } catch (RuntimeException e) {
+            return new State(on, null, null);
         }
     }
 
-    private void setState(boolean on, String by) {
+    private JsonNode stored() {
+        Optional<String> v = settings.get(SETTING);
+        try {
+            return v.isEmpty() ? JSON.createObjectNode() : JSON.readTree(v.get());
+        } catch (IOException e) {
+            return JSON.createObjectNode();
+        }
+    }
+
+    /** The ids of the sources the pack made, by name: only these are ever changed or deleted by it. */
+    private Map<String, Long> ownSources() {
+        Map<String, Long> out = new LinkedHashMap<>();
+        JsonNode sources = stored().path("sources");
+        for (Map.Entry<String, JsonNode> e : sources.properties()) {
+            if (e.getValue().canConvertToLong()) {
+                out.put(e.getKey(), e.getValue().asLong());
+            }
+        }
+        return out;
+    }
+
+    private void save(Boolean on, String by, Map<String, Long> own) {
+        JsonNode was = stored();
         Map<String, Object> v = new LinkedHashMap<>();
-        v.put("on", on);
-        v.put("since", Instant.now().toString());
-        v.put("by", by);
+        boolean isOn = on != null ? on : was.path("on").asBoolean(false);
+        v.put("on", isOn);
+        v.put("since", on != null || !was.hasNonNull("since") ? Instant.now().toString() : was.get("since").asText());
+        v.put("by", on != null || !was.hasNonNull("by") ? by : was.get("by").asText()); // by: who changed it now
+        v.put("sources", own);
         try {
             settings.put(SETTING, JSON.writeValueAsString(v), by);
         } catch (IOException e) {
@@ -188,19 +218,21 @@ public class StarterPack {
         PipelineViews.RunSummary run = c == null || c.tables() == null ? null : c.tables().lastRun();
         Path folder = folder();
         return new Details(s.on(), s.since(), s.by(), config.production(), notReady == null, notReady,
-            DATABASE, folder == null ? null : folder.toString().replace('\\', '/'), run, added, people());
+            DATABASE, folder == null ? null : folder.toString().replace('\\', '/'), run, added,
+            new People(PEOPLE_ADD, PEOPLE_REMOVE, audit.providerAccess().stream().map(AuditLog.ProviderAccess::name)
+                .filter(ExampleAccounts::isExample).toList()));
     }
 
     // ---- turning it on ----
 
     /**
-     * Turns the pack on: the two sources, the sample tables, the samples, and the people where
-     * allowed. Refused (409) on an install marked production unless {@code force}.
+     * Turns the pack on: the two sources, the sample tables and the samples. Refused (409) on an
+     * install marked production unless {@code force}.
      */
     public Result turnOn(boolean force, String by, AccessRole role, Sights sights, AuditLog.Actor actor) {
         if (config.production() && !force) {
             throw ApiError.of(Response.Status.CONFLICT, "This install is marked as production (KILNMARK_PRODUCTION=true): "
-                + "the Starter Pack, with its example data and example people, is not for production, so it was not "
+                + "the Starter Pack, with its example data, is not for production, so it was not "
                 + "turned on. Nothing was changed");
         }
         if (!settings.samplesOffered()) {
@@ -218,10 +250,12 @@ public class StarterPack {
                 steps.add(new Step("database", "done", "kilnmark_samples answers its own login, over TLS"));
             } catch (RuntimeException e) {
                 steps.add(new Step("database", "failed", e.getMessage()));
-                return new Result(state().on(), steps, null, List.of(), null);
+                audit.record(actor, AuditLog.STARTER_PACK_ADDED, "starter pack", Map.of("forced", force && config.production(),
+                    "steps", outcomes(steps)));
+                return new Result(state().on(), steps, null);
             }
             // On from here, so even a pack added in part shows the banner until it is turned off.
-            setState(true, by);
+            save(true, by, ownSources());
             boolean ok = true;
             ok &= run(steps, "database source", () -> databaseSource(actor));
             ok &= run(steps, "files source", () -> filesSource(actor));
@@ -259,36 +293,10 @@ public class StarterPack {
                     return String.join(", ", words) + ", in the Library";
                 });
             }
-            List<KeycloakPeople.Outcome> people = List.of();
-            String password = null;
-            People p = peopleRules();
-            if (!p.allowed()) {
-                steps.add(new Step("example people", "skipped", p.why()));
-            } else {
-                try {
-                    password = KeycloakPeople.newPassword();
-                    people = keycloak().add(password);
-                    long added = people.stream().filter(o -> !"left".equals(o.outcome())).count();
-                    if (added == 0) {
-                        password = null;
-                    }
-                    steps.add(new Step("example people", "done", added + " of " + KeycloakPeople.PEOPLE.size()
-                        + " in Keycloak, in their groups" + (added < KeycloakPeople.PEOPLE.size()
-                            ? "; the others' addresses belong to people the pack did not add, who were left as they are"
-                            : "")));
-                    audit.record(actor, AuditLog.STARTER_PEOPLE_ADDED, "starter pack", Map.of("people",
-                        people.stream().filter(o -> !"left".equals(o.outcome())).map(KeycloakPeople.Outcome::email).toList(),
-                        "left", people.stream().filter(o -> "left".equals(o.outcome())).map(KeycloakPeople.Outcome::email)
-                            .toList()));
-                } catch (RuntimeException e) {
-                    password = null;
-                    steps.add(new Step("example people", "failed", e.getMessage()));
-                }
-            }
             audit.record(actor, AuditLog.STARTER_PACK_ADDED, "starter pack", Map.of("forced", force && config.production(),
                 "steps", outcomes(steps)));
             LOG.infof("Starter Pack turned on by %s%s", by, force && config.production() ? ", forced on a production install" : "");
-            return new Result(true, steps, tables[0], people, password);
+            return new Result(true, steps, tables[0]);
         }
     }
 
@@ -424,13 +432,18 @@ public class StarterPack {
         return source(FILES_SOURCE, "files", s, null, "Starter Pack files", actor);
     }
 
-    /** Adds the source, or makes the pack's own source of that name as the pack needs it. */
+    /**
+     * Adds the source, or sets the pack's own source of that name as the pack needs it. A source of
+     * that name the pack did not make (its id is not in the pack's setting) is left as it is.
+     */
     private String source(String name, String kind, Map<String, String> settingsWanted, String password,
                           String displayName, AuditLog.Actor actor) {
         Records.Source existing = store.source(name).orElse(null);
-        if (existing != null && !kind.equals(existing.kind())) {
-            throw new IllegalStateException("A source called " + name + " is here that is not the Starter Pack's: "
-                + "rename or delete it, then turn the pack on again");
+        Map<String, Long> own = ownSources();
+        if (existing != null && (!kind.equals(existing.kind()) || own.get(name) == null
+            || own.get(name) != existing.id())) {
+            throw new IllegalStateException("A source called " + name + " is here that the Starter Pack did not make: "
+                + "it was left as it is. Rename it, then turn the pack on again");
         }
         SourceService.Draft d = sources.draft(new SourceForm(name, kind, settingsWanted, password, null, null,
             displayName), null, true, true);
@@ -439,6 +452,8 @@ public class StarterPack {
         if (existing == null) {
             Records.Source s = store.addSource(new Records.NewSource(name, kind, d.config().settings(), secret,
                 d.displayName()));
+            own.put(name, s.id());
+            save(null, actor.name(), own);
             audit.sourceSettings(actor, s.name(), null, s.settings(), "starter pack");
             return "added " + name + " (" + displayName + "), Allow writing on";
         }
@@ -450,29 +465,16 @@ public class StarterPack {
 
     // ---- turning it off ----
 
-    /** Turns the pack off, once the admin has typed {@value #CONFIRM}: everything it added, and nothing else. */
+    /**
+     * Turns the pack off, once the admin has typed {@value #CONFIRM}: everything it added, and nothing
+     * else. The pack is off only when every step worked; the example people are the control script's.
+     */
     public Result turnOff(String confirm, String by, AccessRole role, Sights sights, AuditLog.Actor actor) {
         if (!CONFIRM.equals(confirm)) {
             throw new IllegalArgumentException("confirm: type " + CONFIRM + " to remove the Starter Pack and its data");
         }
         synchronized (lock) {
             List<Step> steps = new ArrayList<>();
-            List<KeycloakPeople.Outcome> people = List.of();
-            People p = peopleRules();
-            if (!p.allowed()) {
-                steps.add(new Step("example people", "skipped", p.why()));
-            } else {
-                try {
-                    people = keycloak().remove();
-                    List<String> removed = people.stream().filter(o -> "removed".equals(o.outcome()))
-                        .map(KeycloakPeople.Outcome::email).toList();
-                    steps.add(new Step("example people", "done", removed.size() + " removed from Keycloak; people the "
-                        + "pack did not add are never removed"));
-                    audit.record(actor, AuditLog.STARTER_PEOPLE_REMOVED, "starter pack", Map.of("people", removed));
-                } catch (RuntimeException e) {
-                    steps.add(new Step("example people", "failed", e.getMessage()));
-                }
-            }
             boolean ok = true;
             ok &= run(steps, "sample flows", () -> {
                 List<String> gone = new ArrayList<>();
@@ -496,27 +498,31 @@ public class StarterPack {
             });
             ok &= run(steps, "sources", () -> {
                 List<String> gone = new ArrayList<>();
+                List<String> left = new ArrayList<>();
+                Map<String, Long> own = ownSources();
                 for (String name : List.of(DATABASE_SOURCE, FILES_SOURCE, Samples.SAMPLE_DATA)) {
                     Records.Source s = store.source(name).orElse(null);
                     if (s == null) {
+                        own.remove(name);
                         continue;
                     }
-                    if (Samples.SAMPLE_DATA.equals(name) && (!Samples.SAMPLE_DATA.equals(s.kind()) || stillRead(name, sights))) {
-                        continue; // someone's own pipeline still reads Kilnmark's sample data
+                    if (Samples.SAMPLE_DATA.equals(name) ? !Samples.SAMPLE_DATA.equals(s.kind()) || stillRead(name, sights)
+                        : own.get(name) == null || own.get(name) != s.id()) {
+                        left.add(name); // not the pack's, or Kilnmark's sample data that your own work reads
+                        continue;
                     }
-                    try {
-                        Records.Deleted d = store.deleteSource(s.id()).orElse(null);
-                        if (d != null) {
-                            audit.record(actor, AuditLog.SOURCE_DELETED, d.name(), Map.of("assets", d.assets(), "runs",
-                                d.runs(), "marked", false, "via", "starter pack"));
-                            gone.add(name);
-                        }
-                    } catch (GraphStore.SourceBusyException e) {
-                        throw new IllegalStateException(name + " is being scanned: wait for the scan, then turn the "
-                            + "pack off again");
+                    Records.Deleted d = deleteWhenIdle(s);
+                    if (d != null) {
+                        audit.record(actor, AuditLog.SOURCE_DELETED, d.name(), Map.of("assets", d.assets(), "runs",
+                            d.runs(), "marked", false, "via", "starter pack"));
+                        gone.add(name);
                     }
+                    own.remove(name);
+                    save(null, by, own);
                 }
-                return gone.isEmpty() ? "none was left" : String.join(", ", gone) + " removed";
+                return (gone.isEmpty() ? "none was left to remove" : String.join(", ", gone) + " removed")
+                    + (left.isEmpty() ? "" : "; left as they are, not the pack's or still read by your own work: "
+                        + String.join(", ", left));
             });
             run(steps, "server variable", () -> {
                 var v = variables.snapshot().containsKey(Samples.REGION_VARIABLE)
@@ -530,19 +536,55 @@ public class StarterPack {
             ok &= run(steps, "sample tables", this::emptyDatabase);
             ok &= run(steps, "sample files", this::removeFiles);
             if (ok) {
-                setState(false, by);
+                save(false, by, ownSources());
             }
             audit.record(actor, AuditLog.STARTER_PACK_REMOVED, "starter pack", Map.of("steps", outcomes(steps)));
             LOG.infof("Starter Pack turned off by %s%s", by, ok ? "" : ", in part");
-            return new Result(!ok, steps, null, people, null);
+            return new Result(!ok, steps, null);
         }
     }
 
-    private static final Pattern NAMES_SOURCE = Pattern.compile("(?m)^\\s*(?:-\\s+)?source:\\s*[\"']?([A-Za-z0-9_.-]+)");
+    /**
+     * Deletes a source once no scan of it is queued or running: writing a sample's files can queue a
+     * scan of the files source a moment before. Waits up to a minute, then says to try again.
+     */
+    private Records.Deleted deleteWhenIdle(Records.Source s) {
+        for (int i = 0; ; i++) {
+            try {
+                return store.deleteSource(s.id()).orElse(null);
+            } catch (GraphStore.SourceBusyException e) {
+                if (i >= 60) {
+                    throw new IllegalStateException(s.name() + " is being scanned: wait for the scan, then turn the "
+                        + "pack off again");
+                }
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException stop) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(s.name() + " could not be removed: the server is stopping");
+                }
+            }
+        }
+    }
+
+    /** {@code source: <name>}, on a line of its own or inside {@code { ... }}, as YAML allows both. */
+    private static final Pattern NAMES_SOURCE = Pattern.compile("(?m)(?:^|[\\s{,])source:\\s*[\"']?([A-Za-z0-9_.-]+)");
 
     /** Whether a pipeline or flow outside the Library still names {@code source}. */
     private boolean stillRead(String source, Sights sights) {
+        for (FlowStore.Summary f : flowStore.summaries()) {
+            if (Samples.LIBRARY.equals(f.flow().library())) {
+                continue;
+            }
+            FlowStore.Version v = flowStore.version(f.flow().name(), f.flow().latestVersion()).orElse(null);
+            if (v == null || names(v.yaml(), source)) {
+                return true; // cannot tell, or it does: keep it
+            }
+        }
         for (PipelineViews.PipelineSummary ps : pipelines.list(sights)) {
+            if (Samples.LIBRARY.equals(ps.library())) {
+                continue;
+            }
             try {
                 PipelineViews.PipelineDetail d = pipelines.get(ps.name(), sights);
                 if (d.latest() != null && names(d.latest().yaml(), source)) {
@@ -675,72 +717,5 @@ public class StarterPack {
     private Path folder() {
         Path root = filesRoot();
         return root == null ? null : root.resolve(FOLDER);
-    }
-
-    // ---- example people ----
-
-    /** Whether the pack may manage the example people here, and why not. */
-    People peopleRules() {
-        boolean allowed = "allowed".equals(config.starter().people().map(String::strip).orElse(""));
-        if (!allowed) {
-            return new People(false, "Not managed here: the example people need KILNMARK_STARTER=allowed in "
-                + "config/.env and the bundled Keycloak (INSTALL.md, Try Kilnmark with the Starter Pack)", List.of(), null);
-        }
-        if (!signInOn() || issuer() == null || KeycloakPeople.realmOf(issuer()) == null) {
-            return new People(false, "Not managed here: sign-in with the bundled Keycloak is off (the auth profile)",
-                List.of(), null);
-        }
-        if (config.starter().keycloak().clientSecret().filter(s -> !s.isBlank()).isEmpty()) {
-            return new People(false, "Not managed here: the Starter Pack's service account has no secret. Run the "
-                + "control script's up again, which sets KILNMARK_KEYCLOAK_STARTER_SECRET", List.of(), null);
-        }
-        if (!HostPolicy.of(config).allows(issuer().getHost())) {
-            return new People(false, "Not managed here: Keycloak's host is not one Kilnmark may reach "
-                + "(" + HostPolicy.SETTING + ")", List.of(), null);
-        }
-        return new People(true, null, List.of(), null);
-    }
-
-    private People people() {
-        People p = peopleRules();
-        if (!p.allowed()) {
-            return p;
-        }
-        try {
-            return new People(true, null, keycloak().present(), null);
-        } catch (RuntimeException e) {
-            return new People(true, null, List.of(), e.getMessage());
-        }
-    }
-
-    private static boolean signInOn() {
-        return ConfigProvider.getConfig().getOptionalValue("quarkus.oidc.tenant-enabled", Boolean.class).orElse(false);
-    }
-
-    private static URI issuer() {
-        Optional<String> url = ConfigProvider.getConfig().getOptionalValue("quarkus.oidc.auth-server-url", String.class);
-        try {
-            URI u = url.map(s -> URI.create(s.strip())).orElse(null);
-            return u != null && ("http".equals(u.getScheme()) || "https".equals(u.getScheme())) && u.getHost() != null
-                ? u : null;
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
-    }
-
-    private KeycloakPeople keycloak() {
-        KilnmarkConfig.Oidc o = config.auth().oidc();
-        Map<String, String> groups = new LinkedHashMap<>();
-        first(o.viewerGroups()).ifPresent(g -> groups.put("viewer", g));
-        first(o.stewardGroups()).ifPresent(g -> groups.put("steward", g));
-        first(o.designerGroups()).ifPresent(g -> groups.put("designer", g));
-        first(o.adminGroups()).ifPresent(g -> groups.put("admin", g));
-        first(o.unmaskGroups()).ifPresent(g -> groups.put("unmask", g));
-        return new KeycloakPeople(issuer(), config.starter().keycloak().clientId(),
-            config.starter().keycloak().clientSecret().orElse(""), groups);
-    }
-
-    private static Optional<String> first(Optional<List<String>> list) {
-        return list.orElse(List.of()).stream().map(String::strip).filter(s -> !s.isEmpty()).findFirst();
     }
 }

@@ -1592,9 +1592,6 @@ export type StarterPackState = { on: boolean; since: string | null; by: string |
 /** One step of turning the Starter Pack on or off, and how it went. */
 export type StarterPackStep = { step: string; outcome: "done" | "skipped" | "failed"; detail: string | null };
 
-/** What happened to one of the example people in Keycloak. */
-export type StarterPerson = { email: string; role: string; outcome: string; reason: string | null };
-
 /** Settings › Starter Pack, for admins. */
 export type StarterPackDetails = {
   on: boolean;
@@ -1609,16 +1606,17 @@ export type StarterPackDetails = {
   files: string | null;
   tablesRun: PipelineRun | null;
   samples: number;
-  people: { allowed: boolean; why: string | null; present: string[]; presentError: string | null };
+  /**
+   * The example people, which the control script makes and removes (Kilnmark holds no Keycloak
+   * credential): its commands, and the kilnmark.com accounts that have signed in here.
+   */
+  people: { add: string; remove: string; signedIn: string[] };
 };
 
 export type StarterPackResult = {
   on: boolean;
   steps: StarterPackStep[];
   tablesRun: PipelineRun | null;
-  people: StarterPerson[];
-  /** The example people's new password, shown once: Kilnmark keeps it nowhere. */
-  peoplePassword: string | null;
 };
 
 export const starterPackApi = {

@@ -20,8 +20,7 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * The Starter Pack (ADR 0051): example data and, where allowed, example people, for trials, demos
- * and training. Everyone signed in reads whether it is on, for the banner; admins turn it on and
+ * The Starter Pack (ADR 0051): example data for trials, demos and training. Everyone signed in reads whether it is on, for the banner; admins turn it on and
  * off (Settings, Starter Pack), and Kilnmark does the work itself ({@link StarterPack}).
  */
 @Path("/api/v1/starter-pack")
@@ -59,8 +58,8 @@ public class StarterPackResource {
     @Operation(summary = "The Starter Pack in full", description = "Whether it is on; whether this install is marked "
         + "production (KILNMARK_PRODUCTION), where the pack is refused; whether it can be turned on here and why not; "
         + "its database (kilnmark_samples) and files folder; the last run creating the sample tables; how many samples "
-        + "are in the Library; and whether it may manage the example people here (KILNMARK_STARTER=allowed and the "
-        + "bundled Keycloak), with those of them in Keycloak now. Role: admin.")
+        + "are in the Library; and, for the example people, which the control script makes and removes (Kilnmark "
+        + "holds no Keycloak credential), the commands and the kilnmark.com accounts that have signed in. Role: admin.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "The pack"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
@@ -74,9 +73,8 @@ public class StarterPackResource {
     @Operation(summary = "Turn the Starter Pack on", description = "Adds the pack: a database source on "
         + "kilnmark_samples (its own database on Kilnmark's PostgreSQL server, reached with its own login) and a files "
         + "source on the pack's folder in the files folder, both with Allow writing on; the sample tables (the pipeline "
-        + "sample-tables, run at once); every sample into the Library; and, with KILNMARK_STARTER=allowed and the "
-        + "bundled Keycloak, five example people at kilnmark.com addresses, with a new password returned here once and "
-        + "kept nowhere. Safe to repeat. Refused (409) on an install marked production (KILNMARK_PRODUCTION=true) "
+        + "sample-tables, run at once) and every sample into the Library. A source of either name that the pack did "
+        + "not make is left as it is. Safe to repeat. Refused (409) on an install marked production (KILNMARK_PRODUCTION=true) "
         + "unless force=true, which the audit event records. Answers with each step and how it went. Role: admin.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "Each step and how it went"),
@@ -93,10 +91,10 @@ public class StarterPackResource {
     @RolesAllowed(AccessRole.ADMIN_ROLE)
     @Operation(summary = "Turn the Starter Pack off", description = "Removes what the pack added, once confirmed with "
         + "{\"confirm\": \"DELETE\"}: every sample pipeline and flow in the Library, the pack's two sources (and "
-        + "Kilnmark's sample data source unless your own pipelines read it), the tables in kilnmark_samples (the "
-        + "database stays, empty), the files in the pack's folder, and the example people it added (only those it "
-        + "marked as its own). Nothing else. Safe to repeat. Answers with each step and how it went; the banner goes "
-        + "once every step has worked. Role: admin.")
+        + "Kilnmark's sample data source unless your own pipelines or flows read it), the tables in kilnmark_samples "
+        + "(the database stays, empty) and the files in the pack's folder. Nothing else: the example people are the "
+        + "control script's to remove. Safe to repeat. Answers with each step and how it went; the banner goes once "
+        + "every step has worked. Role: admin.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "Each step and how it went"),
         @APIResponse(responseCode = "400", description = "Not confirmed with DELETE"),

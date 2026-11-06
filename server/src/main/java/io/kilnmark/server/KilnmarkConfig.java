@@ -86,8 +86,9 @@ public interface KilnmarkConfig {
     Database database();
 
     /**
-     * Whether this install is production ({@code KILNMARK_PRODUCTION=true}): the Starter Pack,
-     * example data and example people, is then refused (ADR 0051). Off unless set.
+     * Whether this install is production ({@code KILNMARK_PRODUCTION=true}): the Starter Pack's
+     * example data is then refused (ADR 0051), and keycloak-setup refuses its example people. Off
+     * unless set.
      */
     @WithDefault("false")
     boolean production();
@@ -109,29 +110,6 @@ public interface KilnmarkConfig {
 
         /** The login's password ({@code KILNMARK_SAMPLES_DB_PASSWORD}); unset, the pack cannot be turned on. */
         Optional<String> password();
-    }
-
-    /** The Starter Pack's example people (ADR 0051). */
-    Starter starter();
-
-    interface Starter {
-        /**
-         * {@code allowed} ({@code KILNMARK_STARTER=allowed} in config/.env): the pack may add and
-         * remove its example people in the bundled Keycloak, through {@link #keycloak()}. Anything
-         * else, or unset: it may not, and no Keycloak credentials are used.
-         */
-        Optional<String> people();
-
-        /** The service account that manages people and groups in the realm of the sign-in issuer. */
-        StarterKeycloak keycloak();
-    }
-
-    interface StarterKeycloak {
-        @WithDefault("kilnmark-starter")
-        String clientId();
-
-        /** Its secret, set only while {@code KILNMARK_STARTER=allowed}; never Keycloak's admin password. */
-        Optional<String> clientSecret();
     }
 
     interface Database {

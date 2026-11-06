@@ -148,12 +148,13 @@ provider"). It works like any other provider above, with Kilnmark's own look:
 
 ![Keycloak's page for setting up the one-time code: install an authenticator app, scan the QR code (blurred here), type the code it shows and a name for the device](images/keycloak-one-time-code.png)
 
-**For a demonstration**, an admin turns on the **Starter Pack** under **Settings** (INSTALL.md,
-"Try Kilnmark with the Starter Pack"). Where the administrator allows it
-(`KILNMARK_STARTER=allowed` with this Keycloak), it adds five example people, one per role, all at
-`kilnmark.com` addresses that receive no mail from here, sharing one new password that the admin
-sees once, when turning the pack on. Kilnmark keeps that password nowhere; turning the pack on
-again gives them a new one.
+**For a demonstration**, the person who runs Kilnmark can add five example people, one per role,
+all at `kilnmark.com` addresses that receive no mail from here, with the control script:
+`kilnmark.sh starter people` (Windows: `kilnmark.cmd starter people`), where
+`KILNMARK_STARTER=allowed` is set and the install is not marked production (INSTALL.md, "Try
+Kilnmark with the Starter Pack"). Keycloak's own setup makes them; they share one new password,
+which that command shows once on its terminal and nothing keeps. Kilnmark itself never makes them
+and never sees their password.
 
 | Person | Signs in as | Role |
 | --- | --- | --- |
@@ -164,11 +165,11 @@ again gives them a new one.
 | Alex Morgan | `alex.morgan@kilnmark.com` | Admin |
 
 Each sets up their own one-time code on first sign-in, as above. They are for showing Kilnmark only:
-never turn them on where real data is. While the pack is on, every page says so in a banner, and
-the access review marks each of them as an **Example account**. Turning the pack off deletes the
-five again, but only people the pack added itself: someone else with one of those addresses is
-left as they are. Kilnmark manages them through a Keycloak service account that can manage people
-and groups in Kilnmark's realm only, never through Keycloak's admin.
+never add them where real data is. The access review marks each of them as an **Example account**,
+and Settings, Starter Pack lists those that have signed in. `kilnmark.sh starter people --remove`
+deletes the five again, as does removing `KILNMARK_STARTER=allowed`, at the next start; only people
+the pack made, never someone else with one of those addresses. While the Starter Pack's example
+data is on, every page says so in a banner:
 
 ![The banner every page shows while the Starter Pack is on: Starter Pack: example data and accounts, not for production](images/starter-pack-banner.png)
 

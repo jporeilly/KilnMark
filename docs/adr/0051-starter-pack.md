@@ -1,6 +1,6 @@
-# 0051 The Starter Pack: example data and people, turned on and off by an admin, in a database of its own
+# 0051 The Starter Pack: example data turned on and off by an admin in a database of its own, and example people made by Keycloak's setup
 
-Status: Accepted (6 November 2026)
+Status: Accepted (6 November 2026; decision 5 amended the same day after a security review)
 
 ## Context
 
@@ -17,8 +17,10 @@ and must not arrive on a production install by accident.
 The owner decided on 6 November 2026: an opt-in **Starter Pack** for trials, demos and training,
 turned on and off by an admin under **Settings**, with Kilnmark doing the work itself, the same on
 Linux and Windows; the sample data in a separate database on Kilnmark's own PostgreSQL server; the
-example people managed through a narrow Keycloak service account only where `.env` allows it.
-Templates stay in the product as they are (ADR 0043).
+example people made only where `.env` allows it. After a security review of the first version
+(below, decision 5) the owner decided that the example people are made by Keycloak's own setup
+step and that Kilnmark holds no Keycloak credential at all. Templates stay in the product as they
+are (ADR 0043).
 
 ## Decision
 
@@ -65,52 +67,61 @@ Templates stay in the product as they are (ADR 0043).
    login, over TLS, **Allow writing** and **Allow SQL** on, so the two samples that run SQL can be
    added by a designer who may see unmasked values) and a files source `starter-samples-files` on
    `/srv/files/starter-pack` (**Allow writing** on); then the existing starter pack: the sample
-   tables (the `sample-tables` pipeline, run at once), every sample into the Library reading them;
-   and the example people where allowed (below). `DELETE /api/v1/starter-pack` with
-   `{"confirm": "DELETE"}` turns it off: every sample pipeline and flow in the Library, the two
-   sources (and `sample-data` unless a team's own pipeline reads it), the `sample_region` variable
-   the pack set, every table and schema the samples' login owns in `kilnmark_samples` (the database
-   stays, empty), the pack's folder in the files folder, and the people it added. Nothing else. Both
-   are safe to repeat; each answers with every step and how it went, which the page shows. The pack
+   tables (the `sample-tables` pipeline, run at once) and every sample into the Library reading
+   them. `DELETE /api/v1/starter-pack` with `{"confirm": "DELETE"}` turns it off: every sample
+   pipeline and flow in the Library, the two sources (and `sample-data` unless a team's own pipeline
+   or flow reads it), the `sample_region` variable the pack set, every table and schema the samples'
+   login owns in `kilnmark_samples` (the database stays, empty) and the pack's folder in the files
+   folder. Nothing else; the pack is reported off only once every step has worked. Both are safe to
+   repeat; each answers with every step and how it went, which the page shows and the audit event
+   records. The pack remembers the ids of the two sources it made: a source of either name that it
+   did not make (a team's own) is never repointed, made writable or deleted, and the step says so.
+   The pack
    writes its files in a folder of its own, not `/srv/files` itself, so turning it off never touches
    a site's own files there. `install --starter` (`-Starter`) is a convenience that installs and
-   then calls the same API; the server is the one place that does the work.
+   then calls the same API; the server is the one place that does the work on the data.
 
-5. **The example people, through a narrow service account, only where allowed.** With
-   `KILNMARK_STARTER=allowed` in `config/.env` and the bundled Keycloak (the `auth` profile), the
-   control script generates `KILNMARK_KEYCLOAK_STARTER_SECRET`, and `keycloak-setup` (run at every
-   start) makes the client `kilnmark-starter` whose service account holds `realm-management`'s
-   `manage-users`, `view-users` and `query-groups` in the `kilnmark` realm and nothing else: no
-   role in `master`, no realm, client or sign-in-flow management, not even the realm's default
-   roles. Compose passes that client's secret to Kilnmark; Keycloak's admin password never reaches
-   it. With the setting off, on production, or without Keycloak, the control script empties the
-   secret and `keycloak-setup` deletes the client, so no Keycloak credential reaches Kilnmark at
-   all; the page then says why it cannot manage people. Kilnmark calls Keycloak at the sign-in
-   issuer's own address, which must be a host it may reach (`kilnmark.sources.allowed-hosts`), never
-   following a redirect; errors never echo an address or a secret.
+5. **The example people, made by Keycloak's own setup step; Kilnmark holds no Keycloak
+   credential.** The first version gave Kilnmark a Keycloak service account (`manage-users` in the
+   `kilnmark` realm) and showed the admin turning the pack on the five people's shared password. A
+   security review found that this broke Kilnmark's two-person rules: one admin then knew the
+   password of `priya.shah` (a designer who sees sensitive values) and of `alex.morgan` (an admin),
+   so they could see unmasked values on every source (ADR 0027) and approve their own unmask grant
+   as a second admin (ADR 0038, and the second person of ADR 0045), on production too through
+   `force=true`. And `manage-users` could reset anyone's password or second factor, delete people
+   and put anyone in the admins group: a whole-realm credential in Kilnmark's environment.
 
-   Turning the pack on adds the five kilnmark.com people as `setup.sh`'s demonstration list names
-   them (one per role, one designer seeing sensitive values), in their groups, each carrying the
-   attribute `kilnmark_starter_pack`, with one new password the admin sees once in the dialog (or
-   the control script prints once, to the terminal only, never into its `logs` folder): Kilnmark
-   keeps it nowhere, not in its database, its logs or the audit log. Turning it on again gives them a new password. Turning it off deletes exactly those
-   five, and each only if it carries the mark, so a real person with one of those addresses is
-   never touched. The realm's user profile lets only admins see and set attributes it does not
-   declare (`ADMIN_EDIT`), so no one can mark themselves. `KILNMARK_KEYCLOAK_DEMO_PASSWORD` stays
-   as it was, for a demonstration without the pack; people made that way carry no mark and the
-   pack leaves them alone.
+   So, instead: the person who runs Kilnmark, who already holds Keycloak's admin password in
+   `config/.env`, makes the people with the control script, `kilnmark.sh starter people`
+   (`kilnmark.cmd starter people`). It makes a new password, hands it to that one run of
+   `keycloak-setup` in its environment (never a command line, never `config/.env`) and shows it once
+   on the terminal, never in `logs`. `keycloak-setup`, with Keycloak's own admin, makes the five
+   (one per role, one designer seeing sensitive values) in their groups, each carrying the attribute
+   `kilnmark_starter_pack`, only while `KILNMARK_STARTER=allowed` and the install is not marked
+   production, which it checks itself. A run never resets the password of someone already there;
+   `--new-password` gives them all a new one, `--remove` removes them. At every start
+   (`keycloak-setup` runs on every `up`), once `KILNMARK_STARTER` is unset or the install is marked
+   production, it deletes exactly the five that carry the mark: a real person with one of those
+   addresses is never touched. While people may be made it sets the realm's unmanaged attributes to
+   admins only (`ADMIN_EDIT`), so no one can put the mark on themselves, and turns on Keycloak's admin
+   events, which record each change to the people. `KILNMARK_KEYCLOAK_DEMO_PASSWORD`, the earlier way
+   to make the same five, is retired: the control script empties it, and people made that way carry
+   no mark and are left for an admin to remove in Keycloak's console.
+
+   Kilnmark's own part is to show, under Settings > Starter Pack, the commands and which kilnmark.com
+   accounts have signed in, from its own audit log. It never learns or shows their password.
 
 6. **Guard rails.** A banner on every page, for every role, while the pack is on ("Starter Pack:
    example data and accounts, not for production"), from the server's own setting
-   (`GET /api/v1/starter-pack`). Audit events `starter.added` and `starter.removed`
-   (each step's outcome, and whether it was forced) and `starter.people_added` and
-   `starter.people_removed` (the addresses; never a password). The access review marks every
-   kilnmark.com account that has signed in as an example account. A new server setting,
+   (`GET /api/v1/starter-pack`). Audit events `starter.added` and `starter.removed`, each with
+   every step's outcome, a failed attempt included, and whether it was forced; the people's changes
+   are Keycloak's admin events. The access review marks every kilnmark.com account that has signed
+   in as an example account. A new server setting,
    `KILNMARK_PRODUCTION=true` (`kilnmark.production`, off by default), marks an install as
-   production: turning the pack on is then refused, with nothing changed, and the control script
-   will not make the service account's secret. Only an admin calling the API with `force=true` can
-   add it there, which the audit event records; the page offers no way to force. Turning it off is
-   never refused.
+   production: turning the pack on is then refused by the server, with nothing changed, and
+   `keycloak-setup` refuses the example people and removes any it made. Only an admin calling the API
+   with `force=true` can add the example data there, which the audit event records; the page offers
+   no way to force, and nothing forces the people. Turning it off is never refused.
 
 ## Consequences
 
@@ -120,8 +131,12 @@ Templates stay in the product as they are (ADR 0043).
 - Every install carries an empty `kilnmark_samples` database and a login that can open nothing
   else. It costs a few megabytes and holds nothing until the pack is turned on.
 - Restoring a backup leaves the samples out: turn the pack off and on again to recreate them.
-- With `KILNMARK_STARTER=allowed`, Kilnmark holds a credential that can manage every person and group
-  in the `kilnmark` realm, including putting a person in the admins group. That is why it is off
-  by default, refused on production, and gone (client and secret) as soon as the setting is.
+- Kilnmark holds no Keycloak credential in any configuration. The example people's password is known
+  to whoever runs `starter people`, who holds Keycloak's admin password already; on an install with
+  the people, every admin who has it can act as an example admin or a designer who sees sensitive
+  values, which is why they are only for trials and training, and gone at the next start once
+  `KILNMARK_STARTER` is removed or the install is marked production.
+- Turning the pack off in Kilnmark does not remove the people: the page says so and gives the
+  command.
 - The two samples that run SQL are not added by the pack (an admin may not see unmasked values,
   ADR 0027); a designer who may adds them under **Library > Add samples**.
