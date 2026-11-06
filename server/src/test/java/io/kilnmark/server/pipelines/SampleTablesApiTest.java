@@ -130,9 +130,9 @@ class SampleTablesApiTest {
         JsonPath added = as(designer).body(Map.of("sources", Map.of("crm-db", "e2e-db", "shop-db", "e2e-db",
             "files", "e2e-files"), "schema", SCHEMA)).post("/api/v1/samples").then().statusCode(200)
             .extract().jsonPath();
-        // 20 pipelines, then the sample flows that run them (ADR 0043). The one with sql nodes needs a
+        // 21 pipelines, then the sample flows that run them (ADR 0043). The one with sql nodes needs a
         // source with Allow SQL on, which e2e-db does not have: skipped, saying so, never a draft.
-        assertEquals(23, added.getInt("added"), added.prettify());
+        assertEquals(24, added.getInt("added"), added.prettify());
         assertEquals(List.of("sample-for-each-region", "sample-passing-values", "sample-quality-decides"),
             added.getList("samples.findAll { it.outcome == 'added' && it.file.startsWith('08-flows/') }.name"),
             added.prettify());
