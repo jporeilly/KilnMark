@@ -46,6 +46,7 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 - [Parallel runs](design/parallel-runs.md): how much runs at once, worker slots, limits per source and per flow, and the for-each node
 - [Database tools](design/database-tools.md): Explore a source's tables, generate their SQL, connection settings on tabs, and changing a database with controls
 - [Flow controls](design/flow-controls.md): nodes that check or wait for what a pipeline needs, and timeout, retries and priority on a node
+- [Benchmarks](design/benchmarks.md) (planned): how volume and throughput are measured; the data, the workloads, what is measured and compared with, the machines, and the nightly check
 - [The assistant](design/assistant.md): a chat window that answers from knowledge domains, starting with the documentation
 - [Notifications](design/notifications.md): one event type, dedupe, masking per recipient, the email worker and the in-app feed's contract
 - [Supply chain](design/supply-chain.md): the SBOMs every release carries, vulnerability scanning in CI, and how releases are signed
