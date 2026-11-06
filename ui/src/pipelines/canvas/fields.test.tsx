@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { NodeType, NodeTypeSetting, Source } from "../../api";
@@ -6,6 +5,13 @@ import { catalogueOf, type GraphNode } from "./model";
 import { SettingControl, type ControlContext } from "./SettingControls";
 import { SettingsPanel } from "./SettingsPanel";
 import { DomainList } from "../../pages/EmailSettingsPage";
+
+// The style sheets as text, read from disk: a test is given an empty sheet for a CSS import, and
+// the UI has no Node types, so fs is reached through the running Node itself.
+type Fs = { readFileSync(path: URL, encoding: "utf8"): string };
+const fs = (globalThis as unknown as { process: { getBuiltinModule(id: "node:fs"): Fs } }).process.getBuiltinModule("node:fs");
+const dockCss = fs.readFileSync(new URL("../pipelines.css", import.meta.url), "utf8");
+const canvasCss = fs.readFileSync(new URL("./canvas.css", import.meta.url), "utf8");
 
 // The layout of fields, as markup: which settings take the panel's whole row, and the order of a
 // field's parts (name, box, what is chosen, help), so the boxes of a row line up.
@@ -47,7 +53,7 @@ describe("a setting's width follows its kind of control, never what it holds", (
   });
 
   test("the dock spans a setting by its class, not by what is inside it", () => {
-    const css = readFileSync(new URL("../pipelines.css", import.meta.url), "utf8");
+    const css = dockCss;
     const rule = css.match(/([^{}]*)\{\s*grid-column: 1 \/ -1;\s*\}/)?.[1] ?? "";
     expect(rule).toContain(".cv-set-main > .cv-field-wide");
     expect(rule).not.toContain(":has(");
@@ -124,7 +130,7 @@ describe("an on/off setting lines up with the settings beside it", () => {
   // The switch row's list padding put its name 11 px below the names of the row (measured at
   // 1900, 1280 and 1024 px), and its name was 14 px where the others' are 13 px.
   test("in a field, the switch row has no padding or rule, and its name is a label's size", () => {
-    const css = readFileSync(new URL("./canvas.css", import.meta.url), "utf8");
+    const css = canvasCss;
     expect(css).toMatch(/\.cv-field > \.km-switch-row \{\s*padding: 0;\s*border-bottom: 0;\s*\}/);
     expect(css).toMatch(/\.cv-field > \.km-switch-row \.km-switch-label \{\s*font-size: var\(--km-text-sm\);/);
     const out = html(spec("strict", "boolean", { defaultValue: false }), undefined);
