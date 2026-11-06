@@ -40,19 +40,25 @@ const asList = (v: Value | undefined): string[] =>
 const asPairs = (v: Value | undefined): [string, string][] =>
   v && typeof v === "object" && !Array.isArray(v) ? Object.entries(v).map(([k, x]) => [k, x == null ? "" : String(x)]) : [];
 
-/** The label, help, default and problems around a control; `describedBy` ties them to it. */
+/**
+ * The label, help, default and problems around a control; `describedBy` ties them to it. A `wide`
+ * control (SQL, an expression, a list of pairs or rules, a read's column checklist) takes the whole
+ * row of the panel, whatever it holds at the moment, so a setting never changes width as it fills.
+ */
 function Field({
   spec,
   id,
   problems,
   children,
   group,
+  wide,
 }: {
   spec: NodeTypeSetting;
   id: string;
   problems: string[];
   children: (describedBy: string, invalid: boolean) => ReactNode;
   group?: boolean;
+  wide?: boolean;
 }) {
   const def = defaultText(spec);
   const described = [`${id}-help`, problems.length ? `${id}-problems` : null].filter(Boolean).join(" ");
@@ -77,17 +83,24 @@ function Field({
       <p id={`${id}-help`} className="hint">
         {spec.help}
         {spec.help && !/[.!?]$/.test(spec.help) ? "." : ""}
-        {def != null && <span className="cv-default"> Default: {def}.</span>}
+        {/* The space outside the unbroken default, so the help wraps before it, not a word early. */}
+        {def != null && (
+          <>
+            {" "}
+            <span className="cv-default">Default: {def}.</span>
+          </>
+        )}
       </p>
     </>
   );
+  const cls = wide ? "cv-field cv-field-wide" : "cv-field";
   return group ? (
-    <fieldset className="cv-field" data-setting={spec.key}>
+    <fieldset className={cls} data-setting={spec.key}>
       <legend className="cv-label">{label}</legend>
       {body}
     </fieldset>
   ) : (
-    <div className="cv-field" data-setting={spec.key}>
+    <div className={cls} data-setting={spec.key}>
       <label className="cv-label" htmlFor={id}>
         {label}
       </label>
@@ -152,7 +165,7 @@ function SqlControl(p: ControlProps) {
   const outside = asText(p.value, p.text);
   const { draft, setDraft, focusProps } = useDraft(outside);
   return (
-    <Field spec={p.spec} id={p.id} problems={p.problems}>
+    <Field spec={p.spec} id={p.id} problems={p.problems} wide>
       {(describedBy, invalid) => (
         <textarea
           id={p.id}
@@ -373,7 +386,7 @@ function ExpressionControl(p: ControlProps) {
     });
   };
   return (
-    <Field spec={p.spec} id={p.id} problems={p.problems}>
+    <Field spec={p.spec} id={p.id} problems={p.problems} wide>
       {(describedBy, invalid) => (
         <>
           <textarea
@@ -507,12 +520,10 @@ function ColumnChecklist(p: ControlProps & { columns: PipelineColumn[] }) {
     p.onChange(next.length ? next : undefined);
   };
   return (
-    <Field spec={p.spec} id={p.id} problems={p.problems} group>
+    <Field spec={p.spec} id={p.id} problems={p.problems} group wide>
       {(describedBy, invalid) => (
         <>
-          <p className="small muted" id={`${p.id}-state`}>
-            {chosen.length === 0 ? "None ticked: every column is read." : `${chosen.length} of ${p.columns.length} read, in this order: ${chosen.join(", ")}.`}
-          </p>
+          {/* The box under the name as in every setting; what it reads, in words, under the box. */}
           <ul className="cv-checklist" id={p.id} aria-describedby={`${describedBy} ${p.id}-state`} aria-invalid={invalid || undefined}>
             {p.columns.map((c) => {
               const at = chosen.indexOf(c.name);
@@ -535,6 +546,9 @@ function ColumnChecklist(p: ControlProps & { columns: PipelineColumn[] }) {
               </li>
             ))}
           </ul>
+          <p className="small muted" id={`${p.id}-state`}>
+            {chosen.length === 0 ? "None ticked: every column is read." : `${chosen.length} of ${p.columns.length} read, in this order: ${chosen.join(", ")}.`}
+          </p>
           {!p.readOnly && chosen.length > 0 && (
             <button type="button" className="cv-mini" onClick={() => p.onChange(undefined)}>
               Read every column
@@ -680,7 +694,7 @@ function PairsControl(p: ControlProps & { kind: PairKind }) {
   const exprRefs = useRef<(HTMLTextAreaElement | null)[]>([]);
   const lastFocused = useRef<number>(-1);
   return (
-    <Field spec={p.spec} id={p.id} problems={problems} group>
+    <Field spec={p.spec} id={p.id} problems={problems} group wide>
       {(describedBy, invalid) => (
         <>
           {rows.length === 0 && (
@@ -954,7 +968,7 @@ function RulesControl(p: ControlProps) {
       }),
     );
   return (
-    <Field spec={p.spec} id={p.id} problems={p.problems} group>
+    <Field spec={p.spec} id={p.id} problems={p.problems} group wide>
       {(describedBy, invalid) => (
         <>
           {rows.length === 0 && (
