@@ -289,8 +289,13 @@ details.
   a pipeline, stewardship overnight, outside agents through MCP, agents people build. A diagram,
   `agents.svg`, drawn by `diagrams.mjs`. Nothing is built yet.
 - **AI in pipelines is decided** ([ADR 0050](docs/adr/0050-ai-in-pipelines.md)): an `ai` node
-  with the tasks classify, extract, summarise, translate and find personal data, and an `embed`
-  node, under the model rules of ADR 0012 (local by default, a model per feature, JSON answers,
+  with the tasks classify, extract, summarise, translate, diagnose (the likely cause of a fault,
+  with a confidence and its evidence) and find personal data, and an `embed` node. Any task can
+  take context: the records closest in meaning from an embedded table, at most 20, read through
+  `Sights`, marked as data, and named by key beside the answer. A model's answer is data and
+  never acts on its own; a `route` on its confidence sends the rest to a person, and confirmed
+  findings come back as history and as a measure of accuracy on the customer's data. A worked
+  example, a valve's fault, with a diagram, `ai-diagnose.svg`. All of it under the model rules of ADR 0012 (local by default, a model per feature, JSON answers,
   scored before release); a model never sees a sensitive value unmasked, so such a column is
   masked first or refused; each answer carries its model, prompt version and confidence; rows,
   tokens and time are limited per run and answers cached. Nothing is built yet.

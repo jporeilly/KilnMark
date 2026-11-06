@@ -18,6 +18,11 @@ personal data hidden in comments, and turn text into vectors for search by meani
 asked on 6 November 2026 for "the whole AI piece" alongside more nodes
 ([ADR 0049](0049-more-nodes-and-how-coarse-they-are.md)).
 
+They also want inference: when a valve reports an error, say what is most likely wrong, from
+that valve's history and what engineers wrote when they fixed it before. The row alone cannot
+answer that; the model needs the right past records beside it, and a person must be able to see
+which ones it used.
+
 ## Decision
 
 1. **Two nodes, coarse as ADR 0049 asks:**
@@ -25,6 +30,9 @@ asked on 6 November 2026 for "the whole AI piece" alongside more nodes
      - `classify`: a label for each row from the categories given, with a confidence;
      - `extract`: named fields from free text into typed columns, by a schema the node declares;
      - `summarise` and `translate`: text into shorter text, or another language;
+     - `diagnose`: the most likely cause of a fault, alarm or incident, with a confidence and the
+       evidence it used, by a schema the node declares (a cause, and optionally the next checks
+       to make); it is the task that most needs context (decision 8);
      - `detect-personal-data`: which personal data a text holds (names, account numbers,
        addresses), with the patterns and checksum classifiers as the fallback and first pass.
    - **`embed`**: a text column into a vector column, for search by meaning on the customer's own
@@ -51,12 +59,47 @@ asked on 6 November 2026 for "the whole AI piece" alongside more nodes
    deterministic equivalent: a pipeline using them cannot be saved or run while `pipeline_ai` has
    no model, and says why.
 7. **Scored before it ships** (ADR 0012, rule 5): each task gets an answer key in the lab
-   (synthetic tickets, notes and documents) and a release that scores worse does not ship.
+   (synthetic tickets, notes and documents, and for `diagnose` synthetic faults with the
+   engineers' notes and the confirmed cause) and a release that scores worse does not ship.
+8. **Context from similar records.** Any `ai` task can take a `context`: a table written by an
+   `embed` node, on a source the pipeline may read, and how to choose from it. Kilnmark chooses
+   the records closest in meaning to a column of the row, at most 5 by default and never more
+   than 20, and can first keep only those with the same keys (the same asset, the same valve
+   type) or within a time window. The chosen records go into the prompt marked as data, never
+   instructions ([ADR 0052](0052-agents.md), decision 6). The answer must name the records it
+   relied on, by key; those keys are written beside it, so a person can check the evidence and
+   lineage shows which records informed the answer. The context table is read through `Sights`
+   like any other read, so decision 3 holds for it too. The lookups count against the run's
+   limits (decision 5), and the cache key includes the chosen records, so a changed history
+   gives a fresh answer.
+9. **Inferring is not acting.** A model's answer is data. What happens next is the pipeline's
+   own, fixed when it is saved: a `route` or `gate` on the confidence, and a person for low
+   confidence or for anything the customer marks critical. A model's answer alone never starts
+   an action on equipment or money.
+10. **Findings come back.** The confirmed cause a person records can be written beside the
+   model's answer. That table feeds the context for later rows, and the run page shows how often
+   the model's answer matched the confirmed one, so the customer sees its accuracy on their own
+   data as well as the lab's score.
+
+## An example: a valve's fault
+
+![Inferring a valve's fault: engineer notes and past incidents are embedded once; for each error the closest records for that valve are chosen, the ai node's diagnose task gives a cause, a confidence and the records it used; high confidence drafts a work order, low confidence goes to an engineer, whose finding joins the history](../guide/images/ai-diagnose.svg)
+
+1. An `embed` node turns the engineers' notes and past incidents into a table with vectors, once
+   and then as new findings arrive.
+2. A valve error arrives as a row: the code, the reading, the asset and the time.
+3. The `ai` node with `task: diagnose` and a `context` on that table picks the 5 closest past
+   records for the same valve type, and answers: "actuator seal wear, confidence 0.82, from
+   incidents 4411 and 3902 and the note of 12 March".
+4. A `route` sends answers of 0.8 or more to draft a work order, and the rest, and every critical
+   asset, to an engineer with the evidence beside it.
+5. The engineer's finding is written back: it joins the history the next error is compared with,
+   and the confirmed causes become the measure of how often the model was right.
 
 ## Beyond nodes
 
-The same work makes room for AI around pipelines, each its own change on the backlog. The agents among them,
-and the rules every agent keeps, are decided in [ADR 0052](0052-agents.md).
+The same work makes room for AI around pipelines, each its own change on the backlog. The
+agents among them, and the rules every agent keeps, are decided in [ADR 0052](0052-agents.md).
 
 - **Explain a failed run** in plain words, from its record, with the built-in playbook as the
   fallback (ADR 0012).
@@ -72,5 +115,8 @@ and the rules every agent keeps, are decided in [ADR 0052](0052-agents.md).
   (docs/design/benchmarks.md) measure for rows per second per model, and the run page shows
   their calls and cost.
 - Search by meaning on customer data needs pgvector on the target; the install guide says so.
+  So does a `context`, which reads a table of vectors.
+- A prompt with context is longer, so slower and dearer per row; the benchmarks measure
+  `diagnose` with and without it.
 - Hosted providers make data leave the network: the administrator's choice per feature, recorded
   in the audit log, and refused for sensitive columns whatever the choice.
