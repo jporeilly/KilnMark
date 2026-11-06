@@ -21,8 +21,8 @@ run timelines).
    `gradle/verification-metadata.xml` (ADR 0042).
 3. **The scheduler's pages, and deleting a flow** (Flows F4, [ADR 0026](../adr/0026-flows.md),
    [ADR 0046](../adr/0046-scheduler.md)): the scheduler's server and API are built, for pipelines
-   and flows (docs/design/schedules.md); the pages to set and read schedules, and deleting a flow,
-   remain.
+   and flows (docs/design/schedules.md); the pages to set and read schedules remain. Deleting a
+   flow is built ([ADR 0048](../adr/0048-deleting-a-flow.md)): done.
 
 ## 2. Get a release out
 

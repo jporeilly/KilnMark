@@ -9,8 +9,8 @@ recorded node by node.
 
 - **Viewers** read flows and their runs.
 - **Stewards** run flows, give their parameters values, and cancel runs.
-- **Designers** add flows and save new versions, and with **admins** give flows schedules
-  ([Running pipelines and flows on a schedule](schedules.md)). A flow with a `sql` node is saved only by a
+- **Designers** add flows, save new versions and delete flows, and with **admins** give flows
+  schedules ([Running pipelines and flows on a schedule](schedules.md)). A flow with a `sql` node is saved only by a
   designer whose token sees unmasked values, since SQL can read and change any column its source's
   login can.
 
@@ -23,7 +23,8 @@ not.
 **Flows**, in the sidebar after Pipelines, lists every flow with its latest version, whether that
 version can run, and its last run. Stewards see **Run now** beside each; designers see **New flow**.
 
-A flow's own page is laid out as a pipeline's: its name with **Run now**, then the flow on two tabs,
+A flow's own page is laid out as a pipeline's: its name with **Run now** (and **Delete**, for
+designers and admins), then the flow on two tabs,
 **Diagram** and **YAML**, which show and edit the same flow. Under them, a panel with the pipeline
 page's tabs:
 
@@ -584,9 +585,34 @@ node started waits the same way, on its own page.
 To stop a run, open it and choose **Cancel run** (stewards). Nothing more starts, and the pipeline
 runs it started that are still going are cancelled. What they had already written stays written.
 
+## Deleting a flow
+
+Designers and admins can delete a flow they no longer need. Open it and choose **Delete**, beside
+**Run now**. The page asks first, naming the flow and saying what goes and what stays:
+
+![The flow nightly-customers's page after Delete was chosen: under its name, with Run now and Delete beside it, a warning asks "Delete the flow nightly-customers? Its versions, its runs with what each node did, and its schedules are deleted. The pipeline runs it started stay, with what they wrote and the lineage they recorded. This cannot be undone.", with the buttons Delete nightly-customers and Cancel, the focus on Cancel](images/flow-delete-confirm.png)
+
+![What deleting a flow does: the flow and every version of it, its runs with what each node did, and its schedules (each recorded in the audit log) are deleted; the pipeline runs it started stay in their pipelines' history, with the tables and files they wrote, and their lineage and quality results in the catalogue. Deleting is refused while a run of the flow is queued or running](images/flow-delete.svg)
+
+- **Deleted:** the flow, every version of it, its runs with what each node did, and its
+  schedules. Each schedule deleted this way is recorded in the [audit log](audit-log.md) as
+  **Schedule deleted**, saying it went with the flow.
+- **Kept:** the pipeline runs it started, in their pipelines' history, with what they wrote, the
+  lineage they recorded and their quality results. They no longer say which flow run started them.
+
+Choose **Delete** followed by the flow's name to delete it; you are taken back to the Flows list, or to the
+Library for a sample. Choose **Cancel** to keep it. Nothing can bring a deleted flow back, but its
+YAML can be saved again under the same name as a new flow, starting at version 1.
+
+A flow cannot be deleted while a run of it is queued or running: the page says so. Cancel the run,
+or wait for it to finish, then delete. A sample from the Library is deleted the same way; the
+Library then shows it as not added, and **Add samples** adds it again.
+
+Through the API: `DELETE /api/v1/flows/<name>` (designers and admins) answers 204 when the flow is
+deleted, 404 when there is no such flow, and 409 while a run is queued or running.
+
 ## What is not here yet
 
 - Changing a node's settings on the diagram: for now, change them in the YAML.
-- Deleting a flow.
 - Pages for schedules: flows run on a schedule now, set through the API for the moment
   ([Running pipelines and flows on a schedule](schedules.md)).

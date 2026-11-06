@@ -657,3 +657,20 @@ function svg(name, height, title, sub, body) {
   svg("schedule-outcomes", 542, "What happens when a schedule is due", "Each fire ends in one of five outcomes, shown on the schedule", b);
 }
 
+
+// ---- What deleting a flow does ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 188;
+  const b =
+    lane(y1, 96, "Deleted with the flow", C.bad) +
+    card(X[0], y1 + 30, W, { icon: "file", color: C.bad, dash: "4 3", title: "The flow", sub: "and every version of it" }) +
+    card(X[1], y1 + 30, W, { icon: "play", color: C.bad, dash: "4 3", title: "Its runs", sub: "with what each node did" }) +
+    card(X[2], y1 + 30, W, { icon: "clock", color: C.bad, dash: "4 3", title: "Its schedules", sub: "each one in the audit log" }) +
+    lane(y2, 96, "Kept", C.good) +
+    card(X[0], y2 + 30, W, { icon: "play", color: C.good, strong: true, title: "Its pipeline runs", sub: "in their pipelines' history" }) +
+    card(X[1], y2 + 30, W, { icon: "db", color: C.good, strong: true, title: "What they wrote", sub: "tables and files stay" }) +
+    card(X[2], y2 + 30, W, { icon: "log", color: C.good, strong: true, title: "Lineage and quality", sub: "in the catalogue" }) +
+    foot(300, "lock", "Refused while a run of the flow is queued or running: cancel it, or let it finish, then delete.");
+  svg("flow-delete", 350, "What deleting a flow does", "Designers and admins delete a flow; what its pipeline runs did stays", b);
+}

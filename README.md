@@ -36,7 +36,7 @@ under it a panel with the latest run, its nodes, suggestions, every run and ever
 A flow's page: its diagram, connections labelled with when they are taken, and the same panel, here
 listing each node with what it runs after and how it went in the latest run.
 
-![A flow's page: a diagram running a pipeline, then either a second pipeline or a notice depending on the share of customers set aside; under it the Nodes tab, a table of each node, what it runs after, and its status, start, time and result in the latest run](docs/images/flow-page.png)
+![A flow's page, with Run now and Delete beside its name: a diagram running a pipeline, then either a second pipeline or a notice depending on the share of customers set aside; under it the Nodes tab, a table of each node, what it runs after, and its status, start, time and result in the latest run](docs/images/flow-page.png)
 
 ## Quick start
 
