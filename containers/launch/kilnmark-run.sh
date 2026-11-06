@@ -21,10 +21,13 @@ umask 077
 
 me="kilnmark-run"
 EX_OK=0 EX_FAILED=1 EX_REFUSED=2 EX_TIMEOUT=3 EX_CANCELLED=4 EX_UNREACHABLE=5
-# The longest one request asks to wait, in seconds; the server may cut it shorter (kilnmark.api.max-wait).
-chunk=900
+# The longest one request asks to wait, in seconds: under the 60-second idle timeout many proxies and
+# load balancers have, so a wait never becomes a 504. The server may cut it shorter.
+chunk=50
 # Tries in a row before a server that cannot be reached counts as gone.
 tries=5
+# Busy answers (503) in a row before a server that stays busy counts as gone: about five minutes.
+busy_max=60
 
 say() { printf '%s\n' "$*"; }
 err() { printf '%s: %s\n' "$me" "$*" >&2; }
@@ -38,8 +41,9 @@ Starts a run of the pipeline or flow, waits until it ends, and exits with:
   0 succeeded, 1 failed, 2 could not start, 3 timed out waiting, 4 cancelled,
   5 could not reach the server or bad usage.
 
---param NAME=VALUE   A value for one of its parameters. A number, true or false is sent as
-                     such; [..] as a JSON list; "..." as text; anything else as text.
+--param NAME=VALUE   A value for one of its parameters, sent exactly as typed: a JSON number
+                     (12, -3, 0.5, 1e6; never 007), true or false as such; [..] (a JSON list)
+                     and "..." (JSON text) as written; anything else as text.
 --version N          Run version N (the latest by default).
 --timeout DURATION   Stop waiting after this long: 90 (seconds), 30s, 10m, 2h or 1d. The run is
                      left going unless --cancel-on-timeout. No limit by default.
@@ -57,21 +61,31 @@ EOF
 nl='
 '
 
+# Whether a value holds a control character (a line break, a tab, ...), anywhere in it.
+has_control() {
+  case $1 in *"$nl"*) return 0 ;; esac
+  printf '%s' "$1" | LC_ALL=C grep -q '[[:cntrl:]]'
+}
+
 # JSON text for a value: backslashes and double quotes escaped. Control characters are refused.
 json_text() {
-  case $1 in
-    *"$nl"*|*"$(printf '\r')"*|*"$(printf '\t')"*) err "a value holds a line break or a tab; leave them out"; exit "$EX_UNREACHABLE" ;;
-  esac
+  if has_control "$1"; then
+    err "a value holds a control character, such as a line break or a tab; leave it out"; exit "$EX_UNREACHABLE"
+  fi
   printf '"%s"' "$(printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
 }
 
-# A parameter's value as JSON: a number, true or false as such; [..] and "..." as written; else text.
+# A parameter's value as JSON, exactly as typed; kilnmark-run.ps1 follows the same rule. A JSON number
+# (never 007, which is text), true or false is sent as such; a JSON text in double quotes, or a list
+# [..] of those, as written; anything else as text.
+json_num='-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?'
+json_str='"([^"\\]|\\.)*"'
+json_item="($json_num|$json_str|true|false)"
 json_value() {
-  case $1 in
-    true|false) printf '%s' "$1"; return ;;
-    \[*\]|\"*\") printf '%s' "$1"; return ;;
-  esac
-  if printf '%s' "$1" | grep -Eq '^-?[0-9]+(\.[0-9]+)?$'; then
+  if has_control "$1"; then
+    err "a value holds a control character, such as a line break or a tab; leave it out"; exit "$EX_UNREACHABLE"
+  fi
+  if printf '%s' "$1" | grep -Eq "^($json_item|\\[ *($json_item( *, *$json_item)*)? *\\])\$"; then
     printf '%s' "$1"
   else
     json_text "$1"
@@ -109,6 +123,10 @@ while [ $# -gt 0 ]; do
       case $2 in *=*) ;; *) err "--param takes NAME=VALUE"; exit "$EX_UNREACHABLE" ;; esac
       pname=${2%%=*} pvalue=${2#*=}
       [ -n "$pname" ] || { err "--param takes NAME=VALUE"; exit "$EX_UNREACHABLE"; }
+      # checked here: an exit inside $(...) below would leave only that subshell
+      if has_control "$pname" || has_control "$pvalue"; then
+        err "a value holds a control character, such as a line break or a tab; leave it out"; exit "$EX_UNREACHABLE"
+      fi
       params="$params${params:+,}$(json_text "$pname"):$(json_value "$pvalue")"
       shift 2 ;;
     --version)
@@ -129,7 +147,8 @@ while [ $# -gt 0 ]; do
 done
 
 if [ "$keyed" = yes ]; then
-  if [ -z "$key" ] || [ ${#key} -gt 200 ] || printf '%s' "$key" | LC_ALL=C grep -q '[^ -~]'; then
+  # the whole key: a line break would let grep pass each line on its own
+  if [ -z "$key" ] || [ ${#key} -gt 200 ] || has_control "$key" || printf '%s' "$key" | LC_ALL=C grep -q '[^ -~]'; then
     err "--key takes 1 to 200 printable characters"; exit "$EX_UNREACHABLE"
   fi
 else
@@ -161,10 +180,23 @@ esac
 
 command -v curl >/dev/null 2>&1 || { err "curl is needed and was not found"; exit "$EX_UNREACHABLE"; }
 
-work=$(mktemp -d 2>/dev/null) || work="${TMPDIR:-/tmp}/$me.$$"
-[ -d "$work" ] || mkdir -m 700 "$work" || { err "could not make a folder for temporary files"; exit "$EX_UNREACHABLE"; }
-trap 'rm -rf "$work"' EXIT
-trap 'exit 130' INT TERM
+# A new folder only this account can open, for curl's settings (which hold the token) and the answers.
+# Never one that exists already: another account could have made it to read what is put there.
+work=""
+trap '[ -z "$work" ] || rm -rf "$work"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+made=$(mktemp -d 2>/dev/null) && [ -d "$made" ] && work=$made
+if [ -z "$work" ]; then
+  # no mktemp -d (older AIX, HP-UX): a random name, made here and now, or nothing
+  rand=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
+  case $rand in ''|*[!0-9a-f]*) err "could not make a private folder for temporary files"; exit "$EX_UNREACHABLE" ;; esac
+  if ! mkdir -m 700 "${TMPDIR:-/tmp}/$me.$rand" 2>/dev/null; then
+    err "could not make a new private folder for temporary files in ${TMPDIR:-/tmp}"; exit "$EX_UNREACHABLE"
+  fi
+  work="${TMPDIR:-/tmp}/$me.$rand"
+fi
 
 # The token goes to curl in a file of its own (umask 077), never on curl's command line.
 {
@@ -262,10 +294,6 @@ while :; do
   call POST "/api/v1/$plural/$name/runs?wait=$w" $((w + 60)) "$body"
   case $code in
     200|202) cp "$work/body" "$work/run"; break ;;
-    503)
-      a=$(retry_after); failures=0
-      say "Kilnmark is busy; asking again in $a seconds"
-      sleep "$a" ;;
     400|401|403|404|409|422)
       err "could not start the $kind: $(refusal)"; exit "$EX_REFUSED" ;;
     *)
@@ -274,13 +302,16 @@ while :; do
         err "could not reach Kilnmark at $base ($(refusal)); the request key above is safe to use again"
         exit "$EX_UNREACHABLE"
       fi
-      err "no answer from Kilnmark ($(refusal)); trying again in 10 seconds with the same key"
-      sleep 10 ;;
+      a=10; [ "$code" != 503 ] || a=$(retry_after)
+      err "no answer from Kilnmark ($(refusal)); trying again in $a seconds with the same key"
+      sleep "$a" ;;
   esac
 done
 
 id=$(field id)
-case $id in ''|*[!0-9]*) err "Kilnmark's answer had no run id"; exit "$EX_UNREACHABLE" ;; esac
+case $id in
+  ''|*[!0-9]*) err "the answer was not Kilnmark's (a sign-in page or a proxy may be in the way)"; exit "$EX_UNREACHABLE" ;;
+esac
 if grep -qi '^idempotent-replayed: *true' "$work/head"; then
   say "Run: $id (started earlier with this request key)"
 else
@@ -290,17 +321,31 @@ say "Page: $base/#/$kind-runs/$id"
 
 # ---- wait ----
 
-failures=0
+failures=0 busy=0 waiting=yes
 while :; do
   if [ "$code" = 200 ] && [ "$(field ended)" = true ]; then
     finish
   fi
   w=$(next_wait)
   [ "$w" -gt 0 ] || timed_out
+  # after a busy answer, one read without waiting, which the server never refuses for being busy
+  [ "$waiting" = yes ] || w=0
+  waiting=yes
   call GET "/api/v1/$kind-runs/$id?wait=$w" $((w + 60))
   case $code in
-    200) failures=0; cp "$work/body" "$work/run" ;;
-    503) a=$(retry_after); sleep "$a"; code=0 ;;
+    200)
+      if [ "$(sed -n 's/^id: //p' "$work/body" | head -n 1 | tr -d '\r')" != "$id" ]; then
+        err "the answer was not Kilnmark's (a sign-in page or a proxy may be in the way); run $id may still be going"
+        exit "$EX_UNREACHABLE"
+      fi
+      failures=0 busy=0; cp "$work/body" "$work/run" ;;
+    503)
+      busy=$((busy + 1))
+      if [ "$busy" -ge "$busy_max" ]; then
+        err "Kilnmark stayed busy for about five minutes; run $id may still be going"
+        exit "$EX_UNREACHABLE"
+      fi
+      a=$(retry_after); sleep "$a"; waiting=no; code=0 ;;
     401|403|404)
       err "could not read run $id: $(refusal)"; exit "$EX_UNREACHABLE" ;;
     *)

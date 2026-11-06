@@ -48,7 +48,7 @@ class RunScriptFilesTest {
         String text = Files.readString(LAUNCH.resolve("kilnmark-run.sh"));
         assertTrue(text.startsWith("#!/bin/sh\n"), "starts #!/bin/sh");
         assertTrue(!text.contains("\r"), "LF line ends only");
-        for (String bashOnly : List.of("[[", "local ", "declare ", "function ", "jq ", "python")) {
+        for (String bashOnly : List.of("[[ ", "local ", "declare ", "function ", "jq ", "python")) {
             assertTrue(!text.contains(bashOnly), "uses " + bashOnly.strip());
         }
     }

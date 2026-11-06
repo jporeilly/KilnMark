@@ -149,7 +149,8 @@ class RunScriptTest {
         assertTrue(ok.out().contains("Status: succeeded"), ok.out());
         assertTrue(ok.out().contains("/#/flow-runs/"), ok.out());
         assertTrue(!ok.out().contains(steward), "the token is never printed");
-        Ran again = run("flow", "rs-ok", "--key", "rs key 1");
+        Ran again = run("flow", "rs-ok", "--param", "label=north", "--param", "share=0.5", "--key", "rs key 1");
+        assertEquals(2, run("flow", "rs-ok", "--key", "rs key 1").code(), "the same key with other values is refused");
         assertEquals(0, again.code(), again.out());
         assertTrue(again.out().contains("started earlier with this request key"), again.out());
         // made up and printed when left out

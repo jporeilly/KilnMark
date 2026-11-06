@@ -115,6 +115,11 @@ tasks.withType<Test>().configureEach {
     systemProperty("kmtest.eval.docs", rootProject.file("tests/ai-eval/docs.json").absolutePath)
     inputs.dir(rootProject.file("tests/docs"))
     inputs.file(rootProject.file("tests/ai-eval/docs.json"))
+    // The run script's tests run containers/launch/kilnmark-run.* (ADR 0047): a change there reruns them.
+    inputs.files(rootProject.fileTree("containers/launch") { include("kilnmark-run.*") })
+    // and the environment that turns them on
+    inputs.property("kmtest.sh", providers.environmentVariable("KILNMARK_TEST_SH").orElse(""))
+    inputs.property("kmtest.powershell", providers.environmentVariable("KILNMARK_TEST_POWERSHELL").orElse(""))
 }
 
 // AI evaluation (ADR 0016): scores a running server's search and question answering against

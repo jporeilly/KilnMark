@@ -17,14 +17,21 @@
 # Windows PowerShell 5.1 misreads anything else.
 
 $ErrorActionPreference = 'Stop'
-# Windows PowerShell 5.1 writes a list as {"value": [...], "Count": n} unless this type data goes.
-if ($PSVersionTable.PSVersion.Major -le 5) { Remove-TypeData -TypeName System.Array -ErrorAction SilentlyContinue }
 $Me = 'kilnmark-run'
 $ExOk = 0; $ExFailed = 1; $ExRefused = 2; $ExTimeout = 3; $ExCancelled = 4; $ExUnreachable = 5
-# The longest one request asks to wait, in seconds; the server may cut it shorter (kilnmark.api.max-wait).
-$Chunk = 900
+# Anything unexpected (a CA file that is not a certificate, a blocked Add-Type, ...) is "could not
+# reach the server", never "the run failed".
+trap {
+    [Console]::Error.WriteLine("${Me}: stopped: $($_.Exception.Message)")
+    exit $ExUnreachable
+}
+# The longest one request asks to wait, in seconds: under the 60-second idle timeout many proxies and
+# load balancers have, so a wait never becomes a 504. The server may cut it shorter.
+$Chunk = 50
 # Tries in a row before a server that cannot be reached counts as gone.
 $Tries = 5
+# Busy answers (503) in a row before a server that stays busy counts as gone: about five minutes.
+$BusyMax = 60
 
 function Say([string]$Text) { [Console]::Out.WriteLine($Text) }
 function Err([string]$Text) { [Console]::Error.WriteLine("${Me}: $Text") }
@@ -38,8 +45,9 @@ Starts a run of the pipeline or flow, waits until it ends, and exits with:
   0 succeeded, 1 failed, 2 could not start, 3 timed out waiting, 4 cancelled,
   5 could not reach the server or bad usage.
 
---param NAME=VALUE   A value for one of its parameters. A number, true or false is sent as
-                     such; [..] as a JSON list; "..." as text; anything else as text.
+--param NAME=VALUE   A value for one of its parameters, sent exactly as typed: a JSON number
+                     (12, -3, 0.5, 1e6; never 007), true or false as such; [..] (a JSON list)
+                     and "..." (JSON text) as written; anything else as text.
 --version N          Run version N (the latest by default).
 --timeout DURATION   Stop waiting after this long: 90 (seconds), 30s, 10m, 2h or 1d. The run is
                      left going unless --cancel-on-timeout. No limit by default.
@@ -68,19 +76,23 @@ function ConvertTo-Seconds([string]$Text) {
     }
 }
 
-# A parameter's value: a number, true or false as such; [..] and "..." read as JSON; else text.
-function ConvertTo-Value([string]$Text) {
-    if ($Text -ceq 'true') { return $true }
-    if ($Text -ceq 'false') { return $false }
-    if ($Text -match '^-?[0-9]+(\.[0-9]+)?$') { return [double]::Parse($Text, [Globalization.CultureInfo]::InvariantCulture) }
-    if (($Text.StartsWith('[') -and $Text.EndsWith(']')) -or ($Text.Length -ge 2 -and $Text.StartsWith('"') -and $Text.EndsWith('"'))) {
-        try { $v = ConvertFrom-Json $Text } catch { Stop-Usage "a --param value written as [..] or `"..`" is not valid JSON" }
-        # a list is handed back whole: PowerShell would otherwise unroll it, and a list of one into its item
-        if ($v -is [array]) { return , $v }
-        return $v
-    }
-    if ($Text -match '[\x00-\x1f]') { Stop-Usage 'a value holds a line break or a tab; leave them out' }
-    return $Text
+# A parameter's value as JSON, exactly as typed; kilnmark-run.sh follows the same rule. A JSON number
+# (never 007, which is text), true or false is sent as such; a JSON text in double quotes, or a list
+# [..] of those, as written; anything else as text. Never read into a number: that would round it.
+$JsonNum = '-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?'
+$JsonStr = '"([^"\\]|\\.)*"'
+$JsonItem = "($JsonNum|$JsonStr|true|false)"
+$JsonValue = "\A($JsonItem|\[ *($JsonItem( *, *$JsonItem)*)? *\])\z"
+
+function ConvertTo-JsonText([string]$Text) {
+    if ($Text -match '[\x00-\x1f\x7f]') { Stop-Usage 'a value holds a control character, such as a line break or a tab; leave it out' }
+    return '"' + $Text.Replace('\', '\\').Replace('"', '\"') + '"'
+}
+
+function ConvertTo-JsonValue([string]$Text) {
+    if ($Text -match '[\x00-\x1f\x7f]') { Stop-Usage 'a value holds a control character, such as a line break or a tab; leave it out' }
+    if ($Text -cmatch $JsonValue) { return $Text }
+    return ConvertTo-JsonText $Text
 }
 
 # ---- arguments ----
@@ -91,7 +103,7 @@ $Name = [string]$args[1]
 if ($Kind -cne 'pipeline' -and $Kind -cne 'flow') { Err 'the first argument is pipeline or flow'; Show-Usage }
 if ($Name -cnotmatch '^[a-z0-9-]+$') { Stop-Usage 'a name is small letters, digits and dashes' }
 
-$Params = [ordered]@{}
+$Params = @()
 $Version = $null
 $Timeout = $null
 $Key = $null
@@ -106,7 +118,7 @@ while ($i -lt $args.Count) {
             $pair = [string]$args[$i + 1]
             $eq = $pair.IndexOf('=')
             if ($eq -lt 1) { Stop-Usage '--param takes NAME=VALUE' }
-            $Params[$pair.Substring(0, $eq)] = ConvertTo-Value $pair.Substring($eq + 1)
+            $Params += (ConvertTo-JsonText $pair.Substring(0, $eq)) + ':' + (ConvertTo-JsonValue $pair.Substring($eq + 1))
             $i += 2
         }
         '--version' {
@@ -209,7 +221,8 @@ public static class KilnmarkRunCa {
 # ---- the API ----
 
 # Calls Kilnmark: returns @{ Code = HTTP status (0 when the server could not be reached); Run = the
-# run read from JSON, or $null; Error = the refusal's words; RetryAfter = seconds; Replayed = bool }.
+# answer read from JSON, or $null; Error = the refusal's words; RetryAfter = seconds; Replayed = bool }.
+# $Body is the request's JSON text, or $null.
 function Invoke-Kilnmark([string]$Method, [string]$Path, [int]$MaxSeconds, $Body) {
     $r = @{ Code = 0; Run = $null; Error = ''; RetryAfter = 5; Replayed = $false }
     $headers = @{}
@@ -218,13 +231,13 @@ function Invoke-Kilnmark([string]$Method, [string]$Path, [int]$MaxSeconds, $Body
     if ($null -ne $Body) {
         $headers['Idempotency-Key'] = $Key
         $call['ContentType'] = 'application/json; charset=utf-8'
-        $call['Body'] = [Text.Encoding]::UTF8.GetBytes(($Body | ConvertTo-Json -Depth 6 -Compress))
+        $call['Body'] = [Text.Encoding]::UTF8.GetBytes([string]$Body)
     }
     try {
         $resp = Invoke-WebRequest @call
         $r.Code = [int]$resp.StatusCode
-        $r.Run = ConvertFrom-Json ([string]$resp.Content)
         if ($resp.Headers['Idempotent-Replayed'] -eq 'true') { $r.Replayed = $true }
+        try { $r.Run = ConvertFrom-Json ([string]$resp.Content) } catch { $r.Run = $null }
     } catch {
         $resp = $_.Exception.Response
         if ($null -eq $resp) { $r.Error = $_.Exception.Message; return $r }
@@ -282,9 +295,21 @@ function Test-Ended($Run) {
 # ---- start ----
 
 $Plural = if ($Kind -ceq 'pipeline') { 'pipelines' } else { 'flows' }
-$Request = [ordered]@{ parameters = $Params }
-if ($null -ne $Version) { $Request['version'] = $Version }
+$Request = '{"parameters":{' + ($Params -join ',') + '}'
+if ($null -ne $Version) { $Request += ',"version":' + $Version }
+$Request += '}'
 Say "Request key: $Key"
+
+# Whether an answer is a run (a pipeline run's or flow run's id, a whole number above 0), and not, say,
+# a sign-in page or a proxy's own answer.
+function Test-Run($Run) {
+    return $null -ne $Run -and ([string]$Run.id) -match '\A[1-9][0-9]*\z' -and $null -ne $Run.status
+}
+
+function Stop-NotKilnmark([string]$Also) {
+    Err "the answer was not Kilnmark's (a sign-in page or a proxy may be in the way)$Also"
+    exit $ExUnreachable
+}
 
 $failures = 0
 while ($true) {
@@ -292,12 +317,6 @@ while ($true) {
     if ($w -le 0) { Err 'timed out before the run could be started'; exit $ExTimeout }
     $r = Invoke-Kilnmark 'POST' "/api/v1/$Plural/$Name/runs?wait=$w" ($w + 60) $Request
     if ($r.Code -eq 200 -or $r.Code -eq 202) { break }
-    if ($r.Code -eq 503) {
-        $failures = 0
-        Say "Kilnmark is busy; asking again in $($r.RetryAfter) seconds"
-        Start-Sleep -Seconds $r.RetryAfter
-        continue
-    }
     if (@(400, 401, 403, 404, 409, 422) -contains $r.Code) {
         Err "could not start the ${Kind}: $($r.Error)"
         exit $ExRefused
@@ -307,11 +326,14 @@ while ($true) {
         Err "could not reach Kilnmark at $Base ($($r.Error)); the request key above is safe to use again"
         exit $ExUnreachable
     }
-    Err "no answer from Kilnmark ($($r.Error)); trying again in 10 seconds with the same key"
-    Start-Sleep -Seconds 10
+    $pause = 10
+    if ($r.Code -eq 503) { $pause = $r.RetryAfter }
+    Err "no answer from Kilnmark ($($r.Error)); trying again in $pause seconds with the same key"
+    Start-Sleep -Seconds $pause
 }
 
 $Run = $r.Run
+if (-not (Test-Run $Run)) { Stop-NotKilnmark '' }
 $Id = [long]$Run.id
 if ($r.Replayed) { Say "Run: $Id (started earlier with this request key)" } else { Say "Run: $Id" }
 Say "Page: $Base/#/$Kind-runs/$Id"
@@ -319,18 +341,33 @@ Say "Page: $Base/#/$Kind-runs/$Id"
 # ---- wait ----
 
 $failures = 0
+$busy = 0
+$waiting = $true
 while ($true) {
     if (Test-Ended $Run) { Complete-Run $Run }
     $w = Get-NextWait
     if ($w -le 0) { Stop-TimedOut $Run $Id }
+    # after a busy answer, one read without waiting, which the server never refuses for being busy
+    if (-not $waiting) { $w = 0 }
+    $waiting = $true
     $g = Invoke-Kilnmark 'GET' "/api/v1/$Kind-runs/$Id`?wait=$w" ($w + 60) $null
     if ($g.Code -eq 200) {
-        $failures = 0
         # A pipeline run is read as { run, nodes, ... }; a flow run as { run, nodes }.
-        $Run = $g.Run.run
+        $next = $null
+        if ($null -ne $g.Run) { $next = $g.Run.run }
+        if (-not (Test-Run $next) -or [long]$next.id -ne $Id) { Stop-NotKilnmark "; run $Id may still be going" }
+        $Run = $next
+        $failures = 0
+        $busy = 0
         continue
     }
-    if ($g.Code -eq 503) { Start-Sleep -Seconds $g.RetryAfter; continue }
+    if ($g.Code -eq 503) {
+        $busy++
+        if ($busy -ge $BusyMax) { Err "Kilnmark stayed busy for about five minutes; run $Id may still be going"; exit $ExUnreachable }
+        Start-Sleep -Seconds $g.RetryAfter
+        $waiting = $false
+        continue
+    }
     if (@(401, 403, 404) -contains $g.Code) { Err "could not read run ${Id}: $($g.Error)"; exit $ExUnreachable }
     $failures++
     if ($failures -ge $Tries) {
