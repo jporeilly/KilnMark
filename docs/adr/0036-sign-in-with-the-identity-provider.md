@@ -1,6 +1,6 @@
 # 0036 Sign-in with the organisation's identity provider, with MFA
 
-Status: Accepted (3 November 2026)
+Status: Accepted (3 November 2026); amended 6 November 2026 (decision 4: a sign-in renews itself)
 
 ## Context
 
@@ -44,8 +44,42 @@ pasted into the sign-in page.
    is new on every token the provider re-issues and would restart the session for ever. Every
    redirect to the provider carries `max_age`, so the provider asks them to sign in again after it;
    a sign-in older than that (from a provider that ignores it, or a session that has run its time)
-   gets no role, and the page says why. The ID token's own expiry ends a session
-   sooner, and a fresh one comes from the provider without a prompt while its session lasts.
+   gets no role, and the page says why.
+   - **A sign-in renews itself** (`quarkus.oidc.token.refresh-expired`). The session cookie holds the
+     provider's ID token and refresh token; when the ID token expires (Keycloak's after 5 minutes,
+     Entra ID's after about an hour), the OIDC client asks the provider for a fresh one with the
+     refresh token. Until 6 November 2026 it did not, and every provider sign-in ended with its
+     first ID token: after 5 minutes with the bundled Keycloak.
+   - **Every renewal is checked as a sign-in is**: the second factor, the groups, and `auth_time`,
+     which on a renewed ID token is still when the person signed in (OpenID Connect Core 12.2), so
+     renewing never moves the longest session on, and a renewed token without it is refused. A
+     renewal refused for any of these ends the session (Kilnmark answers 401, "Your sign-in has
+     ended", and clears the session cookie at the path and domain the OIDC client set it with);
+     signing in again shows why, and records it. A renewal relies on the provider keeping `sub` and
+     `auth_time` as OpenID Connect requires: Quarkus does not compare them with the expired token's
+     (Keycloak keeps both, checked against Keycloak 26.8 on 6 November 2026).
+   - **A renewal is not a sign-in.** It records no `auth.sign_in` (Quarkus 3.40 announces a renewal
+     as a login too, so `SignInEvents` passes over a request the OIDC client marks as renewing). It
+     does pause the schedules the person set above the renewed role, as a sign-in would (ADR 0046):
+     with the role unchanged nothing is above it, so nothing pauses. What a renewal finds is not
+     recorded, so if that pause fails (a fire holds the schedule past the lock timeout, the database
+     is down) the fire-time check still reads the latest sign-in's groups until the next sign-in.
+   - **The provider's session ends it too**: the refresh fails when that session has ended (the
+     bundled Keycloak: 2 hours idle, 8 hours at most) or the person was disabled there, and the
+     person signs in again. Taking someone out of a group shows at the next renewal, within one ID
+     token's lifetime.
+   - The session cookie outlives the ID token in it by the longest session
+     (`quarkus.oidc.authentication.session-age-extension`, set from `max-session`), so the expired
+     token is still there to renew after a gap; past the longest session a renewal is refused anyway.
+   - No early renewal (`refresh-token-time-skew`): Kilnmark checks the ID token itself, so a token is
+     either good or expired and renewed, and an early renewal that failed would fall back to an
+     identity without Kilnmark's roles.
+   - The provider must issue a refresh token. Keycloak does; Entra ID and Okta do when asked for
+     `offline_access` (`KILNMARK_OIDC_SCOPES`). Without one, a sign-in still ends with its ID token.
+   - Each request that finds the ID token expired renews it on its own, so a page's requests made
+     together renew together with the same refresh token. A provider that rotates refresh tokens and
+     treats a second use as theft (Keycloak with "Revoke Refresh Token" on, Okta or Auth0 without a
+     grace period) would then end the session; keep reuse allowed, or a grace period, for Kilnmark.
 5. **Cookie requests.** A request that may change something, signed in by the session cookie, must
    carry `X-Requested-With: JavaScript`, which only Kilnmark's pages send: a page on another site can
    make a browser send the cookie but not that header. The same header makes the OIDC client answer
@@ -72,10 +106,15 @@ pasted into the sign-in page.
 
 - A bank can sign people in with its own provider and MFA, give roles from its own groups, and show
   both in Kilnmark's audit log.
-- Signing out ends Kilnmark's session in that browser; the provider's own session is the
-  provider's. The session cookie is not kept on the server, so a copy of it taken from the browser
-  works until it expires (at most the ID token's lifetime). A server-side session store, so signing
-  out ends every copy, is a later step if a customer needs it.
+- Signing out ends Kilnmark's session in that browser, and asks the provider to revoke the
+  session's refresh token (RFC 7009, where the provider offers it, as Keycloak does), so a copy of
+  the cookie can no longer renew. The provider's own session is the provider's; Keycloak 26 ends
+  its session when the refresh token of its only client is revoked, so with the bundled Keycloak
+  signing out ends that too. The session cookie
+  is not kept on the server, so a copy of it taken from the browser before signing out works until
+  its ID token expires, and one taken from a session still in use renews as the session does, until
+  the provider's session or the longest session ends it. A server-side session store, so signing
+  out ends every copy at once, is a later step if a customer needs it.
 - Kilnmark checks what the provider says (`amr`, `acr`, `auth_time`); a provider that sends none
   of them cannot be used with MFA required, and its administrator either configures the claims or
   turns the requirement off.

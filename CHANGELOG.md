@@ -5,6 +5,35 @@ details.
 
 ## Unreleased
 
+### What's new
+
+- **Signing in through your organisation's provider no longer ends after a few minutes.** A sign-in
+  now renews itself while the person works, and lasts until 8 hours after they signed in at the
+  provider, until the provider's own session ends, or until they sign out. With the bundled
+  Keycloak it ended after 5 minutes. Microsoft Entra ID and Okta need
+  `KILNMARK_OIDC_SCOPES=offline_access` for it. ([Signing in](docs/guide/signing-in.md#signing-in-with-your-organisation))
+
+### Details
+
+- **A provider sign-in renews with the refresh token** (ADR 0036, decision 4, amended). Quarkus's
+  OIDC client was set up without `quarkus.oidc.token.refresh-expired`, so a session lasted only as
+  long as the provider's first ID token: 5 minutes with Keycloak's default, about an hour with
+  Entra ID. It now gets a fresh ID token when that one expires, and the session cookie outlives the
+  ID token by `kilnmark.auth.oidc.max-session`, so the expired token is there to renew. Each renewal
+  is checked as a sign-in is: MFA, groups, and `auth_time`, which stays when the person signed in,
+  so the 8-hour limit still ends the session and a renewed token without it is refused. A renewal
+  that is refused, or that the provider refuses (its session ended, the person disabled), ends the
+  session; the page says to sign in again. A renewal records no `auth.sign_in` (Quarkus announces it
+  as a login, and `SignInEvents` now passes over it); it pauses the schedules set above a role the
+  provider has lowered since, and nothing when the role is the same. Signing out asks the provider
+  to revoke the refresh token (RFC 7009) where the provider offers that (Keycloak and Okta do, Entra
+  ID does not), so a copy of the session cookie cannot renew afterwards;
+  with the bundled Keycloak this ends its session too, so signing in again asks for the password
+  and code. A session that can no longer sign anyone in is answered 401 "Your sign-in has ended.
+  Sign in again." with its cookie cleared, so later requests do not ask the provider again.
+  New `KILNMARK_OIDC_SCOPES` (`quarkus.oidc.authentication.scopes`) for providers that issue a
+  refresh token only for `offline_access`. The bundled Keycloak keeps its 5-minute tokens.
+
 ## 0.1.1 (6 November 2026)
 
 ### What's new
