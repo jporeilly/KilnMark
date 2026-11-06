@@ -34,6 +34,16 @@ public final class Expression {
         this.root = root;
     }
 
+    /** The functions an expression may call, by name: what the guide's function table lists. */
+    public static java.util.Set<String> functions() {
+        return Compiler.FUNCTIONS;
+    }
+
+    /** The aggregate functions, which only an aggregate node's values may call. */
+    public static java.util.Set<String> aggregates() {
+        return Compiler.AGGREGATES;
+    }
+
     /**
      * Reads an expression, checking only its form; columns and types are checked by {@link #compile}.
      *

@@ -67,8 +67,8 @@ public final class WriteNodeFactory implements NodeFactory {
 
     @Override
     public String help() {
-        return "Writes rows to a database table or a file in a saved source. The source must allow writing, which an "
-            + "admin sets; what is written is registered in the catalogue with its lineage.";
+        return "Writes rows to a database table or a file in a saved source. The source must allow writing, which a "
+            + "designer or an admin sets; what is written is registered in the catalogue with its lineage.";
     }
 
     @Override

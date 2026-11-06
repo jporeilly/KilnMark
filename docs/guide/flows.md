@@ -82,6 +82,9 @@ connections:
 - **Parameters** are values each run can change. One with no default must be given when the flow
   runs.
 
+Every node type, with each setting it takes, its type and default, and an example, is in
+[Reference: flow nodes](reference-flow-nodes.md).
+
 Nodes with no connection between them run at the same time. The full format, the condition
 language and how a run decides what starts next are in the design notes (`docs/design/flows.md`). The sample flows that ship with Kilnmark, in `samples/08-flows`,
 show one idea each.

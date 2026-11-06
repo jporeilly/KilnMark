@@ -12,6 +12,14 @@ details.
   (each schedule recorded in the audit log); the pipeline runs it started stay, with what they
   wrote and the lineage they recorded. Refused while a run of it is queued or running.
   ([Deleting a flow](docs/guide/flows.md#deleting-a-flow))
+- **A components reference.** One place for every pipeline node, flow node, connector, quality rule
+  and expression function, with what it does and every setting it takes: its type, whether it is
+  required, its default and what `${...}` may do in it, then what to know, who may use it and an
+  example to copy. Connectors also say what each can scan, read, write, preview and explore, where
+  SQL you write may run, the driver, and the database versions they are tested against. The node and
+  connector settings tables are made from the server's own catalogue, so they match the version you
+  run, and the build checks that every other table names exactly the keys Kilnmark reads.
+  ([Components reference](docs/guide/components-reference.md))
 
 - **Pipelines and flows run on a schedule** (ADR 0046). Designers and admins give a pipeline or flow
   one or more schedules: a five-field cron time in a time zone, the values its runs start with, and
@@ -98,6 +106,21 @@ details.
   failing with a server error, a start with a request key included (it then keeps no key); the
   request keys of deleted runs go with them (V37's cascade). A flow's delete also waits for the job of a run that has just ended,
   which tells of a failure before it ends.
+- **The components reference is generated and checked** (docs/development.md, "The components
+  reference"). `ComponentsReference` (a server test class) writes each node type's, connector's,
+  flow node's and rule type's facts and settings tables from the catalogue into marked parts of
+  `docs/guide/components-reference.md` and `reference-*.md`; `./gradlew :server:writeReference`
+  writes them again. `ComponentsReferenceTest`, run by `:server:checkReference` as part of `check`,
+  fails when a part is out of date, a component has no entry, a hand-written flow node or rule table
+  names other keys than the reader takes, an expression function is missing from
+  `pipeline-nodes.md`, the versions tested differ from the integration tests' images, or an example
+  does not save: every YAML example is checked as saving a pipeline or flow checks it, every JSON
+  one as the rules API does. To share the checks, `FlowDefinition.TYPE_KEYS` is public, `Expression`
+  lists its functions, `SettingSpec.fill()` says how `${...}` fills a setting (the compiler fills by
+  it), and `FlowService`'s checks of a node's sources and of the pipeline it runs are two methods,
+  `sourceProblems` and `pipelineProblems`. The `allow_writing` hint and the write node's help now
+  say designers and admins turn writing on, as the server enforces. A diagram of the component
+  families joins the guides.
 
 - **Error Prone checks the flow files too** (ADR 0042, decision 5). `FlowDefinition`, its test,
   `FlowService` and `JobQueue` are no longer left out. What it found is fixed: case changes now
