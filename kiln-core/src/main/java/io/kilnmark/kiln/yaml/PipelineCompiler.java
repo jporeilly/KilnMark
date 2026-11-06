@@ -458,9 +458,11 @@ public final class PipelineCompiler {
                     : Checked.wrong("must be one of " + String.join(", ", spec.choices()));
                 case NUMBER -> number(v);
                 case BOOLEAN -> v instanceof Boolean ? Checked.ok(v) : Checked.wrong("must be true or false");
-                case COLUMNS -> {
+                case COLUMNS, ORDER -> {
                     if (!(v instanceof List<?> l) || !l.stream().allMatch(i -> i instanceof String || i instanceof Number)) {
-                        yield Checked.wrong("must be a list of columns, such as [customer_id, email]");
+                        yield Checked.wrong(spec.kind() == SettingSpec.Kind.ORDER
+                            ? "must be a list of columns, each perhaps followed by desc, such as [region, amount desc]"
+                            : "must be a list of columns, such as [customer_id, email]");
                     }
                     List<?> t = text instanceof List<?> tl && tl.size() == l.size() ? tl : l;
                     List<Object> out = new ArrayList<>();

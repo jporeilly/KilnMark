@@ -48,6 +48,11 @@ final class Harness implements AutoCloseable {
     final Map<String, Schema> schemas = new LinkedHashMap<>();
     final Map<String, Integer> batches = new LinkedHashMap<>();
     private final Map<String, Schema> declared = new LinkedHashMap<>();
+    /** The node of the last {@link #run}, once created. */
+    volatile Node node;
+    /** Bytes the node said it spilled to disk, and the lines it added to the run's log. */
+    final java.util.concurrent.atomic.AtomicLong spilled = new java.util.concurrent.atomic.AtomicLong();
+    final List<String> notes = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     // ---- building batches ----
 
@@ -145,6 +150,7 @@ final class Harness implements AutoCloseable {
     Harness run(NodeFactory factory, Map<String, Object> config) throws NodeException {
         assertEquals(List.of(), factory.check(config), "settings should be valid");
         Node node = factory.create(config);
+        this.node = node;
         Context ctx = new Context(config);
         Throwable failure = null;
         try {
@@ -286,6 +292,16 @@ final class Harness implements AutoCloseable {
         @Override
         public MetadataEmitter metadata() {
             return e -> { };
+        }
+
+        @Override
+        public void spilled(long bytes) {
+            spilled.addAndGet(bytes);
+        }
+
+        @Override
+        public void note(String text) {
+            notes.add(text);
         }
 
         @Override

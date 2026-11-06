@@ -241,6 +241,7 @@ final class ComponentsReference {
             case EXPRESSIONS -> "names and expressions";
             case COLUMN -> "column";
             case COLUMNS -> "list of columns";
+            case ORDER -> "columns in order";
             case COLUMN_MAP -> "column to column";
             case CONDITIONS -> "names and conditions";
             case SOURCE -> "saved source";

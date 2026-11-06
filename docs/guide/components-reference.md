@@ -64,6 +64,7 @@ in [Building and running a pipeline](pipelines.md).
 | [`lookup`](reference-pipeline-nodes.md#lookup) | transform | Look up, in Combine | Adds columns from the lookup input to each main row with the same key, like a join. |
 | [`route`](reference-pipeline-nodes.md#route) | transform | Route rows, in Filter and route | Sends each row to the first route whose condition it meets, in order. |
 | [`select`](reference-pipeline-nodes.md#select) | transform | Select columns, in Transform | Keeps or drops columns, and renames, reorders and changes the type of the columns kept. |
+| [`sort`](reference-pipeline-nodes.md#sort) | transform | Sort rows, in Transform | Orders rows by one or more columns, each ascending or descending. |
 | [`union`](reference-pipeline-nodes.md#union) | transform | Union, in Combine | Appends the rows of all its inputs, matching columns by name. |
 | [`gate`](reference-pipeline-nodes.md#gate) | gate | Quality gate, in Quality | Checks rows against quality rules as they pass, with no second read: the rules of the asset read upstream and any written here. |
 | [`write`](reference-pipeline-nodes.md#write) | sink | Write to a table or file, in Write | Writes rows to a database table or a file in a saved source. |

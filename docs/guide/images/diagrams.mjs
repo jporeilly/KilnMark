@@ -819,3 +819,29 @@ function svg(name, height, title, sub, body) {
     foot(y4 + 112, "book", "Every settings table in the reference is made from the catalogue the server uses, and the build checks it.");
   svg("component-families", y4 + 162, "The components a pipeline or flow is built from", "Connectors reach the data, nodes do the work, expressions and rules check it, flow nodes order it", b);
 }
+
+// ---- How a sort carries on on disk ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 200;
+  const mid = (i) => X[i] + W / 2;
+  const b =
+    lane(y1, 96, "As rows arrive", C.blue) +
+    card(X[0], y1 + 30, W, { icon: "play", color: C.blue, title: "Rows arrive", sub: "a batch at a time" }) +
+    card(X[1], y1 + 30, W, { icon: "chip", color: C.blue, title: "Held in memory", sub: "up to memory_limit_mb" }) +
+    card(X[2], y1 + 30, W, { icon: "lock", color: C.orange, title: "Past the limit", sub: "sorted, written as a run" }) +
+    arrow([[X[0] + W, y1 + 58], [X[1] - 2, y1 + 58]], C.blue) +
+    arrow([[X[1] + W, y1 + 58], [X[2] - 2, y1 + 58]], C.orange) +
+    arrow([[mid(2), y1 + 86], [mid(2), y2 + 28]], C.orange) +
+    label(mid(2) + 8, y1 + 106, "each run a file", C.orange, "start") +
+    arrow([[mid(1), y1 + 86], [mid(1), y2 + 28]], C.blue) +
+    label(mid(1) + 8, y1 + 106, "nothing spilled: sorted here", C.blue, "start") +
+    lane(y2, 96, "When the input ends", C.green) +
+    card(X[2], y2 + 30, W, { icon: "file", color: C.orange, title: "Runs on disk", sub: "merged 64 at a time" }) +
+    card(X[1], y2 + 30, W, { icon: "check", color: C.green, title: "Rows in order", sub: "equal rows keep their order" }) +
+    card(X[0], y2 + 30, W, { icon: "play", color: C.green, strong: true, title: "The next node", sub: "8,192 rows a batch" }) +
+    arrow([[X[2] - 2, y2 + 58], [X[1] + W + 2, y2 + 58]], C.orange) +
+    arrow([[X[1] - 2, y2 + 58], [X[0] + W + 2, y2 + 58]], C.green) +
+    foot(y2 + 112, "lock", "Runs are encrypted with a key only the node holds, in its own temporary folder, deleted when it ends, fails or stops.");
+  svg("sort-spill", y2 + 162, "How a sort carries on on disk", "In memory while the rows fit; past the limit, sorted runs on disk, merged at the end", b);
+}

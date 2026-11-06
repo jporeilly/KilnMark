@@ -1,0 +1,24 @@
+# Sort: rows in order (a Kilnmark sample).
+# Lists the shop's orders by status, then the dearest shipping first, then the oldest first.
+# Look for: several columns, the second largest first; orders that are equal on all three keep their order.
+kilnmark: pipeline/v1
+name: sample-sort
+description: Shop orders by status, then dearest shipping first, then oldest first.
+
+nodes:
+  - id: orders
+    type: read
+    source: shop-db
+    asset: shop.orders
+
+  - id: ordered
+    type: sort
+    input: orders
+    by: [status, shipping_fee desc, ordered_at]
+
+  - id: out
+    type: write
+    input: ordered
+    source: files
+    path: samples/transform/orders_sorted.csv
+    mode: replace

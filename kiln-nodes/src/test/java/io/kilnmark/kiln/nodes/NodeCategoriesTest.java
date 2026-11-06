@@ -25,7 +25,7 @@ class NodeCategoriesTest {
         }
         assertEquals(Map.of("aggregate", "Aggregate", "compute", "Transform", "dedupe", "Filter and route",
             "filter", "Filter and route", "limit", "Filter and route", "lookup", "Combine", "route",
-            "Filter and route", "select", "Transform", "union", "Combine"), got);
+            "Filter and route", "select", "Transform", "sort", "Transform", "union", "Combine"), got);
     }
 
     @Test

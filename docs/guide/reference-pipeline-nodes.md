@@ -794,3 +794,58 @@ nodes:
 ```
 
 Related: [limit](pipeline-nodes.md#limit).
+
+## sort
+
+Orders rows by one or more columns, each ascending or descending.
+
+[generated: node sort]: #
+
+**Sort rows**: a transform node, in the palette's Transform folder. Orders rows by one or more columns, each ascending or descending. Rows with equal values keep their order. Past its memory limit it sorts on disk, so any number of rows can be sorted.
+
+- Reads from: `in`
+- Writes to: `out`
+
+| Setting | Type | Required | Default | Parameters | What it does |
+| --- | --- | --- | --- | --- | --- |
+| `by` | columns in order | yes |  | no | Columns to order by, the first deciding most. Add desc for largest first, and nulls first to put empty values first (they go last by default). |
+| `memory_limit_mb` | number | no | `256` | whole value | The most memory rows may take while they are sorted. Past it, sorted parts are written to disk and merged. |
+
+[end: node sort]: #
+
+**What to know.** Each entry in `by` is a column, then perhaps `desc` (largest first; `asc` is the
+default), then perhaps `nulls first` (empty values go last by default, whichever the direction).
+Values order as conditions compare them: numbers by value, text by Unicode code point with no
+collation (so `B` comes before `a`, and accented letters after `z`), dates and timestamps in time
+(to the nanosecond), whole numbers by value (unsigned ones too), `false` before `true`, and a floating-point NaN after every other number. Rows with equal values
+keep the order they arrived in. Nothing is passed on until every row has arrived. Rows are held up
+to `memory_limit_mb`; past it they are sorted in parts, written to a private temporary folder on
+the server (encrypted, with a key only the running node holds) and merged at the end, so any number
+of rows can be sorted; the run's log says when that happened and how much was written. The folder
+is deleted when the node ends, fails or is stopped, and a file damaged while there fails the run.
+
+```yaml
+kilnmark: pipeline/v1
+name: orders-sorted
+description: Orders, by country and then largest first.
+
+nodes:
+  - id: orders
+    type: read
+    source: sales-db
+    asset: sales.orders
+
+  - id: ordered
+    type: sort
+    input: orders
+    by: [country, amount desc, ordered_at nulls first]
+
+  - id: out
+    type: write
+    input: ordered
+    source: files
+    path: exports/orders-sorted.csv
+    mode: replace
+```
+
+Related: [sort](pipeline-nodes.md#sort).

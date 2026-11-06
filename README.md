@@ -10,7 +10,7 @@ Status: version 0.0.9, early and moving fast; see the [changelog](CHANGELOG.md).
   admin registers, local folders and S3, with CSV, JSON and Parquet files. Scan them, search
   tables, views and columns, and open each asset with its column profiles and quality score.
 - **Pipelines:** graphs of nodes (read, filter, compute, select, lookup, aggregate, union, dedupe,
-  route, limit, quality gate, write), built on a canvas or in YAML, with parameters, server
+  route, limit, sort, quality gate, write), built on a canvas or in YAML, with parameters, server
   variables, previews at any node and a predicted quality before they run.
 - **Flows:** run pipelines in an order, on success, failure or a condition over what they
   measured, with SQL, notice, wait and stop nodes, and one pipeline for each item of a list. Nodes

@@ -7,6 +7,12 @@ details.
 
 ### What's new
 
+- **Sort rows** (a new `sort` node, ADR 0049): orders rows by one or more columns, each smallest or
+  largest first, with empty values last unless a column says `nulls first`. Rows with equal values
+  keep their order. Any number of rows can be sorted: past the node's memory limit it carries on on
+  disk, in a temporary folder only the server can read, encrypted and deleted when the node ends,
+  and the run's log says how much it wrote. In the Transform folder of the canvas, with a sample,
+  `sample-sort`. ([sort](docs/guide/pipeline-nodes.md#sort))
 - **Signing in through your organisation's provider no longer ends after a few minutes.** A sign-in
   now renews itself while the person works, and lasts until 8 hours after they signed in at the
   provider, until the provider's own session ends, or until they sign out. With the bundled
@@ -15,6 +21,27 @@ details.
 
 ### Details
 
+- **`sort` is an external merge sort** (`ExternalSorter` in `kiln-nodes`; docs/design/pipelines.md,
+  "Sorting, and spilling to disk"). Each row's key is encoded once into bytes that order as the
+  values do (`KeyCodec`), as the expression language's `<` orders them: numbers by value, -0.0 equal
+  to 0.0 and NaN last, dates and timestamps in time, text by Unicode code point with no collation.
+  Up to `memory_limit_mb` (256) rows are sorted in memory with a stable merge sort; past it they are
+  written as sorted runs (Arrow IPC with the key as an extra column, AES-CTR with a key held only in
+  the node's memory) to a folder of the node's own under `kilnmark.spill-dir` or `java.io.tmpdir`,
+  and merged at most 64 at a time (neighbouring runs a pass, so each row is written once a pass),
+  earlier runs first on a tie so the sort stays stable. Dates and timestamps order to the
+  nanosecond, and unsigned 64-bit numbers as unsigned. Batches are bounded by bytes as well as
+  rows, so wide rows stay within the limit. Each run's rows, size and SHA-256 digest are checked
+  as it is read back. Folders are owner-only (`rwx------`, or an owner-only access list on
+  Windows) and deleted when the node ends, fails or is stopped; a process keeps a lock on its own
+  folder, and folders whose lock can be taken (their process has gone, on this machine or another
+  sharing the folder) are deleted the next time a node spills. New setting kind `ORDER` (`[region, amount desc, closed_at nulls
+  first]`), with its own control on the canvas: each column with Smallest first or Largest first,
+  Empty last or Empty first, and Up. A preview runs a sort with its share of the preview's memory,
+  and refuses one that orders by a column hidden from the caller.
+- **A node can say how much it wrote to disk.** `NodeContext.spilled(bytes)` adds to the run's
+  `NodeResult.spilledBytes` (not yet stored in the database), and `NodeContext.note(text)` adds a
+  line in the node's own words to the run's log (`node_note`, through `RunListener.nodeNote`).
 - **Wording**: every setting's help reads as a sentence, starting with what the setting does rather
   than a value ("How rows are written: create fails if ...", "Lets pipelines write ...; off keeps it
   read-only"); 20 settings of nodes, sources and connectors are rewritten, and the components

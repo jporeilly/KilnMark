@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { PipelineProblem, PipelineValidation, Source, NodeType, NodeTypeSetting } from "../../api";
 import { arrivingColumns, defaultText, problemSetting, shownSettings, nodeSummary } from "./insight";
 import type { GraphNode } from "./model";
-import { SettingControl, type ControlContext } from "./SettingControls";
+import { SettingControl, orderTermText, parseOrderTerm, type ControlContext } from "./SettingControls";
 import { categoryOf, Palette } from "./Palette";
 
 const spec = (key: string, kind: string, extra: Partial<NodeTypeSetting> = {}): NodeTypeSetting => ({
@@ -121,6 +121,30 @@ describe("each setting kind gets its control, with help and default", () => {
     expect(html(spec("keep", "columns"), [], { side: "lookup", nodeType: "lookup" })).toMatch(/<option value="id">id \(int64\)<\/option>/);
   });
 
+  test("ORDER: columns in order, each with its direction and where empty values go", () => {
+    const out = html(spec("by", "order"), ["status desc", "customer_id nulls first"], { nodeType: "sort" });
+    expect(out).toMatch(/<ol class="cv-order"/);
+    expect(out.indexOf(">status<")).toBeLessThan(out.indexOf(">customer_id<"));
+    expect(out).toMatch(/aria-label="Direction for status"[^>]*>.*?<option value="desc" selected="">Largest first<\/option>/);
+    expect(out).toMatch(/aria-label="Empty values in customer_id"[^>]*>.*?<option value="first" selected="">Empty first<\/option>/);
+    expect(out).toContain('aria-label="Move customer_id up"');
+    expect(out).not.toContain('aria-label="Move status up"'); // the first cannot move up
+    expect(out).toContain('aria-label="Remove status from by"');
+    // only columns not chosen yet can be added
+    expect(out).toMatch(/<option value="first name">first name \(utf8\)<\/option>/);
+    expect(out).not.toMatch(/<option value="status">/);
+    expect(html(spec("by", "order"), [], { columns: { main: null, lookup: null } })).toContain('aria-label="Column to add to by"');
+  });
+
+  test("ORDER entries are read and written as the sort node reads them", () => {
+    expect(parseOrderTerm("amount")).toEqual({ column: "amount", descending: false, nullsFirst: false });
+    expect(parseOrderTerm(" first name DESC NULLS FIRST ")).toEqual({ column: "first name", descending: true, nullsFirst: true });
+    expect(parseOrderTerm("x asc nulls last")).toEqual({ column: "x", descending: false, nullsFirst: false });
+    expect(orderTermText({ column: "amount", descending: true, nullsFirst: false })).toBe("amount desc");
+    expect(orderTermText({ column: "amount", descending: false, nullsFirst: true })).toBe("amount nulls first");
+    expect(orderTermText(parseOrderTerm("a desc nulls first"))).toBe("a desc nulls first");
+  });
+
   test("A read node's query: SQL in a monospace box over several lines; other text stays one line", () => {
     const out = html(spec("query", "text"), "SELECT 1\nFROM t", { nodeType: "read" });
     expect(out).toMatch(/<textarea[^>]*class="mono cv-sql"/);
@@ -189,6 +213,7 @@ describe("what the canvas says about nodes", () => {
     expect(nodeSummary(node({ type: "filter", settings: { condition: "a > 1" } }))).toBe("a > 1");
     expect(nodeSummary(node({ type: "compute", settings: { columns: { x: "1", y: "2" } } }))).toBe("x, y");
     expect(nodeSummary(node({ type: "lookup", settings: { on: { a: "b" } } }))).toBe("on a = b");
+    expect(nodeSummary(node({ type: "sort", settings: { by: ["region", "amount desc"] } }))).toBe("by region, amount desc");
     expect(nodeSummary(node({ type: "write", settings: { source: "w", path: "x.csv", mode: "replace" } }))).toBe("w · x.csv · replace");
     expect(nodeSummary(node({ type: "read", settings: { source: "db", asset: 2024.1 }, texts: { asset: "2024.10" } }))).toBe("db · 2024.10");
   });
