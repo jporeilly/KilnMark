@@ -5,8 +5,25 @@ details.
 
 ## Unreleased
 
+### What's new
+
+- **Check a source before the work starts** (ADR 0041). A flow's new `check-source` node checks
+  that a source can be reached and holds the tables or files the flow needs, keeping no data, and
+  fails at once, naming what is missing, if not. Its `missing` value can go in a notice.
+  ([Checking a source before the work starts](docs/guide/flows.md#checking-a-source-before-the-work-starts))
+
 ### Details
 
+- **The `check-source` flow node** (ADR 0041, docs/design/flow-controls.md, C1). It takes `source`,
+  `tables` and `files` (lists, at most 50 names together, no ${...}) and `timeout`. It connects with
+  `Connector.test` within `kilnmark.sources.check-timeout`, after the allowed hosts, then looks each
+  name up with `Connector.asset` (a table's columns from metadata; a file's from its start, as a
+  scan reads it), keeping nothing; a file path as the catalogue writes it (`%23`) is tried on disk
+  too. With no `timeout`, a hung check ends after 10 minutes; either way the node ends at once. It
+  runs on a thread beside the flow's watcher, holding no worker slot. It succeeds when all are there and fails with the missing
+  names, or with "Could not reach <source>"; it reports `missing`. Messages never quote the source's
+  settings or its driver. Saving checks that the source exists and holds tables (databases) or files
+  (file and object stores). The diagram, Settings tab and run timeline show it.
 - **Dev mode starts again**: `./gradlew :server:quarkusDev` needs two POMs the build itself does
   not (`org.jboss:jboss-parent:37`, `org.jboss.slf4j:slf4j-jboss-logmanager:1.1.0.Final`); their
   checksums, matched against Maven Central, are now in `gradle/verification-metadata.xml`

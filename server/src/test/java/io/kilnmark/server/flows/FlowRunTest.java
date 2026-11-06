@@ -1017,4 +1017,91 @@ class FlowRunTest {
         assertEquals(0, jobPriority(direct));
         await("the direct run to end", () -> pipelineStore.run(direct).orElseThrow().finished(), Boolean::booleanValue);
     }
+
+    // ---- check-source (ADR 0041) ----
+
+    @Test
+    @Order(23)
+    void aCheckSourceNodeSaysWhatIsMissingInTheFlowsOwnWords() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fl-check
+            nodes:
+              - id: ready
+                type: check-source
+                source: fl-src
+                tables: [lab.people, lab.missing_one, lab.missing_two]
+              - { id: tell, type: notify, title: "Missing: ${ready.missing}" }
+              - { id: load, type: run-pipeline, pipeline: fl-copy }
+            connections:
+              - { from: ready, to: tell, when: failure }
+              - { from: ready, to: load }
+            """);
+        FlowStore.Run run = start("fl-check", Map.of());
+        FlowStore.Run done = waitForFlow(run.id(), "succeeded");
+        assertNull(done.error(), "the failure was handled");
+        FlowStore.NodeRun ready = node(run.id(), "ready");
+        assertEquals("failed", ready.status());
+        assertEquals("2 of 3 tables are missing on fl-src: lab.missing_one, lab.missing_two", ready.message());
+        assertFalse(ready.message().contains(IN_SECRET), "never what the source said");
+        assertTrue(ready.reported().replace(" ", "").contains("\"missing\":2.0"), ready.reported());
+        assertTrue(node(run.id(), "tell").message().contains("Missing: 2"), node(run.id(), "tell").message());
+        assertEquals("skipped", node(run.id(), "load").status(), "nothing after it ran");
+        assertNull(node(run.id(), "ready").pipelineRunId(), "it starts no pipeline run");
+
+        // Everything there: it succeeds and what follows runs.
+        save("""
+            kilnmark: flow/v1
+            name: fl-check-ok
+            nodes:
+              - { id: ready, type: check-source, source: fl-src, tables: [lab.people] }
+              - { id: load, type: run-pipeline, pipeline: fl-copy }
+            connections:
+              - { from: ready, to: load }
+            """);
+        FlowStore.Run ok = start("fl-check-ok", Map.of());
+        waitForFlow(ok.id(), "succeeded");
+        assertEquals("fl-src can be reached; the 1 table it names is there", node(ok.id(), "ready").message());
+        assertTrue(node(ok.id(), "ready").reported().replace(" ", "").contains("\"missing\":0.0"));
+        assertEquals("succeeded", node(ok.id(), "load").status());
+    }
+
+    @Test
+    @Order(24)
+    void aCheckSourceNodeThatCannotReachItsSourceFailsWithoutLookingFurther() throws Exception {
+        admin().contentType(ContentType.JSON).body(Map.of("name", "fl-down", "kind", "postgresql",
+            "settings", Map.of("url", "jdbc:postgresql://127.0.0.1:1/none", "username", "nobody"),
+            "password", "fl-down-secret-7")).post("/api/v1/sources").then().statusCode(201);
+        save("""
+            kilnmark: flow/v1
+            name: fl-check-down
+            nodes:
+              - { id: ready, type: check-source, source: fl-down, tables: [public.orders] }
+            """);
+        FlowStore.Run run = start("fl-check-down", Map.of());
+        FlowStore.Run done = waitForFlow(run.id(), "failed");
+        FlowStore.NodeRun ready = node(run.id(), "ready");
+        assertEquals("Could not reach fl-down", ready.message());
+        assertFalse(ready.reported().contains("missing"), "nothing was looked for: " + ready.reported());
+        assertEquals("Node ready failed", done.error());
+    }
+
+    @Test
+    @Order(25)
+    void aCheckSourceNodeIsCheckedAgainstItsSourceWhenSaved() {
+        String yaml = """
+            kilnmark: flow/v1
+            name: fl-check-saved
+            nodes:
+              - { id: ready, type: check-source, source: fl-src, tables: [lab.people] }
+            """;
+        assertTrue(flows.validate(yaml).valid(), flows.validate(yaml).problems().toString());
+        List<String> none = flows.validate(yaml.replace("source: fl-src", "source: no-such-source")).problems().stream()
+            .map(io.kilnmark.kiln.yaml.Problem::message).toList();
+        assertTrue(none.contains("Node ready checks the source 'no-such-source', which does not exist"), none.toString());
+        List<String> files = flows.validate(yaml.replace("tables: [lab.people]", "files: [incoming/today.csv]"))
+            .problems().stream().map(io.kilnmark.kiln.yaml.Problem::message).toList();
+        assertTrue(files.stream().anyMatch(m -> m.startsWith("Node ready looks for files, but fl-src is not a file")),
+            files.toString());
+    }
 }

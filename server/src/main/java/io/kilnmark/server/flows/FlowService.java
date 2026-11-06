@@ -131,6 +131,16 @@ public class FlowService {
                     sqlProblems(s, problems);
                     continue;
                 }
+                if (FlowDefinition.CHECK_SOURCE.equals(s.type())) {
+                    if (s.source() != null) {
+                        String why = CheckSource.sourceRefusal(s, sqlSources);
+                        if (why != null) {
+                            Position at = s.at("source");
+                            problems.add(new Problem(at.line(), at.column(), s.id(), why));
+                        }
+                    }
+                    continue;
+                }
                 if (!runsPipeline(s) || s.pipeline() == null) {
                     continue;
                 }
@@ -853,6 +863,7 @@ public class FlowService {
         } catch (RuntimeException e) {
             // A sql node still running must not commit after the run is recorded as failed.
             execution.sqlControls.values().forEach(SqlAction.Control::stop);
+            execution.checkThreads.values().forEach(Thread::interrupt);
             // Not the exception's text: it could quote anything. The class is enough for the log.
             LOG.errorf("Flow run %d failed with %s", id, e.getClass().getName());
             String why = "The flow could not be run to the end: an internal error. Look at the server's log.";
@@ -883,6 +894,11 @@ public class FlowService {
         private final Map<String, List<Long>> sqlPlaces = new HashMap<>();
         /** Sql nodes waiting for a free place on their source. */
         private final Set<String> sqlWaiting = new HashSet<>();
+        /** The check-source nodes running, each on a thread of its own (ADR 0041). */
+        private final Map<String, java.util.concurrent.CompletableFuture<CheckSource.Outcome>> checkRuns = new HashMap<>();
+        private final Map<String, Thread> checkThreads = new HashMap<>();
+        /** Check-source nodes stopped because the flow was cancelled or stopped. */
+        private final Set<String> checksStopped = new HashSet<>();
         private boolean nodeWasCancelled;
         /** What ${...} reads: the run's parameters and the variables it started with (vars.name). */
         private Map<String, Object> scope = Map.of();
@@ -938,6 +954,7 @@ public class FlowService {
             while (true) {
                 if (shutdown.getAsBoolean()) {
                     sqlControls.values().forEach(SqlAction.Control::stop);
+                    checkThreads.values().forEach(Thread::interrupt);
                     for (String s : engine.running()) {
                         if (sqlRuns.containsKey(s)) {
                             save(def, s, "failed", null, Instant.now(), stoppedSql(s), Map.of());
@@ -1068,6 +1085,10 @@ public class FlowService {
             }
             if (FlowDefinition.SQL.equals(s.type())) {
                 trySql(def, s);
+                return;
+            }
+            if (FlowDefinition.CHECK_SOURCE.equals(s.type())) {
+                startCheck(def, s);
                 return;
             }
             if (FlowDefinition.FOR_EACH.equals(s.type())) {
@@ -1420,6 +1441,67 @@ public class FlowService {
             }
         }
 
+        /**
+         * Starts a check-source node on a thread of its own (ADR 0041): it holds no worker slot, and a
+         * connection only while it checks. The connection test is bounded as a person's test is.
+         */
+        private void startCheck(FlowDefinition def, FlowDefinition.Node s) {
+            save(def, s.id(), "running", null, null, "Checking " + s.source(), Map.of());
+            Duration connect = config == null ? Duration.ofSeconds(15) : config.sources().checkTimeout();
+            java.util.concurrent.CompletableFuture<CheckSource.Outcome> done = new java.util.concurrent.CompletableFuture<>();
+            checkRuns.put(s.id(), done);
+            checkThreads.put(s.id(), Thread.ofVirtual().name("flow-" + run.id() + "-check-" + s.id()).start(() -> {
+                try {
+                    done.complete(CheckSource.run(s, sqlSources, connect));
+                } catch (RuntimeException e) {
+                    LOG.errorf("Flow run %d, check-source node %s failed with %s", run.id(), s.id(),
+                        e.getClass().getName());
+                    done.complete(CheckSource.Outcome.unreachable("Node " + s.id() + " could not check its source: an "
+                        + "internal error. Look at the server's log."));
+                }
+            }));
+        }
+
+        /**
+         * Ends a check-source node whose check has finished: succeeded when everything named is there,
+         * failed (with {@code missing}) when something is not, or when the source could not be reached.
+         * A flow that stops ends it at once, cancelled; so does its timeout (or, with none,
+         * {@link CheckSource#DEFAULT_LIMIT}), failed: its thread is interrupted and left to end.
+         */
+        private void pollCheck(FlowDefinition def, FlowEngine engine, String node, boolean cancelling) {
+            java.util.concurrent.CompletableFuture<CheckSource.Outcome> f = checkRuns.get(node);
+            Thread thread = checkThreads.get(node);
+            if (f != null && !f.isDone() && thread != null) {
+                // A source that hangs may not let the thread stop when asked: the node ends now all the same.
+                Duration limit = def.node(node).timeout() == null ? CheckSource.DEFAULT_LIMIT : def.node(node).timeout();
+                if (cancelling || engine.halted()) {
+                    checksStopped.add(node);
+                } else if (overdue(limit, started.get(node))) {
+                    timedOut.add(node);
+                } else {
+                    return;
+                }
+                thread.interrupt();
+                checkRuns.remove(node);
+                checkThreads.remove(node);
+                if (checksStopped.contains(node)) {
+                    end(def, engine, node, FlowEngine.State.CANCELLED, null, "Stopped with the flow", Map.of());
+                } else {
+                    end(def, engine, node, FlowEngine.State.FAILED, null, tookTooLong(limit), Map.of(), TIMED_OUT_RECORD);
+                }
+                return;
+            }
+            if (f == null || !f.isDone()) {
+                return;
+            }
+            CheckSource.Outcome o = f.join();
+            checkRuns.remove(node);
+            checkThreads.remove(node);
+            Map<String, Object> reported = o.missing() == null ? Map.of() : Map.of("missing", (double) o.missing());
+            end(def, engine, node, o.succeeded() ? FlowEngine.State.SUCCEEDED : FlowEngine.State.FAILED, null,
+                o.message(), reported);
+        }
+
         /** Ends a sql node whose thread has finished: with the rows it changed, or why it did not. */
         private void pollSql(FlowDefinition def, FlowEngine engine, String node, boolean cancelling) {
             if (sqlWaiting.contains(node)) {
@@ -1607,6 +1689,10 @@ public class FlowService {
             FlowDefinition.Node s = def.node(node);
             if (FlowDefinition.SQL.equals(s.type())) {
                 pollSql(def, engine, node, cancelling);
+                return;
+            }
+            if (FlowDefinition.CHECK_SOURCE.equals(s.type())) {
+                pollCheck(def, engine, node, cancelling);
                 return;
             }
             if (FlowDefinition.FOR_EACH.equals(s.type())) {
