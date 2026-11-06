@@ -50,6 +50,10 @@ UI), meant to run inside banks and other regulated organisations. Start with
   `Sights`.
 - **SQL a person writes** runs only on PostgreSQL sources with Allow SQL on, checked as custom SQL
   rules are, on a read-only connection (ADR 0028). Whatever a query returns is marked sensitive.
+- **Database operations** (ADR 0045) run only statements Kilnmark writes from fixed shapes, never
+  text a person typed: behind a source's Allow changes, for designers and admins, previewed,
+  confirmed by name for a drop or truncate, approved by a second person unless an admin marked the
+  source Not production (bound to the database's own identity), and each an audit event.
 - **Generic JDBC** reaches database servers over the network only, with vetted driver settings
   (ADR 0030); drivers that move files for ordinary SQL are refused.
 - **The audit log** is append-only; new security-relevant changes record an event (ADR 0029).
