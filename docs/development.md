@@ -528,6 +528,7 @@ intervals and a minute. The schedules are set through
 | --- | --- | --- |
 | `kilnmark.schedules.poll-interval` (`KILNMARK_SCHEDULES_POLL_INTERVAL`) | `30s` | How often a process with the scheduler role looks for schedules that are due |
 | `kilnmark.schedules.catch-up` (`KILNMARK_SCHEDULES_CATCH_UP`) | `1h` | A fire due longer ago than this when it is found (the server was not running) is missed, not run late |
+| `kilnmark.schedules.signed-in-within` (`KILNMARK_SCHEDULES_SIGNED_IN_WITHIN`) | `30d` | A schedule set by a person signed in through the identity provider pauses when their latest sign-in is older than this |
 
 Tests set the poll interval to a day (and the catch-up to two) and fire schedules themselves with
 `Scheduler.tick`.

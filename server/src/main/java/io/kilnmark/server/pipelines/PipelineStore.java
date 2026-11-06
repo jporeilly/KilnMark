@@ -342,6 +342,13 @@ public class PipelineStore {
      */
     public Optional<List<GoneSchedule>> deleteWithSchedules(String name) {
         return db.tx(c -> {
+            // the schedules' rows first, then the pipeline's: a schedule's fire holds its row while it
+            // queues a run, which locks the pipeline, so the other order could deadlock
+            try (PreparedStatement ps = c.prepareStatement(
+                "SELECT 1 FROM kilnmark.schedule WHERE pipeline = ? ORDER BY id FOR UPDATE")) {
+                ps.setString(1, name);
+                ps.executeQuery().close();
+            }
             try (PreparedStatement ps = c.prepareStatement(
                 "SELECT 1 FROM kilnmark.pipeline WHERE name = ? FOR UPDATE")) {
                 ps.setString(1, name);

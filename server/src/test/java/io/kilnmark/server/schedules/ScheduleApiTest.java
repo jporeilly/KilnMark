@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -219,7 +220,7 @@ class ScheduleApiTest {
             .getLong("id");
         await("the scan " + scan, () -> as(designer).get("/api/v1/runs/" + scan).then().extract().jsonPath()
             .getString("status"), "succeeded"::equals);
-        for (String name : List.of("sc-copy", "sc-twice", "sc-gone")) {
+        for (String name : List.of("sc-copy", "sc-twice", "sc-gone", "sc-race")) {
             as(designer).body(Map.of("name", name, "yaml", pipeline(name))).post("/api/v1/pipelines").then()
                 .statusCode(201).body("latestVersion", equalTo(1));
         }
@@ -405,7 +406,7 @@ class ScheduleApiTest {
         // while the run is being queued, it is changed to run a flow
         as(designer).body(body("flow", "sc-flow", "cron", "@hourly", "parameters", Map.of("label", "x")))
             .put("/api/v1/schedules/" + id).then().statusCode(200).body("lastOutcome", nullValue());
-        store.recordOutcome(claimed, Scheduler.STARTED, null, null);
+        assertTrue(store.fire(claimed, s -> new ScheduleStore.Fired(Scheduler.STARTED, null, null, null)).isEmpty());
         assertNull(schedule(id).get("lastOutcome"));
         // with the same target, the outcome is written
         long same = create(designer, body("pipeline", "sc-twice", "cron", "@hourly"));
@@ -413,10 +414,22 @@ class ScheduleApiTest {
         ScheduleStore.Schedule mine = store.claimDue(null, Scheduler.BATCH,
                 (s, at) -> Scheduler.plan(s, at, Duration.ofHours(1))).stream()
             .filter(d -> d.schedule().id() == same).findFirst().orElseThrow().schedule();
-        store.recordOutcome(mine, Scheduler.SKIPPED, null, null);
+        assertTrue(store.fire(mine, s -> new ScheduleStore.Fired(Scheduler.SKIPPED, null, null, null)).isPresent());
         assertEquals(Scheduler.SKIPPED, schedule(same).getString("lastOutcome"));
+
+        // paused by a person while it was starting: nothing runs, and the outcome says why
+        long paused = create(designer, body("pipeline", "sc-twice", "cron", "@hourly"));
+        dueAgo(paused, Duration.ofSeconds(5));
+        ScheduleStore.Schedule starting = store.claimDue(null, Scheduler.BATCH,
+                (s, at) -> Scheduler.plan(s, at, Duration.ofHours(1))).stream()
+            .filter(d -> d.schedule().id() == paused).findFirst().orElseThrow().schedule();
+        as(designer).body(body("pipeline", "sc-twice", "cron", "@hourly", "enabled", false))
+            .put("/api/v1/schedules/" + paused).then().statusCode(200);
+        assertTrue(store.fire(starting, s -> new ScheduleStore.Fired(Scheduler.STARTED, null, null, null)).isEmpty());
+        assertEquals(ScheduleStore.CHANGED_WHILE_STARTING, schedule(paused).getString("lastOutcome"));
         as(designer).delete("/api/v1/schedules/" + id).then().statusCode(204);
         as(designer).delete("/api/v1/schedules/" + same).then().statusCode(204);
+        as(designer).delete("/api/v1/schedules/" + paused).then().statusCode(204);
     }
 
     @Test
@@ -651,13 +664,18 @@ class ScheduleApiTest {
             + "?::jsonb)";
         sql(signIn, name, AuditLog.SIGN_IN, json("role", "designer", "unmask", false, "person", person));
         assertNull(setters.problem(store.find(asDesigner).orElseThrow()));
+        // another person who shares the name signs in as a viewer: it is not this person's sign-in
+        sql(signIn, name, AuditLog.SIGN_IN, json("role", "viewer", "unmask", false, "person", "p:someone-else-0002"));
+        assertNull(setters.problem(store.find(asDesigner).orElseThrow()));
         // a sign-in refused for want of a second factor takes no role away, as the access review reads it
         sql(signIn, name, AuditLog.SIGN_IN_REFUSED, json("reason", "No second factor.", "person", person));
         assertNull(setters.problem(store.find(asDesigner).orElseThrow()));
-        // signed in again as a steward: at the next fire, the designer schedule may not run
-        sql(signIn, name, AuditLog.SIGN_IN, json("role", "steward", "unmask", false, "person", person));
+        // signed in again as a steward, under a new name (the provider's name changed): the key is
+        // what counts, so at the next fire the designer schedule may not run
+        sql(signIn, "sso:Pat Renamed (pat-0001)", AuditLog.SIGN_IN, json("role", "steward", "unmask", false,
+            "person", person));
         assertEquals("the person who set it signed in with a lower role",
-            setters.problem(store.find(asDesigner).orElseThrow()));
+            setters.problem(store.find(asDesigner).orElseThrow()).reason());
         assertNull(setters.problem(store.find(asSteward).orElseThrow()));
 
         // and at once, when the sign-in happens: only the schedule above their new role
@@ -670,7 +688,7 @@ class ScheduleApiTest {
         sql(signIn, name, AuditLog.SIGN_IN_REFUSED, json("reason", io.kilnmark.server.auth.OidcAccess.NO_GROUP,
             "person", person));
         assertEquals("the person who set it has no role at their latest sign-in",
-            setters.problem(store.find(asSteward).orElseThrow()));
+            setters.problem(store.find(asSteward).orElseThrow()).reason());
         service.personSignedIn(person, null, new AuditLog.Actor(name, null));
         assertFalse(schedule(asSteward).getBoolean("enabled"));
         JsonPath events = pausedEvents();
@@ -696,5 +714,156 @@ class ScheduleApiTest {
         assertEquals(List.of("schedule " + id + " (set by sc successor)", "designer"), requested("pipeline_run", run));
         awaitPipelineRunDone(run);
         as(designer).delete("/api/v1/schedules/" + id).then().statusCode(204);
+    }
+
+    @Test
+    @Order(24)
+    void aPersonWhoHasNotSignedInForThirtyDaysHasTheirScheduleStopped() throws Exception {
+        String person = "p:test-person-0003";
+        String name = "sso:Lee Gone (lee-0003)";
+        long id = create(designer, body("pipeline", "sc-copy", "cron", "@hourly"));
+        sql("UPDATE kilnmark.schedule SET set_by_token = NULL, set_by_person = ?, updated_by = ? WHERE id = ?",
+            person, name, id);
+        sql("INSERT INTO kilnmark.audit_event (at, actor, action, target, detail) VALUES (now() - interval '31 days', "
+            + "?, ?, 'session', ?::jsonb)", name, AuditLog.SIGN_IN, json("role", "designer", "person", person));
+        dueAgo(id, Duration.ofSeconds(5));
+        assertEquals(1, scheduler.tick());
+        JsonPath s = schedule(id);
+        assertFalse(s.getBoolean("enabled"));
+        assertEquals("paused: the person who set it has not signed in for 30 days", s.getString("lastOutcome"));
+        as(viewer).get("/api/v1/schedules/" + id).then().statusCode(200).body("lastOutcome", equalTo("paused"));
+        assertEquals(0, runsBy("schedule " + id + " (set by " + name + ")"));
+        JsonPath events = pausedEvents();
+        assertEquals("the person who set it has not signed in for 30 days", events.getString(
+            "events.find { it.target == 'schedule " + id + "' }.detail.reason"), events.prettify());
+        as(designer).delete("/api/v1/schedules/" + id).then().statusCode(204);
+    }
+
+    @Test
+    @Order(25)
+    void aRoleThisServerDoesNotKnowCountsAsNone() throws Exception {
+        String person = "p:test-person-0004";
+        long id = create(designer, body("pipeline", "sc-copy", "cron", "@hourly"));
+        sql("UPDATE kilnmark.schedule SET set_by_token = NULL, set_by_person = ?, updated_by = ? WHERE id = ?",
+            person, "sso:Kim (kim-0004)", id);
+        sql("INSERT INTO kilnmark.audit_event (actor, action, target, detail) VALUES (?, ?, 'session', ?::jsonb)",
+            "sso:Kim (kim-0004)", AuditLog.SIGN_IN, json("role", "superuser", "person", person));
+        assertEquals(ScheduleStore.PAUSED, setters.problem(store.find(id).orElseThrow()).outcome());
+        as(designer).delete("/api/v1/schedules/" + id).then().statusCode(204);
+    }
+
+    @Test
+    @Order(26)
+    void aRevokeWhileARunIsBeingQueuedWaitsForIt() throws Exception {
+        Made d = token("sc racing", "designer");
+        long id = create(d.token(), body("pipeline", "sc-copy", "cron", "@hourly"));
+        dueAgo(id, Duration.ofSeconds(5));
+        ScheduleStore.Schedule claimed = store.claimDue(null, Scheduler.BATCH,
+                (s, at) -> Scheduler.plan(s, at, Duration.ofHours(1))).stream()
+            .filter(x -> x.schedule().id() == id).findFirst().orElseThrow().schedule();
+        CountDownLatch checked = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            // the fire has checked the setter and is queueing its run, holding the schedule's row
+            Future<Optional<ScheduleStore.Fired>> fire = pool.submit(() -> store.fire(claimed, s -> {
+                checked.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return new ScheduleStore.Fired(Scheduler.STARTED, null, null, null);
+            }));
+            assertTrue(checked.await(30, java.util.concurrent.TimeUnit.SECONDS));
+            // an admin revokes the token meanwhile: its pause waits for that row, and comes after the run
+            Future<Integer> revoke = pool.submit(() -> admin().delete("/api/v1/tokens/" + d.id()).statusCode());
+            Thread.sleep(1500);
+            assertFalse(revoke.isDone(), "the revoke's pause waits for the fire holding the schedule");
+            release.countDown();
+            assertTrue(fire.get().isPresent());
+            assertEquals(204, revoke.get());
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
+        JsonPath s = schedule(id);
+        assertFalse(s.getBoolean("enabled"));
+        assertEquals(ScheduleStore.PAUSED, s.getString("lastOutcome"));
+        as(designer).delete("/api/v1/schedules/" + id).then().statusCode(204);
+    }
+
+    @Test
+    @Order(27)
+    void theSignInHistoryIsReadByItsIndexes() throws Exception {
+        for (String[] q : new String[][] {
+            {"detail ->> 'person' = 'p:x'", "audit_event_sign_in_person_idx"},
+            {"actor = 'sso:x' AND detail ->> 'person' IS NULL", "audit_event_sign_in_actor_idx"}}) {
+            StringBuilder plan = new StringBuilder();
+            try (Connection c = db.getConnection(); java.sql.Statement st = c.createStatement()) {
+                c.setAutoCommit(false);
+                st.execute("SET LOCAL enable_seqscan = off");
+                try (ResultSet rs = st.executeQuery("EXPLAIN SELECT action, detail::text, at FROM "
+                    + "kilnmark.audit_event WHERE action IN ('auth.sign_in', 'auth.sign_in_refused') AND " + q[0]
+                    + " ORDER BY at DESC, id DESC LIMIT 500")) {
+                    while (rs.next()) {
+                        plan.append(rs.getString(1)).append('\n');
+                    }
+                }
+                c.rollback();
+            }
+            assertTrue(plan.toString().contains(q[1]), plan.toString());
+        }
+    }
+
+    @Inject
+    io.kilnmark.server.pipelines.PipelineService pipelineService;
+
+    @Test
+    @Order(28)
+    void deletingAPipelineWhileItsScheduleFiresWaitsInsteadOfDeadlocking() throws Exception {
+        long id = create(designer, body("pipeline", "sc-race", "cron", "@hourly"));
+        dueAgo(id, Duration.ofSeconds(5));
+        ScheduleStore.Schedule claimed = store.claimDue(null, Scheduler.BATCH,
+                (s, at) -> Scheduler.plan(s, at, Duration.ofHours(1))).stream()
+            .filter(x -> x.schedule().id() == id).findFirst().orElseThrow().schedule();
+        CountDownLatch holding = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        long run;
+        try {
+            // the fire holds the schedule's row, then queues a run, which locks the pipeline
+            Future<Optional<ScheduleStore.Fired>> fire = pool.submit(() -> store.fire(claimed, s -> {
+                holding.countDown();
+                try {
+                    release.await();
+                    long r = pipelineService.queueRun("sc-race", null, Map.of(), "schedule " + id,
+                        io.kilnmark.server.auth.AccessRole.STEWARD).id();
+                    return new ScheduleStore.Fired(Scheduler.STARTED, r, null, null);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return new ScheduleStore.Fired(Scheduler.FAILED + "interrupted", null, null, null);
+                } catch (RuntimeException e) {
+                    return new ScheduleStore.Fired(Scheduler.FAILED + e.getClass().getSimpleName(), null, null, null);
+                }
+            }));
+            assertTrue(holding.await(30, java.util.concurrent.TimeUnit.SECONDS));
+            Future<Integer> delete = pool.submit(() -> as(designer).delete("/api/v1/pipelines/sc-race").statusCode());
+            Thread.sleep(1500);
+            release.countDown();
+            // with the locks taken in the other order these would wait for each other for ever:
+            // PostgreSQL cannot see that the fire's transaction waits on its own run's connection
+            ScheduleStore.Fired fired = fire.get(60, java.util.concurrent.TimeUnit.SECONDS).orElseThrow();
+            assertEquals(Scheduler.STARTED, fired.outcome());
+            // the delete waited for the fire, then found its run queued
+            assertEquals(409, delete.get(60, java.util.concurrent.TimeUnit.SECONDS));
+            run = fired.pipelineRun();
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
+        awaitPipelineRunDone(run);
+        as(designer).delete("/api/v1/pipelines/sc-race").then().statusCode(204);
+        as(steward).get("/api/v1/schedules/" + id).then().statusCode(404);
     }
 }

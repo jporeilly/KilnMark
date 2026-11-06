@@ -92,7 +92,13 @@ details.
   role, or the person must have it as the access review reads their sign-ins; if not, nothing runs,
   the schedule is paused with `paused: the person who set it no longer has the role` and
   `schedule.paused` is recorded. Revoking a token, or a sign-in with less of a role, pauses that
-  identity's schedules at once. Saving a paused schedule makes the person saving it its setter.
+  identity's schedules at once (never failing the sign-in). Saving a paused schedule makes the
+  person saving it its setter. A person's role is lowered to what the groups their sign-in recorded
+  (now `groups` in sign-in events) give under today's mapping, and their latest sign-in must be
+  within `kilnmark.schedules.signed-in-within` (30 days), else
+  `paused: the person who set it has not signed in for 30 days`. Sign-ins are read by the person's
+  key through two partial indexes on `audit_event`. The check and the queueing hold the schedule's
+  row lock, so a revoke or pause comes wholly before or after a run; a pause never cancels a run.
 - **The scheduler's pages** (ui/src/schedules, docs/design/schedules.md section 12). The panel under
   a pipeline or flow has a Schedules tab (`SchedulesSection`), and the line under its name gives
   the next scheduled run. Each schedule shows its cron in words where it is a common shape
@@ -108,9 +114,10 @@ details.
   the schedule again before a PUT, so another person's change is kept. Delete asks first. The
   Run now dialog's parameter fields are now `ParameterFields`, shared with the form. `#/schedules`
   (`SchedulesPage`, in the sidebar after Flows) lists every schedule with what it runs, filters
-  for on, paused, paused because the setter lost the role, and failed last time, and a note for
-  admins' access reviews. A schedule the server paused reads **Paused: setter lost the role**
-  as its last outcome, apart from the Paused state.
+  for on, paused, paused by Kilnmark (its setter lost the role, or has not signed in within
+  `kilnmark.schedules.signed-in-within`), and failed last time, and a note for admins' access
+  reviews. A schedule Kilnmark paused reads **Paused: setter lost the role** or **Paused: setter
+  not signed in for 30 days** as its last outcome, in amber, apart from the grey Paused state.
 - **The `wait-for` flow node** (ADR 0041, docs/design/flow-controls.md, C2). It takes `source` and
   either `file` (a pattern with `*` and `?` in its last part; `at_least`, 1 by default) or `query`,
   plus `every` (30s to 1h, 5m) and `timeout` (up to 24h, 1h). It looks at once, then every `every`,

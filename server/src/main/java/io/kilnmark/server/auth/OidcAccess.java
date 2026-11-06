@@ -69,12 +69,7 @@ public final class OidcAccess {
             return Decision.refused(TOO_OLD);
         }
         Set<String> groups = Set.copyOf(strings(claim.apply(config.groupsClaim())));
-        AccessRole role = null;
-        for (AccessRole r : AccessRole.values()) {
-            if (anyOf(groups, groupsFor(config, r))) {
-                role = r; // values() runs from the lowest role to the highest
-            }
-        }
+        AccessRole role = roleOf(config, groups);
         if (role == null) {
             return Decision.refused(NO_GROUP);
         }
@@ -117,6 +112,27 @@ public final class OidcAccess {
         }
         List<String> acr = strings(claim.apply("acr"));
         return !acr.isEmpty() && config.mfaAcr().map(a -> a.contains(acr.getFirst())).orElse(false);
+    }
+
+    /**
+     * The highest role any of {@code groups} is given under the settings as they are now, or null
+     * when none is: what a schedule a person set is checked by, from the groups their latest sign-in
+     * recorded (ADR 0046).
+     */
+    public static AccessRole roleOf(KilnmarkConfig.Oidc config, java.util.Collection<String> groups) {
+        Set<String> g = Set.copyOf(groups);
+        AccessRole role = null;
+        for (AccessRole r : AccessRole.values()) {
+            if (anyOf(g, groupsFor(config, r))) {
+                role = r; // values() runs from the lowest role to the highest
+            }
+        }
+        return role;
+    }
+
+    /** The groups a sign-in's claims name, as {@link #decide} reads them. */
+    public static List<String> groupsOf(KilnmarkConfig.Oidc config, Function<String, Object> claim) {
+        return strings(claim.apply(config.groupsClaim()));
     }
 
     private static List<String> groupsFor(KilnmarkConfig.Oidc config, AccessRole role) {
