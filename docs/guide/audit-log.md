@@ -18,7 +18,7 @@ it (behind a proxy, as its forwarding settings say).
 | --- | --- | --- |
 | Token created (`token.created`) | An API token was made | Its name, role, whether it sees unmasked values, when it expires |
 | Token revoked (`token.revoked`) | A token was revoked | Its name and role |
-| Signed in (`auth.sign_in`) | Someone signed in with your organisation's identity provider | The role their groups gave them, whether they see unmasked values, the names of their groups, and an opaque key for the person (`person`), which schedules they set are checked by |
+| Signed in (`auth.sign_in`) | Someone signed in with your organisation's identity provider | The role their groups gave them, whether they see unmasked values, those of their groups that your settings map to a role (never their other groups, whose names can be sensitive), and an opaque key for the person (`person`). The groups and key are what schedules they set are checked by |
 | Sign-in given no role (`auth.sign_in_refused`) | Someone signed in with the provider but was given no role | Why: no second factor, or none of their groups has a role |
 | Signed out (`auth.sign_out`) | Someone signed out of a provider sign-in | |
 | Access review (`access.review`) | An admin viewed or downloaded the access review (Settings, Access review) | Its format and how many entries it had |

@@ -42,7 +42,8 @@ Kilnmark checks:
     role any more takes it away; one refused for another reason, such as no second factor, does
     not, as in the access review;
   - their groups still give that role as Kilnmark's settings map groups to roles today. If an admin
-    changes the mapping, the lower of the two counts;
+    changes the mapping, the lower of the two counts. For this, each sign-in records only the groups
+    your settings map to a role, never the person's other groups;
   - they have signed in within the last 30 days (`kilnmark.schedules.signed-in-within`). Someone who
     has left, and is disabled at your provider, never signs in again, so their schedules stop
     after 30 days at most.

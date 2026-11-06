@@ -185,17 +185,42 @@ public class Scheduler {
      * (ADR 0046); then its run is queued, as Run now would, and the outcome recorded. A run already
      * queued or running is never cancelled by a pause.
      */
-    private void run(ScheduleStore.Schedule claimed) {
+    void run(ScheduleStore.Schedule claimed) {
+        java.util.concurrent.atomic.AtomicReference<ScheduleStore.Fired> decided =
+            new java.util.concurrent.atomic.AtomicReference<>();
         Optional<ScheduleStore.Fired> fired;
         try {
-            fired = store.fire(claimed, this::decide);
+            fired = store.fire(claimed, s -> {
+                ScheduleStore.Fired f = decide(s);
+                decided.set(f);
+                return f;
+            });
         } catch (RuntimeException e) {
             LOG.warnf("Schedule %d of %s: could not finish its fire (%s)", claimed.id(),
                 ScheduleService.target(claimed), e.getClass().getSimpleName());
+            ScheduleStore.Fired f = decided.get();
+            if (f != null && f.pauseReason() == null) {
+                // the run may be queued already: say so, rather than leave it reading as a lost fire
+                retry(claimed.id(), f);
+            }
             return;
         }
+        // the schedule as it is now, after any change saved before the fire took its row
         fired.filter(f -> f.pauseReason() != null)
-            .ifPresent(f -> schedules.paused(claimed, f.pauseReason(), AuditLog.Actor.server("scheduler")));
+            .ifPresent(f -> schedules.paused(f.schedule(), f.pauseReason(), AuditLog.Actor.server("scheduler")));
+    }
+
+    /** Writes a fire's outcome again, up to three times, after the fire could not write it. */
+    private void retry(long id, ScheduleStore.Fired f) {
+        for (int i = 0; i < 3; i++) {
+            try {
+                store.recordAfterFailure(id, f);
+                return;
+            } catch (RuntimeException e) {
+                LOG.warnf("Schedule %d: could not record what its fire did (%s), try %d of 3", id,
+                    e.getClass().getSimpleName(), i + 1);
+            }
+        }
     }
 
     /** What one fire does, the schedule's row being locked: the setter's check, then the run. */

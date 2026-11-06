@@ -276,7 +276,12 @@ public class ScheduleStore {
      * What a fire did: its outcome and the run it started, if any; {@code pauseReason} when it was
      * not run because whoever set the schedule no longer holds its role, which pauses it.
      */
-    public record Fired(String outcome, Long pipelineRun, Long flowRun, String pauseReason) {
+    public record Fired(String outcome, Long pipelineRun, Long flowRun, String pauseReason, Schedule schedule) {
+
+        /** What a fire did with the schedule as it was when it ran. */
+        public Fired(String outcome, Long pipelineRun, Long flowRun, String pauseReason) {
+            this(outcome, pipelineRun, flowRun, pauseReason, null);
+        }
     }
 
     /**
@@ -310,7 +315,8 @@ public class ScheduleStore {
                 }
                 return Optional.<Fired>empty();
             }
-            Fired f = work.apply(current.get());
+            Fired done = work.apply(current.get());
+            Fired f = new Fired(done.outcome(), done.pipelineRun(), done.flowRun(), done.pauseReason(), current.get());
             String sql = f.pauseReason() != null
                 ? "UPDATE kilnmark.schedule SET enabled = false, next_at = NULL, last_at = clock_timestamp(), "
                     + "last_outcome = ?, last_pipeline_run = ?, last_flow_run = ? WHERE id = ?"
@@ -332,23 +338,44 @@ public class ScheduleStore {
      * Returns those paused, as they were.
      */
     public List<Schedule> pauseSetBy(Long token, String person, AccessRole role) {
+        return pauseSetBy(token, person, role, null);
+    }
+
+    /**
+     * As {@link #pauseSetBy(Long, String, AccessRole)}, waiting at most {@code lockTimeout} for a
+     * schedule's row (a fire in progress holds it); past that it throws and pauses nothing. Only the
+     * rows that will pause are locked: those whose role is above {@code role}.
+     */
+    public List<Schedule> pauseSetBy(Long token, String person, AccessRole role, Duration lockTimeout) {
+        List<String> above = new ArrayList<>();
+        for (AccessRole r : List.of(AccessRole.STEWARD, AccessRole.DESIGNER)) {
+            if (role == null || !role.atLeast(r)) {
+                above.add(r.id());
+            }
+        }
+        if (above.isEmpty()) {
+            return List.of();
+        }
         return db.tx(c -> {
+            if (lockTimeout != null) {
+                try (java.sql.Statement st = c.createStatement()) {
+                    st.execute("SET LOCAL lock_timeout = '" + Math.max(1, lockTimeout.toMillis()) + "ms'");
+                }
+            }
             List<Schedule> found;
             try (PreparedStatement ps = c.prepareStatement("SELECT " + columns + " FROM kilnmark.schedule WHERE "
                 + "enabled AND " + (token != null ? "set_by_token = ?" : "set_by_person = ?")
-                + " ORDER BY id FOR UPDATE")) {
+                + " AND run_as = ANY (?) ORDER BY id FOR UPDATE")) {
                 if (token != null) {
                     ps.setLong(1, token);
                 } else {
                     ps.setString(1, person);
                 }
+                ps.setArray(2, c.createArrayOf("text", above.toArray()));
                 found = read(ps);
             }
             List<Schedule> paused = new ArrayList<>();
             for (Schedule s : found) {
-                if (role != null && role.atLeast(AccessRole.parse(s.runAs()))) {
-                    continue;
-                }
                 try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.schedule SET enabled = false, "
                     + "next_at = NULL, last_at = clock_timestamp(), last_outcome = ?, last_pipeline_run = NULL, "
                     + "last_flow_run = NULL WHERE id = ?")) {
@@ -364,6 +391,25 @@ public class ScheduleStore {
 
     static String clip(String outcome) {
         return outcome.length() <= MAX_OUTCOME ? outcome : outcome.substring(0, MAX_OUTCOME - 3) + "...";
+    }
+
+    /**
+     * Writes a fire's outcome again, in a transaction of its own, after writing it with the fire
+     * failed (the run may already be queued): only while the row still says {@link #STARTING}, so a
+     * run started is never left reading as a lost fire. Returns whether it was written.
+     */
+    public boolean recordAfterFailure(long id, Fired f) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.schedule SET last_outcome = ?, "
+                + "last_pipeline_run = ?, last_flow_run = ? WHERE id = ? AND last_outcome = ?")) {
+                ps.setString(1, clip(f.outcome()));
+                ps.setObject(2, f.pipelineRun(), Types.BIGINT);
+                ps.setObject(3, f.flowRun(), Types.BIGINT);
+                ps.setLong(4, id);
+                ps.setString(5, STARTING);
+                return ps.executeUpdate() == 1;
+            }
+        });
     }
 
     /** The later of two times; {@code b} may be null. */

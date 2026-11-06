@@ -185,11 +185,14 @@ public class ScheduleService {
      * their sign-in has just given them (null: none). Each is recorded.
      */
     public void personSignedIn(String person, AccessRole role, AuditLog.Actor actor) {
-        for (ScheduleStore.Schedule s : store.pauseSetBy(null, person, role)) {
+        for (ScheduleStore.Schedule s : store.pauseSetBy(null, person, role, SIGN_IN_LOCK_TIMEOUT)) {
             paused(s, role == null ? "the person who set it signed in and was given no role"
                 : "the person who set it signed in as " + role.id(), actor);
         }
     }
+
+    /** How long a sign-in's pause waits for a schedule a fire holds, before giving up to the fire-time check. */
+    static final java.time.Duration SIGN_IN_LOCK_TIMEOUT = java.time.Duration.ofSeconds(2);
 
     /** Records a schedule paused because its setter no longer holds its role. */
     void paused(ScheduleStore.Schedule s, String reason, AuditLog.Actor actor) {

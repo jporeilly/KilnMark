@@ -164,6 +164,34 @@ class ScheduleApiTest {
         }
     }
 
+    /** Waits until a backend runs a statement containing {@code text} and waits for a lock. */
+    private void awaitLockWait(String text) throws Exception {
+        long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+        while (System.nanoTime() < deadline) {
+            try (Connection c = db.getConnection();
+                 PreparedStatement ps = c.prepareStatement("SELECT count(*) FROM pg_stat_activity WHERE datname = "
+                     + "current_database() AND wait_event_type = 'Lock' AND position(? in query) > 0")) {
+                ps.setString(1, text);
+                try (ResultSet rs = ps.executeQuery()) {
+                    rs.next();
+                    if (rs.getLong(1) > 0) {
+                        return;
+                    }
+                }
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Nothing waited for a lock running: " + text);
+    }
+
+    /** Ends every backend waiting for a lock, so a test that failed in a deadlock leaves none behind. */
+    private void endLockWaits() throws SQLException {
+        try (Connection c = db.getConnection(); java.sql.Statement st = c.createStatement()) {
+            st.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() "
+                + "AND pid <> pg_backend_pid() AND wait_event_type = 'Lock'");
+        }
+    }
+
     /** The database's clock. */
     private Instant dbNow() throws SQLException {
         try (Connection c = db.getConnection();
@@ -778,7 +806,7 @@ class ScheduleApiTest {
             assertTrue(checked.await(30, java.util.concurrent.TimeUnit.SECONDS));
             // an admin revokes the token meanwhile: its pause waits for that row, and comes after the run
             Future<Integer> revoke = pool.submit(() -> admin().delete("/api/v1/tokens/" + d.id()).statusCode());
-            Thread.sleep(1500);
+            awaitLockWait("set_by_token = $1");
             assertFalse(revoke.isDone(), "the revoke's pause waits for the fire holding the schedule");
             release.countDown();
             assertTrue(fire.get().isPresent());
@@ -796,24 +824,58 @@ class ScheduleApiTest {
     @Test
     @Order(27)
     void theSignInHistoryIsReadByItsIndexes() throws Exception {
-        for (String[] q : new String[][] {
-            {"detail ->> 'person' = 'p:x'", "audit_event_sign_in_person_idx"},
-            {"actor = 'sso:x' AND detail ->> 'person' IS NULL", "audit_event_sign_in_actor_idx"}}) {
+        Object[][] queries = {
+            {AuditLog.LATEST_SIGN_IN_BY_KEY, "audit_event_sign_in_person_idx", new Object[] {"p:x"}},
+            {AuditLog.LATEST_SIGN_IN_BY_NAME, "audit_event_sign_in_actor_idx", new Object[] {"sso:x"}},
+            {AuditLog.NO_GROUP_AFTER_BY_KEY, "audit_event_sign_in_person_idx", new Object[] {"p:x", 1L, "r"}},
+            {AuditLog.NO_GROUP_AFTER_BY_NAME, "audit_event_sign_in_actor_idx", new Object[] {"sso:x", 1L, "r"}}};
+        for (Object[] q : queries) {
             StringBuilder plan = new StringBuilder();
             try (Connection c = db.getConnection(); java.sql.Statement st = c.createStatement()) {
                 c.setAutoCommit(false);
                 st.execute("SET LOCAL enable_seqscan = off");
-                try (ResultSet rs = st.executeQuery("EXPLAIN SELECT action, detail::text, at FROM "
-                    + "kilnmark.audit_event WHERE action IN ('auth.sign_in', 'auth.sign_in_refused') AND " + q[0]
-                    + " ORDER BY at DESC, id DESC LIMIT 500")) {
-                    while (rs.next()) {
-                        plan.append(rs.getString(1)).append('\n');
+                try (PreparedStatement ps = c.prepareStatement("EXPLAIN " + q[0])) {
+                    Object[] values = (Object[]) q[2];
+                    for (int k = 0; k < values.length; k++) {
+                        ps.setObject(k + 1, values[k]);
+                    }
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            plan.append(rs.getString(1)).append('\n');
+                        }
                     }
                 }
                 c.rollback();
             }
-            assertTrue(plan.toString().contains(q[1]), plan.toString());
+            assertTrue(plan.toString().contains((String) q[1]), q[0] + "\n" + plan);
         }
+    }
+
+    @Test
+    @Order(29)
+    void onlyASignInWithARoleOrARefusalForWantOfAGroupCounts() throws Exception {
+        String person = "p:test-person-0008";
+        String name = "sso:Ray (ray-0008)";
+        long id = create(designer, body("pipeline", "sc-copy", "cron", "@hourly", "runAs", "designer"));
+        sql("UPDATE kilnmark.schedule SET set_by_token = NULL, set_by_person = ?, updated_by = ? WHERE id = ?",
+            person, name, id);
+        String signIn = "INSERT INTO kilnmark.audit_event (at, actor, action, target, detail) VALUES (now() - "
+            + "make_interval(secs => ?), ?, ?, 'session', ?::jsonb)";
+        // signed in as a designer before sign-ins carried the key
+        sql(signIn, 60.0, name, AuditLog.SIGN_IN, json("role", "designer"));
+        assertNull(setters.problem(store.find(id).orElseThrow()));
+        // since then, 501 refusals for want of a second factor, carrying the key: none takes the role away
+        sql("INSERT INTO kilnmark.audit_event (actor, action, target, detail) SELECT ?, ?, 'session', ?::jsonb "
+            + "FROM generate_series(1, 501)", name, AuditLog.SIGN_IN_REFUSED,
+            json("reason", io.kilnmark.server.auth.OidcAccess.NO_MFA, "person", person));
+        assertNull(setters.problem(store.find(id).orElseThrow()));
+        // a sign-in as a designer, then one as a steward stored after it, though another server's clock
+        // put it an hour earlier: the one stored last counts
+        sql(signIn, 0.0, name, AuditLog.SIGN_IN, json("role", "designer", "person", person));
+        sql(signIn, 3600.0, name, AuditLog.SIGN_IN, json("role", "steward", "person", person));
+        assertEquals("the person who set it signed in with a lower role",
+            setters.problem(store.find(id).orElseThrow()).reason());
+        as(designer).delete("/api/v1/schedules/" + id).then().statusCode(204);
     }
 
     @Inject
@@ -849,7 +911,8 @@ class ScheduleApiTest {
             }));
             assertTrue(holding.await(30, java.util.concurrent.TimeUnit.SECONDS));
             Future<Integer> delete = pool.submit(() -> as(designer).delete("/api/v1/pipelines/sc-race").statusCode());
-            Thread.sleep(1500);
+            // the delete is waiting for the schedule's row, which the fire holds
+            awaitLockWait("kilnmark.schedule WHERE pipeline = $1");
             release.countDown();
             // with the locks taken in the other order these would wait for each other for ever:
             // PostgreSQL cannot see that the fire's transaction waits on its own run's connection
@@ -860,10 +923,42 @@ class ScheduleApiTest {
             run = fired.pipelineRun();
         } finally {
             release.countDown();
+            endLockWaits();
             pool.shutdownNow();
         }
         awaitPipelineRunDone(run);
         as(designer).delete("/api/v1/pipelines/sc-race").then().statusCode(204);
         as(steward).get("/api/v1/schedules/" + id).then().statusCode(404);
+    }
+
+    @Test
+    @Order(30)
+    void aPauseRecordsTheScheduleAsItIsNowAndAnOutcomeIsWrittenOnce() throws Exception {
+        Made d = token("sc changing", "designer");
+        long id = create(d.token(), body("pipeline", "sc-copy", "cron", "@hourly"));
+        dueAgo(id, Duration.ofSeconds(5));
+        ScheduleStore.Schedule claimed = store.claimDue(null, Scheduler.BATCH,
+                (s, at) -> Scheduler.plan(s, at, Duration.ofHours(1))).stream()
+            .filter(x -> x.schedule().id() == id).findFirst().orElseThrow().schedule();
+        // changed while starting, by the same token, which then expires
+        as(d.token()).body(body("pipeline", "sc-copy", "cron", "@daily")).put("/api/v1/schedules/" + id).then()
+            .statusCode(200);
+        sql("UPDATE kilnmark.api_token SET expires_at = now() - interval '1 minute' WHERE id = ?", d.id());
+        scheduler.run(claimed);
+        assertEquals(ScheduleStore.PAUSED, schedule(id).getString("lastOutcome"));
+        JsonPath events = pausedEvents();
+        assertEquals("@daily", events.getString("events.find { it.target == 'schedule " + id + "' }.detail.cron"),
+            events.prettify());
+
+        // an outcome written again after a failure only replaces "starting"
+        long other = create(designer, body("pipeline", "sc-copy", "cron", "@hourly"));
+        dueAgo(other, Duration.ofSeconds(5));
+        store.claimDue(null, Scheduler.BATCH, (s, at) -> Scheduler.plan(s, at, Duration.ofHours(1)));
+        assertTrue(store.recordAfterFailure(other, new ScheduleStore.Fired(Scheduler.STARTED, null, null, null)));
+        assertEquals(Scheduler.STARTED, schedule(other).getString("lastOutcome"));
+        assertFalse(store.recordAfterFailure(other, new ScheduleStore.Fired(Scheduler.SKIPPED, null, null, null)));
+        assertEquals(Scheduler.STARTED, schedule(other).getString("lastOutcome"));
+        as(designer).delete("/api/v1/schedules/" + id).then().statusCode(204);
+        as(designer).delete("/api/v1/schedules/" + other).then().statusCode(204);
     }
 }
