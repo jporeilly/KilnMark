@@ -2,8 +2,8 @@
 
 A database source's page has tools for looking at the database itself, as it is now, without
 leaving Kilnmark: **Explore** its schemas, tables and views, their columns, keys and indexes, and
-the first rows of a table. More tools follow (ADR 0045): a SQL generator, connection settings on
-tabs, and changes to a database behind controls.
+the first rows of a table, and **generate SQL** for a table to copy or save. More tools follow
+(ADR 0045): connection settings on tabs, and changes to a database behind controls.
 
 ## Explore a database
 
@@ -14,7 +14,7 @@ Generic JDBC) and scroll to **Explore**. Stewards, designers and admins see it; 
 
 1. Choose a schema. Each shows how many tables and views it holds.
 2. Choose a table or view. Long lists come a page at a time.
-3. Read the table on four tabs:
+3. Read the table on its tabs:
    - **Columns**: each column's name and type (with its length, or its digits before and after the
      point), whether it allows nulls, whether the database fills it (an identity or a generated
      column) or a default does when a row leaves it out, and whether it is in the primary key.
@@ -24,6 +24,7 @@ Generic JDBC) and scroll to **Explore**. Stewards, designers and admins see it; 
      primary key, its kind where the database says, and whether it is partial (it covers only the
      rows a condition picks; the condition is not shown).
    - **Preview**: the first 50 rows.
+   - **SQL**: the SQL generator ([below](#generate-sql-for-a-table)).
 
 The address keeps the schema and table you chose, so you can send a colleague a link to the same
 table.
@@ -68,3 +69,51 @@ it has rights on) and, for the preview and **Count exactly**, to `SELECT` from t
 connects read-only and runs only queries Kilnmark writes; nothing you type goes into SQL. It shares
 the time limit and the number of checks at once that **Test connection** has, so many people
 exploring one source at the same moment wait their turn rather than load the database.
+
+## Generate SQL for a table
+
+![The SQL tab: a CREATE TABLE for sales.orders in PostgreSQL, with Copy, Save as .sql, and what was left out](images/source-generate-sql.png)
+
+On Explore's **SQL** tab, Kilnmark writes the SQL for the table you chose, for you to copy or save
+as a `.sql` file. **Nothing is run**: take the text to your database's own tools, or to a change
+request. Stewards, designers and admins can use it.
+
+1. Choose the **Statement**:
+   - **CREATE TABLE for this table**: its columns, whether each allows nulls, its primary key, and
+     its plain indexes;
+   - **ALTER TABLE: add a column**: a name, a kind, and a length for text or digits for a decimal;
+   - **CREATE INDEX**: a name, its columns in the order you tick them, and whether it is unique;
+   - **DROP INDEX**: one of the table's indexes (not the primary key's);
+   - **DROP TABLE** and **TRUNCATE TABLE**.
+2. Choose the **Database** to write it for. It is the source's own by default; choose another to
+   move a table, for example from SQL Server to PostgreSQL. A Generic JDBC source has no dialect
+   of its own, so you choose one.
+3. Press **Generate SQL**, then **Copy** or **Save as .sql**.
+
+### What the SQL holds
+
+- **The types a pipeline would choose.** Each column gets the type a pipeline's write node gives
+  it in `create` mode ([Writing data](writing-data.md)), so the table is the one a pipeline would
+  make. Text keeps its length; decimals keep their digits.
+- **Names always quoted** and with their schema, so a name with a space or a capital letter is
+  kept exactly.
+- **Nothing that can quote a value.** Defaults, checks, comments, triggers, grants, partitions, an
+  index on an expression and a partial index are never copied: their text can hold values from the
+  data. A column whose type Kilnmark has no kind for (a JSON or range type, say) is written as
+  text. Foreign keys are left for you to add once the tables they point to exist. Under **Left
+  out or changed**, the page lists what it left out of this table and what it wrote differently.
+- **What each database can hold.** A decimal without digits of its own is written as the database's
+  own unconstrained decimal where it has one (PostgreSQL `numeric`, Oracle `NUMBER`) and with the
+  most digits it keeps where it has not. A text column in a key or an index gets a length where the
+  database cannot index text without one (450 characters on SQL Server, 768 on MySQL and MariaDB,
+  1,000 on Oracle). MySQL and MariaDB tables are UTF-8 (`utf8mb4`), as a pipeline makes them.
+- **Names as the database keeps them.** Names read from the same database are written exactly as
+  they are stored. Names you type, and every name when writing for another database, are written
+  as that database stores a plain name: Oracle keeps `orders` as `ORDERS`.
+- **Indexes are plain.** Full-text, spatial, GIN or GiST kinds, descending order and prefix lengths
+  are not copied; check them. A Generic JDBC source says nothing of its indexes or sizes, so its
+  SQL has none.
+- **Safe forms.** `DROP TABLE` never cascades to other objects; on PostgreSQL a truncate is
+  `TRUNCATE ONLY`, so child tables are not emptied with it (a partitioned table is truncated a
+  partition at a time instead); on Oracle a dropped table goes to the recycle bin. Adding a column
+  that allows no nulls works only on an empty table, and the page says so.

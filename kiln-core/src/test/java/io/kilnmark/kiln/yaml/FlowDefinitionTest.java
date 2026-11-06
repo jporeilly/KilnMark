@@ -620,4 +620,46 @@ class FlowDefinitionTest {
             .contains("at_least is for a file"));
         assertTrue(firstProblem(WAITS.replace("    every: 2m\n", "    priority: high\n")).contains("has no setting 'priority'"));
     }
+
+    // ---- retries (ADR 0041) ----
+
+    @Test
+    void readsRetriesOnRunPipelineForEachAndSqlNodes() {
+        String load = "    pipeline: orders-load\n";
+        FlowDefinition.Parsed p = FlowDefinition.parse(SQL.replace(load, load + "    retries: 3\n    retry_delay: 30s\n")
+            .replace("    source: warehouse\n", "    source: warehouse\n    retries: 1\n"));
+        assertTrue(p.valid(), p.problems().toString());
+        FlowDefinition.Node n = p.definition().node("load");
+        assertEquals(3, n.retries());
+        assertEquals(Duration.ofSeconds(30), n.retry().before(1));
+        assertEquals(Duration.ofSeconds(60), n.retry().before(2), "doubled each time");
+        assertEquals(Duration.ofSeconds(120), n.retry().before(3));
+        assertEquals(1, p.definition().node("empty").retries());
+        assertEquals(FlowDefinition.DEFAULT_RETRY_DELAY, p.definition().node("empty").retry().delay(), "1m unless written");
+        assertEquals(0, FlowDefinition.parse(SQL).definition().node("load").retries(), "none unless written");
+        assertEquals(null, FlowDefinition.parse(SQL.replace(load, load + "    retries: 0\n")).definition().node("load")
+            .retry(), "0 is none");
+        FlowDefinition.Parsed each = FlowDefinition.parse(FAN.replace("    max_parallel: 2\n",
+            "    max_parallel: 2\n    retries: 2\n"));
+        assertTrue(each.valid(), each.problems().toString());
+        assertEquals(2, each.definition().node("regions").retries());
+    }
+
+    @Test
+    void checksRetries() {
+        String load = "    pipeline: orders-load\n";
+        for (String bad : List.of("6", "-1", "2.5", "many", "[1]")) {
+            assertTrue(firstProblem(SQL.replace(load, load + "    retries: " + bad + "\n"))
+                .contains("a whole number from 0 to 5"), bad);
+        }
+        for (String bad : List.of("5s", "2h", "soon")) {
+            assertTrue(firstProblem(SQL.replace(load, load + "    retries: 1\n    retry_delay: " + bad + "\n"))
+                .contains("retry_delay is the wait"), bad);
+        }
+        assertTrue(firstProblem(SQL.replace(load, load + "    retry_delay: 1m\n")).contains("set retries too"));
+        // Only nodes whose failure may pass are tried again.
+        assertTrue(firstProblem(SQL.replace("    title: \"Emptied", "    retries: 1\n    title: \"Emptied"))
+            .contains("has no setting 'retries'"));
+        assertTrue(firstProblem(WAITS.replace("    every: 2m\n", "    retries: 1\n")).contains("has no setting 'retries'"));
+    }
 }

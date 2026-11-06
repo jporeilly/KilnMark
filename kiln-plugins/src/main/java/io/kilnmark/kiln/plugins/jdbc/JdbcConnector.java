@@ -666,7 +666,8 @@ public abstract class JdbcConnector implements Connector {
                     .stream().map(col -> col.withKind(kinds.get(col.name()))).toList();
                 Set<String> names = new java.util.HashSet<>();
                 columns.forEach(col -> names.add(col.name()));
-                return new io.kilnmark.kiln.connect.TableDetail(a.path(), a.kind(), columns, pk.columns(),
+                return new io.kilnmark.kiln.connect.TableDetail(a.path(), schema, table, a.kind(), columns,
+                    pk.columns(),
                     isTable ? JdbcExplorer.foreignKeys(md, scope, table, true) : List.of(),
                     isTable ? JdbcExplorer.foreignKeys(md, scope, table, false) : List.of(),
                     isTable ? refineIndexes(c, schema, table, JdbcExplorer.indexes(md, scope, table, pk, names))

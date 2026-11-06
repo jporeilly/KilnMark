@@ -91,6 +91,14 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
      * runs on its flow's own watcher, never queued, so a priority would order nothing.
      */
     public static final Set<String> PRIORITISED = Set.of(RUN_PIPELINE, FOR_EACH);
+    /** The node types that take {@code retries} (ADR 0041). */
+    public static final Set<String> RETRIED = Set.of(RUN_PIPELINE, FOR_EACH, SQL);
+    /** The most tries again a node may have. */
+    public static final int MAX_RETRIES = 5;
+    /** The wait before the first try again, when a node does not say, and the least and most it may. */
+    public static final Duration DEFAULT_RETRY_DELAY = Duration.ofMinutes(1);
+    public static final Duration MIN_RETRY_DELAY = Duration.ofSeconds(10);
+    public static final Duration MAX_RETRY_DELAY = Duration.ofHours(1);
     /** A node's {@code priority} as written, and as the job queue stores it: higher is taken first (ADR 0041). */
     public static final Map<String, Integer> PRIORITIES = Map.of("high", 1, "normal", 0, "low", -1);
     static final int MAX_TITLE = 200;
@@ -125,12 +133,13 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         "max_parallel", "nodes", "connections", "layout");
     static final Set<String> NODE_KEYS = Set.of("id", "type");
     static final Map<String, Set<String>> TYPE_KEYS = Map.of(
-        RUN_PIPELINE, Set.of("pipeline", "version", "with", "timeout", "priority"),
-        FOR_EACH, Set.of("pipeline", "version", "items", "as", "with", "max_parallel", "timeout", "priority"),
+        RUN_PIPELINE, Set.of("pipeline", "version", "with", "timeout", "priority", "retries", "retry_delay"),
+        FOR_EACH, Set.of("pipeline", "version", "items", "as", "with", "max_parallel", "timeout", "priority", "retries",
+            "retry_delay"),
         STOP, Set.of("status", "message"),
         NOTIFY, Set.of("severity", "title", "message"),
         WAIT, Set.of("for"),
-        SQL, Set.of("source", "statements", "timeout"),
+        SQL, Set.of("source", "statements", "timeout", "retries", "retry_delay"),
         CHECK_SOURCE, Set.of("source", "tables", "files", "timeout"),
         WAIT_FOR, Set.of("source", "file", "at_least", "query", "every", "timeout"));
     static final Set<String> CONNECTION_KEYS = Set.of("from", "to", "when");
@@ -153,16 +162,37 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
      * 1 high, 0 normal (the default), -1 low (ADR 0041). A {@link #CHECK_SOURCE} node has
      * {@code source} and {@code check}: the tables and files it looks for. A {@link #WAIT_FOR} node
      * has {@code source}, {@code until} (what it waits for, and how often it looks) and
-     * {@code timeout}: how long it waits before it gives up.
+     * {@code timeout}: how long it waits before it gives up. {@code retry} is how often a run-pipeline,
+     * for-each (each item) or sql node is tried again after a failure, and the wait before; null for none.
      */
     public record Node(String id, String type, String pipeline, Integer version, String status, String message,
                        Position position, Map<String, Position> keys, Map<String, Object> with, String severity,
                        String title, Duration waitFor, String source, List<String> statements, Each each,
-                       Duration timeout, int priority, Check check, Until until) {
+                       Duration timeout, int priority, Check check, Until until, Retry retry) {
 
         public Node {
             with = with == null ? Map.of() : java.util.Collections.unmodifiableMap(new LinkedHashMap<>(with));
             statements = statements == null ? List.of() : List.copyOf(statements);
+        }
+
+        /** A node that is never tried again. */
+        public Node(String id, String type, String pipeline, Integer version, String status, String message,
+                    Position position, Map<String, Position> keys, Map<String, Object> with, String severity,
+                    String title, Duration waitFor, String source, List<String> statements, Each each,
+                    Duration timeout, int priority, Check check, Until until) {
+            this(id, type, pipeline, version, status, message, position, keys, with, severity, title, waitFor, source,
+                statements, each, timeout, priority, check, until, null);
+        }
+
+        /** The node as written, tried again {@code retry.retries()} times after a failure (ADR 0041). */
+        Node withRetry(Retry r) {
+            return new Node(id, type, pipeline, version, status, message, position, keys, with, severity, title,
+                waitFor, source, statements, each, timeout, priority, check, until, r);
+        }
+
+        /** How many times the node is tried again after a failure: 0 when it is not. */
+        public int retries() {
+            return retry == null ? 0 : retry.retries();
         }
 
         /** A node that waits for nothing. */
@@ -222,6 +252,17 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         /** Where {@code key} is written, or where the node starts if it is not. */
         public Position at(String key) {
             return keys.getOrDefault(key, position);
+        }
+    }
+
+    /**
+     * How a node is tried again (ADR 0041): up to {@code retries} more times after a failure, waiting
+     * {@code delay} before the first, doubled before each one after.
+     */
+    public record Retry(int retries, Duration delay) {
+        /** The wait before try {@code n} (1 for the first try again): the delay, doubled each time. */
+        public Duration before(int n) {
+            return delay.multipliedBy(1L << Math.max(0, Math.min(n - 1, 10)));
         }
     }
 
@@ -396,6 +437,11 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
             Map<String, Position> ids = new HashMap<>();
             for (YamlReader.Node item : list.items()) {
                 Node s = node(item, ids, names, declared, problems);
+                if (s != null && s.type() != null && item instanceof YamlReader.Mapping m
+                    && RETRIED.contains(s.type())) {
+                    Retry r = retry(m, s.id(), problems);
+                    s = r == null ? s : s.withRetry(r);
+                }
                 if (s != null) {
                     nodes.add(s);
                 }
@@ -923,6 +969,31 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
             }
         }
         return out;
+    }
+
+    /**
+     * A node's {@code retries} (0 to {@value #MAX_RETRIES}) and {@code retry_delay} (10s to 1h, 1m when
+     * not written), or null when it is never tried again. Whether trying it again could write twice is
+     * for the server to check, against the pipeline it runs.
+     */
+    private static Retry retry(YamlReader.Mapping m, String id, List<Problem> problems) {
+        YamlReader.Entry r = m.entries().get("retries");
+        YamlReader.Entry d = m.entries().get("retry_delay");
+        int retries = 0;
+        if (r != null) {
+            if (r.value().value() instanceof Integer n && n >= 0 && n <= MAX_RETRIES) {
+                retries = n;
+            } else {
+                problems.add(Problem.at(r.value().position(), id, "retries is how many times the node is tried again "
+                    + "after a failure: a whole number from 0 to " + MAX_RETRIES));
+            }
+        }
+        if (d != null && r == null) {
+            problems.add(Problem.at(d.keyPosition(), id, "retry_delay is the wait before trying again: set retries too"));
+        }
+        Duration delay = between(d, MIN_RETRY_DELAY, MAX_RETRY_DELAY, DEFAULT_RETRY_DELAY, "retry_delay is the wait "
+            + "before the first try again, doubled before each after: 10s to 1h, such as 1m", id, problems);
+        return retries == 0 ? null : new Retry(retries, delay);
     }
 
     /**

@@ -711,7 +711,8 @@ public class GenericJdbcConnector extends JdbcConnector {
     public io.kilnmark.kiln.connect.TableDetail explore(SourceConfig source, String path, Duration timeout)
         throws ConnectorException {
         AssetInfo a = asset(source, path);
-        return new io.kilnmark.kiln.connect.TableDetail(a.path(), a.kind(), a.fields().stream()
+        return new io.kilnmark.kiln.connect.TableDetail(a.path(), a.hints().getOrDefault("schema", a.container()),
+            a.hints().getOrDefault("table", a.name()), a.kind(), a.fields().stream()
             .map(f -> new io.kilnmark.kiln.connect.TableDetail.Column(f.name(), f.position(), f.sourceType(), null,
                 null, f.nullable(), false, false, f.kind())).toList(),
             a.primaryKey(), List.of(), List.of(), List.of(), null);

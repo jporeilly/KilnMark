@@ -34,7 +34,11 @@ final class SqlAction {
     static final String KIND = "postgresql";
 
     /** How a sql node ended: rows changed when it succeeded, else why it did not, in Kilnmark's words. */
-    record Outcome(boolean succeeded, long rowsAffected, String message) {
+    record Outcome(boolean succeeded, long rowsAffected, String message, boolean inDoubt) {
+
+        Outcome(boolean succeeded, long rowsAffected, String message) {
+            this(succeeded, rowsAffected, message, false);
+        }
 
         static Outcome failed(String message) {
             return new Outcome(false, 0, message);
@@ -207,7 +211,14 @@ final class SqlAction {
                     c.rollback();
                     return Outcome.failed(STOPPED);
                 }
-                c.commit();
+                try {
+                    c.commit();
+                } catch (SQLException e) {
+                    // The commit may have reached the database before the connection failed: never tried again.
+                    return new Outcome(false, 0, "Node " + node.id() + ": the commit failed (SQLSTATE "
+                        + e.getSQLState() + "), so whether its statements changed anything is not known. Check "
+                        + "before running it again", true);
+                }
             }
             return new Outcome(true, rows, "Ran " + n + (n == 1 ? " statement" : " statements") + " on "
                 + node.source() + "; " + rows + (rows == 1 ? " row" : " rows") + " changed");

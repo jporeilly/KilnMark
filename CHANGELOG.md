@@ -15,6 +15,13 @@ details.
   going, is not made up. Set through the API for now; the pages follow.
   ([Running pipelines and flows on a schedule](docs/guide/schedules.md))
 
+- **Try a node again after a failure** (ADR 0041). A `run-pipeline`, `for-each` or `sql` node's
+  `retries` (0 to 5) tries it again when it fails or times out, waiting `retry_delay` (1 minute
+  unless set), doubled each time. A cancel is never tried again, and a pipeline is tried again only
+  if its writes replace or upsert, so nothing is written twice. Each try is a pipeline run of its
+  own, listed on the run page. Upgrading adds a column to `pipeline_run` (migration V35).
+  ([Trying a node again after a failure](docs/guide/flows.md#trying-a-node-again-after-a-failure))
+
 - **Wait until a file arrives or a query is true** (ADR 0041). A flow's new `wait-for` node looks
   every so often, holding no worker in between, until enough files matching a pattern are on a file
   source, or a read-only query on a PostgreSQL source with Allow SQL on returns true, then lets the
@@ -25,6 +32,12 @@ details.
   that a source can be reached and holds the tables or files the flow needs, keeping no data, and
   fails at once, naming what is missing, if not. Its `missing` value can go in a notice.
   ([Checking a source before the work starts](docs/guide/flows.md#checking-a-source-before-the-work-starts))
+- **Generate SQL for a table** ([Database tools](docs/guide/database-tools.md#generate-sql-for-a-table),
+  ADR 0045). Explore's new **SQL** tab writes `CREATE TABLE`, `ALTER TABLE … ADD`, `CREATE INDEX`,
+  `DROP INDEX`, `DROP TABLE` or `TRUNCATE` for a table, in its database's dialect or another's, to
+  copy or save as `.sql`. Nothing is run. Types are the ones a pipeline's `create` mode chooses;
+  names are quoted; defaults, checks, comments and expressions are never copied, and the page says
+  what was left out.
 - **Explore a database source** ([Database tools](docs/guide/database-tools.md), ADR 0045). A
   database source's page shows its schemas, the tables and views of one, and a table's columns,
   keys (both ways), indexes and the database's estimate of its rows, read live; **Count exactly**
@@ -36,8 +49,8 @@ details.
   indexes with a masked preview; generate `CREATE TABLE`, `ALTER`, `CREATE INDEX` and `DROP` in
   each database's dialect; connection settings on tabs; and operations that change a database,
   behind a per-source Allow changes switch, previewed, confirmed and audited, with a second
-  person's approval on production sources. ADR 0045 amends ADR 0028. Explore is built (above);
-  the rest follows.
+  person's approval on production sources. ADR 0045 amends ADR 0028. Explore and the SQL
+  generator are built (above); settings on tabs and operations follow.
 
 ### Details
 

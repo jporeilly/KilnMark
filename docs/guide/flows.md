@@ -198,6 +198,62 @@ long it was allowed:
 
 ![A run of nightly-takings in which the takings node timed out: the diagram outlines takings red as Failed, its notice node too-slow green as Succeeded through the on failure connection, and done as Skipped; the run timeline has a red bar for takings, chosen, with its details below (Failed, took 3.1 s, "Took longer than 2s and was stopped; its pipeline run was cancelled", reported timed_out true); the Nodes table shows takings as Failed and Timed out, with a link to its pipeline run](images/flow-run-timed-out.png)
 
+## Trying a node again after a failure
+
+A `run-pipeline`, `for-each` or `sql` node may be tried again when it fails, with `retries`. Use it
+for failures that pass on their own: a database restarting, a network drop, a lock held a little too
+long.
+
+![How a node is tried again: each try is a pipeline run of its own. If it succeeds, the node succeeds. If a person or the flow cancelled it, it is never tried again. If it failed or timed out and it has tries left, and trying again is safe, the node waits its retry_delay, doubled before each try, then tries again; otherwise it fails, saying after how many tries. Safe means a sql node whose statements failed, as they were rolled back, and a pipeline only if its writes replace or upsert; a sql commit that failed is never tried again. A for-each node tries each failed item on its own.](images/flow-retries.svg)
+
+```yaml
+nodes:
+  - id: load
+    type: run-pipeline
+    pipeline: orders-load       # every write replaces or upserts
+    retries: 3                  # up to 3 more tries; 0 to 5
+    retry_delay: 2m             # wait 2m, then 4m, then 8m; 10s to 1h, 1m when left out
+    timeout: 30m                # each try has the whole timeout
+
+  - id: regions
+    type: for-each
+    pipeline: sales-by-region
+    items: [EMEA, APAC, AMER]
+    as: region
+    retries: 1                  # each failed item is tried once more, on its own
+
+  - id: tidy
+    type: sql
+    source: warehouse
+    statements: ["DELETE FROM staging.orders"]
+    retries: 2
+```
+
+- **A try that fails or takes longer than its timeout is tried again**, after `retry_delay`, which
+  doubles before each try after. The node shows **Running** while it waits, with a message such as
+  "Try 1 of 4 failed; trying again in 2m". Only once its last try fails does the node fail, saying
+  "..., after 4 tries", and its `failure` connection is taken.
+- **A cancel is never tried again**: a pipeline run cancelled on its page, or a flow cancelled or
+  stopped, ends the node as it would without retries.
+- **Trying again must not write twice.** A pipeline that appends, or creates its target, would write
+  its rows a second time. So saving a flow refuses `retries` on a node whose pipeline has a `write`
+  node that does not `replace` or `upsert`, naming it ("... must replace or upsert: out appends").
+  Before each try again, the version the failed run used is checked once more, as a node with no
+  `version` runs the latest, which may have changed since: if it now appends, the node fails.
+- **A `sql` node** is tried again after its statements fail, as its transaction was rolled back. If
+  the commit itself fails (the connection dropped as it committed), whether anything changed is not
+  known, so it is never tried again: the node fails and says to check first.
+- **Each try is a pipeline run of its own.** The node shows its last try. On the run's page, choose
+  the node (or a for-each item) in the timeline to see **Tries**: each try, how it ended, and a link
+  to its pipeline run. A for-each item counts as its last try ended, and the node tries each failed
+  item on its own while the others go on; an item waiting for its next try shows **Pending**. The
+  run's totals (pipeline runs, rows written) count every try.
+- An item waiting for its next try counts as failed if the node stops early: the flow is cancelled,
+  or it gave up waiting for another run of its pipeline (the flow's `queue_timeout`, which a try
+  again waits for too).
+- On the diagram, choose the node and set **Tries again** and **Wait before trying again** on its
+  Settings tab.
+
 ## Choosing which runs start first
 
 When more pipeline runs wait than there are workers free, a `run-pipeline` or `for-each` node's
