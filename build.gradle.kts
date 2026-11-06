@@ -6,7 +6,7 @@ import net.ltgt.gradle.errorprone.errorprone
 
 plugins {
     alias(libs.plugins.quarkus) apply false
-    id("com.github.jk1.dependency-license-report") version "3.1.4" apply false
+    id("com.github.jk1.dependency-license-report") version "3.1.5" apply false
     // A CycloneDX SBOM of what the server ships, with every release (docs/design/supply-chain.md).
     id("org.cyclonedx.bom") version "3.5.1" apply false
     // Static analysis of the Java code, inside the compiler (ADR 0042).
