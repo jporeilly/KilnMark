@@ -390,6 +390,14 @@ public interface KilnmarkConfig {
          */
         @WithDefault("1h")
         Duration catchUp();
+
+        /**
+         * A schedule set by a person signed in through the identity provider pauses when their latest
+         * sign-in is older than this: someone who has left and is disabled at the provider never
+         * signs in again (ADR 0046). Schedules set with an API token are not affected.
+         */
+        @WithDefault("30d")
+        Duration signedInWithin();
     }
 
     interface Files {

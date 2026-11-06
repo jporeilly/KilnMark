@@ -1,7 +1,7 @@
 -- Schedules (ADR 0046, docs/design/schedules.md): pipelines and flows that run at set times. A
 -- schedule is a row here, not part of the YAML: who a scheduled run acts as is the decision of the
 -- designer or admin who sets it, and changing a time must not make a new version. Refers only to
--- V12 (pipeline, pipeline_run) and V20 (flow, flow_run).
+-- V4 (api_token), V12 (pipeline, pipeline_run), V20 (flow, flow_run) and V28 (audit_event).
 
 SET search_path = kilnmark, public;
 
@@ -29,7 +29,7 @@ CREATE TABLE schedule (
     created_at         timestamptz NOT NULL DEFAULT now(),
     updated_by         text NOT NULL,
     updated_at         timestamptz NOT NULL DEFAULT now(),
-    set_by_token       bigint,
+    set_by_token       bigint REFERENCES api_token (id),   -- tokens are revoked, never deleted
     set_by_person      text CHECK (set_by_person IS NULL OR length(set_by_person) BETWEEN 1 AND 128),
     next_at            timestamptz,
     last_at            timestamptz,
@@ -48,3 +48,12 @@ CREATE INDEX schedule_token_idx ON schedule (set_by_token) WHERE set_by_token IS
 CREATE INDEX schedule_person_idx ON schedule (set_by_person) WHERE set_by_person IS NOT NULL;
 -- What the scheduler reads every poll: the schedules that are due.
 CREATE INDEX schedule_due_idx ON schedule (next_at) WHERE enabled;
+
+-- Before every fire, a schedule a person set is checked against their latest sign-in (ADR 0046):
+-- the sign-in events by the person's key, and by name for those recorded before the key was.
+-- Building them reads the audit log once; its rows are written by a thread of their own, so no
+-- request waits meanwhile.
+CREATE INDEX audit_event_sign_in_person_idx ON audit_event ((detail ->> 'person'), at DESC, id DESC)
+    WHERE action IN ('auth.sign_in', 'auth.sign_in_refused');
+CREATE INDEX audit_event_sign_in_actor_idx ON audit_event (actor, at DESC, id DESC)
+    WHERE action IN ('auth.sign_in', 'auth.sign_in_refused');

@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
@@ -57,6 +59,52 @@ class ScheduleRulesTest {
         assertEquals(403, refused.getResponse().getStatus());
         service.requireIdentity(new ScheduleStore.Setter("ci", 4L, null));
         service.requireIdentity(new ScheduleStore.Setter("sso:Pat (p1)", null, "p:0123"));
+    }
+
+    /** Settings: one group per role, as the identity provider's groups are mapped now. */
+    private static io.kilnmark.server.KilnmarkConfig.Oidc oidc() {
+        return new io.kilnmark.server.KilnmarkConfig.Oidc() {
+            @Override public String providerName() { return "Example"; }
+            @Override public String groupsClaim() { return "groups"; }
+            @Override public Optional<List<String>> viewerGroups() { return Optional.of(List.of("km-viewers")); }
+            @Override public Optional<List<String>> stewardGroups() { return Optional.of(List.of("km-stewards")); }
+            @Override public Optional<List<String>> designerGroups() { return Optional.of(List.of("km-designers")); }
+            @Override public Optional<List<String>> adminGroups() { return Optional.of(List.of("km-admins")); }
+            @Override public Optional<List<String>> unmaskGroups() { return Optional.empty(); }
+            @Override public boolean requireMfa() { return true; }
+            @Override public Optional<List<String>> mfaAcr() { return Optional.empty(); }
+            @Override public Duration maxSession() { return Duration.ofHours(8); }
+        };
+    }
+
+    @Test
+    void aPersonIsCheckedByTodaysGroupMappingAndARecentSignIn() {
+        Duration month = Duration.ofDays(30);
+        Instant yesterday = NOW.minus(Duration.ofDays(1));
+        // signed in as a designer through km-designers, which still gives designer
+        assertNull(Setters.personProblem(new io.kilnmark.server.audit.AuditLog.Standing(AccessRole.DESIGNER,
+            List.of("km-designers", "other"), yesterday), AccessRole.DESIGNER, oidc(), month, NOW));
+        // km-designers was given designer when they signed in; now it gives nothing: the lower counts
+        Setters.Problem p = Setters.personProblem(new io.kilnmark.server.audit.AuditLog.Standing(AccessRole.DESIGNER,
+            List.of("old-designers"), yesterday), AccessRole.STEWARD, oidc(), month, NOW);
+        assertEquals(ScheduleStore.PAUSED, p.outcome());
+        assertEquals("the person's groups no longer give the role", p.reason());
+        // their groups give steward now: enough for a steward schedule, not a designer one
+        assertNull(Setters.personProblem(new io.kilnmark.server.audit.AuditLog.Standing(AccessRole.DESIGNER,
+            List.of("km-stewards"), yesterday), AccessRole.STEWARD, oidc(), month, NOW));
+        assertEquals(ScheduleStore.PAUSED, Setters.personProblem(new io.kilnmark.server.audit.AuditLog.Standing(
+            AccessRole.DESIGNER, List.of("km-stewards"), yesterday), AccessRole.DESIGNER, oidc(), month, NOW).outcome());
+        // groups never raise the recorded role
+        assertEquals(ScheduleStore.PAUSED, Setters.personProblem(new io.kilnmark.server.audit.AuditLog.Standing(
+            AccessRole.STEWARD, List.of("km-admins"), yesterday), AccessRole.DESIGNER, oidc(), month, NOW).outcome());
+        // a sign-in recorded before groups were keeps its role
+        assertNull(Setters.personProblem(new io.kilnmark.server.audit.AuditLog.Standing(AccessRole.DESIGNER, null,
+            yesterday), AccessRole.DESIGNER, oidc(), month, NOW));
+        // no sign-in for longer than the setting: paused, saying so
+        Setters.Problem old = Setters.personProblem(new io.kilnmark.server.audit.AuditLog.Standing(AccessRole.DESIGNER,
+            List.of("km-designers"), NOW.minus(Duration.ofDays(31))), AccessRole.DESIGNER, oidc(), month, NOW);
+        assertEquals("paused: the person who set it has not signed in for 30 days", old.outcome());
+        assertEquals("paused", ScheduleService.outcomeWithoutReason(old.outcome()));
     }
 
     @Test

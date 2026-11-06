@@ -173,38 +173,75 @@ public class AuditLog {
     }
 
     /**
-     * The role a person signed in through the identity provider holds now, as the access review
-     * reads it (ADR 0037): their latest sign-in's role, unless a later sign-in was refused because
-     * none of their groups has a role any more; other refusals (no second factor, say) take nothing
-     * away. Empty when they hold none, or Kilnmark has no sign-in of theirs. {@code person} is the
-     * key sign-ins record ({@code OidcIdentityAugmentor.personRef}); {@code actor} their name, for
-     * sign-ins recorded before that key was.
+     * What a person signed in through the identity provider last had, as the access review reads it
+     * (ADR 0037): {@code role} as recorded (null for none, or one this server does not know),
+     * {@code groups} their group names (null for a sign-in recorded before they were), and
+     * {@code at}, when that sign-in was.
      */
-    public Optional<AccessRole> providerRole(String person, String actor) {
+    public record Standing(AccessRole role, List<String> groups, Instant at) {
+    }
+
+    /** The sign-in actions, written into the queries so their partial indexes (V36) serve them. */
+    private static final String SIGN_INS = "action IN ('" + SIGN_IN + "', '" + SIGN_IN_REFUSED + "')";
+
+    /**
+     * A person's standing now: their latest sign-in with a role, unless a later sign-in was refused
+     * because none of their groups has a role any more; other refusals (no second factor, say) take
+     * nothing away. Empty when they hold no role or Kilnmark has no sign-in of theirs. Read by
+     * {@code person}, the key sign-ins record ({@code OidcIdentityAugmentor.personRef}); only when
+     * none carries it, by {@code actor}, their name, among sign-ins recorded before the key was.
+     */
+    public Optional<Standing> providerStanding(String person, String actor) {
         return db.tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement("SELECT action, detail::text FROM kilnmark.audit_event "
-                + "WHERE action IN (?, ?) AND (detail ->> 'person' = ? OR actor = ?) ORDER BY at DESC, id DESC "
-                + "LIMIT 500")) {
-                ps.setString(1, SIGN_IN);
-                ps.setString(2, SIGN_IN_REFUSED);
-                ps.setString(3, person);
-                ps.setString(4, actor);
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        Map<String, Object> d = detail(rs.getString(2));
-                        if (SIGN_IN.equals(rs.getString(1))) {
-                            Object role = d.get("role");
-                            return role == null ? Optional.<AccessRole>empty()
-                                : Optional.of(AccessRole.parse(String.valueOf(role)));
-                        }
-                        if (OidcAccess.NO_GROUP.equals(d.get("reason"))) {
-                            return Optional.<AccessRole>empty();
-                        }
+            Optional<Optional<Standing>> byKey = standing(c, "detail ->> 'person' = ?", person);
+            if (byKey.isPresent()) {
+                return byKey.get();
+            }
+            return standing(c, "actor = ? AND detail ->> 'person' IS NULL", actor).orElse(Optional.empty());
+        });
+    }
+
+    /** The standing the matching sign-ins give, newest first; empty when there are none. */
+    private Optional<Optional<Standing>> standing(java.sql.Connection c, String where, String value)
+        throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT action, detail::text, at FROM kilnmark.audit_event "
+            + "WHERE " + SIGN_INS + " AND " + where + " ORDER BY at DESC, id DESC LIMIT 500")) {
+            ps.setString(1, value);
+            try (ResultSet rs = ps.executeQuery()) {
+                boolean any = false;
+                while (rs.next()) {
+                    any = true;
+                    Map<String, Object> d = detail(rs.getString(2));
+                    if (SIGN_IN.equals(rs.getString(1))) {
+                        return Optional.of(Optional.of(new Standing(knownRole(d.get("role")), groupNames(d.get("groups")),
+                            Db.instant(rs.getTimestamp(3)))));
+                    }
+                    if (OidcAccess.NO_GROUP.equals(d.get("reason"))) {
+                        return Optional.of(Optional.<Standing>empty());
                     }
                 }
+                return any ? Optional.of(Optional.<Standing>empty()) : Optional.empty();
             }
-            return Optional.<AccessRole>empty();
-        });
+        }
+    }
+
+    /** A recorded role, or null when there is none or this server does not know it (counts as none). */
+    private static AccessRole knownRole(Object role) {
+        if (role == null) {
+            return null;
+        }
+        try {
+            return AccessRole.parse(String.valueOf(role));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private static List<String> groupNames(Object groups) {
+        if (!(groups instanceof List<?> l)) {
+            return null;
+        }
+        return l.stream().filter(g -> g != null).map(String::valueOf).toList();
     }
 
     /** Everyone who has signed in with the identity provider and been given a role, most recent first. */

@@ -160,10 +160,7 @@ public class ScheduleResource {
      * person signed in through the identity provider by an opaque key, else the API token used.
      */
     private ScheduleStore.Setter setter() {
-        String person = io.kilnmark.server.auth.OidcIdentityAugmentor.personRef(identity);
-        Long token = person != null || identity.isAnonymous() ? null
-            : identity.getAttribute(io.kilnmark.server.auth.ApiTokenIdentityProvider.TOKEN_ID);
-        return new ScheduleStore.Setter(who(), token == null || token == 0 ? null : token, person);
+        return ScheduleService.setter(identity, who());
     }
 
     private AccessRole role() {

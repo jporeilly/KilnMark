@@ -95,6 +95,18 @@ public class ScheduleService {
 
     // ---- changing ----
 
+    /**
+     * Who is setting a schedule, as {@code identity} says: {@code name}, and the identity each fire
+     * checks the role of: a person signed in through the identity provider by the same opaque key
+     * their sign-ins record ({@code OidcIdentityAugmentor.personRef}), else the API token used.
+     */
+    public static ScheduleStore.Setter setter(io.quarkus.security.identity.SecurityIdentity identity, String name) {
+        String person = io.kilnmark.server.auth.OidcIdentityAugmentor.personRef(identity);
+        Long token = person != null || identity.isAnonymous() ? null
+            : identity.getAttribute(io.kilnmark.server.auth.ApiTokenIdentityProvider.TOKEN_ID);
+        return new ScheduleStore.Setter(name, token == null || token == 0 ? null : token, person);
+    }
+
     /** Only designers and admins set schedules (ADR 0046), whatever the API's roles say. */
     static void requireSetter(AccessRole caller) {
         if (caller == null || !caller.atLeast(AccessRole.DESIGNER)) {

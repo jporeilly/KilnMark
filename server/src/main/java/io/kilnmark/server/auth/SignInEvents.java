@@ -2,6 +2,7 @@ package io.kilnmark.server.auth;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.eclipse.microprofile.jwt.JsonWebToken;
@@ -18,6 +19,8 @@ import jakarta.enterprise.event.Observes;
  */
 @ApplicationScoped
 public class SignInEvents {
+
+    private static final org.jboss.logging.Logger LOG = org.jboss.logging.Logger.getLogger(SignInEvents.class);
 
     private final KilnmarkConfig config;
     private final AuditLog audit;
@@ -48,15 +51,35 @@ public class SignInEvents {
         if (person != null) {
             detail.put("person", person); // opaque: what a schedule set by this person is checked by
         }
+        // the group names, so a schedule the person set is checked against today's mapping (ADR 0046)
+        detail.put("groups", groups(OidcAccess.groupsOf(config.auth().oidc(), token::getClaim)));
         AuditLog.Actor actor = new AuditLog.Actor(OidcIdentityAugmentor.actorName(token), null);
         audit.record(actor, d.allowed() ? AuditLog.SIGN_IN : AuditLog.SIGN_IN_REFUSED, "session", detail);
         if (person != null && schedules != null) {
-            // as the access review reads it: no group takes the role away, other refusals do not
-            if (d.allowed()) {
-                schedules.personSignedIn(person, d.role(), actor);
-            } else if (OidcAccess.NO_GROUP.equals(d.refusal())) {
-                schedules.personSignedIn(person, null, actor);
+            try {
+                // as the access review reads it: no group takes the role away, other refusals do not
+                if (d.allowed()) {
+                    schedules.personSignedIn(person, d.role(), actor);
+                } else if (OidcAccess.NO_GROUP.equals(d.refusal())) {
+                    schedules.personSignedIn(person, null, actor);
+                }
+            } catch (RuntimeException e) {
+                // never fail a sign-in for this: each schedule is checked again before it runs
+                LOG.errorf("Could not pause the schedules of a person who signed in with less of a role (%s); "
+                    + "each is checked again before it runs", e.getClass().getSimpleName());
             }
         }
+    }
+
+    /** At most this many group names are recorded with a sign-in, each at most this long. */
+    static final int MAX_GROUPS = 200;
+    static final int MAX_GROUP_NAME = 200;
+
+    /** The group names as recorded: sorted, without blanks or control characters, limited. */
+    static List<String> groups(List<String> names) {
+        return names.stream().filter(n -> n != null && !n.isBlank()).map(String::strip)
+            .map(n -> n.replaceAll("\\p{Cntrl}", "?"))
+            .map(n -> n.length() > MAX_GROUP_NAME ? n.substring(0, MAX_GROUP_NAME) : n)
+            .distinct().sorted().limit(MAX_GROUPS).toList();
     }
 }

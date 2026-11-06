@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.jboss.logging.Logger;
 
@@ -179,26 +180,38 @@ public class Scheduler {
     }
 
     /**
-     * Queues one claimed schedule's run, as Run now would, and records what happened. First, whoever
-     * set it must still hold its role: if not, nothing runs and the schedule is paused, recorded in
-     * the audit log (ADR 0046).
+     * Finishes one claimed fire, under the schedule's row lock (ScheduleStore.fire): whoever set it
+     * must still hold its role, or nothing runs and it is paused, recorded in the audit log
+     * (ADR 0046); then its run is queued, as Run now would, and the outcome recorded. A run already
+     * queued or running is never cancelled by a pause.
      */
-    private void run(ScheduleStore.Schedule s) {
-        String problem;
+    private void run(ScheduleStore.Schedule claimed) {
+        Optional<ScheduleStore.Fired> fired;
+        try {
+            fired = store.fire(claimed, this::decide);
+        } catch (RuntimeException e) {
+            LOG.warnf("Schedule %d of %s: could not finish its fire (%s)", claimed.id(),
+                ScheduleService.target(claimed), e.getClass().getSimpleName());
+            return;
+        }
+        fired.filter(f -> f.pauseReason() != null)
+            .ifPresent(f -> schedules.paused(claimed, f.pauseReason(), AuditLog.Actor.server("scheduler")));
+    }
+
+    /** What one fire does, the schedule's row being locked: the setter's check, then the run. */
+    private ScheduleStore.Fired decide(ScheduleStore.Schedule s) {
+        Setters.Problem problem;
         try {
             problem = setters.problem(s);
         } catch (RuntimeException e) {
             // cannot tell (the database is unreachable): nothing runs, and the fire is lost, not paused
             LOG.warnf("Schedule %d of %s: could not check who set it (%s)", s.id(), ScheduleService.target(s),
                 e.getClass().getSimpleName());
-            record(s, FAILED + "Kilnmark could not check the role of whoever set it", null, null);
-            return;
+            return new ScheduleStore.Fired(FAILED + "Kilnmark could not check the role of whoever set it", null, null,
+                null);
         }
         if (problem != null) {
-            if (store.pauseClaimed(s)) {
-                schedules.paused(s, problem, AuditLog.Actor.server("scheduler"));
-            }
-            return;
+            return new ScheduleStore.Fired(problem.outcome(), null, null, problem.reason());
         }
         String by = ScheduleService.requestedBy(s);
         String outcome;
@@ -229,15 +242,7 @@ public class Scheduler {
         // the outcome's reason can be worked out from the run's values: INFO says only what happened
         LOG.infof("Schedule %d of %s: %s", s.id(), ScheduleService.target(s), kind(outcome));
         LOG.debugf("Schedule %d: %s", s.id(), outcome);
-        record(s, outcome, pipelineRun, flowRun);
-    }
-
-    private void record(ScheduleStore.Schedule s, String outcome, Long pipelineRun, Long flowRun) {
-        try {
-            store.recordOutcome(s, outcome, pipelineRun, flowRun);
-        } catch (RuntimeException e) {
-            LOG.warnf("Could not record what schedule %d did (%s)", s.id(), kind(outcome));
-        }
+        return new ScheduleStore.Fired(outcome, pipelineRun, flowRun, null);
     }
 
     /** An outcome's first word: started, skipped, missed or failed. */

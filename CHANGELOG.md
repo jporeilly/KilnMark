@@ -89,7 +89,13 @@ details.
   role, or the person must have it as the access review reads their sign-ins; if not, nothing runs,
   the schedule is paused with `paused: the person who set it no longer has the role` and
   `schedule.paused` is recorded. Revoking a token, or a sign-in with less of a role, pauses that
-  identity's schedules at once. Saving a paused schedule makes the person saving it its setter.
+  identity's schedules at once (never failing the sign-in). Saving a paused schedule makes the
+  person saving it its setter. A person's role is lowered to what the groups their sign-in recorded
+  (now `groups` in sign-in events) give under today's mapping, and their latest sign-in must be
+  within `kilnmark.schedules.signed-in-within` (30 days), else
+  `paused: the person who set it has not signed in for 30 days`. Sign-ins are read by the person's
+  key through two partial indexes on `audit_event`. The check and the queueing hold the schedule's
+  row lock, so a revoke or pause comes wholly before or after a run; a pause never cancels a run.
 - **The `wait-for` flow node** (ADR 0041, docs/design/flow-controls.md, C2). It takes `source` and
   either `file` (a pattern with `*` and `?` in its last part; `at_least`, 1 by default) or `query`,
   plus `every` (30s to 1h, 5m) and `timeout` (up to 24h, 1h). It looks at once, then every `every`,

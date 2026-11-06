@@ -40,6 +40,9 @@ public class ScheduleStore {
      */
     public static final String UNQUEUED = "failed: the server stopped before the run was queued";
 
+    /** The outcome when a claimed fire finds its schedule paused, changed or set to run something else. */
+    public static final String CHANGED_WHILE_STARTING = "skipped: the schedule was changed while it was starting";
+
     /** The outcome when a change to a schedule's times, zone or pausing meets a fire that was due. */
     public static final String CHANGED_WHILE_DUE = "missed: changed while it was due";
 
@@ -270,48 +273,56 @@ public class ScheduleStore {
     }
 
     /**
-     * Records what a fire of {@code s} did, with the run it started, if any. Left alone when the
-     * schedule has been deleted, or changed since to run another pipeline or flow, or changed while
-     * the fire was starting (its outcome is then no longer {@link #STARTING}).
+     * What a fire did: its outcome and the run it started, if any; {@code pauseReason} when it was
+     * not run because whoever set the schedule no longer holds its role, which pauses it.
      */
-    public void recordOutcome(Schedule s, String outcome, Long pipelineRun, Long flowRun) {
-        db.tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.schedule SET last_outcome = ?, "
-                + "last_pipeline_run = ?, last_flow_run = ? WHERE id = ? AND pipeline IS NOT DISTINCT FROM ? "
-                + "AND flow IS NOT DISTINCT FROM ? AND last_outcome = ?")) {
-                ps.setString(1, clip(outcome));
-                ps.setObject(2, pipelineRun, Types.BIGINT);
-                ps.setObject(3, flowRun, Types.BIGINT);
-                ps.setLong(4, s.id());
-                ps.setString(5, s.pipeline());
-                ps.setString(6, s.flow());
-                ps.setString(7, STARTING);
-                return ps.executeUpdate();
-            }
-        });
+    public record Fired(String outcome, Long pipelineRun, Long flowRun, String pauseReason) {
     }
 
     /**
-     * Pauses a claimed fire's schedule because whoever set it no longer holds its role: off, no next
-     * fire, outcome {@link #PAUSED}. Only while it is as claimed (same target and setter, still
-     * {@link #STARTING}); returns whether it was paused.
+     * Finishes a claimed fire under the schedule's row lock, held from the check of its setter to
+     * the outcome, so a token revoked or a schedule paused or changed meanwhile either comes first
+     * (nothing runs) or waits until the run is queued and recorded. The row must still be on, still
+     * {@link #STARTING} and run the same pipeline or flow; {@code work} gets it as it is now (its
+     * setter may have changed) and returns what it did, which is written before the lock is let go:
+     * a pause turns it off with no next fire. When the row is no longer so, nothing runs, and a row
+     * left {@link #STARTING} says {@link #CHANGED_WHILE_STARTING}. Returns what was done, if anything.
      */
-    public boolean pauseClaimed(Schedule s) {
+    public Optional<Fired> fire(Schedule claimed, Function<Schedule, Fired> work) {
         return db.tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.schedule SET enabled = false, "
-                + "next_at = NULL, last_outcome = ?, last_pipeline_run = NULL, last_flow_run = NULL WHERE id = ? "
-                + "AND pipeline IS NOT DISTINCT FROM ? AND flow IS NOT DISTINCT FROM ? "
-                + "AND set_by_token IS NOT DISTINCT FROM ? AND set_by_person IS NOT DISTINCT FROM ? "
-                + "AND last_outcome = ?")) {
-                ps.setString(1, PAUSED);
-                ps.setLong(2, s.id());
-                ps.setString(3, s.pipeline());
-                ps.setString(4, s.flow());
-                ps.setObject(5, s.setByToken(), Types.BIGINT);
-                ps.setString(6, s.setByPerson());
-                ps.setString(7, STARTING);
-                return ps.executeUpdate() == 1;
+            Optional<Schedule> current;
+            try (PreparedStatement ps = c.prepareStatement("SELECT " + columns + " FROM kilnmark.schedule WHERE "
+                + "id = ? AND enabled AND last_outcome = ? AND pipeline IS NOT DISTINCT FROM ? "
+                + "AND flow IS NOT DISTINCT FROM ? FOR UPDATE")) {
+                ps.setLong(1, claimed.id());
+                ps.setString(2, STARTING);
+                ps.setString(3, claimed.pipeline());
+                ps.setString(4, claimed.flow());
+                current = read(ps).stream().findFirst();
             }
+            if (current.isEmpty()) {
+                try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.schedule SET last_outcome = ? "
+                    + "WHERE id = ? AND last_outcome = ?")) {
+                    ps.setString(1, CHANGED_WHILE_STARTING);
+                    ps.setLong(2, claimed.id());
+                    ps.setString(3, STARTING);
+                    ps.executeUpdate();
+                }
+                return Optional.<Fired>empty();
+            }
+            Fired f = work.apply(current.get());
+            String sql = f.pauseReason() != null
+                ? "UPDATE kilnmark.schedule SET enabled = false, next_at = NULL, last_at = clock_timestamp(), "
+                    + "last_outcome = ?, last_pipeline_run = ?, last_flow_run = ? WHERE id = ?"
+                : "UPDATE kilnmark.schedule SET last_outcome = ?, last_pipeline_run = ?, last_flow_run = ? WHERE id = ?";
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
+                ps.setString(1, clip(f.outcome()));
+                ps.setObject(2, f.pipelineRun(), Types.BIGINT);
+                ps.setObject(3, f.flowRun(), Types.BIGINT);
+                ps.setLong(4, claimed.id());
+                ps.executeUpdate();
+            }
+            return Optional.of(f);
         });
     }
 

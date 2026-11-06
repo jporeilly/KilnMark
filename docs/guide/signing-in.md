@@ -172,9 +172,11 @@ unless set, and must be between 1 and 3650 days, so a typing mistake cannot quie
 log.
 
 Schedules follow what the access review shows: a schedule runs only while the token or person that
-set it still has its role, and is paused when they lose it
-([Running pipelines and flows on a schedule](schedules.md#when-the-person-who-set-it-loses-the-role)).
-Revoking a token pauses the schedules it set at once.
+set it still has its role, and a person must have signed in within 30 days; it is paused when that
+stops being so ([Running pipelines and flows on a schedule](schedules.md#when-the-person-who-set-it-loses-the-role)).
+Revoking a token pauses the schedules set with it at once; a person's tokens are separate from the
+schedules they set while signed in. The review does not yet list the schedules each one set: use
+`GET /api/v1/schedules` and its `updatedBy`.
 
 ## Two people for sensitive values
 

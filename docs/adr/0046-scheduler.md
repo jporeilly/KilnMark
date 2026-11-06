@@ -88,13 +88,20 @@ Three things make a schedule different from what a pipeline or flow says:
    - a person must have it as the access review reads their sign-ins: their latest sign-in's role,
      unless a later sign-in was refused because none of their groups has a role any more. Other
      refusals (no second factor, say) take nothing away, as in the access review, so one sign-in
-     on the wrong device does not stop a team's nightly work.
+     on the wrong device does not stop a team's nightly work. That role is lowered to what the
+     groups their sign-in recorded give under the group-to-role settings now, so changing the
+     mapping takes effect at the next fire. And their latest sign-in must be within
+     `kilnmark.schedules.signed-in-within` (30 days): someone who has left and is disabled at the
+     provider never signs in again, so their schedules stop after 30 days at most, saying
+     `paused: the person who set it has not signed in for 30 days`.
 
    If not, nothing runs: the schedule is paused (off, no next fire), its outcome is
    `paused: the person who set it no longer has the role` (viewers see `paused`), and the audit
    log records `schedule.paused` with the reason. It is also paused at once, without waiting for a
    fire, when the token is revoked, or when a sign-in gives the person less of a role than a
-   schedule of theirs (or none). A designer or admin resumes it by saving it, which makes them its
+   schedule of theirs (or none); that never fails the sign-in. The check and the queueing happen
+   under the schedule's row lock, so a revoke or pause either comes before (nothing runs) or after
+   the run is queued and recorded. A pause never cancels a run already queued or running. A designer or admin resumes it by saving it, which makes them its
    setter, checked against their own role. The server's environment admin token
    (`KILNMARK_ADMIN_TOKEN`) is a token like any other: when its value changes, Kilnmark sets the old
    token aside, and the schedules it set are paused at their next fire. A schedule saved while
@@ -127,7 +134,11 @@ Three things make a schedule different from what a pipeline or flow says:
 - A fire can be lost (a crash at the wrong moment, a server down for longer than the catch-up). The
   outcome, the run history and the server's log say so; nothing runs twice to make up for it.
 - Event triggers (a run when a file lands, when another flow ends) are not part of this decision.
-- A person who leaves the organisation's groups is known to Kilnmark only when they next sign in
-  (Kilnmark is not told otherwise). Until then their latest sign-in stands, as it does in the
-  access review. Revoking their tokens, or removing them at the provider and having them sign in,
-  stops their schedules.
+- A person who leaves the organisation's groups is known to Kilnmark only when they next sign in,
+  or once their latest sign-in is 30 days old (Kilnmark is not told otherwise). API tokens are not
+  linked to people: revoking a person's tokens stops the schedules set with those tokens, not those
+  they set when signed in. Work that must outlive any one person is best set with a team's designer
+  token, which stops only when it is revoked or expires.
+- Follow-up: the access review does not list the schedules each token or person set. It groups
+  people by name, while schedules key them by the person's key, so it must be keyed by person
+  first.
