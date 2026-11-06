@@ -9,6 +9,8 @@
 # prints a secret. This file is ASCII only: Windows PowerShell 5.1 misreads anything else.
 
 $ErrorActionPreference = 'Continue'   # native tools are judged by their exit codes, not stderr
+# Podman says on every compose command that it runs an external compose tool: not news here.
+$env:PODMAN_COMPOSE_WARNING_LOGS = 'false'
 $Here = $PSScriptRoot
 $Registry = 'ghcr.io/jporeilly'
 $DefaultRoot = 'C:\Kilnmark'
@@ -147,6 +149,16 @@ function Invoke-Compose {
     $base = Get-ComposeArgs
     & $script:Engine @base @args | Out-Host
     return ($LASTEXITCODE -eq 0)
+}
+
+# Runs compose without showing what it prints (container ids and names) unless it fails, when
+# all of it is shown. For up and down, whose own lines say what happened.
+function Invoke-ComposeQuietly {
+    $base = Get-ComposeArgs
+    $out = & $script:Engine @base @args 2>&1 | ForEach-Object { '' + $_ }
+    if ($LASTEXITCODE -eq 0) { return $true }
+    $out | Out-Host
+    return $false
 }
 
 # Runs compose and returns what it printed, as text.
@@ -432,7 +444,7 @@ function Invoke-Up([string[]]$Options) {
     $v = Get-CurrentVersion
     if (-not (Test-ImagesPresent $v)) { Fail ('The images of Kilnmark ' + $v + ' are not here. Get them with one of: kilnmark.cmd pull, kilnmark.cmd load-images FILE, kilnmark.cmd build') }
     Write-Host ('Starting Kilnmark ' + $v + ' ...')
-    if (-not (Invoke-Compose up -d)) { Fail 'Kilnmark could not start. See why with: kilnmark.cmd logs' }
+    if (-not (Invoke-ComposeQuietly up -d)) { Fail 'Kilnmark could not start. See why with: kilnmark.cmd logs' }
     if (-not (Wait-For 'Kilnmark' ((Get-LocalUrl) + '/q/health/ready') 90)) { Fail 'Kilnmark did not answer within 3 minutes. See why with: kilnmark.cmd logs kilnmark' }
     $profiles = ',' + ((Get-Setting 'COMPOSE_PROFILES') -replace '\s', '') + ','
     if ($profiles.Contains(',auth,')) {
@@ -447,7 +459,7 @@ function Invoke-Up([string[]]$Options) {
 
 function Invoke-Down {
     Write-Host 'Stopping Kilnmark ...'
-    if (-not (Invoke-Compose down)) { Fail 'Kilnmark could not be stopped cleanly. See: kilnmark.cmd status' }
+    if (-not (Invoke-ComposeQuietly down)) { Fail 'Kilnmark could not be stopped cleanly. See: kilnmark.cmd status' }
     Write-Host 'Kilnmark is stopped. Its data is kept.'
 }
 

@@ -83,6 +83,9 @@ current_version() {
 
 # --- engine and compose ------------------------------------------------------------------------
 
+# Podman says on every compose command that it runs an external compose tool: not news here.
+export PODMAN_COMPOSE_WARNING_LOGS=false
+
 engine=""
 pick_engine() {
   [ -z "$engine" ] || return 0
@@ -342,13 +345,22 @@ local_url() {
   else echo "http://localhost:${port:-8780}"; fi
 }
 
+# Runs compose without showing what it prints (container ids and names) unless it fails, when
+# all of it is shown. For up and down, whose own lines say what happened.
+compose_quietly() {
+  local out
+  if out="$("${compose[@]}" "$@" 2>&1)"; then return 0; fi
+  printf '%s\n' "$out" >&2
+  return 1
+}
+
 cmd_up() {
   local browser=true v url profiles
   for a in "$@"; do case "$a" in --no-browser) browser=false ;; *) die "Unknown option $a." ;; esac; done
   v="$(current_version)"; set_compose
   images_present "$v" || die "The images of Kilnmark $v are not here. Get them with one of: ./kilnmark.sh pull, ./kilnmark.sh load-images FILE, ./kilnmark.sh build"
   echo "Starting Kilnmark $v ..."
-  "${compose[@]}" up -d || die "Kilnmark could not start. See why with: ./kilnmark.sh logs"
+  compose_quietly up -d || die "Kilnmark could not start. See why with: ./kilnmark.sh logs"
   wait_for Kilnmark "$(local_url)/q/health/ready" 90 \
     || die "Kilnmark did not answer within 3 minutes. See why with: ./kilnmark.sh logs kilnmark"
   profiles="$(setting COMPOSE_PROFILES | tr -d '[:space:]')"
@@ -368,7 +380,7 @@ cmd_up() {
 cmd_down() {
   set_compose
   echo "Stopping Kilnmark ..."
-  "${compose[@]}" down || die "Kilnmark could not be stopped cleanly. See: ./kilnmark.sh status"
+  compose_quietly down || die "Kilnmark could not be stopped cleanly. See: ./kilnmark.sh status"
   echo "Kilnmark is stopped. Its data is kept."
 }
 
