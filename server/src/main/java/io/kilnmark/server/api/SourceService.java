@@ -599,8 +599,8 @@ public class SourceService {
      * they choose what a scan records, not what a steward may look at.
      *
      * <p>Columns a steward marked sensitive on the catalogued asset (matched by name) are masked
-     * for anyone but an admin, as in every other view of the data. A table never scanned has no
-     * marks yet.
+     * through {@code Sights}, for everyone but designers with the unmask grant (ADR 0027), as in
+     * every other view of the data. A table never scanned has no marks yet.
      */
     Views.Preview preview(Connector connector, SourceConfig config, String asset, Integer rows) {
         if (asset == null || asset.isBlank()) {
@@ -702,12 +702,53 @@ public class SourceService {
     @jakarta.inject.Inject
     io.kilnmark.server.quality.Sights sights;
 
-    /** A preview as a response no browser or proxy keeps: the rows are the source's data. */
-    static Response noStore(Views.Preview preview) {
+    /**
+     * One table's columns, keys, indexes and estimated rows, read live (Explore, ADR 0045), under
+     * the check time limit and places. Names and types only: no value of the table is read.
+     */
+    io.kilnmark.kiln.connect.TableDetail explore(Connector connector, SourceConfig config, String asset) {
+        explorable(connector, asset);
+        return run(connector, config, "read the table " + asset,
+            () -> connector.explore(config, asset, checks.timeout()));
+    }
+
+    /**
+     * SQL for one table of the source, generated and never run (ADR 0045, D2). The table is read
+     * live first, as Explore reads it, so names and columns are the catalogue's.
+     */
+    Views.GeneratedSql generateSql(Connector connector, SourceConfig config, SqlGenerator.Request request) {
+        if (request == null) {
+            throw new IllegalArgumentException("statement: what to generate");
+        }
+        explorable(connector, request.asset());
+        io.kilnmark.kiln.plugins.jdbc.DdlWriter.Dialect dialect = SqlGenerator.dialect(request.dialect(), config.kind());
+        io.kilnmark.kiln.connect.TableDetail table = explore(connector, config, request.asset());
+        return SqlGenerator.generate(request, table, dialect,
+            io.kilnmark.kiln.plugins.jdbc.DdlWriter.Dialect.forKind(config.kind()).orElse(null));
+    }
+
+    /** The exact number of rows of one table, counted by the database under the check time limit. */
+    Views.RowCount countRows(Connector connector, SourceConfig config, String asset) {
+        explorable(connector, asset);
+        return new Views.RowCount(asset, run(connector, config, "count the rows of " + asset,
+            () -> connector.countRows(config, asset, checks.timeout())));
+    }
+
+    private static void explorable(Connector connector, String asset) {
+        if (!connector.explores()) {
+            throw ApiError.of(Response.Status.NOT_FOUND, "Explore shows the tables of database sources only.");
+        }
+        if (asset == null || asset.isBlank()) {
+            throw new IllegalArgumentException("asset: the table to show, as schema.table");
+        }
+    }
+
+    /** A response no browser or proxy keeps: a preview's rows are the source's data. */
+    static Response noStore(Object body) {
         jakarta.ws.rs.core.CacheControl none = new jakarta.ws.rs.core.CacheControl();
         none.setNoStore(true);
         none.setNoCache(true);
-        return Response.ok(preview).cacheControl(none).build();
+        return Response.ok(body).cacheControl(none).build();
     }
 
     private <T> T run(Connector connector, SourceConfig config, String doing,

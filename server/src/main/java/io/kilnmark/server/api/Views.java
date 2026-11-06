@@ -104,6 +104,17 @@ public final class Views {
                                 String defaultValue, String kind) {
     }
 
+    /**
+     * SQL the generator wrote (ADR 0045, D2), never run: the dialect it is in, the statements in
+     * order, and what was left out of them, for people to read.
+     */
+    public record GeneratedSql(String dialect, List<String> sql, List<String> leftOut) {
+    }
+
+    /** The exact number of rows of one table (Explore, ADR 0045). */
+    public record RowCount(String asset, long rows) {
+    }
+
     /** The outcome of a connection test. {@code problem} is null when it worked; it never holds a secret. */
     public record TestResult(boolean ok, String problem, long millis) {
     }

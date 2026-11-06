@@ -4367,3 +4367,64 @@ h1.with-tile {
   align-items: center;
   gap: 8px;
 }
+
+/* Explore on a database source's page (ADR 0045): schemas, tables, then the chosen table. */
+.explore-panes {
+  display: grid;
+  grid-template-columns: minmax(8rem, 11rem) minmax(10rem, 15rem) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.explore-pane {
+  min-width: 0;
+}
+
+.explore-pane > h3 {
+  margin-top: 0;
+  font-size: 1rem;
+}
+
+.explore-list,
+.explore-keys {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.explore-list {
+  max-height: 28rem;
+  overflow-y: auto;
+}
+
+.explore-list [aria-current="true"] {
+  text-decoration-thickness: 3px;
+}
+
+@media (max-width: 960px) {
+  .explore-panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The SQL generator on Explore's SQL tab (ADR 0045): the statements, read-only, to copy or save. */
+.sql-out {
+  margin: 12px 0 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--km-divider);
+  border-radius: var(--km-radius-xs);
+  background: var(--km-surface-2);
+  font-family: var(--km-mono);
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.explore-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 4px 0 8px;
+}

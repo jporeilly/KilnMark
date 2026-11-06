@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
@@ -427,7 +428,7 @@ class FlowDefinitionTest {
         assertTrue(firstProblem("- a\n- b").contains("starts with kilnmark"));
         assertTrue(firstProblem("kilnmark: flow/v1\nname: f\nnodes: []").contains("at least one node"));
         assertTrue(firstProblem("kilnmark: flow/v1\nnodes:\n  - {id: a, type: stop}").contains("needs a name"));
-        assertTrue(firstProblem("kilnmark: flow/v1\nname: f\nnodes:\n  - &x {id: a, type: stop}").toLowerCase()
+        assertTrue(firstProblem("kilnmark: flow/v1\nname: f\nnodes:\n  - &x {id: a, type: stop}").toLowerCase(Locale.ROOT)
             .contains("anchor"));
     }
 
@@ -468,7 +469,7 @@ class FlowDefinitionTest {
         assertEquals("90m", FlowDefinition.written(Duration.ofMinutes(90)));
         assertEquals("1d", FlowDefinition.written(Duration.ofHours(24)));
         assertEquals("45s", FlowDefinition.written(Duration.ofSeconds(45)));
-        assertEquals("2m", FlowDefinition.written(Duration.ofSeconds(120)));
+        assertEquals("2m", FlowDefinition.written(Duration.ofMinutes(2)));
     }
 
     // ---- priority (ADR 0041) ----
@@ -563,5 +564,103 @@ class FlowDefinitionTest {
             .contains("has no setting 'priority'"));
         assertTrue(firstProblem(CHECK.replace("ready.missing = 0", "ready.rows_written = 0"))
             .contains("rows_written"));
+    }
+
+    // ---- wait-for (ADR 0041) ----
+
+    static final String WAITS = """
+        kilnmark: flow/v1
+        name: wait-then-load
+        nodes:
+          - id: arrived
+            type: wait-for
+            source: landing
+            file: "incoming/orders-*.csv"
+            at_least: 2
+            every: 2m
+            timeout: 3h
+          - id: loaded
+            type: wait-for
+            source: warehouse
+            query: "select max(loaded_at) > now() - interval '1 hour' from etl.batches"
+          - id: tell
+            type: notify
+            title: "Found ${arrived.found} after ${arrived.waited_s}s"
+        connections:
+          - { from: arrived, to: loaded }
+          - { from: loaded, to: tell, when: "loaded.found = 1" }
+        """;
+
+    @Test
+    void readsAWaitForNode() {
+        FlowDefinition.Parsed p = FlowDefinition.parse(WAITS);
+        assertTrue(p.valid(), p.problems().toString());
+        FlowDefinition.Node arrived = p.definition().node("arrived");
+        assertEquals(new FlowDefinition.Until("incoming/orders-*.csv", 2, null, Duration.ofMinutes(2)), arrived.until());
+        assertEquals(Duration.ofHours(3), arrived.timeout());
+        FlowDefinition.Node loaded = p.definition().node("loaded");
+        assertEquals(Duration.ofMinutes(5), loaded.until().every(), "every 5 minutes by default");
+        assertEquals(Duration.ofHours(1), loaded.timeout(), "an hour by default");
+        assertTrue(loaded.until().query().startsWith("select max(loaded_at)"));
+        assertEquals(FlowCondition.Type.NUMBER, FlowDefinition.nodeValueType(p.definition(), "arrived.waited_s"));
+    }
+
+    @Test
+    void checksAWaitForNode() {
+        String file = "    file: \"incoming/orders-*.csv\"\n";
+        assertTrue(firstProblem(WAITS.replace(file, "")).contains("waits for one thing"));
+        assertTrue(firstProblem(WAITS.replace(file, file + "    query: \"select true\"\n")).contains("waits for one thing"));
+        assertTrue(firstProblem(WAITS.replace("incoming/orders-*.csv", "in*/orders.csv")).contains("only in the file's name"));
+        assertTrue(firstProblem(WAITS.replace("incoming/orders-*.csv", "../orders.csv")).contains("no empty, . or .. parts"));
+        assertTrue(firstProblem(WAITS.replace("incoming/orders-*.csv", "/etc/orders.csv")).contains("a path below"));
+        assertTrue(firstProblem(WAITS.replace("every: 2m", "every: 10s")).contains("every is how often it looks: 30s to 1h"));
+        assertTrue(firstProblem(WAITS.replace("timeout: 3h", "timeout: 25h")).contains("up to 24h"));
+        assertTrue(firstProblem(WAITS.replace("at_least: 2", "at_least: 0")).contains("a whole number from 1"));
+        assertTrue(firstProblem(WAITS.replace("from etl.batches", "from ${t}")).contains("${...} cannot be used"));
+        assertTrue(firstProblem(WAITS.replace("    query: \"select max(", "    at_least: 1\n    query: \"select max("))
+            .contains("at_least is for a file"));
+        assertTrue(firstProblem(WAITS.replace("    every: 2m\n", "    priority: high\n")).contains("has no setting 'priority'"));
+    }
+
+    // ---- retries (ADR 0041) ----
+
+    @Test
+    void readsRetriesOnRunPipelineForEachAndSqlNodes() {
+        String load = "    pipeline: orders-load\n";
+        FlowDefinition.Parsed p = FlowDefinition.parse(SQL.replace(load, load + "    retries: 3\n    retry_delay: 30s\n")
+            .replace("    source: warehouse\n", "    source: warehouse\n    retries: 1\n"));
+        assertTrue(p.valid(), p.problems().toString());
+        FlowDefinition.Node n = p.definition().node("load");
+        assertEquals(3, n.retries());
+        assertEquals(Duration.ofSeconds(30), n.retry().before(1));
+        assertEquals(Duration.ofSeconds(60), n.retry().before(2), "doubled each time");
+        assertEquals(Duration.ofMinutes(2), n.retry().before(3));
+        assertEquals(1, p.definition().node("empty").retries());
+        assertEquals(FlowDefinition.DEFAULT_RETRY_DELAY, p.definition().node("empty").retry().delay(), "1m unless written");
+        assertEquals(0, FlowDefinition.parse(SQL).definition().node("load").retries(), "none unless written");
+        assertEquals(null, FlowDefinition.parse(SQL.replace(load, load + "    retries: 0\n")).definition().node("load")
+            .retry(), "0 is none");
+        FlowDefinition.Parsed each = FlowDefinition.parse(FAN.replace("    max_parallel: 2\n",
+            "    max_parallel: 2\n    retries: 2\n"));
+        assertTrue(each.valid(), each.problems().toString());
+        assertEquals(2, each.definition().node("regions").retries());
+    }
+
+    @Test
+    void checksRetries() {
+        String load = "    pipeline: orders-load\n";
+        for (String bad : List.of("6", "-1", "2.5", "many", "[1]")) {
+            assertTrue(firstProblem(SQL.replace(load, load + "    retries: " + bad + "\n"))
+                .contains("a whole number from 0 to 5"), bad);
+        }
+        for (String bad : List.of("5s", "2h", "soon")) {
+            assertTrue(firstProblem(SQL.replace(load, load + "    retries: 1\n    retry_delay: " + bad + "\n"))
+                .contains("retry_delay is the wait"), bad);
+        }
+        assertTrue(firstProblem(SQL.replace(load, load + "    retry_delay: 1m\n")).contains("set retries too"));
+        // Only nodes whose failure may pass are tried again.
+        assertTrue(firstProblem(SQL.replace("    title: \"Emptied", "    retries: 1\n    title: \"Emptied"))
+            .contains("has no setting 'retries'"));
+        assertTrue(firstProblem(WAITS.replace("    every: 2m\n", "    retries: 1\n")).contains("has no setting 'retries'"));
     }
 }

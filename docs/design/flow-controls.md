@@ -61,7 +61,7 @@ flowchart TD
 - Not a sample yet: the samples library takes a flow's `source:` as a sql node's and asks for a
   source with Allow SQL on.
 
-## C2. `wait-for` (planned)
+## C2. `wait-for` (built)
 
 ```mermaid
 flowchart LR
@@ -99,6 +99,35 @@ flowchart LR
   shown. Results: `found` (1 or 0).
 - Waits on the flow's watcher, holding no slot and no connection between checks. Cancelling the
   flow ends the wait. Results also: `waited_s`.
+- Built as: `FlowDefinition.Until` (file, at_least, query, every) with the node's `timeout`;
+  `WaitFor.look` (server/flows) makes one look on a virtual thread, as a check-source node does,
+  and `FlowService.pollWait` schedules the next (`now + every` after a look ends). A look that cannot
+  be made (`Look.problem`) is tried again; one that never can (`Look.refused`: the source gone, its
+  kind or Allow SQL changed, a superuser login, the simple protocol) fails the node at once.
+- File: the pattern's folder must be literal (`*` and `?` only in the last part, no `..`, `/` or
+  `\` at the start). `FileSourceConnector.filesBelow(source, folder, timeout)` lists the files below
+  that folder within `kilnmark.sources.check-timeout`, as the source's include and exclude patterns
+  keep them, relative to the source's prefix (an S3 bucket's `prefix`); each path is matched whole
+  (`*` → `[^/]*`, `?` → `[^/]`). The pattern is never opened as a path, only compared.
+- Query: refused when saved unless the source is PostgreSQL with Allow SQL on (Allow writing is not
+  needed) and `SqlTokens.checkCustomSql` accepts it. A flow with one counts as having SQL
+  (`FlowService.hasSql`): saved only by a designer with the unmask grant, run only from a version
+  saved with that check (`sql_checked`), and each run that starts the node records `flow.sql` in
+  the audit log (target `flow/run/node`, details the source and `query: true`, never the text).
+  `hasSql` looks for a `query` key as parsed, so a draft whose query the parser refused is gated
+  too. `FlowStore.save` records `sql_checked` as whether the saver held the unmask grant (it was
+  always true, V29), so a version saved without it never runs SQL, whatever a later Kilnmark reads
+  in it. Before this node existed, anyone who could save a flow could have saved one as an unknown
+  type, with `sql_checked` true; the YAML's text cannot say which (keys and values may be quoted,
+  with escapes such as `"que\x72y"`), so V34 adds `query_checked`, false for every older version and
+  since then the saver's grant. A version with a wait-for query runs only with both true.
+- What a query shows: only `found` (1 or 0) on the run, to whoever may read the run, as a sql node's
+  `rows_affected` is. Nothing it returns is stored; its errors give only their SQLSTATE.
+- The flow's watcher, holding the flow job (`kilnmark.worker.flows` places), keeps polling while a
+  node waits, as for `wait`: no pipeline worker slot and no connection between looks. At
+  run time: the URL's rules again, TLS and hosts, no simple protocol, `RuleRunner.privileged`, a
+  read-only transaction with the dialect's read-only and timeout settings (30 s), conforming
+  strings, `setMaxRows(1)`, then a rollback. A failed query's message gives only its SQLSTATE.
 
 ## C3. `timeout` (built)
 
@@ -140,31 +169,59 @@ flowchart LR
 - No migration: the timeout is read from the flow's version each time.
 - A timed-out try may be retried (C4) when retries allow.
 
-## C4. `retries` (planned)
+## C4. `retries` (built)
 
 ```mermaid
 flowchart TD
   A{"How did the try end?"} -- "cancelled by a person<br/>or the flow" --> N(["Never retried"])
   A -- "failed or timed out" --> B{"Node type"}
   B -- sql --> Y(["Retried: its transaction<br/>was rolled back"])
-  B -- "run-pipeline or<br/>a for-each item" --> C{"Did any write begin?"}
-  C -- no --> Y2(["Retried"])
-  C -- yes --> D{"Every write in the version<br/>replace or upsert?"}
+  B -- "run-pipeline or<br/>a for-each item" --> D{"Every write in the version<br/>replace or upsert?"}
   D -- yes --> Y3(["Retried: writing again<br/>gives the same result"])
   D -- no --> N2(["Not retried. The flow is<br/>refused when saved"])
 ```
 
 - On `run-pipeline`, `for-each` and `sql`: `retries` 0 to 5, `retry_delay` 10s to 1h (1 minute by
-  default), doubled after each try.
+  default), doubled after each try (`FlowDefinition.Retry.before`). `retry_delay` without `retries`
+  is refused; any other node type refuses both keys.
 - **Pipelines.** Checked when saved: every `write` node of the pipeline's version uses `replace`
   or `upsert`, or the flow is refused, naming the write node ("retries need writes that replace or
-  upsert: write-orders appends"). At run time a failed run is also retried when it failed before any
-  write began, whatever its modes. A cancelled run (by a person, or the flow) is never retried.
-- **SQL.** A `sql` node runs in one transaction, rolled back on failure, so it may always be
-  retried.
+  upsert: write-orders appends"). At run time the version the failed run used is checked again. A
+  cancelled run (by a person, or the flow) is never retried.
+- **SQL.** A `sql` node runs in one transaction, rolled back on failure, so it may be retried,
+  unless the commit itself failed (below).
+- **Checked when saved** (`FlowService.unsafeWrite`): a write whose mode is set by a parameter
+  counts as unsafe, since it is not known until the run. **At run time** (`mayRetry`) the check is
+  made again against the version the failed run used, always. The "no write began" exception above
+  was dropped in review: a run cancelled, lost with its worker, or failed in the engine records no
+  write statistics, so it cannot be told from one that wrote nothing.
+- **Only the watcher's own timeout cancel is retried.** A try counts as timed out for retrying only
+  when this watcher asked for the cancel (`timedOut` and `cancelAsked`). A cancelled run found by a
+  worker that took the flow over, or a person's cancel close to the timeout, is not retried: the
+  first is still marked timed out, the second ends the node cancelled.
+- **SQL in doubt.** A failure of `commit()` itself returns an outcome `inDoubt`: never retried, as
+  the database may have committed. Statement failures and refusals are retried (a refusal will
+  fail again; harmless, as nothing ran).
+- A for-each try again that finds the pipeline busy waits at most `queue_timeout`, as a first try
+  does; giving up (or the flow stopping) fails the items still waiting. The node's row lists those
+  items under `retrying_items` while it runs, and the run page shows them **pending**.
+- `flowTotals` counts every try's pipeline run and rows written: the rows were written.
 - Each try is a new pipeline run linked to `(flow run, node, item, try)`; `pipeline_run.flow_try`
-  (0 for the first). The run page lists every try with its link; the node's status is its last
-  try's.
+  (0 for the first), migration V35, with the unique index on all four so each try starts once. The
+  node's row and `flowNodeRun`/`flowItemRun(s)` give the latest try; a worker that takes a flow over
+  carries on from it (`flowLatestTry`), and a failed latest try found again is tried again then if
+  tries are left (the delay starts again).
+- While it waits, the node stays **running**, with "Try 1 of 4 failed; trying again in 2m". It holds
+  no worker and no place. A cancel or stop of the flow while it waits ends it cancelled ("Not tried
+  again: the flow was stopped").
+- A try that timed out is retried as a failure, and the `timed_out` mark is kept only when the last
+  try timed out. A for-each item waiting to be tried again does not count against `max_parallel`;
+  when its time comes, it starts before items not yet started, as places allow.
+- The node's row records `tries` (the number of tries) once there was more than one, which
+  conditions never read. `GET /api/v1/flow-runs/{id}` returns each node's `tries`
+  (`[{item, number, pipelineRunId, status, startedAt, finishedAt}]`, number from 1) when any was a
+  try again, and the run page lists them under **Tries** in the node's or item's details.
+- Not covered by a test: a takeover mid-wait (it needs a second worker), and a commit in doubt.
 
 ## C5. `priority` (built)
 

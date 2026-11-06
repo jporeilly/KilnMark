@@ -277,9 +277,23 @@ const PRIORITY: Field = {
   ],
 };
 
+/** How often a failed node is tried again, and the wait before the first try again (ADR 0041). */
+const RETRIES: Field = {
+  key: "retries",
+  label: "Tries again",
+  kind: "number",
+  hint: "0 to 5 after a failure: none when blank. Its writes must replace or upsert.",
+};
+const RETRY_DELAY: Field = {
+  key: "retry_delay",
+  label: "Wait before trying again",
+  kind: "text",
+  hint: "10s to 1h, doubled each time: 1m when blank.",
+};
+
 /** The settings of each node type the Settings tab offers, as the server reads them (docs/design/flows.md). */
 const FIELDS: Record<string, Field[]> = {
-  "run-pipeline": [PIPELINE, VERSION, TIMEOUT, PRIORITY],
+  "run-pipeline": [PIPELINE, VERSION, TIMEOUT, PRIORITY, RETRIES, RETRY_DELAY],
   "for-each": [
     PIPELINE,
     VERSION,
@@ -287,6 +301,8 @@ const FIELDS: Record<string, Field[]> = {
     { key: "max_parallel", label: "Items at once", kind: "number", hint: "4 when blank, 50 at most." },
     { ...TIMEOUT, hint: "For each item's run: 30m, 2h, 1d. Blank for none." },
     PRIORITY,
+    { ...RETRIES, hint: "Each failed item, 0 to 5 times: none when blank. Its writes must replace or upsert." },
+    RETRY_DELAY,
   ],
   notify: [
     {
@@ -319,6 +335,15 @@ const FIELDS: Record<string, Field[]> = {
   sql: [
     { key: "source", label: "Source", kind: "text", hint: "A PostgreSQL source with Allow SQL on." },
     { ...TIMEOUT, hint: "Rolled back past it: 30m, 2h, 1d. Blank for none." },
+    { ...RETRIES, hint: "0 to 5 after a failure: none when blank. A failed try changes nothing." },
+    RETRY_DELAY,
+  ],
+  "wait-for": [
+    { key: "source", label: "Source", kind: "text", hint: "A file source, or PostgreSQL for a query." },
+    { key: "file", label: "File", kind: "text", hint: "A pattern: incoming/orders-*.csv." },
+    { key: "at_least", label: "At least", kind: "number", hint: "Files that must match: 1 when blank." },
+    { key: "every", label: "Look every", kind: "text", hint: "30s to 1h: 5m when blank." },
+    { key: "timeout", label: "Give up after", kind: "text", hint: "Up to 24h: 1h when blank." },
   ],
   "check-source": [
     { key: "source", label: "Source", kind: "text", hint: "The saved source to check." },
@@ -332,6 +357,7 @@ const IN_THE_YAML: Record<string, string> = {
   "for-each": "The items and the pipeline's other parameters (with) are in the YAML.",
   sql: "The statements are in the YAML.",
   "check-source": "The tables and files it looks for are in the YAML.",
+  "wait-for": "A query is in the YAML.",
 };
 
 /** A field's value as the form starts it: as written, or the server's default for a word. */
