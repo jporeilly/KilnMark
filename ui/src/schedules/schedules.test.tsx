@@ -46,12 +46,14 @@ vi.mock("../api", async (original) => {
   return {
     ...real,
     schedulesApi: { ...real.schedulesApi, list: api.list, get: api.get, preview: api.preview, replace: api.replace, remove: api.remove, create: api.create },
-    pipelinesApi: { ...real.pipelinesApi, get: api.getPipeline },
+    pipelinesApi: { ...real.pipelinesApi, get: api.getPipeline, list: vi.fn(async () => []) },
+    flowsApi: { ...real.flowsApi, list: vi.fn(async () => []) },
   };
 });
 
 const { SchedulesSection } = await import("./SchedulesSection");
 const { useSchedules } = await import("./SchedulesTable");
+const { SchedulesPage } = await import("./SchedulesPage");
 
 beforeAll(() => {
   // jsdom has no modal dialogs: open and close them as attributes.
@@ -284,5 +286,43 @@ describe("the schedule form", () => {
     await settle();
     expect(dialog.querySelector('[role="alert"]')?.textContent).toBe("zone: unknown time zone");
     expect(dialog.hasAttribute("open")).toBe(true);
+  });
+});
+
+describe("the Schedules page", () => {
+  const lost = "paused: the person who set it no longer has the role";
+  beforeEach(() => {
+    listed = [
+      schedule({}),
+      schedule({ id: 4, enabled: false, nextAt: null, lastOutcome: "started" }),
+      schedule({ id: 5, enabled: false, nextAt: null, lastOutcome: lost, lastPipelineRun: null, updatedBy: "gone-token" }),
+    ];
+  });
+
+  test("tells a schedule Kilnmark paused from one a person paused, and filters them for admins", async () => {
+    await act(async () => root.render(<SchedulesPage role="admin" show="all" />));
+    await settle();
+    const states = [...host.querySelectorAll('[data-kind="state"]')].map((c) => c.textContent);
+    const outcomes = [...host.querySelectorAll('[data-kind="outcome"]')].map((c) => c.textContent);
+    expect(states).toEqual(["On", "Paused", "Paused"]);
+    expect(outcomes).toEqual(["Started", "Started", "Paused: setter lost the role"]);
+    const chips = [...host.querySelectorAll(".km-filter")].map((c) => c.textContent);
+    expect(chips).toEqual(["All 3", "On 1", "Paused 2", "Paused: setter lost the role 1", "Failed last time 0"]);
+    expect(host.querySelector(".sc-review")?.textContent).toContain("Kilnmark pauses the schedules they set");
+
+    await act(async () => root.render(<SchedulesPage role="admin" show="setter" />));
+    await settle();
+    expect([...host.querySelectorAll("tbody tr")].map((r) => r.querySelector("th")?.textContent)).toEqual([
+      expect.stringContaining("schedule 5"),
+    ]);
+  });
+
+  test("viewers see that Kilnmark paused it, without the reason", async () => {
+    listed = listed.map((s) => ({ ...s, parameters: null, lastOutcome: s.lastOutcome === lost ? "paused" : s.lastOutcome }));
+    await act(async () => root.render(<SchedulesPage role="viewer" show="all" />));
+    await settle();
+    expect([...host.querySelectorAll('[data-kind="outcome"]')].map((c) => c.textContent)).toContain("Paused by Kilnmark");
+    expect(host.querySelector(".sc-review")).toBeNull();
+    expect(button("Resume schedule 5")).toBeUndefined();
   });
 });

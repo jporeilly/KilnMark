@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { Schedule } from "../api";
 import { scheduleChange } from "../api";
-import { cronWords, ordinal, outcomeOf, pipelineParameters, presetCron, readPreset, timeZones, valuesText } from "./cron";
+import { cronWords, ordinal, outcomeOf, pausedBySetter, pipelineParameters, presetCron, readPreset, timeZones, valuesText } from "./cron";
 import { parse } from "../router";
 
 describe("the schedule presets", () => {
@@ -73,6 +73,23 @@ describe("a schedule in words", () => {
     expect(outcomeOf(null).word).toBe("Not run yet");
   });
 
+  test("a schedule Kilnmark paused reads apart from one a person paused", () => {
+    expect(outcomeOf("paused: the person who set it no longer has the role")).toEqual({
+      word: "Paused: setter lost the role",
+      tone: "warn",
+      reason: null,
+    });
+    // Viewers get just "paused".
+    expect(outcomeOf("paused")).toEqual({ word: "Paused by Kilnmark", tone: "warn", reason: null });
+    expect(outcomeOf("paused: some other reason")).toEqual({ word: "Paused by Kilnmark", tone: "warn", reason: "some other reason" });
+    const s = (enabled: boolean, lastOutcome: string | null) => ({ enabled, lastOutcome }) as Schedule;
+    expect(pausedBySetter(s(false, "paused: the person who set it no longer has the role"))).toBe(true);
+    expect(pausedBySetter(s(false, "paused"))).toBe(true);
+    // Paused by a person, or resumed since: not in the filter.
+    expect(pausedBySetter(s(false, "started"))).toBe(false);
+    expect(pausedBySetter(s(true, "paused: the person who set it no longer has the role"))).toBe(false);
+  });
+
   test("values in a line, and none for viewers", () => {
     expect(valuesText({ region: "EMEA", statuses: ["shipped", "delivered"] })).toBe("region = EMEA; statuses = shipped, delivered");
     expect(valuesText({})).toBe("The defaults");
@@ -112,6 +129,7 @@ describe("the schedules page", () => {
   test("is in the address, with its filter", () => {
     expect(parse("#/schedules")).toEqual({ page: "schedules", show: "all" });
     expect(parse("#/schedules?show=failed")).toEqual({ page: "schedules", show: "failed" });
+    expect(parse("#/schedules?show=setter")).toEqual({ page: "schedules", show: "setter" });
     expect(parse("#/schedules?show=nonsense")).toEqual({ page: "schedules", show: "all" });
   });
 

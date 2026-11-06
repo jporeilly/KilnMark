@@ -40,15 +40,15 @@ export type Route =
   // Flows: the list, one flow (a new one when name is null), and one run
   | { page: "flows" }
   | { page: "flow"; name: string | null; version: number | null; template?: string | null }
-  /** Every schedule on the server (ADR 0046), shown all, on, paused, or failed last time. */
+  /** Every schedule on the server (ADR 0046): all, on, paused, paused as its setter lost the role, or failed last time. */
   | { page: "schedules"; show: ScheduleFilter }
   /** The library of samples and templates (ADR 0043), on one of its two tabs. */
   | { page: "library"; tab: "samples" | "templates" }
   | { page: "flow-run"; id: number };
 
-/** Which schedules the Schedules page shows. */
-export type ScheduleFilter = "all" | "on" | "paused" | "failed";
-const SCHEDULE_FILTERS: ScheduleFilter[] = ["all", "on", "paused", "failed"];
+/** Which schedules the Schedules page shows; "setter": paused because whoever set them lost the role. */
+export type ScheduleFilter = "all" | "on" | "paused" | "setter" | "failed";
+const SCHEDULE_FILTERS: ScheduleFilter[] = ["all", "on", "paused", "setter", "failed"];
 
 /** A path part decoded, or as it is when it is not valid percent-encoding. */
 function decode(part: string): string {
