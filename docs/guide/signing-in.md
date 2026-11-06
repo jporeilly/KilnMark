@@ -36,7 +36,8 @@ Everyone, and every token, has exactly one role. Each role can do everything the
 
 - **Viewer**: search and read the catalogue, pipelines, flows and runs.
 - **Steward**: also run pipelines and flows, scan sources, and look after quality rules and issues.
-- **Designer**: also build pipelines and flows, add and edit sources, write custom SQL rules.
+- **Designer**: also build pipelines and flows, give them schedules, add and edit sources, write
+  custom SQL rules.
 - **Admin**: also Settings, API tokens and the audit log.
 
 ![The four roles as steps, each including the one below; the unmask grant sits beside designers, and admins see values masked](images/signin-roles.svg)

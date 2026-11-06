@@ -26,6 +26,8 @@ it (behind a proxy, as its forwarding settings say).
 | Sensitive values approved (`unmask.approved`) | A second admin let a designer token see sensitive values | The token's name |
 | Sensitive values refused (`unmask.refused`) | An admin refused a designer token seeing sensitive values; it sees them masked | The token's name |
 | Database restored (`database.restored`) | Kilnmark's database was restored from a backup with `restore.sh` ([Backing up and restoring Kilnmark](backup-and-restore.md)), recorded at the first start after it. Events after the backup's time are in your SIEM and the kept database, not in the restored log | The backup, when it was taken, its Kilnmark version, the previous database's name, and whether the keys were restored |
+| Schedule set (`schedule.set`) | A designer or admin added or changed a schedule ([Running pipelines and flows on a schedule](schedules.md)); the event is on `schedule <id>` | The pipeline or flow, the cron expression, the zone, the role its runs act as, and whether it is on. Never the values its runs start with |
+| Schedule deleted (`schedule.deleted`) | A schedule was deleted, by itself or with its pipeline | As for Schedule set, and `via: pipeline deleted` when its pipeline was deleted |
 | Column marked sensitive (`mark.set`) | A column was marked | The column |
 | Sensitive mark cleared (`mark.cleared`) | A mark was cleared: the column's values are no longer masked | The column |
 | Source deleted (`source.deleted`) | A source and what was recorded about it were deleted | Its assets and runs, and whether it had marks (deleting it cleared them) |

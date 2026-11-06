@@ -512,6 +512,22 @@ With a shorter grace period, lower `KILNMARK_WORKER_SHUTDOWN_TIMEOUT` to leave 1
 `kilnmark.scan.parallel-tables` tables at a time, so one worker reads up to
 `concurrency × parallel-tables` tables at once.
 
+## Schedules
+
+Pipelines and flows run at set times on processes with the scheduler role (ADR 0046,
+docs/design/schedules.md). Every poll, one short transaction claims the due schedules
+(`FOR UPDATE SKIP LOCKED`) and moves each one's next fire on; only after it commits is each run
+queued, as Run now queues it, so a schedule fires at most once however many schedulers run. A fire
+found later than the catch-up is recorded as missed and not run. The schedules are set through
+`/api/v1/schedules` by designers and admins.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `kilnmark.schedules.poll-interval` (`KILNMARK_SCHEDULES_POLL_INTERVAL`) | `30s` | How often a process with the scheduler role looks for schedules that are due |
+| `kilnmark.schedules.catch-up` (`KILNMARK_SCHEDULES_CATCH_UP`) | `1h` | A fire due longer ago than this when it is found (the server was not running) is missed, not run late |
+
+Tests set the poll interval to a day and fire schedules themselves with `Scheduler.tick`.
+
 ## Data quality
 
 Each scan also samples rows, keeps value shapes and formats, and then queues a job of kind

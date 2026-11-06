@@ -578,3 +578,59 @@ function svg(name, height, title, sub, body) {
     foot(y3 + 52, "shield", "Its messages name only what the flow wrote: never the source's settings or its driver's words.");
   svg("flow-check-source", y3 + 104, "What a check-source node does", "Before the work starts: can the source be reached, and is everything it needs there?", b);
 }
+
+// ---- How a schedule fires ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 188;
+  const b =
+    lane(y1, 96, "One short transaction", C.navy) +
+    card(X[0], y1 + 30, W, { n: "1", color: C.navy, title: "Due schedules found", sub: "every 30 s, scheduler role" }) +
+    card(X[1], y1 + 30, W, { n: "2", color: C.navy, title: "Each one locked", sub: "others are skipped" }) +
+    card(X[2], y1 + 30, W, { n: "3", color: C.navy, title: "Next fire moved on", sub: "past now; then it commits" }) +
+    arrow([[X[0] + W, y1 + 58], [X[1] - 2, y1 + 58]], C.navy) +
+    arrow([[X[1] + W, y1 + 58], [X[2] - 2, y1 + 58]], C.navy) +
+    lane(y2, 96, "After it commits", C.blue) +
+    card(X[2], y2 + 30, W, { n: "4", color: C.blue, title: "The run is queued", sub: "latest version, as Run now" }) +
+    card(X[1], y2 + 30, W, { n: "5", color: C.blue, title: "Acts as the schedule", sub: "as steward or designer" }) +
+    card(X[0], y2 + 30, W, { icon: "check", color: C.good, strong: true, title: "Outcome recorded", sub: "started, skipped, failed" }) +
+    arrow([[X[2] + W / 2, y1 + 86], [X[2] + W / 2, y2 + 28]], C.blue) +
+    arrow([[X[2], y2 + 58], [X[1] + W + 2, y2 + 58]], C.blue) +
+    arrow([[X[1], y2 + 58], [X[0] + W + 2, y2 + 58]], C.blue) +
+    foot(300, "shield", "Two schedulers never fire one schedule twice. A crash between claim and queue loses that fire, never doubles it.");
+  svg("schedule-fire", 350, "How a schedule fires", "The claim commits before the run is queued, so each fire happens at most once", b);
+}
+
+// ---- What happens to a fire ----
+{
+  const dx = 330;
+  const diamond = (cy, a, z) =>
+    `<polygon points="${dx - 82},${cy} ${dx},${cy - 34} ${dx + 82},${cy} ${dx},${cy + 34}" fill="${C.tint}" stroke="${C.axis}" stroke-width="1.25"/>` +
+    text(dx, cy - 4, a, { size: 12.5, weight: 600, anchor: "middle" }) +
+    text(dx, cy + 12, z, { size: 12.5, weight: 600, anchor: "middle" });
+  const d1 = 112, d2 = 220, d3 = 328;
+  const b =
+    card(24, d1 - 28, 200, { icon: "clock", color: C.blue, title: "A fire is due", sub: "found by the scheduler" }) +
+    arrow([[224, d1], [dx - 84, d1]], C.blue) +
+    diamond(d1, "Due more than", "an hour ago?") +
+    arrow([[dx + 82, d1], [520, d1]], C.warn, { dash: "4 3" }) +
+    label(dx + 92, d1 - 10, "yes", C.warn, "start") +
+    card(522, d1 - 28, 214, { icon: "clock", color: C.warn, dash: "4 3", title: "missed", sub: "the server was not running" }) +
+    arrow([[dx, d1 + 34], [dx, d2 - 36]], C.blue) +
+    label(dx + 8, d1 + 54, "no", C.quiet, "start") +
+    diamond(d2, "A run of it", "still going?") +
+    arrow([[dx + 82, d2], [520, d2]], C.warn, { dash: "4 3" }) +
+    label(dx + 92, d2 - 10, "yes", C.warn, "start") +
+    card(522, d2 - 28, 214, { icon: "play", color: C.warn, dash: "4 3", title: "skipped", sub: "a run was still going" }) +
+    arrow([[dx, d2 + 34], [dx, d3 - 36]], C.blue) +
+    label(dx + 8, d2 + 54, "no", C.quiet, "start") +
+    diamond(d3, "Can the latest", "version run?") +
+    arrow([[dx + 82, d3], [520, d3]], C.good) +
+    label(dx + 92, d3 - 10, "yes", C.good, "start") +
+    card(522, d3 - 28, 214, { icon: "check", color: C.good, strong: true, title: "started", sub: "the run is queued" }) +
+    arrow([[dx - 82, d3], [206, d3]], C.bad, { dash: "4 3" }) +
+    label(227, d3 - 10, "no", C.bad) +
+    card(24, d3 - 28, 180, { icon: "cross", color: C.bad, title: "failed", sub: "the server's reason" }) +
+    foot(384, "gear", "Either way the next fire is worked out from now: a missed or skipped fire is not made up later.");
+  svg("schedule-outcomes", 434, "What happens when a schedule is due", "Each fire ends in one of four outcomes, shown on the schedule", b);
+}

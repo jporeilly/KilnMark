@@ -7,6 +7,13 @@ details.
 
 ### What's new
 
+- **Pipelines and flows run on a schedule** (ADR 0046). Designers and admins give a pipeline or flow
+  one or more schedules: a five-field cron time in a time zone, the values its runs start with, and
+  the role they act as (steward or designer, never admin). Each run is of the latest version,
+  checked as Run now checks it, and is recorded as asked for by the schedule. A schedule fires at
+  most once per time; a time missed while Kilnmark was stopped, or one that finds the last run still
+  going, is not made up. Set through the API for now; the pages follow.
+  ([Running pipelines and flows on a schedule](docs/guide/schedules.md))
 - **Check a source before the work starts** (ADR 0041). A flow's new `check-source` node checks
   that a source can be reached and holds the tables or files the flow needs, keeping no data, and
   fails at once, naming what is missing, if not. Its `missing` value can go in a notice.
@@ -14,6 +21,24 @@ details.
 
 ### Details
 
+- **The scheduler** (ADR 0046, docs/design/schedules.md). Migration V36 adds `schedule`: one
+  pipeline or flow (each a foreign key that cascades, so deleting a pipeline deletes its
+  schedules), `cron`, `zone`, `parameters`, `run_as` (steward or designer), `enabled`,
+  `description`, who set it, `next_at`, and the last fire's time, outcome and run. `Cron` reads
+  five-field Unix cron (lists, ranges, steps, month and day names, 0 and 7 for Sunday, the Vixie
+  rule for the two day fields, `@hourly` to `@yearly`; no seconds, no `@reboot`) in an IANA zone:
+  a time the clocks skip runs moved on by the gap, one they repeat runs once, and an expression
+  that never fires in ten years is refused. `Scheduler`, on the scheduler role every
+  `kilnmark.schedules.poll-interval` (30 s), claims the due schedules in one transaction
+  (`FOR UPDATE SKIP LOCKED`), moves their next fire past now and commits, then queues each run
+  through `queueRun` as `schedule <id> (set by <name>)` with the schedule's role, and records
+  `started`, `skipped: a run was still going`, `missed: the server was not running` (due longer
+  ago than `kilnmark.schedules.catch-up`, 1 h) or `failed: <message>`. `/api/v1/schedules` lists
+  (by pipeline or flow), reads, adds, replaces and deletes them (designers and admins write;
+  viewers read without parameter values) and previews an expression's next five times. Parameter
+  values are checked against the latest version when saved. A busy pipeline or flow is now told
+  apart by its own exception (`AlreadyRunning`, still a 409). The audit log records
+  `schedule.set` and `schedule.deleted`, never the values, and the audit page lists them.
 - **The `check-source` flow node** (ADR 0041, docs/design/flow-controls.md, C1). It takes `source`,
   `tables` and `files` (lists, at most 50 names together, no ${...}) and `timeout`. It connects with
   `Connector.test` within `kilnmark.sources.check-timeout`, after the allowed hosts, then looks each
