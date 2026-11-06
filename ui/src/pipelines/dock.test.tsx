@@ -240,6 +240,7 @@ function server() {
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
     if (u.endsWith("/node-types")) return json(TYPES);
     if (u.includes("/sources")) return json([]);
+    if (u.includes("/schedules")) return json([]);
     if (u.endsWith("/validate")) return json(VALIDATION);
     if (u.endsWith("/pipelines/people-out/runs") && method === "POST") {
       const r = run(8, "queued");
@@ -298,13 +299,13 @@ describe("the pipeline page's panel", () => {
     await show(page());
     await ready();
     // Nothing selected: only the pipeline's tabs, and Nodes shown.
-    expect(tabNames()).toEqual(["Nodes", "Run", "Suggestions", "History", "Versions"]);
+    expect(tabNames()).toEqual(["Nodes", "Run", "Suggestions", "History", "Schedules", "Versions"]);
     expect(selectedTab().textContent).toBe("Nodes");
     expect(host.querySelector(".cv-drawer")).toBeNull();
 
     const before = document.activeElement;
     await click(nodeEl("people"));
-    expect(tabNames()).toEqual(["Nodes", "Settings", "Preview", "Run", "Suggestions", "History", "Versions"]);
+    expect(tabNames()).toEqual(["Nodes", "Settings", "Preview", "Run", "Suggestions", "History", "Schedules", "Versions"]);
     expect(selectedTab().textContent).toBe("Settings");
     expect(panel().querySelector("h3")?.textContent).toBe("people");
     expect(document.activeElement).toBe(before);
@@ -320,7 +321,7 @@ describe("the pipeline page's panel", () => {
     // Escape clears the selection: Settings and Preview go, Nodes is shown, the focus stays on the node.
     nodeEl("out").focus();
     await key(nodeEl("out"), "Escape");
-    expect(tabNames()).toEqual(["Nodes", "Run", "Suggestions", "History", "Versions"]);
+    expect(tabNames()).toEqual(["Nodes", "Run", "Suggestions", "History", "Schedules", "Versions"]);
     expect(selectedTab().textContent).toBe("Nodes");
     expect(document.activeElement).toBe(nodeEl("out"));
     expect(tabs().every((t) => t.getAttribute("aria-controls") === panel().id)).toBe(true);

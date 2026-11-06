@@ -32,6 +32,8 @@ page's tabs:
 - **Run**: the latest run's summary, as its run page gives it, kept current while it goes;
 - **History**: each run with its status, version, when it was asked for and by whom, how long it
   took, and the rows its pipeline runs wrote;
+- **Schedules**: the times it runs on its own, with the next and the last
+  ([Running pipelines and flows on a schedule](schedules.md));
 - **Versions**: every saved version.
 
 The problems, the parameters and saving come last, whichever tab is shown. **Collapse** folds the
@@ -439,6 +441,7 @@ The panel under the diagram has the same tabs as a pipeline's:
 - **Settings** shows the node or connection chosen on the diagram or in the table, while one is
   chosen.
 - **Run**, **History** and **Versions** show the latest run, every run and every saved version.
+- **Schedules** shows its schedules; designers and admins add and change them there.
 
 ![A flow's page: the diagram, with the node copy, which runs a pipeline, joined from its out connector to a notice and to a second pipeline by two amber connections labelled with their conditions, and to a closing notice by a red dashed connection on failure that runs round the nodes between; the second pipeline joins the closing notice on success. Under it the Nodes tab, a table giving each node, what it does, what it runs after, and its status, start, time and result in the latest run](images/flow-diagram-edit.png)
 
@@ -506,9 +509,11 @@ Kilnmark checks the latest saved version again first, since a pipeline may have 
 queues the run. Unsaved changes on the page are not part of it. Only one run of a flow is queued or
 running at a time.
 
-To run a flow at set times, such as every night, give it a schedule: see
-[Running pipelines and flows on a schedule](schedules.md). A run a schedule started shows
-`schedule <id> (set by <name>)` as who asked for it.
+To run a flow at set times, such as every night, give it a schedule in the **Schedules** tab under
+the diagram (designers and admins): see
+[Running pipelines and flows on a schedule](schedules.md). The schedule form asks for the values of
+the flow's parameters as Run now does. A run a schedule started shows `schedule <id> (set by
+<name>)` as who asked for it.
 
 ## Reading a run
 
@@ -588,5 +593,3 @@ runs it started that are still going are cancelled. What they had already writte
 
 - Changing a node's settings on the diagram: for now, change them in the YAML.
 - Deleting a flow.
-- Pages for schedules: flows run on a schedule now, set through the API for the moment
-  ([Running pipelines and flows on a schedule](schedules.md)).

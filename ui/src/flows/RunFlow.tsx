@@ -1,6 +1,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { flowsApi, type FlowParameter, type FlowRun, type FlowRunStatus, type FlowNodeStatus } from "../api";
-import { defaultText, defaultWords, runValues } from "./parameters";
+import { defaultText, runValues } from "./parameters";
+import { ParameterFields } from "./ParameterFields";
 
 const LABEL: Record<FlowRunStatus | FlowNodeStatus, string> = {
   pending: "Not started",
@@ -111,8 +112,6 @@ export function RunFlowButton({
     void run(values);
   };
 
-  const fieldId = (p: string) => `run-${name}-${p}`;
-
   return (
     <>
       <button
@@ -132,43 +131,13 @@ export function RunFlowButton({
             Values for this run. A field left as its default, or empty, runs with the default; lists are separated by
             commas.
           </p>
-          {params.map((p) => (
-            <div className="field" key={p.name}>
-              <label htmlFor={fieldId(p.name)}>
-                <span className="mono">{p.name}</span> ({p.type}
-                {p.required ? ", needed" : ""})
-              </label>
-              {p.type === "boolean" ? (
-                <select
-                  id={fieldId(p.name)}
-                  value={typed[p.name] ?? ""}
-                  onChange={(e) => setTyped((t) => ({ ...t, [p.name]: e.target.value }))}
-                  aria-invalid={problems[p.name] ? true : undefined}
-                  aria-describedby={`${fieldId(p.name)}-hint`}
-                >
-                  {(p.required || p.defaultVariable) && (
-                    <option value="">{p.defaultVariable ? `The server variable ${p.defaultVariable}` : "Choose…"}</option>
-                  )}
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              ) : (
-                <input
-                  id={fieldId(p.name)}
-                  value={typed[p.name] ?? ""}
-                  inputMode={p.type === "number" ? "decimal" : undefined}
-                  autoComplete="off"
-                  spellCheck={false}
-                  onChange={(e) => setTyped((t) => ({ ...t, [p.name]: e.target.value }))}
-                  aria-invalid={problems[p.name] ? true : undefined}
-                  aria-describedby={`${fieldId(p.name)}-hint`}
-                />
-              )}
-              <p id={`${fieldId(p.name)}-hint`} className={problems[p.name] ? "hint pl-bad" : "hint"}>
-                {problems[p.name] ?? [p.description, defaultWords(p)].filter(Boolean).join(" ")}
-              </p>
-            </div>
-          ))}
+          <ParameterFields
+            idBase={`run-${name}`}
+            params={params}
+            typed={typed}
+            problems={problems}
+            onChange={(p, v) => setTyped((t) => ({ ...t, [p]: v }))}
+          />
           {dialogError && (
             <p role="alert" className="error">
               {dialogError}

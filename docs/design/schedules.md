@@ -254,5 +254,39 @@ schedule's `updatedBy`.
 
 ## 11. Not yet
 
-- The pages to set and read schedules (the next change); until then, the API.
 - Event triggers: a run when a file lands, or when another flow ends.
+
+## 12. Pages
+
+In `ui/src/schedules`; the guide walks through them.
+
+- **A pipeline's or flow's Schedules tab** (`SchedulesSection`), in the panel under its canvas or
+  diagram, reads `GET /schedules?pipeline=` or `?flow=` when the page opens (the line under its
+  name gives the next scheduled run) and again every 30 seconds while the tab shows.
+- **The Schedules page** (`#/schedules`, `SchedulesPage`) reads `GET /schedules`, with filters for
+  on, paused, paused by Kilnmark, and failed last time; display names come from the pipeline and
+  flow lists.
+- **One table** (`SchedulesTable`) for both: the cron in words for the shapes the presets make and
+  the `@` shorthands (`cronWords`), else the expression; `updatedBy`, the name runs carry, in bold;
+  On or Paused with the next run in the viewer's zone, and in the schedule's when that differs;
+  the last outcome as a word, a tone and its reason, linked to the run. A schedule Kilnmark
+  paused reads, in amber and apart from the grey Paused state, **Paused: setter lost the role**
+  or **Paused: setter not signed in for 30 days** (the days as the outcome gives them); any other
+  `paused:` reason reads **Paused by Kilnmark** with the reason, and viewers, who get just
+  `paused`, read **Paused by Kilnmark**. The page's **Paused by Kilnmark** filter
+  (`pausedByKilnmark`: off, with an outcome starting `paused`) counts them all. The values are a
+  line under the schedule for stewards and above; viewers get null from the API and no line. Six
+  columns at most, so the page fits 1200 pixels.
+- **The form** (`ScheduleForm`, designers and admins) has presets that fill the cron (`presetCron`;
+  `readPreset` reads one back, so an edit opens on its preset) and a free cron field. Every few
+  minutes offers only steps that divide the hour, so the gaps stay even. A preset part that is not
+  right empties the cron rather than keep an earlier one. The zone list is
+  `Intl.supportedValuesOf("timeZone")` with UTC and the browser's zone. `POST /schedules/preview`
+  is asked 400 ms after the last change, earlier answers aborted, and only the answer for the
+  current expression and zone is shown. Parameter fields are the Run now dialog's
+  (`ParameterFields`); a pipeline's parameters are read from its latest YAML (`pipelineParameters`),
+  a flow's from its version. The form does not save until the parameters are read, since a PUT
+  replaces every value.
+- **Pause and Resume** read the schedule again (`GET /schedules/{id}`) and PUT it with only
+  `enabled` changed, so a change since the list was read is kept; **Edit** opens on a fresh read
+  too. Each makes the person the schedule's `set by`, as the notice says. **Delete** asks first.
