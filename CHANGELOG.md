@@ -71,6 +71,13 @@ details.
 
 ### Details
 
+- **A plan for benchmarks** (docs/design/benchmarks.md, planned; nothing built yet). How volume and
+  throughput will be measured: generated data at 1 million to 1 billion rows (TPC-H-derived, wide,
+  text-heavy and with broken rows), eight workloads from a table copy to 200 small runs at once,
+  what each run records, the baselines (the database's bulk tools, the last release, the tool a
+  customer runs today), the machines (starting on the owner's server), soak, failure and scaling
+  runs, `lab bench`, and a nightly check that fails on a 15% slowdown. Two diagrams,
+  `benchmark-setup.svg` and `benchmark-cycle.svg`, drawn by `diagrams.mjs`.
 - **Deleting a flow** (ADR 0048, docs/design/flows.md section 4). `DELETE /api/v1/flows/{name}`
   (designer; 204, 404, or 409 while a run is queued or running) runs `FlowStore.deleteWithSchedules`
   in one transaction: the flow's schedules are locked first, then the flow's row, the order a

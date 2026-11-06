@@ -55,7 +55,11 @@ run timelines).
    [docs/design/database-tools.md](../design/database-tools.md).
 9. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
    pre-run checks, flags on slow pipelines. Run tools on the MCP server fold in here (parked item
-   in Plan & Scope).
+   in Plan & Scope). **Benchmarks come first** (owner, 6 November 2026; planned in
+   [docs/design/benchmarks.md](../design/benchmarks.md)): a data generator and `lab bench`, the
+   copy, file-load and join workloads at 1 and 10 million rows on the owner's server, a nightly
+   check that fails on a 15% slowdown, then the rest of the workloads, two benchmark machines and
+   a comparison with the tool a customer runs today. What they find decides what to optimise.
 10. **Connectors** (brief of 28 October): SFTP/FTP, SMB, Azure Blob, REST; Snowflake, Vertica and
    Exasol as connectors of their own, with the SQL that moves files refused (ADR 0030).
 11. **Templates of a team's own** ("save as template", after the Library's, ADR 0043), and

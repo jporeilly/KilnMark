@@ -710,6 +710,64 @@ function svg(name, height, title, sub, body) {
   svg("request-key-retry", rows[2] + 100, "A retry with the same request key gets the same run", "The work never runs twice because a scheduler asked twice", b);
 }
 
+// ---- The benchmark machines ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 200, y3 = 324;
+  const mid = (i) => X[i] + W / 2;
+  const b =
+    lane(y1, 96, "Bench machine", C.blue) +
+    card(X[0], y1 + 30, W, { icon: "gear", color: C.blue, title: "Data generator", sub: "fixed seeds, 1M to 1B rows" }) +
+    card(X[1], y1 + 30, W, { icon: "terminal", color: C.blue, title: "lab bench", sub: "starts each run, five times" }) +
+    card(X[2], y1 + 30, W, { icon: "play", color: C.blue, strong: true, title: "Kilnmark", sub: "server and workers" }) +
+    arrow([[X[1] + W, y1 + 58], [X[2] - 2, y1 + 58]], C.blue) +
+    arrow([[X[0] + 170, y1 + 86], [X[0] + 170, y2 + 28]], C.green) +
+    label(X[0] + 178, y1 + 106, "makes the data once", C.green, "start") +
+    arrow([[mid(2), y1 + 86], [mid(2), y2 + 28]], C.blue) +
+    label(mid(2) + 8, y1 + 106, "reads and writes", C.blue, "start") +
+    lane(y2, 96, "Database machine", C.green) +
+    card(X[0], y2 + 30, W, { icon: "db", color: C.green, title: "Source databases", sub: "PostgreSQL first, then others" }) +
+    card(X[1], y2 + 30, W, { icon: "file", color: C.green, title: "Files", sub: "CSV and Parquet" }) +
+    card(X[2], y2 + 30, W, { icon: "db", color: C.green, title: "Target databases", sub: "written by each run" }) +
+    lane(y3, 96, "Results", C.violet) +
+    card(X[0], y3 + 30, W, { icon: "log", color: C.violet, title: "A CSV per benchmark", sub: "one row per run, with setup" }) +
+    card(X[1], y3 + 30, W, { icon: "book", color: C.violet, title: "Charts, results note", sub: "every run, not the best" }) +
+    card(X[2], y3 + 30, W, { icon: "check", color: C.violet, title: "Nightly check", sub: "fails if 15% slower" }) +
+    arrow([[X[0] + W, y3 + 58], [X[1] - 2, y3 + 58]], C.violet) +
+    arrow([[X[1] + W, y3 + 58], [X[2] - 2, y3 + 58]], C.violet) +
+    foot(y3 + 112, "gear", "To start, one machine holds both: stop the CI runners first and keep the same memory shares every run.");
+  svg("benchmark-setup", y3 + 162, "The benchmark machines", "Kilnmark on one machine, the data on another, the results kept with the setup", b);
+}
+
+// ---- A benchmark's cycle ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 200, y3 = 324;
+  const mid = (i) => X[i] + W / 2;
+  const b =
+    lane(y1, 96, "Each benchmark", C.blue) +
+    card(X[0], y1 + 30, W, { n: "1", color: C.blue, title: "Generate the data", sub: "once, at a fixed size" }) +
+    card(X[1], y1 + 30, W, { n: "2", color: C.blue, title: "Warm up", sub: "one run, thrown away" }) +
+    card(X[2], y1 + 30, W, { n: "3", color: C.blue, title: "Run it five times", sub: "nothing else running" }) +
+    arrow([[X[0] + W, y1 + 58], [X[1] - 2, y1 + 58]], C.blue) +
+    arrow([[X[1] + W, y1 + 58], [X[2] - 2, y1 + 58]], C.blue) +
+    arrow([[mid(2), y1 + 86], [mid(2), y1 + 108], [X[0] + 170, y1 + 108], [X[0] + 170, y2 + 28]], C.blue) +
+    lane(y2, 96, "Every run", C.orange) +
+    card(X[0], y2 + 30, W, { n: "4", color: C.orange, title: "Measure", sub: "rows/s, MB/s, memory, CPU" }) +
+    card(X[1], y2 + 30, W, { n: "5", color: C.orange, title: "Compare", sub: "median and slowest run" }) +
+    card(X[2], y2 + 30, W, { n: "6", color: C.orange, strong: true, title: "Report", sub: "CSV, chart and the setup" }) +
+    arrow([[X[0] + W, y2 + 58], [X[1] - 2, y2 + 58]], C.orange) +
+    arrow([[X[1] + W, y2 + 58], [X[2] - 2, y2 + 58]], C.orange) +
+    arrow([[mid(1), y2 + 86], [mid(1), y3 + 28]], C.orange) +
+    label(mid(1) + 8, y2 + 106, "with", C.orange, "start") +
+    lane(y3, 96, "Compared with", C.green) +
+    card(X[0], y3 + 30, W, { icon: "db", color: C.green, title: "The ceiling", sub: "the database's bulk tools" }) +
+    card(X[1], y3 + 30, W, { icon: "clock", color: C.green, title: "The last release", sub: "15% slower fails" }) +
+    card(X[2], y3 + 30, W, { icon: "book", color: C.green, title: "Today's tool", sub: "same data, built well" }) +
+    foot(y3 + 112, "check", "A run that writes the wrong number of rows has failed, however fast it was.");
+  svg("benchmark-cycle", y3 + 162, "A benchmark's cycle", "Generate once, warm up, run five times, measure each run, compare, report every run", b);
+}
+
 // ---- What deleting a flow does ----
 {
   const W = 208, X = [40, 276, 512];
