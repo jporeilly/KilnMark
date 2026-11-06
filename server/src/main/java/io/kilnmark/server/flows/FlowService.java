@@ -494,6 +494,8 @@ public class FlowService {
         } catch (FlowStore.Changed e) {
             throw fail(Response.Status.CONFLICT, "Someone saved another version of " + check.name()
                 + " since you opened it. Reload it, then make your change again.");
+        } catch (FlowStore.Missing e) {
+            throw fail(Response.Status.NOT_FOUND, "No flow called " + check.name());
         }
     }
 
@@ -523,6 +525,28 @@ public class FlowService {
 
     public Optional<FlowStore.Flow> find(String name) {
         return store.find(name);
+    }
+
+    /**
+     * Deletes the flow with its versions, runs and schedules (ADR 0048); the pipeline runs it started
+     * stay. Takes the designer role. Returns the schedules deleted with it, to record.
+     */
+    public List<io.kilnmark.server.schedules.ScheduleStore.Gone> delete(String name, String by, AccessRole role) {
+        if (!role.atLeast(AccessRole.DESIGNER)) {
+            throw fail(Response.Status.FORBIDDEN, "Deleting a flow takes the designer role");
+        }
+        try {
+            List<io.kilnmark.server.schedules.ScheduleStore.Gone> gone = store.deleteWithSchedules(name)
+                .orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No flow called " + name));
+            LOG.infof("Flow %s deleted by %s, with %d schedules", name, by, gone.size());
+            return gone;
+        } catch (FlowStore.Busy e) {
+            throw fail(Response.Status.CONFLICT, "A run of " + name + " is queued or running. Wait for it to finish, "
+                + "or cancel it, then delete the flow.");
+        } catch (io.kilnmark.server.schedules.ScheduleStore.LockWaitTooLong e) {
+            throw fail(Response.Status.CONFLICT, "Nothing was deleted: " + name + " or one of its schedules was busy "
+                + "a moment ago, perhaps with a scheduled run starting. Try again.");
+        }
     }
 
     public Optional<FlowStore.Version> version(String name, int n) {
@@ -584,6 +608,7 @@ public class FlowService {
      * caller's own transaction ({@code Db.together}) joins.
      *
      * @throws io.kilnmark.server.api.AlreadyRunning (409) while a run of the flow is queued or running
+     * @throws WebApplicationException (404) when the flow was deleted since it was checked
      */
     public FlowStore.Run queueChecked(CheckedRun checked, String by, AccessRole role) {
         try {
@@ -592,6 +617,9 @@ public class FlowService {
         } catch (FlowStore.Busy e) {
             throw new io.kilnmark.server.api.AlreadyRunning("A run of " + checked.name() + " is already queued or "
                 + "running. Wait for it to finish, or cancel it, then run the flow again.");
+        } catch (FlowStore.Missing e) {
+            // deleted since it was checked
+            throw fail(Response.Status.NOT_FOUND, "No flow called " + checked.name());
         }
     }
 

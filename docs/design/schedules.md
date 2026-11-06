@@ -12,7 +12,7 @@ One row of `schedule` per schedule; a pipeline or flow may have several.
 | Column | What it holds |
 | --- | --- |
 | `id` | A number of its own, shown in who a run was requested by |
-| `pipeline`, `flow` | What it runs: exactly one is set. Each is a foreign key that cascades. Deleting a pipeline deletes its schedules in its own transaction (`PipelineStore.deleteWithSchedules`, `DELETE … RETURNING`) and records each. Flows cannot be deleted yet; when they can, the cascade takes their schedules |
+| `pipeline`, `flow` | What it runs: exactly one is set. Each is a foreign key that cascades. Deleting a pipeline or a flow deletes its schedules in its own transaction (`PipelineStore.deleteWithSchedules`, `FlowStore.deleteWithSchedules`, both through `ScheduleStore.deleteFor`: `DELETE … RETURNING`) and records each |
 | `cron`, `zone` | When: five-field cron, read in an IANA zone (`UTC` by default) |
 | `parameters` | The values each run starts with, as given; defaults are filled in at each run, from the version then latest |
 | `run_as` | The role the runs have: `steward` (the default) or `designer`, never `admin` |
@@ -156,8 +156,9 @@ last run. Mistakes are 400 with `{"error": "..."}` naming the field: `cron:`, `z
 `schedule.set` when a schedule is added or changed, and `schedule.deleted`, each on
 `schedule <id>` with the pipeline or flow, cron, zone, `runAs` and `enabled`: never the parameter
 values (ADR 0029). `schedule.paused` when a schedule stops because its setter lost the role, with
-the reason (section 10). Deleting a pipeline records `schedule.deleted`, with `via: pipeline deleted`,
-for exactly the schedules its own transaction deleted, so one added while it was being deleted is
+the reason (section 10). Deleting a pipeline or a flow records `schedule.deleted`, with
+`via: pipeline deleted` or `via: flow deleted` (`ScheduleService.recordDeletedWith`), for exactly
+the schedules its own transaction deleted, so one added while it was being deleted is
 never removed unrecorded. The runs themselves are recorded as runs, requested by the
 schedule.
 
@@ -208,12 +209,17 @@ it is still on, still `starting` and runs the same pipeline or flow, and holds i
 to the outcome, queueing the run in between. A token revoked, or a schedule paused or changed,
 meanwhile either comes first (the check fails, or the row is no longer as claimed and says
 `skipped: the schedule was changed while it was starting`) or waits until the run is queued and
-recorded. A run already queued or running is never cancelled by a pause. Deleting a pipeline
-locks its schedules' rows before the pipeline's own, the order a fire takes them (its run locks
-the pipeline), so the two never deadlock. The order matters more than usual: the fire's row lock
-is held on one connection while its run is queued on another, so PostgreSQL could not see such a
-deadlock and break it; a test shows the other order hangs. Deleting a flow, when it arrives, must
-lock the flow's schedules first in the same way.
+recorded. A run already queued or running is never cancelled by a pause. Deleting a pipeline or
+a flow locks its schedules' rows before its own row (`ScheduleStore.lockFor`), the order a fire
+takes them (its run locks the pipeline or flow). The order matters more than usual: the fire's row
+lock is held on one connection while its run is queued on another, so PostgreSQL could not see
+such a deadlock and break it; a test for each (`ScheduleApiTest`) shows the delete waiting for the
+fire and then refused because the run is queued. The order covers the schedules the pipeline or
+flow has when the delete starts. A schedule changed to run it just after that, and fired, is not
+locked by the delete, so the two could still wait for each other. What is guaranteed: the delete
+limits every lock wait to 5 seconds (`lock_timeout`, `ScheduleStore.DELETE_LOCK_TIMEOUT`), so it
+never hangs. A lock not granted in time rolls the delete back, deletes nothing, and answers 409
+saying to try again; the fire then goes ahead (ADR 0048).
 
 If the check fails, nothing is queued: the row is turned off, its next fire cleared,
 `last_at` set to now, and the outcome written; `schedule.paused` is recorded by the server with the

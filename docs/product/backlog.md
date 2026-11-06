@@ -21,10 +21,11 @@ run timelines).
    `gradle/verification-metadata.xml` (ADR 0042).
 3. **The scheduler's pages, and deleting a flow** (Flows F4, [ADR 0026](../adr/0026-flows.md),
    [ADR 0046](../adr/0046-scheduler.md)): the scheduler's server, API and pages are built, for
-   pipelines and flows (docs/design/schedules.md); deleting a flow remains. External schedulers
-   are supported too (built, [ADR 0047](../adr/0047-external-schedulers.md)): Control-M,
-   AutoSys, cron and Windows Task Scheduler start pipelines and flows with `kilnmark-run`, wait
-   for them, and get an exit code; a retry with the same request key never runs the work twice.
+   pipelines and flows (docs/design/schedules.md), and deleting a flow is built
+   ([ADR 0048](../adr/0048-deleting-a-flow.md)). External schedulers are supported too (built,
+   [ADR 0047](../adr/0047-external-schedulers.md)): Control-M, AutoSys, cron and Windows Task
+   Scheduler start pipelines and flows with `kilnmark-run`, wait for them, and get an exit code; a
+   retry with the same request key never runs the work twice. Done.
 
 ## 2. Get a release out
 

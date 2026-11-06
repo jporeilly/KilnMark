@@ -237,8 +237,9 @@ is recorded as `missed: changed while it was due` rather than lost without a wor
 schedule has no next time. Resuming works the next time out from then, and the times it was paused
 are not made up.
 
-A deleted schedule's runs stay, in the pipeline's or flow's history. Deleting a pipeline deletes its schedules too, and each is recorded in the audit log as
-deleted with it. Flows cannot be deleted yet; when they can, their schedules will go with them.
+A deleted schedule's runs stay, in the pipeline's or flow's history. Deleting a pipeline or a flow
+deletes its schedules too, and each is recorded in the audit log as deleted with it
+([Deleting a flow](flows.md#deleting-a-flow)).
 
 Every change to a schedule is in the [audit log](audit-log.md), as **Schedule set** or **Schedule
 deleted**, with what it runs, when, in which zone, as which role, and whether it is on. The values

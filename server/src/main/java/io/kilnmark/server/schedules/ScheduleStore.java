@@ -219,6 +219,93 @@ public class ScheduleStore {
         });
     }
 
+    /** What a schedule runs: a pipeline or a flow, each named by a column of its own. */
+    public enum Target {
+        PIPELINE("pipeline"),
+        FLOW("flow");
+
+        private final String column;
+
+        Target(String column) {
+            this.column = column;
+        }
+    }
+
+    /** A schedule deleted with its pipeline or flow (ADR 0046), as the audit log records it. */
+    public record Gone(long id, String cron, String zone, String runAs, boolean enabled) {
+    }
+
+    /** How long deleting a pipeline or flow waits for any one lock before it gives up (ADR 0048). */
+    public static final Duration DELETE_LOCK_TIMEOUT = Duration.ofSeconds(5);
+
+    /** PostgreSQL's SQLSTATE when a lock was not granted within {@code lock_timeout}. */
+    static final String LOCK_NOT_AVAILABLE = "55P03";
+
+    /** A delete waited longer than {@link #DELETE_LOCK_TIMEOUT} for a lock: nothing was deleted; try again. */
+    public static final class LockWaitTooLong extends RuntimeException {
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        LockWaitTooLong() {
+            super("lock wait too long", null, false, false);
+        }
+    }
+
+    /**
+     * Runs the transaction that deletes a pipeline or flow, which starts with {@link #lockFor}: a lock
+     * not granted within {@link #DELETE_LOCK_TIMEOUT} rolls it back and throws {@link LockWaitTooLong}.
+     */
+    public static <T> T deleting(Db db, Db.Work<T> work) {
+        try {
+            return db.tx(work);
+        } catch (Db.DbException e) {
+            if (e.getCause() instanceof SQLException s && LOCK_NOT_AVAILABLE.equals(s.getSQLState())) {
+                throw new LockWaitTooLong();
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Locks the schedules of a pipeline or flow that is being deleted, in {@code c}'s transaction,
+     * first limiting every lock wait in that transaction to {@link #DELETE_LOCK_TIMEOUT}. Call it
+     * before locking the pipeline's or flow's own row: a schedule's fire holds its row while it
+     * queues a run, which locks the pipeline or flow, so the other order would make the two wait for
+     * each other. A schedule moved onto the pipeline or flow after this call is not locked by it, so
+     * a narrow wait across two connections, which PostgreSQL cannot see, is still possible: the limit
+     * turns it into a refusal (docs/design/schedules.md, "Under the row lock").
+     */
+    public static void lockFor(Connection c, Target target, String name) throws SQLException {
+        try (java.sql.Statement st = c.createStatement()) {
+            st.execute("SET LOCAL lock_timeout = '" + DELETE_LOCK_TIMEOUT.toMillis() + "ms'");
+        }
+        try (PreparedStatement ps = c.prepareStatement(
+            "SELECT 1 FROM kilnmark.schedule WHERE " + target.column + " = ? ORDER BY id FOR UPDATE")) {
+            ps.setString(1, name);
+            ps.executeQuery().close();
+        }
+    }
+
+    /**
+     * Deletes the schedules of a pipeline or flow in {@code c}'s transaction, returning exactly those
+     * it deleted, so each can be recorded: one added meanwhile is either deleted and returned here,
+     * or not deleted at all.
+     */
+    public static List<Gone> deleteFor(Connection c, Target target, String name) throws SQLException {
+        List<Gone> gone = new ArrayList<>();
+        try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.schedule WHERE " + target.column
+            + " = ? RETURNING id, cron, zone, run_as, enabled")) {
+            ps.setString(1, name);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    gone.add(new Gone(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4),
+                        rs.getBoolean(5)));
+                }
+            }
+        }
+        return gone;
+    }
+
     /** Deletes schedule {@code id}; returns it as it was, or empty when there was none. */
     public Optional<Schedule> delete(long id) {
         return db.tx(c -> {

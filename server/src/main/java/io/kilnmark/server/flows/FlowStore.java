@@ -12,6 +12,7 @@ import java.util.Optional;
 
 import io.kilnmark.server.Db;
 import io.kilnmark.server.jobs.JobQueue;
+import io.kilnmark.server.schedules.ScheduleStore;
 import jakarta.enterprise.context.ApplicationScoped;
 
 /**
@@ -69,6 +70,16 @@ public class FlowStore {
         }
     }
 
+    /** The flow named is not there (it was deleted a moment ago). */
+    public static final class Missing extends RuntimeException {
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        Missing() {
+            super("missing", null, false, false);
+        }
+    }
+
     /** The flow has a run queued or running. */
     public static final class Busy extends RuntimeException {
         @java.io.Serial
@@ -111,6 +122,58 @@ public class FlowStore {
                     return rs.next() && rs.getBoolean(1);
                 }
             }
+        });
+    }
+
+    /**
+     * Deletes the flow with its versions, its runs and their node runs (each table cascades from the
+     * one before, V20) and, in the same transaction, its schedules, returning exactly those, so each
+     * can be recorded (ADR 0048); empty when there is no such flow. The pipeline runs its runs
+     * started stay, as what they wrote and the lineage they recorded stay: their link to the flow run
+     * is set to null by its foreign key. Its open problem for notifications is cleared, so a flow
+     * saved later under the name is told of afresh.
+     *
+     * @throws Busy when a run is queued or running, or the job of one is still finishing
+     * @throws ScheduleStore.LockWaitTooLong when a lock was not granted in time; nothing was deleted
+     */
+    public Optional<List<ScheduleStore.Gone>> deleteWithSchedules(String name) {
+        return ScheduleStore.deleting(db, c -> {
+            // the schedules' rows first, then the flow's: a schedule's fire holds its row while it
+            // queues a run, which locks the flow, so the other order could deadlock
+            ScheduleStore.lockFor(c, ScheduleStore.Target.FLOW, name);
+            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.flow WHERE name = ? FOR UPDATE")) {
+                ps.setString(1, name);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        return Optional.<List<ScheduleStore.Gone>>empty();
+                    }
+                }
+            }
+            // A run's job ends after the run is recorded as ended, and tells of a failure in between:
+            // while it is still going, a failure told after the delete would be about a flow that is gone.
+            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.flow_run WHERE flow = ? "
+                + "AND status IN ('queued', 'running') UNION ALL SELECT 1 FROM kilnmark.job j "
+                + "JOIN kilnmark.flow_run r ON (j.payload ->> 'flowRunId')::bigint = r.id WHERE r.flow = ? "
+                + "AND j.kind = '" + JOB_KIND + "' AND j.status IN ('queued', 'running') LIMIT 1")) {
+                ps.setString(1, name);
+                ps.setString(2, name);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        throw new Busy();
+                    }
+                }
+            }
+            List<ScheduleStore.Gone> gone = ScheduleStore.deleteFor(c, ScheduleStore.Target.FLOW, name);
+            // a name used again starts with no open problem: its next failure is told (notify_state, V13)
+            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.notify_state WHERE dedupe_key = ?")) {
+                ps.setString(1, "flow:" + name);
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.flow WHERE name = ?")) {
+                ps.setString(1, name);
+                ps.executeUpdate();
+            }
+            return Optional.of(gone);
         });
     }
 
@@ -199,6 +262,7 @@ public class FlowStore {
      * @param expected the latest version the caller read, or null to create or to take the latest
      * @throws Exists  when creating and the name is taken
      * @throws Changed when {@code expected} is no longer the latest version
+     * @throws Missing when saving a version of a flow that is not there
      */
     public Flow save(String name, Integer expected, boolean create, String displayName, String description, String yaml,
                      String message, String by, boolean valid, String problems) {
@@ -246,7 +310,7 @@ public class FlowStore {
                     ps.setString(1, name);
                     try (ResultSet rs = ps.executeQuery()) {
                         if (!rs.next()) {
-                            throw new IllegalStateException("No flow " + name);
+                            throw new Missing();
                         }
                         latest = rs.getInt(1);
                     }
@@ -334,12 +398,18 @@ public class FlowStore {
      * Queues a run of one version as a job of kind flow, in one transaction.
      *
      * @throws Busy when the flow has a run queued or running
+     * @throws Missing when the flow is not there (it was deleted a moment ago)
      */
     public Run queueRun(String flow, int version, String by, String role, String parameters, String variables) {
         return db.tx(c -> {
+            // the flow can have been deleted since the caller found it
             try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.flow WHERE name = ? FOR UPDATE")) {
                 ps.setString(1, flow);
-                ps.executeQuery().close();
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        throw new Missing();
+                    }
+                }
             }
             try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.flow_run WHERE flow = ? "
                 + "AND status IN ('queued', 'running') LIMIT 1")) {
