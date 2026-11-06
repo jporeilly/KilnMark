@@ -1,0 +1,32 @@
+# Join: rows of two inputs with equal keys (a Kilnmark sample).
+# Every shop order beside its customer, and also the orders with no customer and the customers with
+# no order (a full join), each with the other side's columns empty.
+# Look for: inputs: left and right; the right's customer_id comes out as right_customer_id.
+kilnmark: pipeline/v1
+name: sample-join
+description: Shop orders and customers side by side, with those that have no partner.
+
+nodes:
+  - id: orders
+    type: read
+    source: shop-db
+    asset: shop.orders
+
+  - id: customers
+    type: read
+    source: shop-db
+    asset: shop.customers
+    columns: [customer_id, first_name, last_name, loyalty_tier]
+
+  - id: joined
+    type: join
+    inputs: { left: orders, right: customers }
+    on: { customer_id: customer_id }
+    how: full
+
+  - id: out
+    type: write
+    input: joined
+    source: files
+    path: samples/combine/orders_and_customers.csv
+    mode: replace

@@ -1,8 +1,8 @@
 # Pipeline nodes and expressions
 
 This guide describes the nodes that change rows in a pipeline (filter, compute, select, lookup,
-aggregate, union, dedupe, route, limit and sort) and the expression language several of them
-share. Each node has a YAML example you can copy into a pipeline. Every node, with each setting's
+join, aggregate, union, dedupe, route, limit and sort) and the expression language several of
+them share. Each node has a YAML example you can copy into a pipeline. Every node, with each setting's
 type and default, is also in [Reference: pipeline nodes](reference-pipeline-nodes.md).
 
 ## How nodes connect
@@ -17,6 +17,7 @@ Every node has named **ports**. Most nodes read from `in` and write to `out`; so
 | `compute` | `in` | `out` |
 | `select` | `in` | `out` |
 | `lookup` | `main`, `lookup` | `out`, `rejected` |
+| `join` | `left`, `right` | `out` |
 | `aggregate` | `in` | `out` |
 | `union` | `in` (any number of inputs) | `out` |
 | `dedupe` | `in` | `out`, `rejected` |
@@ -27,7 +28,7 @@ Every node has named **ports**. Most nodes read from `in` and write to `out`; so
 
 In YAML, `input: tidy` reads the `out` port of the node called `tidy`, and `input: tidy.rejected`
 reads its `rejected` port. A node with two inputs names them: `inputs: { main: spend, lookup:
-tidy }`. A union lists its inputs: `input: [north, south]`.
+tidy }`, or `inputs: { left: orders, right: customers }` for a join. A union lists its inputs: `input: [north, south]`.
 
 Rows sent to a port that nothing reads are dropped. For example, a filter whose `rejected` port is
 not connected simply drops the rows it does not keep.
@@ -127,6 +128,65 @@ Good to know:
   Raise `memory_limit_mb`, or keep fewer columns.
 - While the lookup input loads, main rows that are ready may be held in memory too (counted
   against the same limit), so a pipeline where both inputs come from one node keeps moving.
+
+## join
+
+Joins the rows of the `left` and `right` inputs whose key columns are equal, as SQL does. Use it
+when both inputs may be large, when you want rows from either side that have no match, or when a
+key can repeat on both sides.
+
+```yaml
+- id: joined
+  type: join
+  inputs: { left: orders, right: customers }
+  on: { customer_id: customer_id }
+  how: left
+```
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `on` | Key columns: each left column and the right column it must equal. Required. | |
+| `how` | `inner` keeps the pairs of rows that match; `left` also keeps left rows with no match; `right` keeps right rows with none; `full` keeps both. | `inner` |
+| `right_prefix` | Put in front of a right column's name when a left column already has it. | `right_` |
+| `memory_limit_mb` | The most memory the two inputs may take while they are sorted. Past it, the join carries on on disk. | 256 |
+
+![The sample-join pipeline on the canvas: orders into the join's left port and customers into its right port, the join node saying "full on customer_id = customer_id" and 707 rows out, and a write to a file](images/join-canvas.png)
+
+In its settings, **Match on** pairs each left column with the right column it must equal, and
+**Join** chooses which rows with no match to keep:
+
+![The settings of a join node: Match on with left column customer_id and right column customer_id, Add a key, Join set to full, Right prefix right_ and a memory limit of 256 MB](images/join-settings.png)
+
+![The four kinds of join as pairs of circles, left and right: inner keeps only the overlap, the pairs that match; left adds the left rows with no match; right adds the right rows with none; full keeps every row of both. Where there is no match the other side's columns are empty, and an empty key matches nothing](images/join-kinds.svg)
+
+Good to know:
+
+- Every pair comes out: a key on three left rows and two right rows gives six rows.
+- Keys match by value, as a lookup's do: `1`, `1.0` and `1.00` match, and a date matches a
+  timestamp at midnight. A floating-point number matches by its shortest decimal, so a very large
+  float may not match the whole number it holds; cast it with `select` to match exactly.
+  Timestamps match to the nanosecond. Text never matches a number; change one with `select`
+  first. Several key columns must all be equal.
+- An empty (null) key never matches anything, not even another empty key, as in SQL.
+- Every column of both inputs comes out with its type, the left's first. A right column whose
+  name a left column already has (ignoring case) is renamed with `right_prefix`, so a join on
+  `customer_id` gives `customer_id` and `right_customer_id`; drop the one you do not need with
+  `select`. Columns of a side that may have no match can be empty.
+- Rows come out in order of their keys, rows with an empty key last. Within a key, each left row
+  comes in the order it arrived, with its right rows in theirs.
+- Any number of rows can be joined: both inputs are sorted by their keys, in memory up to
+  `memory_limit_mb` between them and on disk past it, as a sort does. A key with more right rows
+  than a quarter of that limit holds them on disk while its left rows are joined to them. Nothing
+  is passed on until both inputs have ended, except that a join that can give no rows (an `inner`
+  join with an empty input, say) stops as soon as it knows. The run's log says how much was
+  written to disk.
+
+**join or lookup?** A `lookup` reads its lookup input into memory and streams the main input past
+it, keeping the main rows' order: quickest when one side is small, such as a table of codes.
+It uses the first row of a repeated key (or stops), and sends main rows with no match to
+`rejected` if you like. A `join` sorts both sides, so either may be larger than memory, keeps
+every pair when keys repeat, can keep the rows of either side with no match, and passes both
+sides' columns on.
 
 ## aggregate
 

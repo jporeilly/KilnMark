@@ -384,8 +384,8 @@ table writes, `overwrite` and `delimiter` for files, `compression` for Parquet, 
 settings, as in [Writing data from a pipeline](writing-data.md), which describes them; a setting the
 source's writer does not take is a problem, with its line.
 
-The nodes between reading and writing (filter, compute, select, lookup, aggregate, union, dedupe,
-route, limit and sort) are described in [Pipeline nodes and expressions](pipeline-nodes.md). The quality
+The nodes between reading and writing (filter, compute, select, lookup, join, aggregate, union,
+dedupe, route, limit and sort) are described in [Pipeline nodes and expressions](pipeline-nodes.md). The quality
 gate is described below. The node
 catalogue (`GET /api/v1/node-types`) lists every type this server has, with the settings each takes,
 and the [Components reference](components-reference.md) describes each of them, with every

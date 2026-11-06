@@ -393,11 +393,26 @@ final class ExternalSorter implements AutoCloseable {
     // ---- giving rows back ----
 
     /** A batch of rows in order, and their keys (null when not asked for). Closing it closes the rows. */
-    record Chunk(VectorSchemaRoot rows, KeyBlock keys) implements AutoCloseable {
+    record Chunk(VectorSchemaRoot rows, KeyBlock keys, RowSource source) implements AutoCloseable {
+
+        Chunk(VectorSchemaRoot rows, KeyBlock keys) {
+            this(rows, keys, null);
+        }
+
         @Override
         public void close() {
             rows.close();
         }
+    }
+
+    /**
+     * Where each row of a chunk given back from memory is held by the sorter, until it closes: so a
+     * join can keep using a row after its chunk has gone, without copying it.
+     */
+    interface RowSource {
+        VectorSchemaRoot root(int row);
+
+        int row(int row);
     }
 
     /** Rows in order, a batch at a time; the caller owns each batch it is given. */
@@ -475,7 +490,18 @@ final class ExternalSorter implements AutoCloseable {
                 }
                 k = new KeyBlock(s.trimmed(), offsets);
             }
-            return new Chunk(rows, k);
+            RowSource source = new RowSource() {
+                @Override
+                public VectorSchemaRoot root(int row) {
+                    return batches.get((int) (order[from + row] >>> 32));
+                }
+
+                @Override
+                public int row(int row) {
+                    return (int) order[from + row];
+                }
+            };
+            return new Chunk(rows, k, source);
         }
 
         @Override

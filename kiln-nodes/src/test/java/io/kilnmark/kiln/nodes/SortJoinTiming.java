@@ -30,7 +30,7 @@ import io.kilnmark.kiln.graph.PipelineGraph;
 import io.kilnmark.kiln.graph.PortRef;
 
 /**
- * Rough timings of sort on this machine, in memory and spilling, at 1 and 10 million rows: a first
+ * Rough timings of sort and join on this machine, in memory and spilling, at 1 and 10 million rows: a first
  * data point for docs/design/benchmarks.md, not a benchmark. Runs only with {@code KILNMARK_TIMING=1}
  * ({@code KILNMARK_TIMING=1 ./gradlew :kiln-nodes:test --tests "*SortJoinTiming*" -i}).
  */
@@ -149,6 +149,74 @@ class SortJoinTiming {
             r.node("sort").spilledBytes() / 1048576.0, r.node("sort").peakMemoryBytes() / 1048576.0);
         System.out.println("TIMING " + line);
         return line;
+    }
+
+    /** Counts rows, and the rows whose right side matched. */
+    static final class CountJoined implements Node {
+        long rows;
+        long matched;
+
+        @Override
+        public String type() {
+            return "count";
+        }
+
+        @Override
+        public void init(NodeContext context) {
+        }
+
+        @Override
+        public boolean process(NodeContext context) throws NodeException {
+            try (VectorSchemaRoot b = context.input().take(context.allocator())) {
+                if (b == null) {
+                    return false;
+                }
+                rows += b.getRowCount();
+                BigIntVector rk = (BigIntVector) b.getVector("right_k");
+                for (int i = 0; i < b.getRowCount(); i++) {
+                    matched += rk.isNull(i) ? 0 : 1;
+                }
+                return true;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new NodeException("interrupted", e);
+            }
+        }
+    }
+
+    /** Joins {@code rows} left rows to as many right rows, keys drawn from as many values (about one match each). */
+    static String timeJoin(String what, long rows, long limitMb) throws Exception {
+        CountJoined count = new CountJoined();
+        List<GraphNode> nodes = new ArrayList<>();
+        nodes.add(new GraphNode("left", new Generate(rows, rows, 7), null));
+        nodes.add(new GraphNode("right", new Generate(rows, rows, 11), null));
+        nodes.add(new GraphNode("join", new JoinFactory().create(Map.of("on", Map.of("k", "k"), "how", "left",
+            "memory_limit_mb", limitMb)), null));
+        nodes.add(new GraphNode("count", count, null));
+        List<Edge> edges = List.of(new Edge(PortRef.parse("left", "out"), PortRef.parse("join", "left")),
+            new Edge(PortRef.parse("right", "out"), PortRef.parse("join", "right")),
+            new Edge(PortRef.parse("join", "out"), PortRef.parse("count", "in")));
+        long started = System.nanoTime();
+        RunResult r = new KilnGraphRunner((limitMb * 3) << 20, 8, Duration.ofMinutes(30))
+            .run(new PipelineGraph("timing", nodes, edges), e -> { });
+        double seconds = (System.nanoTime() - started) / 1e9;
+        assertTrue(r.succeeded(), r.error());
+        assertTrue(count.rows >= rows);
+        String line = String.format(java.util.Locale.UK, "%s: %,d + %,d rows (%,d out, %,d matched), memory_limit_mb %d: "
+            + "%.1f s (%,.0f input rows/s), spilled %,.0f MB, peak Arrow memory %,.0f MB", what, rows, rows, count.rows,
+            count.matched, limitMb, seconds, 2 * rows / seconds, r.node("join").spilledBytes() / 1048576.0,
+            r.node("join").peakMemoryBytes() / 1048576.0);
+        System.out.println("TIMING " + line);
+        return line;
+    }
+
+    @Test
+    void join() throws Exception {
+        timeJoin("warm-up", 1_000_000, 4096);
+        timeJoin("left join in memory", 1_000_000, 4096);
+        timeJoin("left join spilling", 1_000_000, 32);
+        timeJoin("left join in memory", 10_000_000, 8192);
+        timeJoin("left join spilling", 10_000_000, 256);
     }
 
     @Test

@@ -103,7 +103,7 @@ class SampleTablesTest {
             }
             checked++;
         }
-        assertEquals(21, checked);
+        assertEquals(22, checked);
     }
 
     @Test

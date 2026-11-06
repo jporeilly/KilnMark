@@ -845,3 +845,40 @@ function svg(name, height, title, sub, body) {
     foot(y2 + 112, "lock", "Runs are encrypted with a key only the node holds, in its own temporary folder, deleted when it ends, fails or stops.");
   svg("sort-spill", y2 + 162, "How a sort carries on on disk", "In memory while the rows fit; past the limit, sorted runs on disk, merged at the end", b);
 }
+
+// ---- The four kinds of join ----
+{
+  // Two overlapping circles per kind: the parts a join keeps are filled, the rest outlined.
+  const kinds = [
+    ["inner", "Pairs that match", [false, true, false]],
+    ["left", "Plus left rows with none", [true, true, false]],
+    ["right", "Plus right rows with none", [false, true, true]],
+    ["full", "Every row of both", [true, true, true]],
+  ];
+  const W = 160, X = [40, 214, 388, 562], y = 76;
+  let b = "";
+  kinds.forEach(([name, sub, keep], i) => {
+    const x = X[i];
+    const cx1 = x + 58, cx2 = x + 102, cy = y + 74, r = 34;
+    const id = `j${i}`;
+    b += rect(x, y, W, 190, { fill: C.tint, stroke: C.axis });
+    b += `<defs><clipPath id="${id}l"><circle cx="${cx1}" cy="${cy}" r="${r}"/></clipPath><clipPath id="${id}r"><circle cx="${cx2}" cy="${cy}" r="${r}"/></clipPath></defs>`;
+    // left only, then right only, then the overlap, each filled when kept
+    if (keep[0]) b += `<circle cx="${cx1}" cy="${cy}" r="${r}" fill="${C.blue}" fill-opacity="0.35"/><circle cx="${cx2}" cy="${cy}" r="${r}" fill="${C.tint}" clip-path="url(#${id}l)"/>`;
+    if (keep[2]) b += `<circle cx="${cx2}" cy="${cy}" r="${r}" fill="${C.orange}" fill-opacity="0.35"/><circle cx="${cx1}" cy="${cy}" r="${r}" fill="${C.tint}" clip-path="url(#${id}r)"/>`;
+    if (keep[1]) b += `<circle cx="${cx2}" cy="${cy}" r="${r}" fill="${C.green}" fill-opacity="0.55" clip-path="url(#${id}l)"/>`;
+    b += `<circle cx="${cx1}" cy="${cy}" r="${r}" fill="none" stroke="${C.blue}" stroke-width="1.5"/>`;
+    b += `<circle cx="${cx2}" cy="${cy}" r="${r}" fill="none" stroke="${C.orange}" stroke-width="1.5"/>`;
+    b += text(cx1 - 20, cy + 4, "L", { size: 12, weight: 700, fill: C.blue, anchor: "middle" });
+    b += text(cx2 + 20, cy + 4, "R", { size: 12, weight: 700, fill: C.orange, anchor: "middle" });
+    b += text(x + W / 2, y + 140, `how: ${name}`, { weight: 600, anchor: "middle" });
+    b += text(x + W / 2, y + 160, sub, { size: 11.5, fill: C.quiet, anchor: "middle" });
+  });
+  const y2 = y + 214;
+  b +=
+    lane(y2, 96, "Where there is no match", C.navy) +
+    card(40, y2 + 30, 330, { icon: "log", color: C.navy, title: "The other side's columns are empty", sub: "and every column keeps its type" }) +
+    card(392, y2 + 30, 330, { icon: "key", color: C.navy, title: "An empty key matches nothing", sub: "not even another empty key" }) +
+    foot(y2 + 112, "file", "Rows come out in order of their keys; a key on 3 left rows and 2 right rows gives 6 pairs.");
+  svg("join-kinds", y2 + 162, "The four kinds of join", "Which rows a join keeps: the pairs whose keys are equal, and the rows of either side with no match", b);
+}

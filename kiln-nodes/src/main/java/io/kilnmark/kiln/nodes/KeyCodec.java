@@ -43,7 +43,9 @@ import io.kilnmark.kiln.nodes.expr.Type;
  * <p>Each part starts with a byte saying whether the value is null (0 for nulls first, 2 for nulls
  * last, 1 for a value); descending parts invert their value's bytes, never that byte. For a join
  * ({@code joinKeys}), the whole key starts with 1, or with 2 and nothing more when any part is null
- * (or cannot be matched), so such rows sort last, keep their order, and never equal another key.
+ * (or cannot be matched), so such rows sort last, keep their order, and never equal another key;
+ * and each part is encoded by its family alone ({@link #universal}), so the two sides of a join are
+ * encoded without knowing each other's types.
  */
 final class KeyCodec {
 
@@ -74,7 +76,8 @@ final class KeyCodec {
         int n = batch.getRowCount();
         Reader[] readers = new Reader[parts.size()];
         for (int p = 0; p < readers.length; p++) {
-            readers[p] = reader(batch.getVector(parts.get(p).column()), parts.get(p).as());
+            FieldVector v = batch.getVector(parts.get(p).column());
+            readers[p] = joinKeys ? universal(v) : reader(v, parts.get(p).as());
         }
         Sink out = new Sink(Math.max(16, n * 10));
         int[] offsets = new int[n + 1];
@@ -97,6 +100,156 @@ final class KeyCodec {
             offsets[i + 1] = out.length;
         }
         return new KeyBlock(out.trimmed(), offsets);
+    }
+
+    /** Whether keys of these types can be matched: both numbers, both text, both true/false, or both dates and times. */
+    static boolean matchable(Type a, Type b) {
+        return a.isNull() || b.isNull() || family(a) == family(b);
+    }
+
+    private static int family(Type t) {
+        return switch (t.kind()) {
+            case INT64, FLOAT64, DECIMAL -> 1;
+            case UTF8 -> 2;
+            case BOOLEAN -> 3;
+            case DATE, TIMESTAMP -> 4;
+            case NULL -> 0;
+        };
+    }
+
+    // ---- join keys: one encoding per family, whatever the column's own type ----
+
+    private static final byte NEG_INF = 1;
+    private static final byte NEGATIVE = 2;
+    private static final byte ZERO = 3;
+    private static final byte POSITIVE = 4;
+    private static final byte POS_INF = 5;
+    private static final byte NAN = 6;
+
+    /**
+     * A join key's part encoded by its family alone, so each side is encoded without knowing the
+     * other's types and equal values give equal bytes: numbers by exact value (a whole number, a
+     * decimal and a float of the same value are one key; a float as its shortest decimal, as lookup
+     * matches it), dates and timestamps as microseconds since 1970 (a date at midnight), text as its
+     * UTF-8 bytes, booleans as one byte.
+     */
+    private static Reader universal(FieldVector v) {
+        Type own = Type.of(v.getField().getType());
+        if (own == null) {
+            throw new IllegalArgumentException("A key column cannot hold " + v.getField().getType() + " values");
+        }
+        if (own.kind() == Type.Kind.UTF8) {
+            return reader(v, Type.UTF8);
+        }
+        if (own.kind() == Type.Kind.DATE || own.kind() == Type.Kind.TIMESTAMP) {
+            // the instant to the nanosecond, whatever the unit: a date is its midnight, and every
+            // date Arrow can hold fits
+            return temporal(v);
+        }
+        if (v instanceof UInt8Vector u) {
+            return (row, part, out) -> {
+                if (u.isNull(row)) {
+                    return false;
+                }
+                long raw = u.get(row);
+                out.put(VALUE);
+                if (raw < 0) {
+                    number(new BigDecimal(Long.toUnsignedString(raw)), out); // 2^63 and above
+                } else {
+                    number(raw, out);
+                }
+                return true;
+            };
+        }
+        Col c = ArrowIO.read(v);
+        return (row, part, out) -> {
+            if (c.isNull(row)) {
+                return false;
+            }
+            Object value = c.get(row);
+            out.put(VALUE);
+            switch (own.kind()) {
+                case INT64 -> number((Long) value, out);
+                case DECIMAL -> number((BigDecimal) value, out);
+                case FLOAT64 -> {
+                    double d = (Double) value;
+                    if (Double.isNaN(d)) {
+                        out.put(NAN);
+                    } else if (Double.isInfinite(d)) {
+                        out.put(d > 0 ? POS_INF : NEG_INF);
+                    } else {
+                        number(BigDecimal.valueOf(d), out);
+                    }
+                }
+                case BOOLEAN -> out.put((Boolean) value ? (byte) 1 : (byte) 0);
+                case DATE, TIMESTAMP, UTF8, NULL -> {
+                    return false;
+                }
+            }
+            return true;
+        };
+    }
+
+    /** A whole number as {@link #number(BigDecimal, Sink)} writes it, without making a BigDecimal or a string. */
+    static void number(long v, Sink out) {
+        if (v == 0) {
+            out.put(ZERO);
+            return;
+        }
+        boolean negative = v < 0;
+        long m = negative ? -v : v; // Long.MIN_VALUE stays as is, read as unsigned below
+        byte[] digits = new byte[20]; // least significant first
+        int n = 0;
+        while (m != 0) {
+            digits[n++] = (byte) Long.remainderUnsigned(m, 10);
+            m = Long.divideUnsigned(m, 10);
+        }
+        int low = 0;
+        while (digits[low] == 0) {
+            low++;
+        }
+        out.put(negative ? NEGATIVE : POSITIVE);
+        int at = out.length;
+        out.putInt(n ^ Integer.MIN_VALUE);
+        for (int k = n - 1; k >= low; k--) {
+            out.put((byte) (digits[k] + 1));
+        }
+        out.put((byte) 0);
+        if (negative) {
+            out.invert(at);
+        }
+    }
+
+    /**
+     * Any finite number, by value: its sign, then (as 0.d1d2... times 10 to the power e) the power e
+     * and the digits without trailing zeros, each a byte, then a zero byte; for a negative number,
+     * the power and the digits inverted. Equal values give equal bytes whatever their scale.
+     */
+    static void number(BigDecimal d, Sink out) {
+        if (d.signum() == 0) {
+            out.put(ZERO);
+            return;
+        }
+        BigDecimal s = d.stripTrailingZeros();
+        String digits = s.unscaledValue().abs().toString();
+        digits(s.signum() < 0, digits, digits.length() - s.scale(), out);
+    }
+
+    private static void digits(boolean negative, String digits, long power, Sink out) {
+        int end = digits.length();
+        while (end > 1 && digits.charAt(end - 1) == '0') {
+            end--;
+        }
+        out.put(negative ? NEGATIVE : POSITIVE);
+        int at = out.length;
+        out.putInt(Math.clamp(power, Integer.MIN_VALUE, Integer.MAX_VALUE) ^ Integer.MIN_VALUE);
+        for (int k = 0; k < end; k++) {
+            out.put((byte) (digits.charAt(k) - '0' + 1));
+        }
+        out.put((byte) 0);
+        if (negative) {
+            out.invert(at);
+        }
     }
 
     /** Writes one part of a row's key; false when the value is null (or, for a join, cannot match). */

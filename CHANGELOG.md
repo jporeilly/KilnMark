@@ -13,6 +13,13 @@ details.
   disk, in a temporary folder only the server can read, encrypted and deleted when the node ends,
   and the run's log says how much it wrote. In the Transform folder of the canvas, with a sample,
   `sample-sort`. ([sort](docs/guide/pipeline-nodes.md#sort))
+- **Join two inputs** (a new `join` node, ADR 0049): `inner`, `left`, `right` or `full`, on one or
+  more pairs of key columns, with every pair kept when a key repeats on both sides. Either input
+  may be larger than memory: both are sorted by their keys, on disk past the node's memory limit.
+  Keys match by value as a lookup's do, and an empty key never matches. Every column of both
+  sides comes out with its type; a right column whose name the left already has is renamed
+  `right_...`. In the Combine folder of the canvas, with a sample, `sample-join`. A `lookup` is
+  still the quicker choice for a small table. ([join](docs/guide/pipeline-nodes.md#join))
 - **Signing in through your organisation's provider no longer ends after a few minutes.** A sign-in
   now renews itself while the person works, and lasts until 8 hours after they signed in at the
   provider, until the provider's own session ends, or until they sign out. With the bundled
@@ -39,6 +46,21 @@ details.
   first]`), with its own control on the canvas: each column with Smallest first or Largest first,
   Empty last or Empty first, and Up. A preview runs a sort with its share of the preview's memory,
   and refuses one that orders by a column hidden from the caller.
+- **`join` is a sort-merge join** on `sort`'s `ExternalSorter` (docs/design/pipelines.md, "Joining
+  two inputs of any size"): both inputs read at once and sorted by their keys within one
+  `memory_limit_mb`, the larger spilling first; then merged, rows out in key order with null keys
+  last. Join keys are encoded by family (numbers by exact value, unsigned ones as unsigned, floats
+  by their shortest decimal; dates and timestamps as the instant to the nanosecond, a date at its
+  midnight), so each side is encoded without the other's types. A key's right rows are joined
+  from the batch at hand, pointed at while the right side's sorter holds them, or copied into a
+  group that goes to disk past a quarter of the limit (in bytes, checked row by row), with its
+  rows and digest checked when read back. A join that can give no rows (an `inner` join with an
+  empty input) stops reading at once. Right columns' new names come from one walk the node and
+  the preview's masking share. Settings `on`, `how`
+  (`inner` by default), `right_prefix` (`right_`), `memory_limit_mb` (256). A preview runs it,
+  refuses one matching on a hidden column, and masks a hidden right column under its new name;
+  marks follow the rename to what a write writes. The canvas shows Left column and Right column
+  for its keys.
 - **A node can say how much it wrote to disk.** `NodeContext.spilled(bytes)` adds to the run's
   `NodeResult.spilledBytes` (not yet stored in the database), and `NodeContext.note(text)` adds a
   line in the node's own words to the run's log (`node_note`, through `RunListener.nodeNote`).
