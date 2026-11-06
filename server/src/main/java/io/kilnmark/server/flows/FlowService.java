@@ -1076,7 +1076,7 @@ public class FlowService {
                     engine.cancel();
                 }
                 if (cancelling) {
-                    cancelRunning(engine, def, role);
+                    cancelRunning(engine);
                 }
                 startReady(def, engine, role);
                 for (String node : engine.running()) {
@@ -1092,7 +1092,7 @@ public class FlowService {
                     engine.cancel();
                 }
                 if (engine.halted()) {
-                    cancelRunning(engine, def, role); // a stop node ends what is still running
+                    cancelRunning(engine); // a stop node ends what is still running
                 }
                 if (engine.done()) {
                     break;
@@ -1204,7 +1204,7 @@ public class FlowService {
          * Items start in order while fewer than the node's max_parallel run; every item runs, and the
          * node ends when the last one does.
          */
-        private final class Fan {
+        private static final class Fan {
             final FlowDefinition.Node node;
             final List<Object> items;
             final java.util.SortedMap<Integer, Long> runs = new java.util.TreeMap<>();
@@ -2129,7 +2129,7 @@ public class FlowService {
             return t == 0 ? "" : ", after " + (t + 1) + " tries";
         }
 
-        private void cancelRunning(FlowEngine engine, FlowDefinition def, AccessRole role) {
+        private void cancelRunning(FlowEngine engine) {
             for (String node : engine.running()) {
                 Fan fan = fans.get(node);
                 if (fan != null) {
@@ -2164,7 +2164,7 @@ public class FlowService {
             nodeWasCancelled |= state == FlowEngine.State.CANCELLED;
             Map<String, Object> row = new LinkedHashMap<>(reported);
             row.putAll(recorded);
-            save(def, node, state.name().toLowerCase(), prId, Instant.now(), message, row);
+            save(def, node, state.name().toLowerCase(Locale.ROOT), prId, Instant.now(), message, row);
         }
 
         /**
@@ -2212,7 +2212,7 @@ public class FlowService {
                 case CANCELLED -> store.finishRun(run.id(), "cancelled", "Cancelled");
                 default -> store.finishRun(run.id(), "failed", failure(def, engine));
             }
-            LOG.infof("Flow run %d of %s %s", run.id(), run.flow(), outcome.name().toLowerCase());
+            LOG.infof("Flow run %d of %s %s", run.id(), run.flow(), outcome.name().toLowerCase(Locale.ROOT));
             store.run(run.id()).ifPresent(r -> told(run.flow(), run.id(), r.status(), r.error()));
         }
 
