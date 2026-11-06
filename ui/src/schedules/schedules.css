@@ -29,6 +29,28 @@
   vertical-align: top;
 }
 
+/* The row's heading is the schedule's times; the lines under it read as ordinary text. */
+.sc-table th[scope="row"] {
+  font-weight: 400;
+  min-width: 200px;
+}
+
+.sc-target,
+.sc-setby,
+.sc-nowrap {
+  white-space: nowrap;
+}
+
+.sc-next {
+  margin-top: 4px;
+  min-width: 150px;
+}
+
+.sc-description,
+.sc-values {
+  margin-top: 2px;
+}
+
 .sc-table .buttons.tight {
   flex-wrap: nowrap;
 }
@@ -55,6 +77,14 @@
 .sf-dialog legend {
   font-weight: 600;
   padding: 0 4px;
+}
+
+.sf-dialog .field {
+  margin-bottom: 14px;
+}
+
+.sf-dialog .field .hint {
+  margin-bottom: 0;
 }
 
 .sf-preview {

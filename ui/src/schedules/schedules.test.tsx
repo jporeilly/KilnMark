@@ -124,10 +124,11 @@ describe("a pipeline's schedules", () => {
     expect(text).toContain("Every day at 02:00");
     expect(text).toContain("Every 15 minutes");
     expect(text).toContain("dana");
-    expect(text).toContain("runs as steward");
+    expect(text).toContain("Runs as steward");
     expect(text).toContain("Paused");
     expect(text).toContain("Failed");
-    expect(headers()).not.toContain("Values");
+    expect(headers()).toEqual(["Schedule", "Set by", "State and next run", "Last time it was due"]);
+    expect(text).not.toContain("Values:");
     expect(text).not.toContain("region");
     expect(button("Add a schedule")).toBeUndefined();
     expect(button("Edit schedule 3")).toBeUndefined();
@@ -137,8 +138,7 @@ describe("a pipeline's schedules", () => {
 
   test("stewards read the values too, and still change nothing", async () => {
     await show("steward");
-    expect(headers()).toContain("Values");
-    expect(host.textContent).toContain("region = EMEA");
+    expect(host.textContent).toContain("Values: region = EMEA");
     expect(host.textContent).toContain("The defaults");
     expect(button("Add a schedule")).toBeUndefined();
     expect(button("Edit schedule 3")).toBeUndefined();

@@ -165,9 +165,9 @@ export function ScheduleState({ s }: { s: Schedule }) {
 }
 
 /**
- * Schedules in a table: when (in words, with the expression and zone), who set it and the role its
- * runs have, whether it is on, its next run in the viewer's own time, and its last run. The values
- * its runs start with are shown to stewards and above. Designers and admins have Edit, Pause or
+ * Schedules in a table: when (in words, with the expression and zone, and the values its runs start
+ * with for stewards and above), who set it and the role its runs have, whether it is on and its
+ * next run in the viewer's own time, and its last run. Designers and admins have Edit, Pause or
  * Resume, and Delete. With `names`, a column says what each runs, linked.
  */
 export function SchedulesTable({
@@ -199,10 +199,8 @@ export function SchedulesTable({
           <th scope="col">Schedule</th>
           {names && <th scope="col">Runs</th>}
           <th scope="col">Set by</th>
-          <th scope="col">State</th>
-          <th scope="col">Next run</th>
+          <th scope="col">State and next run</th>
           <th scope="col">Last time it was due</th>
-          {steward && <th scope="col">Values</th>}
           {writes && (
             <th scope="col">
               <span className="visually-hidden">Actions</span>
@@ -220,33 +218,36 @@ export function SchedulesTable({
                 <div className="small muted">
                   <span className="mono">{s.cron}</span>, {s.zone} · schedule {s.id}
                 </div>
-                {s.description && <div className="small">{s.description}</div>}
+                {s.description && <div className="small sc-description">{s.description}</div>}
+                {steward && (
+                  <div className="small sc-values">
+                    <span className="muted">Values:</span> {valuesText(s.parameters)}
+                  </div>
+                )}
               </th>
               {names && (
                 <td>
-                  <span className="small muted">{target.kind} </span>
-                  <a href={s.pipeline != null ? href.pipeline(target.name) : href.flow(target.name)}>
+                  <div className="small muted">{target.kind}</div>
+                  <a className="sc-target" href={s.pipeline != null ? href.pipeline(target.name) : href.flow(target.name)}>
                     {names.get(`${target.kind}:${target.name}`) ?? target.name}
                   </a>
                 </td>
               )}
               <td>
                 <div className="sc-setby">{s.updatedBy}</div>
-                <div className="small muted">
-                  {formatTime(s.updatedAt)}, runs as {s.runAs}
-                </div>
+                <div className="small muted">Runs as {s.runAs}</div>
+                <div className="small muted sc-nowrap">{formatTime(s.updatedAt)}</div>
                 {s.createdBy !== s.updatedBy && <div className="small muted">Added by {s.createdBy}</div>}
               </td>
               <td>
                 <ScheduleState s={s} />
-              </td>
-              <td className="small">
-                {s.nextAt ? whenText(s.nextAt, s.zone) : s.enabled ? "None: it no longer fires" : "None while paused"}
+                <div className="small sc-next">
+                  {s.nextAt ? whenText(s.nextAt, s.zone) : s.enabled ? "No next run: it no longer fires" : "No next run while paused"}
+                </div>
               </td>
               <td>
                 <LastOutcome s={s} />
               </td>
-              {steward && <td className="small">{valuesText(s.parameters)}</td>}
               {writes && (
                 <td>
                   <div className="buttons tight">

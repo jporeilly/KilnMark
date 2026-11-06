@@ -1,6 +1,9 @@
 import type { FlowParameter } from "../api";
 import { defaultWords } from "./parameters";
 
+/** A description as a sentence, so the default's words after it read apart: "The statuses to keep." */
+const sentence = (text: string | null) => (text && !/[.!?:]$/.test(text.trim()) ? `${text.trim()}.` : text);
+
 /**
  * A field for each parameter, as the Run now dialog and the schedule form show them: a choice of
  * true or false for a boolean, a text field for the rest (lists separated by commas), each labelled
@@ -55,7 +58,7 @@ export function ParameterFields({
             />
           )}
           <p id={`${fieldId(p.name)}-hint`} className={problems[p.name] ? "hint pl-bad" : "hint"}>
-            {problems[p.name] ?? [p.description, defaultWords(p)].filter(Boolean).join(" ")}
+            {problems[p.name] ?? [sentence(p.description), defaultWords(p)].filter(Boolean).join(" ")}
           </p>
         </div>
       ))}
