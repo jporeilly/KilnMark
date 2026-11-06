@@ -203,25 +203,33 @@ export function outcomeOf(text: string | null): { word: string; tone: Tone; reas
       return { word: "Missed", tone: "warn", reason };
     case "failed":
       return { word: "Failed", tone: "bad", reason };
-    // Paused by Kilnmark, not by a person: whoever set it lost the role (viewers get just "paused").
-    // Said apart from the grey Paused state, so the two never read as the same thing.
+    // Paused by Kilnmark, not by a person: whoever set it lost the role, or has not signed in for
+    // a while (viewers get just "paused"). Said apart from the grey Paused state, in amber.
     case "paused":
-      return reason == null || /no longer has the role/i.test(reason)
-        ? { word: reason == null ? "Paused by Kilnmark" : "Paused: setter lost the role", tone: "warn", reason: null }
-        : { word: "Paused by Kilnmark", tone: "warn", reason };
+      return { ...pausedWords(reason), tone: "warn" };
     default:
       return { word: text, tone: "neutral", reason: null };
   }
+}
+
+/** A reason Kilnmark paused a schedule for, in a few words; any other reason is shown as it is. */
+function pausedWords(reason: string | null): { word: string; reason: string | null } {
+  if (reason == null) return { word: "Paused by Kilnmark", reason: null };
+  if (/no longer has the role/i.test(reason)) return { word: "Paused: setter lost the role", reason: null };
+  const days = /has not signed in for (\d+) days?/i.exec(reason);
+  if (days) return { word: `Paused: setter not signed in for ${days[1]} ${days[1] === "1" ? "day" : "days"}`, reason: null };
+  return { word: "Paused by Kilnmark", reason };
 }
 
 /** Whether the last time a schedule was due it failed to start a run. */
 export const lastFailed = (s: Schedule) => outcomeOf(s.lastOutcome).word === "Failed";
 
 /**
- * Whether Kilnmark paused it because whoever set it lost the role, and it is still off: an admin
- * resumes it (becoming its setter) or deletes it. Resuming leaves the outcome until its next fire.
+ * Whether Kilnmark paused it, and it is still off: whoever set it lost the role, or has not signed
+ * in within kilnmark.schedules.signed-in-within. An admin resumes it (becoming its setter) or
+ * deletes it. Resuming leaves the outcome until its next fire.
  */
-export const pausedBySetter = (s: Schedule) => !s.enabled && /^paused(:|$)/i.test(s.lastOutcome ?? "");
+export const pausedByKilnmark = (s: Schedule) => !s.enabled && /^paused(:|$)/i.test(s.lastOutcome ?? "");
 
 /** The values a schedule's runs start with, in a line: "region = EMEA; statuses = shipped, delivered". */
 export function valuesText(values: Record<string, unknown> | null): string {

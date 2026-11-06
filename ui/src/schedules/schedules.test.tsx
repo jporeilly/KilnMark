@@ -291,11 +291,13 @@ describe("the schedule form", () => {
 
 describe("the Schedules page", () => {
   const lost = "paused: the person who set it no longer has the role";
+  const away = "paused: the person who set it has not signed in for 30 days";
   beforeEach(() => {
     listed = [
       schedule({}),
       schedule({ id: 4, enabled: false, nextAt: null, lastOutcome: "started" }),
       schedule({ id: 5, enabled: false, nextAt: null, lastOutcome: lost, lastPipelineRun: null, updatedBy: "gone-token" }),
+      schedule({ id: 6, enabled: false, nextAt: null, lastOutcome: away, lastPipelineRun: null, updatedBy: "sso:someone" }),
     ];
   });
 
@@ -304,21 +306,25 @@ describe("the Schedules page", () => {
     await settle();
     const states = [...host.querySelectorAll('[data-kind="state"]')].map((c) => c.textContent);
     const outcomes = [...host.querySelectorAll('[data-kind="outcome"]')].map((c) => c.textContent);
-    expect(states).toEqual(["On", "Paused", "Paused"]);
-    expect(outcomes).toEqual(["Started", "Started", "Paused: setter lost the role"]);
+    expect(states).toEqual(["On", "Paused", "Paused", "Paused"]);
+    expect(outcomes).toEqual(["Started", "Started", "Paused: setter lost the role", "Paused: setter not signed in for 30 days"]);
     const chips = [...host.querySelectorAll(".km-filter")].map((c) => c.textContent);
-    expect(chips).toEqual(["All 3", "On 1", "Paused 2", "Paused: setter lost the role 1", "Failed last time 0"]);
-    expect(host.querySelector(".sc-review")?.textContent).toContain("Kilnmark pauses the schedules they set");
+    expect(chips).toEqual(["All 4", "On 1", "Paused 3", "Paused by Kilnmark 2", "Failed last time 0"]);
+    const note = host.querySelector(".sc-review")?.textContent ?? "";
+    expect(note).toContain("Kilnmark pauses the schedules they set");
+    expect(note).toContain("not signed in for 30 days");
+    expect(note).toContain("a team's designer API token");
 
-    await act(async () => root.render(<SchedulesPage role="admin" show="setter" />));
+    await act(async () => root.render(<SchedulesPage role="admin" show="kilnmark" />));
     await settle();
     expect([...host.querySelectorAll("tbody tr")].map((r) => r.querySelector("th")?.textContent)).toEqual([
       expect.stringContaining("schedule 5"),
+      expect.stringContaining("schedule 6"),
     ]);
   });
 
   test("viewers see that Kilnmark paused it, without the reason", async () => {
-    listed = listed.map((s) => ({ ...s, parameters: null, lastOutcome: s.lastOutcome === lost ? "paused" : s.lastOutcome }));
+    listed = listed.map((s) => ({ ...s, parameters: null, lastOutcome: s.lastOutcome?.startsWith("paused") ? "paused" : s.lastOutcome }));
     await act(async () => root.render(<SchedulesPage role="viewer" show="all" />));
     await settle();
     expect([...host.querySelectorAll('[data-kind="outcome"]')].map((c) => c.textContent)).toContain("Paused by Kilnmark");

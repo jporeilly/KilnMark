@@ -4,7 +4,7 @@ import { go, href, type ScheduleFilter } from "../router";
 import { useTitle } from "../components/useTitle";
 import { docHref } from "../docs/links";
 import { Card, EmptyState, FilterChips, PageHeader } from "../components/ui";
-import { lastFailed, pausedBySetter } from "./cron";
+import { lastFailed, pausedByKilnmark } from "./cron";
 import { ScheduleForm, targetOf } from "./ScheduleForm";
 import { SchedulesTable, useScheduleActions, useSchedules } from "./SchedulesTable";
 import "./schedules.css";
@@ -13,17 +13,18 @@ const SHOWS: Record<ScheduleFilter, (s: Schedule) => boolean> = {
   all: () => true,
   on: (s) => s.enabled,
   paused: (s) => !s.enabled,
-  setter: pausedBySetter,
+  kilnmark: pausedByKilnmark,
   failed: lastFailed,
 };
 
 /**
  * Every schedule on the server (ADR 0046): what it runs, linked; when; who set it, whose name its
  * runs carry; whether it is on; its next run and what happened last time. Filters show those on,
- * paused, paused because whoever set them lost the role, or whose last time failed. Admins use it
- * in access reviews: a schedule pauses itself when whoever set it loses the role (a token revoked
- * or expired, a sign-in with less of a role), and an admin resumes it, becoming its setter, or
- * deletes it. Designers and admins change, pause, resume and delete schedules here; they add them
+ * paused, paused by Kilnmark, or whose last time failed. Admins use it in access reviews: a
+ * schedule pauses itself when whoever set it loses the role (a token revoked or expired, a sign-in
+ * with less of a role), or, for someone who signs in with the organisation's login, has not signed
+ * in for 30 days; an admin resumes it, becoming its setter, or deletes it. A team's designer token
+ * suits work that must outlive any one person. Designers and admins change, pause, resume and delete schedules here; they add them
  * on a pipeline or flow.
  */
 export function SchedulesPage({ role, show }: { role: AccessRole; show: ScheduleFilter }) {
@@ -64,7 +65,7 @@ export function SchedulesPage({ role, show }: { role: AccessRole; show: Schedule
       all: all.length,
       on: all.filter(SHOWS.on).length,
       paused: all.filter(SHOWS.paused).length,
-      setter: all.filter(SHOWS.setter).length,
+      kilnmark: all.filter(SHOWS.kilnmark).length,
       failed: all.filter(SHOWS.failed).length,
     };
   }, [schedules]);
@@ -100,7 +101,7 @@ export function SchedulesPage({ role, show }: { role: AccessRole; show: Schedule
             { id: "all", label: "All", count: counts.all },
             { id: "on", label: "On", count: counts.on, tone: "green" },
             { id: "paused", label: "Paused", count: counts.paused },
-            { id: "setter", label: "Paused: setter lost the role", count: counts.setter, tone: "amber" },
+            { id: "kilnmark", label: "Paused by Kilnmark", count: counts.kilnmark, tone: "amber" },
             { id: "failed", label: "Failed last time", count: counts.failed, tone: "red" },
           ]}
         />
@@ -108,9 +109,10 @@ export function SchedulesPage({ role, show }: { role: AccessRole; show: Schedule
           <p className="hint sc-review">
             For access reviews: {schedules.length === 1 ? "this schedule runs" : `these ${schedules.length} schedules run`}{" "}
             in the name of {people === 1 ? "one person" : `${people} people`}, under <strong>Set by</strong>. When
-            someone&apos;s token is revoked or expires, or they lose their role, Kilnmark pauses the schedules they set:
-            resume each one, which makes you its setter, or delete it. Choose{" "}
-            <strong>Paused: setter lost the role</strong> to see them.
+            someone&apos;s token is revoked or expires, or they lose their role, Kilnmark pauses the schedules they set,
+            and those set by someone who signs in with your organisation&apos;s login once they have not signed in for 30
+            days. Resume each one, which makes you its setter, or delete it: choose <strong>Paused by Kilnmark</strong>{" "}
+            to see them. For work that must outlive any one person, use a team&apos;s designer API token.
           </p>
         )}
         {schedules === null && !loadError && (

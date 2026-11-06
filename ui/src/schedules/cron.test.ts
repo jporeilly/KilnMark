@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { Schedule } from "../api";
 import { scheduleChange } from "../api";
-import { cronWords, ordinal, outcomeOf, pausedBySetter, pipelineParameters, presetCron, readPreset, timeZones, valuesText } from "./cron";
+import { cronWords, ordinal, outcomeOf, pausedByKilnmark, pipelineParameters, presetCron, readPreset, timeZones, valuesText } from "./cron";
 import { parse } from "../router";
 
 describe("the schedule presets", () => {
@@ -79,15 +79,21 @@ describe("a schedule in words", () => {
       tone: "warn",
       reason: null,
     });
+    expect(outcomeOf("paused: the person who set it has not signed in for 30 days")).toEqual({
+      word: "Paused: setter not signed in for 30 days",
+      tone: "warn",
+      reason: null,
+    });
     // Viewers get just "paused".
     expect(outcomeOf("paused")).toEqual({ word: "Paused by Kilnmark", tone: "warn", reason: null });
     expect(outcomeOf("paused: some other reason")).toEqual({ word: "Paused by Kilnmark", tone: "warn", reason: "some other reason" });
     const s = (enabled: boolean, lastOutcome: string | null) => ({ enabled, lastOutcome }) as Schedule;
-    expect(pausedBySetter(s(false, "paused: the person who set it no longer has the role"))).toBe(true);
-    expect(pausedBySetter(s(false, "paused"))).toBe(true);
+    expect(pausedByKilnmark(s(false, "paused: the person who set it no longer has the role"))).toBe(true);
+    expect(pausedByKilnmark(s(false, "paused"))).toBe(true);
+    expect(pausedByKilnmark(s(false, "paused: the person who set it has not signed in for 30 days"))).toBe(true);
     // Paused by a person, or resumed since: not in the filter.
-    expect(pausedBySetter(s(false, "started"))).toBe(false);
-    expect(pausedBySetter(s(true, "paused: the person who set it no longer has the role"))).toBe(false);
+    expect(pausedByKilnmark(s(false, "started"))).toBe(false);
+    expect(pausedByKilnmark(s(true, "paused: the person who set it no longer has the role"))).toBe(false);
   });
 
   test("values in a line, and none for viewers", () => {
@@ -129,7 +135,7 @@ describe("the schedules page", () => {
   test("is in the address, with its filter", () => {
     expect(parse("#/schedules")).toEqual({ page: "schedules", show: "all" });
     expect(parse("#/schedules?show=failed")).toEqual({ page: "schedules", show: "failed" });
-    expect(parse("#/schedules?show=setter")).toEqual({ page: "schedules", show: "setter" });
+    expect(parse("#/schedules?show=kilnmark")).toEqual({ page: "schedules", show: "kilnmark" });
     expect(parse("#/schedules?show=nonsense")).toEqual({ page: "schedules", show: "all" });
   });
 
