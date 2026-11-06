@@ -17,6 +17,12 @@ details.
 - **A writable files folder on every install**: `/srv/files` is now a volume Kilnmark can write
   to, so file sources with **Allow writing** work out of the box. Put your own folder there with
   `KILNMARK_FILES_DIR` in `config/.env`.
+- **Sort rows** (a new `sort` node, ADR 0049): orders rows by one or more columns, each smallest or
+  largest first, with empty values last unless a column says `nulls first`. Rows with equal values
+  keep their order. Any number of rows can be sorted: past the node's memory limit it carries on on
+  disk, in a temporary folder only the server can read, encrypted and deleted when the node ends,
+  and the run's log says how much it wrote. In the Transform folder of the canvas, with a sample,
+  `sample-sort`. ([sort](docs/guide/pipeline-nodes.md#sort))
 - **Signing in through your organisation's provider no longer ends after a few minutes.** A sign-in
   now renews itself while the person works, and lasts until 8 hours after they signed in at the
   provider, until the provider's own session ends, or until they sign out. With the bundled
@@ -62,7 +68,27 @@ details.
   `KILNMARK_URL` to match them, so a second install's sign-in never goes to the first one's
   Keycloak. The server image makes `/srv/files` its user's, and the
   database image carries `kilnmark-samples-db.sh`.
-
+- **`sort` is an external merge sort** (`ExternalSorter` in `kiln-nodes`; docs/design/pipelines.md,
+  "Sorting, and spilling to disk"). Each row's key is encoded once into bytes that order as the
+  values do (`KeyCodec`), as the expression language's `<` orders them: numbers by value, -0.0 equal
+  to 0.0 and NaN last, dates and timestamps in time, text by Unicode code point with no collation.
+  Up to `memory_limit_mb` (256) rows are sorted in memory with a stable merge sort; past it they are
+  written as sorted runs (Arrow IPC with the key as an extra column, AES-CTR with a key held only in
+  the node's memory) to a folder of the node's own under `kilnmark.spill-dir` or `java.io.tmpdir`,
+  and merged at most 64 at a time (neighbouring runs a pass, so each row is written once a pass),
+  earlier runs first on a tie so the sort stays stable. Dates and timestamps order to the
+  nanosecond, and unsigned 64-bit numbers as unsigned. Batches are bounded by bytes as well as
+  rows, so wide rows stay within the limit. Each run's rows, size and SHA-256 digest are checked
+  as it is read back. Folders are owner-only (`rwx------`, or an owner-only access list on
+  Windows) and deleted when the node ends, fails or is stopped; a process keeps a lock on its own
+  folder, and folders whose lock can be taken (their process has gone, on this machine or another
+  sharing the folder) are deleted the next time a node spills. New setting kind `ORDER` (`[region, amount desc, closed_at nulls
+  first]`), with its own control on the canvas: each column with Smallest first or Largest first,
+  Empty last or Empty first, and Up. A preview runs a sort with its share of the preview's memory,
+  and refuses one that orders by a column hidden from the caller.
+- **A node can say how much it wrote to disk.** `NodeContext.spilled(bytes)` adds to the run's
+  `NodeResult.spilledBytes` (not yet stored in the database), and `NodeContext.note(text)` adds a
+  line in the node's own words to the run's log (`node_note`, through `RunListener.nodeNote`).
 - **Wording**: every setting's help reads as a sentence, starting with what the setting does rather
   than a value ("How rows are written: create fails if ...", "Lets pipelines write ...; off keeps it
   read-only"); 20 settings of nodes, sources and connectors are rewritten, and the components
@@ -72,6 +98,35 @@ details.
   provider's name is shorter, with the servers it suits said under it. Predicted quality's row
   count starts its sentence with a capital.
 
+- **Efficiency fixes** from a review of what the server and the UI do over and over:
+  - **The database pool is checked at start** (`PoolSizeCheck`, docs/design/parallel-runs.md P1).
+    A process needs `kilnmark.worker.concurrency × 3 + kilnmark.worker.flows + 1` connections with
+    the worker role and 5 more with the api or scheduler role; with fewer in
+    `quarkus.datasource.jdbc.max-size` the server refuses to start and says which settings to
+    raise or lower, rather than answer 500 and fail jobs under load. The default pool is now 30
+    (it was Agroal's 20, exactly what the default settings need).
+  - **Migration V38 adds indexes** on five foreign keys set to null when their run is deleted
+    (`asset.last_seen_run`, `sample.run_id`, `document.run_id`, `quality_run.scan_run_id`,
+    `quality_result.quality_run_id`), which deleting a source with many runs read whole once per
+    run; and on the job table by pipeline run and by quality run, as scans and flows already had,
+    for the workers' sweeps (every 30 seconds) for runs whose worker stopped.
+  - **Reading a quality run only reads.** `GET /api/v1/quality/runs/{id}`, which the UI asks every
+    second while rules run, and the start of every quality job no longer mark failed the
+    evaluations whose worker stopped: the workers' recovery does, on start and every 30 seconds,
+    in the same pass that fails such jobs, as it already did for pipeline and flow runs, which is
+    no later than before for a worker that died (recovery is what fails its job). An evaluation is
+    still tried `kilnmark.worker.max-attempts` times, and marked failed in the pass that gives up
+    its last attempt: within `kilnmark.worker.stale-after` (2 minutes) plus about 40 seconds of that
+    attempt's last heartbeat.
+  - **Running rules from an asset's Quality tab** stops asking about the run when the tab is left
+    or another asset is shown, and does not ask while the browser tab is hidden.
+  - Upgrading: V38 builds its indexes in one transaction (not `CONCURRENTLY`, as V36), so writes
+    to the job queue and to `asset`, `sample`, `document`, `quality_run` and `quality_result` wait
+    until all seven are built; reads go on. The job table keeps every job ever queued, so on a
+    long-used install its two take longest. The migrations run at start, before the worker takes
+    jobs; other processes sharing the database wait meanwhile. A process whose pool is smaller than it needs no longer starts: one that raised
+    `KILNMARK_WORKER_CONCURRENCY` above 5 (with 8 flows) without raising `QUARKUS_DATASOURCE_JDBC_MAX_SIZE` must
+    raise it (INSTALL.md, "Sizing the workers").
 - **A provider sign-in renews with the refresh token** (ADR 0036, decision 4, amended). Quarkus's
   OIDC client was set up without `quarkus.oidc.token.refresh-expired`, so a session lasted only as
   long as the provider's first ID token: 5 minutes with Keycloak's default, about an hour with

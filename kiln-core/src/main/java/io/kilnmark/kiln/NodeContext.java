@@ -133,6 +133,24 @@ public interface NodeContext {
     }
 
     /**
+     * Counts bytes the node wrote to disk because its rows did not fit in its memory limit (a sort or
+     * a join spilling sorted runs). The run's result shows the total for the node
+     * ({@link RunResult.NodeResult#spilledBytes()}). By default nothing is counted.
+     */
+    default void spilled(long bytes) {
+        // a context outside a runner keeps no metrics
+    }
+
+    /**
+     * Adds a line about this node to the run's log, as information: what it did that is worth
+     * knowing, such as how much it wrote to disk. Never put values from the data in it. By default
+     * the line is dropped.
+     */
+    default void note(String text) {
+        // a context outside a runner keeps no log
+    }
+
+    /**
      * Hands a batch to an output port, or closes it when nothing is connected to that port, so a
      * node with several outputs does not have to check each one. The node gives up the batch either
      * way.

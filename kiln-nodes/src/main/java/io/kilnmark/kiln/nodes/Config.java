@@ -115,6 +115,50 @@ final class Config {
         return out;
     }
 
+    /** One column to order rows by: its name, its direction, and where its nulls go. */
+    record OrderTerm(String column, boolean descending, boolean nullsFirst) {
+
+        /** As written in a pipeline: {@code amount desc nulls first}, leaving out what is the default. */
+        @Override
+        public String toString() {
+            return column + (descending ? " desc" : "") + (nullsFirst ? " nulls first" : "");
+        }
+    }
+
+    private static final java.util.regex.Pattern ORDER_TERM = java.util.regex.Pattern.compile(
+        "(?i)^(.*?)(?:\\s+(asc|desc))?(?:\\s+nulls\\s+(first|last))?$", java.util.regex.Pattern.DOTALL);
+
+    /**
+     * Columns to order by, each written as in SQL's {@code order by}: a column, then perhaps
+     * {@code asc} or {@code desc}, then perhaps {@code nulls first} or {@code nulls last}. Ascending
+     * with nulls last unless the entry says otherwise. Null when the setting is absent.
+     */
+    List<OrderTerm> order(String key, boolean required) {
+        List<String> entries = columns(key, required);
+        if (entries == null) {
+            return null;
+        }
+        List<OrderTerm> out = new ArrayList<>();
+        List<String> seen = new ArrayList<>();
+        for (String entry : entries) {
+            java.util.regex.Matcher m = ORDER_TERM.matcher(entry.strip());
+            if (!m.matches() || m.group(1).isBlank()) {
+                problem(key, "'" + entry + "' names no column; write a column, then perhaps desc or nulls first");
+                return null;
+            }
+            String column = m.group(1).strip();
+            if (seen.contains(column)) {
+                problem(key, "names the column '" + column + "' twice");
+                return null;
+            }
+            seen.add(column);
+            boolean desc = "desc".equalsIgnoreCase(m.group(2));
+            boolean nullsFirst = "first".equalsIgnoreCase(m.group(3));
+            out.add(new OrderTerm(column, desc, nullsFirst));
+        }
+        return out;
+    }
+
     /** A map of names to text, in the order written; null when the setting is absent. */
     LinkedHashMap<String, String> map(String key, boolean required) {
         Object v = raw.get(key);

@@ -153,6 +153,12 @@ final class RunLog implements RunListener {
         add(at == null ? Instant.now() : at, node, l, "engine_note", words, context.scrub(text));
     }
 
+    /** A node's own words about its work (how much a sort wrote to disk): the text everyone who sees the run reads. */
+    @Override
+    public void nodeNote(String node, String text, Instant at) {
+        add(at == null ? Instant.now() : at, node, "info", "node_note", "Node " + node + ": " + context.scrub(text), null);
+    }
+
     @Override
     public void progress(RunProgress p) {
         // A gate sending its first rows anywhere but on, as a mark on the run's time axis.

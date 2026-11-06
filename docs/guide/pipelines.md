@@ -385,7 +385,7 @@ settings, as in [Writing data from a pipeline](writing-data.md), which describes
 source's writer does not take is a problem, with its line.
 
 The nodes between reading and writing (filter, compute, select, lookup, aggregate, union, dedupe,
-route and limit) are described in [Pipeline nodes and expressions](pipeline-nodes.md). The quality
+route, limit and sort) are described in [Pipeline nodes and expressions](pipeline-nodes.md). The quality
 gate is described below. The node
 catalogue (`GET /api/v1/node-types`) lists every type this server has, with the settings each takes,
 and the [Components reference](components-reference.md) describes each of them, with every
@@ -845,7 +845,9 @@ status changes.
 - **Log:** what happened, in order: the run starting, each node starting, its first row in and
   out, its last row out and how it ended, a gate starting to set rows aside and its verdict ("Gate
   check quarantined 229 rows (email format: 229)", the rules that failed and their counts; a rule's
-  own message, which can quote the data, is its detail), warnings and errors, and the run's notes.
+  own message, which can quote the data, is its detail), what a node says about its own work (a
+  sort or a join that ran out of memory and carried on on disk says how much it wrote), warnings
+  and errors, and the run's notes.
   The log is read again from the start when the run ends, so nothing written at the last moment is
   missed. Choose a node,
   or **Warnings and errors** or **Errors only**, to narrow it, and **Download as text** (or

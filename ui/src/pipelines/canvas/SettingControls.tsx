@@ -651,6 +651,144 @@ function ColumnsControl(p: ControlProps) {
   );
 }
 
+/** One column a sort orders by, as its `by` setting writes it: `amount desc nulls first`. */
+export type OrderTerm = { column: string; descending: boolean; nullsFirst: boolean };
+
+const ORDER_TERM = /^(.*?)(?:\s+(asc|desc))?(?:\s+nulls\s+(first|last))?$/is;
+
+/** Reads one entry of a sort's `by` as the sort node reads it. */
+export function parseOrderTerm(entry: string): OrderTerm {
+  const m = ORDER_TERM.exec(entry.trim());
+  const column = m?.[1]?.trim() || entry.trim();
+  return { column, descending: m?.[2]?.toLowerCase() === "desc", nullsFirst: m?.[3]?.toLowerCase() === "first" };
+}
+
+/** Writes one entry of a sort's `by`, leaving out what is the default (ascending, nulls last). */
+export function orderTermText(t: OrderTerm): string {
+  return t.column + (t.descending ? " desc" : "") + (t.nullsFirst ? " nulls first" : "");
+}
+
+/**
+ * The columns a sort orders by, first to last: each with its direction and where its empty values
+ * go, which can be moved up or removed; new ones are added from the arriving columns.
+ */
+function OrderControl(p: ControlProps) {
+  const terms = asList(p.value).map(parseOrderTerm);
+  const cols = p.context.columns.main;
+  const [adding, setAdding] = useState("");
+  const addId = `${p.id}-add`;
+  const rest = cols?.filter((c) => !terms.some((t) => t.column === c.name)) ?? null;
+  const write = (next: OrderTerm[]) => p.onChange(next.length ? next.map(orderTermText) : undefined);
+  const add = (name: string) => {
+    const n = name.trim();
+    if (!n || terms.some((t) => t.column === n)) return;
+    write([...terms, { column: n, descending: false, nullsFirst: false }]);
+    setAdding("");
+  };
+  const change = (i: number, t: Partial<OrderTerm>) => write(terms.map((x, j) => (j === i ? { ...x, ...t } : x)));
+  return (
+    <Field spec={p.spec} id={p.id} problems={p.problems} group wide>
+      {(describedBy, invalid) => (
+        <>
+          {!p.readOnly && (
+            <div className="cv-add-row">
+              {rest && rest.length > 0 ? (
+                <select
+                  id={addId}
+                  value=""
+                  aria-label={`Add a column to ${p.spec.label}`}
+                  aria-describedby={describedBy}
+                  aria-invalid={invalid || undefined}
+                  onChange={(e) => add(e.target.value)}
+                >
+                  <option value="">Add a column…</option>
+                  {rest.map((c) => (
+                    <option key={c.name} value={c.name}>
+                      {c.name} ({c.type})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <>
+                  <input
+                    id={addId}
+                    className="mono"
+                    value={adding}
+                    aria-label={`Column to add to ${p.spec.label}`}
+                    aria-describedby={describedBy}
+                    spellCheck={false}
+                    onChange={(e) => setAdding(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        add(adding);
+                      }
+                    }}
+                  />
+                  <button type="button" onClick={() => add(adding)} disabled={!adding.trim()}>
+                    Add
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+          {terms.length > 0 ? (
+            <ol className="cv-order" id={p.id} aria-describedby={describedBy}>
+              {terms.map((t, i) => (
+                <li key={`${t.column}-${i}`} className="cv-order-row">
+                  <span className="mono cv-order-column">{t.column}</span>
+                  <select
+                    value={t.descending ? "desc" : "asc"}
+                    disabled={p.readOnly}
+                    aria-label={`Direction for ${t.column}`}
+                    onChange={(e) => change(i, { descending: e.target.value === "desc" })}
+                  >
+                    <option value="asc">Smallest first</option>
+                    <option value="desc">Largest first</option>
+                  </select>
+                  <select
+                    value={t.nullsFirst ? "first" : "last"}
+                    disabled={p.readOnly}
+                    aria-label={`Empty values in ${t.column}`}
+                    onChange={(e) => change(i, { nullsFirst: e.target.value === "first" })}
+                  >
+                    <option value="last">Empty last</option>
+                    <option value="first">Empty first</option>
+                  </select>
+                  {!p.readOnly && i > 0 && (
+                    <button
+                      type="button"
+                      className="cv-mini"
+                      aria-label={`Move ${t.column} up`}
+                      onClick={() => write(terms.map((x, j) => (j === i - 1 ? terms[i] : j === i ? terms[i - 1] : x)))}
+                    >
+                      Up
+                    </button>
+                  )}
+                  {!p.readOnly && (
+                    <button
+                      type="button"
+                      className="cv-mini"
+                      aria-label={`Remove ${t.column} from ${p.spec.label}`}
+                      onClick={() => write(terms.filter((_, j) => j !== i))}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="small muted" id={p.id}>
+              None chosen.
+            </p>
+          )}
+        </>
+      )}
+    </Field>
+  );
+}
+
 type PairKind = "column-map" | "expressions" | "conditions";
 
 function pairLabels(kind: PairKind, nodeType: string | null, key: string): [string, string, string] {
@@ -1160,6 +1298,8 @@ export function SettingControl(p: ControlProps) {
       ) : (
         <ColumnsControl {...p} />
       );
+    case "order":
+      return <OrderControl {...p} />;
     case "rules":
       return <RulesControl {...p} />;
     default:

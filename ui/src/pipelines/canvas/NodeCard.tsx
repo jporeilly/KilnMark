@@ -5,6 +5,7 @@ import {
   IconArrowMerge,
   IconArrowsJoin,
   IconArrowsSplit,
+  IconArrowsSort,
   IconBox,
   IconColumns,
   IconCopyOff,
@@ -69,6 +70,7 @@ const ICONS: Record<string, typeof IconBox> = {
   dedupe: IconCopyOff,
   route: IconArrowsSplit,
   limit: IconListNumbers,
+  sort: IconArrowsSort,
   gate: IconShieldCheck,
 };
 

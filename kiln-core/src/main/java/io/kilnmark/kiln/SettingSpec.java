@@ -54,6 +54,11 @@ public record SettingSpec(String key, String label, Kind kind, boolean required,
         COLUMN,
         /** A list of columns of an input. */
         COLUMNS,
+        /**
+         * A list of columns to order rows by, each with its direction and where nulls go, as in SQL's
+         * {@code order by}: {@code [region, amount desc, closed_at desc nulls first]}.
+         */
+        ORDER,
         /** Column name → column name, for renames and lookup keys. */
         COLUMN_MAP,
         /** Port name → condition, for route. */
@@ -110,7 +115,7 @@ public record SettingSpec(String key, String label, Kind kind, boolean required,
             case EXPRESSION -> Fill.EXPRESSION;
             case EXPRESSIONS, CONDITIONS -> Fill.EXPRESSIONS;
             case NUMBER, BOOLEAN -> Fill.WHOLE_VALUE;
-            case CHOICE, URL, COLUMN, COLUMNS, COLUMN_MAP, SOURCE, ASSET, RULES -> Fill.NONE;
+            case CHOICE, URL, COLUMN, COLUMNS, ORDER, COLUMN_MAP, SOURCE, ASSET, RULES -> Fill.NONE;
         };
     }
 

@@ -379,6 +379,10 @@ class NodePreviewTest {
               - {id: y, type: read, source: small, asset: lab.other}
               - {id: x, type: lookup, inputs: {main: people, lookup: y}, on: {name: name}}
             """, """
+              - {id: x, type: sort, input: people, by: [id, name desc]}
+            """, """
+              - {id: x, type: sort, input: people, by: [name nulls first]}
+            """, """
               - {id: x, type: gate, input: people, on_fail: stop, asset_rules: false, rules: [{type: matches_pattern, field: name, regex: "^Person 1$"}]}
             """, """
               - {id: x, type: gate, input: people, on_fail: warn, asset_rules: false, rules: [{type: not_null, field: name}]}
@@ -389,6 +393,33 @@ class NodePreviewTest {
             assertEquals(403, status(r), node);
             assertTrue(error(r).startsWith("Only a designer who sees unmasked values can preview this: node x ("), error(r));
         }
+    }
+
+    @Test
+    void aSortIsPreviewedInOrderAndPassesHiddenColumnsThroughMasked() {
+        String y = yaml("""
+              - {id: people, type: read, source: small, asset: lab.people}
+              - {id: x, type: sort, input: people, by: [id desc]}
+            """);
+        PipelinePreviews.Viewer nameHidden = new PipelinePreviews.Viewer() {
+            @Override
+            public boolean mayUnmask() {
+                return false;
+            }
+
+            @Override
+            public Set<String> marks(String urn) {
+                return urn.equals("urn:kilnmark:small:lab.people") ? Set.of("name") : Set.of();
+            }
+        };
+        PipelineViews.NodePreviewView v = previews().preview(y, "x", null, 3, "jo", AccessRole.STEWARD, nameHidden,
+            () -> false);
+        assertEquals(List.of("40", "39", "38"), v.rows().stream().map(r -> r.get(0)).toList());
+        assertEquals(List.of("name"), v.masked(), "ordering by a visible column passes a hidden one through masked");
+        assertEquals(List.of("Node x (sort) reads every row it is given before it passes any on, so every row "
+            + "before it was read."), v.waits());
+        NodePreview.Plan p = NodePreview.plan(y, "x", new NodePreview.Caps(50, 10, 256));
+        assertEquals(256L, p.definition().nodes().get(1).config().get("memory_limit_mb"), "a sort holds rows");
     }
 
     /** The review's oracle: a gate's success or failure must not tell a hidden value, whatever it does. */
