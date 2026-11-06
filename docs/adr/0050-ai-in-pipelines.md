@@ -23,13 +23,31 @@ that valve's history and what engineers wrote when they fixed it before. The row
 answer that; the model needs the right past records beside it, and a person must be able to see
 which ones it used.
 
+Other tools have settled on much the same set (research of 6 November 2026). The large data
+platforms offer row-level AI functions in SQL: classify, extract to a schema, a yes-or-no filter,
+a score for ranking, a summary across many rows, a general prompt and embeddings, with cheap
+filters run before the model to cut calls. Visual pipeline tools add prompt and context-lookup
+components, with lineage into the vector store. Two patterns from practice shaped this decision:
+extraction that points back to where in the text each value was found, guided by a few worked
+examples; and a pipeline that fetches an asset's recent history itself and then makes one model
+call per row, rather than handing the work to an agent.
+
 ## Decision
 
 1. **Two nodes, coarse as ADR 0049 asks:**
    - **`ai`**, with a `task`:
      - `classify`: a label for each row from the categories given, with a confidence;
-     - `extract`: named fields from free text into typed columns, by a schema the node declares;
+     - `extract`: named fields from free text into typed columns, by a schema the node declares
+       and a few worked examples it carries. Each value comes with where it was found (its start
+       and end in the text), so a person can see it in place and a value the text does not hold
+       shows as invented. Long text is read in overlapping pieces, and in more than one pass when
+       the node asks, since recall falls as text grows;
+     - `filter`: yes or no to a question about each row ("does this complaint mention a
+       refund?"), with a confidence, for a `route` or `filter` after it;
+     - `score`: a number on a scale the node declares, for ranking ("how urgent, 0 to 100");
      - `summarise` and `translate`: text into shorter text, or another language;
+     - `ask`: a question of the designer's own, answered to a schema the node declares, with worked
+       examples, for what the named tasks do not cover;
      - `diagnose`: the most likely cause of a fault, alarm or incident, with a confidence and the
        evidence it used, by a schema the node declares (a cause, and optionally the next checks
        to make); it is the task that most needs context (decision 8);
@@ -37,6 +55,10 @@ which ones it used.
        addresses), with the patterns and checksum classifiers as the fallback and first pass.
    - **`embed`**: a text column into a vector column, for search by meaning on the customer's own
      data (written to PostgreSQL with pgvector, as Kilnmark's own embeddings are).
+
+   And one across rows: the `aggregate` node gains `ai-summary`, one text for each group from its
+   rows ("what customers in this region complained about this week"), read in pieces when a
+   group is large, under the same rules.
 2. **The same model rules as every AI feature.** A new feature, `pipeline_ai`, chosen per server by
    an administrator: local by default, a hosted provider only if they choose one. Answers are
    held to a JSON schema, at temperature 0, so the same text gives the same answer as far as a
@@ -61,11 +83,12 @@ which ones it used.
 7. **Scored before it ships** (ADR 0012, rule 5): each task gets an answer key in the lab
    (synthetic tickets, notes and documents, and for `diagnose` synthetic faults with the
    engineers' notes and the confirmed cause) and a release that scores worse does not ship.
-8. **Context from similar records.** Any `ai` task can take a `context`: a table written by an
-   `embed` node, on a source the pipeline may read, and how to choose from it. Kilnmark chooses
-   the records closest in meaning to a column of the row, at most 5 by default and never more
-   than 20, and can first keep only those with the same keys (the same asset, the same valve
-   type) or within a time window. The chosen records go into the prompt marked as data, never
+8. **Context from other records.** Any `ai` task can take a `context`: a table on a source the
+   pipeline may read, and how to choose from it. Kilnmark chooses by keys and time (the 10 most
+   recent records for the same asset), by meaning (the records closest to a column of the row,
+   from a table an `embed` node wrote), or by keys first and then meaning (the closest records
+   for the same valve type). It takes at most 5 by default and never more than 20. The chosen
+   records go into the prompt marked as data, never
    instructions ([ADR 0052](0052-agents.md), decision 6). The answer must name the records it
    relied on, by key; those keys are written beside it, so a person can check the evidence and
    lineage shows which records informed the answer. The context table is read through `Sights`
@@ -80,6 +103,22 @@ which ones it used.
    model's answer. That table feeds the context for later rows, and the run page shows how often
    the model's answer matched the confirmed one, so the customer sees its accuracy on their own
    data as well as the lab's score.
+11. **An answer that cannot be read is never guessed.** An answer that does not fit the schema
+   is asked for once more. If it still does not, the row gets empty answer columns, confidence 0
+   and an `unreadable` flag, and goes where low confidence goes. Kilnmark never fills in a
+   default: a "medium" priority made up after a failure looks like a real answer and hides that
+   the model failed.
+12. **Cheap work first.** The canvas suggests moving a `filter`, `dedupe` or `limit` that does
+   not need the model's answer to before the `ai` node, so fewer rows reach the model. Before a
+   run, the preview shows how many rows will reach each `ai` node and an estimate of the calls,
+   tokens and time.
+13. **A customer's own model or agent service** is called with the `http` node (ADR 0049),
+   behind the allowed hosts an administrator sets, and is not built into Kilnmark. When the
+   designer marks the host as a model service, the node keeps the rules of an `ai` node: its
+   answer is held to a schema the node declares, is marked as a model's (decision 4), and a
+   column marked sensitive is refused unless masked first (decision 3). Whatever the service
+   does inside, to the pipeline it is one call per row with an answer, so the pipeline stays the
+   same shape every run.
 
 ## An example: a valve's fault
 

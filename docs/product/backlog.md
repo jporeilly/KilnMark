@@ -60,9 +60,9 @@ run timelines).
    and `unpivot`, change detection and dimension history, `sequence`, `mask`, generated rows, and
    file actions in flows. Nodes stay coarse: one per shape of work, single-value operations as
    functions. With them, **AI in pipelines** ([ADR 0050](../adr/0050-ai-in-pipelines.md)): an `ai`
-   node (classify, extract, summarise, translate, diagnose, find personal data), with context
-   from the most similar past records (a fault inferred from a valve's history and engineers'
-   notes), and an `embed` node, after `mask` so sensitive columns can be masked first; then
+   node (classify, extract, filter, score, summarise, translate, ask, diagnose, find personal
+   data), with context from other records by keys or meaning (a fault inferred from a valve's
+   history and engineers' notes), an `ai-summary` across a group, and an `embed` node, after `mask` so sensitive columns can be masked first; then
    explaining failed runs, drafting a
    pipeline from a description, suggesting quality rules, and run tools on the MCP server, as
    agents that propose and people approve ([ADR 0052](../adr/0052-agents.md)): failed runs first,

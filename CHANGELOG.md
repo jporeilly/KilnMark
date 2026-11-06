@@ -289,10 +289,17 @@ details.
   a pipeline, stewardship overnight, outside agents through MCP, agents people build. A diagram,
   `agents.svg`, drawn by `diagrams.mjs`. Nothing is built yet.
 - **AI in pipelines is decided** ([ADR 0050](docs/adr/0050-ai-in-pipelines.md)): an `ai` node
-  with the tasks classify, extract, summarise, translate, diagnose (the likely cause of a fault,
-  with a confidence and its evidence) and find personal data, and an `embed` node. Any task can
-  take context: the records closest in meaning from an embedded table, at most 20, read through
-  `Sights`, marked as data, and named by key beside the answer. A model's answer is data and
+  with the tasks classify, extract (each value with where in the text it was found, from a
+  schema and worked examples, long text read in overlapping pieces), filter, score, summarise,
+  translate, ask (a designer's own question to a schema), diagnose (the likely cause of a fault,
+  with a confidence and its evidence) and find personal data; an `embed` node; and `ai-summary`
+  in `aggregate`, one text per group. Any task can take context: other records chosen by keys
+  and time, by meaning from an embedded table, or both, at most 20, read through `Sights`,
+  marked as data, and named by key beside the answer. An answer that cannot be read is asked
+  for once more, then flagged with confidence 0, never filled with a made-up default. The
+  canvas suggests filters before the `ai` node and the preview estimates calls, tokens and
+  time. A customer's own model or agent service is called with the `http` node under the same
+  rules. A model's answer is data and
   never acts on its own; a `route` on its confidence sends the rest to a person, and confirmed
   findings come back as history and as a measure of accuracy on the customer's data. A worked
   example, a valve's fault, with a diagram, `ai-diagnose.svg`. All of it under the model rules of ADR 0012 (local by default, a model per feature, JSON answers,
