@@ -2,7 +2,7 @@
 # Kilnmark's control script for Linux (INSTALL.md, "A. Install a release"; ADR 0044). One script
 # installs, starts, stops, upgrades and backs up Kilnmark with Podman or Docker:
 #   sudo ./kilnmark.sh prepare [--user kilnmark]      once: the service account and /opt/kilnmark
-#   ./kilnmark.sh install [--root DIR] [--offline IMAGES] [--auth] [--skip-verify]   as that account
+#   ./kilnmark.sh install [--root DIR] [--offline IMAGES] [--auth] [--starter] [--skip-verify]   as that account
 #   ./kilnmark.sh up | down | restart | status | logs | check | backup | restore | upgrade | ...
 #   ./kilnmark.sh help
 # Run with no command, it starts Kilnmark (up), so a menu entry or a double-click starts it.
@@ -36,8 +36,10 @@ Kilnmark control script.
   prepare [--user NAME] [--root DIR] [--engine podman|docker]
                        Once, with sudo: make the service account (kilnmark) that runs Kilnmark,
                        give it the container engine, and make the install root its own.
-  install [--root DIR] [--offline IMAGES.tar.gz] [--auth] [--build] [--skip-verify] [--no-start]
+  install [--root DIR] [--offline IMAGES.tar.gz] [--auth] [--starter] [--build] [--skip-verify] [--no-start]
                        First setup: checks, folders, settings with new secrets, images, start.
+                       --starter then turns the Starter Pack on (example data; with --auth,
+                       example people too): for trials, demos and training, never production.
   up [--no-browser]    Start Kilnmark (and Keycloak when .env turns on the auth profile); wait
                        until it answers; open it in the browser. The default command.
   down                 Stop. Every volume, so all data, is kept.
@@ -302,6 +304,7 @@ make_settings() {
   cp "$example" "$env" && chmod 600 "$env"
   set_line "$env" KILNMARK_DB_PASSWORD "$(random_value)"
   set_line "$env" KILNMARK_ADMIN_TOKEN "km_$(random_value)"
+  set_line "$env" KILNMARK_SAMPLES_DB_PASSWORD "$(random_value)"
   # Relative to compose.yaml in versions/<version>/, so the root can move.
   set_line "$env" KILNMARK_CERTS_DIR ../../certs/https
   # Other ports, when install was run with them set (KILNMARK_PORT=9780 ./kilnmark.sh install).
@@ -323,8 +326,43 @@ make_settings() {
     set_line "$env" KILNMARK_OIDC_DESIGNER_GROUPS kilnmark-designers
     set_line "$env" KILNMARK_OIDC_ADMIN_GROUPS kilnmark-admins
     set_line "$env" KILNMARK_OIDC_UNMASK_GROUPS kilnmark-sensitive-data
+    # Other ports: where browsers reach Keycloak and Kilnmark follows them, so sign-in never sends
+    # people to another install's Keycloak on the default port.
+    [ -z "${KILNMARK_KEYCLOAK_PORT:-}" ] || set_line "$env" KILNMARK_KEYCLOAK_URL "http://localhost:$KILNMARK_KEYCLOAK_PORT"
+    [ -z "${KILNMARK_PORT:-}" ] || set_line "$env" KILNMARK_URL "http://localhost:$KILNMARK_PORT"
+    # A trial install with Keycloak: the Starter Pack may add its example people (ADR 0051).
+    [ "${with_starter:-false}" = true ] && set_line "$env" KILNMARK_STARTER allowed
   fi
   echo "Wrote $env with new secrets (readable by you only)."
+}
+
+# Secrets later versions added, and the Starter Pack's service account (ADR 0051), as config/.env
+# now asks: run before every start, so upgrade and up keep them right. Each new secret is random.
+# KILNMARK_KEYCLOAK_STARTER_SECRET is set only while KILNMARK_STARTER=allowed, with Keycloak on and
+# the install not marked production, and emptied otherwise, so it reaches Kilnmark only then.
+ensure_settings() {
+  local env="$root/config/.env" profiles want=false
+  [ -f "$env" ] || return 0
+  if [ -z "$(setting KILNMARK_SAMPLES_DB_PASSWORD)" ]; then
+    set_line "$env" KILNMARK_SAMPLES_DB_PASSWORD "$(random_value)"
+    echo "Added KILNMARK_SAMPLES_DB_PASSWORD to config/.env: the Starter Pack's database login (ADR 0051)."
+  fi
+  profiles="$(setting COMPOSE_PROFILES | tr -d '[:space:]')"
+  if [ "$(setting KILNMARK_STARTER)" = allowed ]; then
+    if [ "$(setting KILNMARK_PRODUCTION)" = true ]; then
+      echo "Warning: KILNMARK_STARTER=allowed is ignored: this install is marked production (KILNMARK_PRODUCTION=true)."
+    elif [[ ",$profiles," != *",auth,"* ]]; then
+      echo "Note: KILNMARK_STARTER=allowed needs the bundled Keycloak (the auth profile); the example people are not managed."
+    else
+      want=true
+    fi
+  fi
+  if $want; then
+    [ -n "$(setting KILNMARK_KEYCLOAK_STARTER_SECRET)" ] || set_line "$env" KILNMARK_KEYCLOAK_STARTER_SECRET "$(random_value)"
+  elif [ -n "$(setting KILNMARK_KEYCLOAK_STARTER_SECRET)" ]; then
+    set_line "$env" KILNMARK_KEYCLOAK_STARTER_SECRET ""
+    echo "Emptied KILNMARK_KEYCLOAK_STARTER_SECRET: the Starter Pack's service account is removed from Keycloak at this start."
+  fi
 }
 
 # --- start, stop, health -----------------------------------------------------------------------
@@ -357,7 +395,7 @@ compose_quietly() {
 cmd_up() {
   local browser=true v url profiles
   for a in "$@"; do case "$a" in --no-browser) browser=false ;; *) die "Unknown option $a." ;; esac; done
-  v="$(current_version)"; set_compose
+  v="$(current_version)"; ensure_settings; set_compose
   images_present "$v" || die "The images of Kilnmark $v are not here. Get them with one of: ./kilnmark.sh pull, ./kilnmark.sh load-images FILE, ./kilnmark.sh build"
   echo "Starting Kilnmark $v ..."
   compose_quietly up -d || die "Kilnmark could not start. See why with: ./kilnmark.sh logs"
@@ -527,6 +565,7 @@ cmd_install() {
       --root) root="${2:?--root needs a folder}"; shift ;;
       --offline) offline="${2:?--offline needs the images file}"; shift ;;
       --auth) with_auth=true ;;
+      --starter) with_starter=true ;;
       --build) build=true ;;
       --skip-verify) skip_verify=true ;;
       --no-start) start=false ;;
@@ -551,6 +590,7 @@ cmd_install() {
   boot_start
   if $start; then
     "$root/kilnmark.sh" up --no-browser
+    if [ "${with_starter:-false}" = true ]; then starter_on; fi
   fi
   cat <<EOF
 
@@ -634,6 +674,69 @@ cmd_uninstall() {
   "${compose[@]}" --profile auth --profile ai down -v
   "$engine" rmi $(image_names "$v") > /dev/null 2>&1 || true
   echo "Kilnmark's containers, volumes and images are deleted. $root is kept: delete it yourself if you wish."
+}
+
+# --- the Starter Pack (ADR 0051) ----------------------------------------------------------------
+
+# Turns the Starter Pack on through Kilnmark's own API, as Settings > Starter Pack does: Kilnmark
+# does the work. The admin token goes to curl in a file only this account can read, never on a
+# command line; the people's password, when there is one, is shown here once and kept nowhere.
+# Waits for a one-off service (samples-db, keycloak-setup) of this start to finish; false when it
+# failed or did not finish in 5 minutes. By compose's labels, which Docker and Podman both set.
+one_off_done() {
+  local i state
+  for i in $(seq 1 150); do
+    state="$("$engine" ps -a --filter "label=com.docker.compose.project=$project" \
+      --filter "label=com.docker.compose.service=$1" --format '{{.Status}}' 2> /dev/null | head -n 1)"
+    case "$state" in
+      Exited\ \(0\)*) return 0 ;;
+      Exited*) return 1 ;;
+    esac
+    sleep 2
+  done
+  return 1
+}
+
+starter_on() {
+  local work answer code pw profiles
+  set_compose
+  one_off_done samples-db \
+    || echo "Warning: samples-db did not finish well, so the Starter Pack may not find its database. See: ./kilnmark.sh logs samples-db"
+  profiles="$(setting COMPOSE_PROFILES | tr -d '[:space:]')"
+  if [[ ",$profiles," == *",auth,"* ]]; then
+    one_off_done keycloak-setup \
+      || echo "Warning: keycloak-setup did not finish well, so the example people may not be added. See: ./kilnmark.sh logs keycloak-setup"
+  fi
+  work="$(mktemp -d)" || die "Could not make a private folder for the request."
+  {
+    cat <<EOF
+header = "Authorization: Bearer $(setting KILNMARK_ADMIN_TOKEN)"
+EOF
+  } > "$work/curl.conf"
+  echo "Turning the Starter Pack on ..."
+  code="$(curl -k -s --config "$work/curl.conf" -X POST --max-time 600 -o "$work/answer" -w '%{http_code}' \
+    "$(local_url)/api/v1/starter-pack")" || code=000
+  answer="$(cat "$work/answer" 2> /dev/null || true)"
+  rm -rf "$work"
+  if [ "$code" != 200 ]; then
+    echo "The Starter Pack was not turned on (HTTP $code): $(sed -n 's/^{"error":"\(.*\)"}$/\1/p' <<< "$answer")" >&2
+    echo "Turn it on later under Settings > Starter Pack." >&2
+    return 0
+  fi
+  # Each step, one a line: "step: outcome".
+  grep -o '"step":"[^"]*","outcome":"[^"]*"' <<< "$answer" | sed 's/"step":"\([^"]*\)","outcome":"\([^"]*\)"/  \1: \2/'
+  pw="$(sed -n 's/.*"peoplePassword":"\([A-Za-z0-9_-]*\)".*/\1/p' <<< "$answer")"
+  echo "The Starter Pack is on: example data and accounts, not for production. Turn it off under Settings > Starter Pack."
+  # Straight to the terminal: what this script says otherwise goes to logs/ too.
+  if [ -n "$pw" ] && { : > /dev/tty; } 2> /dev/null; then
+    {
+      echo "The example people (vera.lane, sam.okafor, dana.reyes, priya.shah and alex.morgan, @kilnmark.com) sign in"
+      echo "with this password, shown only now and kept nowhere, not even in logs/: $pw"
+    } > /dev/tty
+  elif [ -n "$pw" ]; then
+    echo "The example people's password is shown on a terminal only, never in logs/: turn the pack on again under"
+    echo "Settings > Starter Pack to give them a new one, shown there."
+  fi
 }
 
 # --- backup and restore (the scripts beside compose.yaml) --------------------------------------

@@ -1,6 +1,6 @@
 # Kilnmark's control script for Windows (INSTALL.md, "A. Install a release"; ADR 0044). Windows
 # PowerShell 5.1 or later; run it through kilnmark.cmd, which passes -ExecutionPolicy Bypass:
-#   kilnmark.cmd install [-Root DIR] [-Offline IMAGES] [-Auth] [-SkipVerify]
+#   kilnmark.cmd install [-Root DIR] [-Offline IMAGES] [-Auth] [-Starter] [-SkipVerify]
 #   kilnmark.cmd up | down | restart | status | logs | check | backup | restore | upgrade | ...
 #   kilnmark.cmd help
 # Run with no command, it starts Kilnmark (up). The install root holds versions\<version>\ (a
@@ -30,6 +30,7 @@ $script:KeyOverride = $null
 $script:Offline = $null
 $script:Build = $false
 $script:WithAuth = $false
+$script:WithStarter = $false
 $script:Problems = New-Object System.Collections.ArrayList
 $script:Warnings = New-Object System.Collections.ArrayList
 $script:Logging = $false
@@ -44,8 +45,10 @@ function Show-Usage {
     @'
 Kilnmark control script.
 
-  install [-Root DIR] [-Offline IMAGES.tar.gz] [-Auth] [-Build] [-SkipVerify] [-NoStart]
+  install [-Root DIR] [-Offline IMAGES.tar.gz] [-Auth] [-Starter] [-Build] [-SkipVerify] [-NoStart]
                        First setup: checks, folders, settings with new secrets, images, start.
+                       -Starter then turns the Starter Pack on (example data; with -Auth,
+                       example people too): for trials, demos and training, never production.
   up [-NoBrowser]      Start Kilnmark (and Keycloak when .env turns on the auth profile); wait
                        until it answers; open it in the browser. The default command.
   down                 Stop. Every volume, so all data, is kept.
@@ -388,6 +391,7 @@ function New-Settings([string]$Example) {
     Copy-Item $Example $env
     Set-Line $env 'KILNMARK_DB_PASSWORD' (New-RandomValue)
     Set-Line $env 'KILNMARK_ADMIN_TOKEN' ('km_' + (New-RandomValue))
+    Set-Line $env 'KILNMARK_SAMPLES_DB_PASSWORD' (New-RandomValue)
     # Relative to compose.yaml in versions\<version>\: compose tools read it the same everywhere.
     Set-Line $env 'KILNMARK_CERTS_DIR' '../../certs/https'
     # Other ports, when install was run with them set ($env:KILNMARK_PORT = '9780'; kilnmark.cmd install).
@@ -409,8 +413,46 @@ function New-Settings([string]$Example) {
         Set-Line $env 'KILNMARK_OIDC_DESIGNER_GROUPS' 'kilnmark-designers'
         Set-Line $env 'KILNMARK_OIDC_ADMIN_GROUPS' 'kilnmark-admins'
         Set-Line $env 'KILNMARK_OIDC_UNMASK_GROUPS' 'kilnmark-sensitive-data'
+        # Other ports: where browsers reach Keycloak and Kilnmark follows them, so sign-in never sends
+        # people to another install's Keycloak on the default port.
+        $kc = [Environment]::GetEnvironmentVariable('KILNMARK_KEYCLOAK_PORT')
+        if ($kc) { Set-Line $env 'KILNMARK_KEYCLOAK_URL' ('http://localhost:' + $kc) }
+        $kp = [Environment]::GetEnvironmentVariable('KILNMARK_PORT')
+        if ($kp) { Set-Line $env 'KILNMARK_URL' ('http://localhost:' + $kp) }
+        # A trial install with Keycloak: the Starter Pack may add its example people (ADR 0051).
+        if ($script:WithStarter) { Set-Line $env 'KILNMARK_STARTER' 'allowed' }
     }
     Write-Host ('Wrote ' + $env + ' with new secrets (readable by you only).')
+}
+
+# Secrets later versions added, and the Starter Pack's service account (ADR 0051), as config\.env
+# now asks: run before every start, so upgrade and up keep them right. Each new secret is random.
+# KILNMARK_KEYCLOAK_STARTER_SECRET is set only while KILNMARK_STARTER=allowed, with Keycloak on and
+# the install not marked production, and emptied otherwise, so it reaches Kilnmark only then.
+function Update-Settings {
+    $env = Join-Path $script:Root 'config\.env'
+    if (-not (Test-Path $env)) { return }
+    if (-not (Get-Setting 'KILNMARK_SAMPLES_DB_PASSWORD')) {
+        Set-Line $env 'KILNMARK_SAMPLES_DB_PASSWORD' (New-RandomValue)
+        Write-Host "Added KILNMARK_SAMPLES_DB_PASSWORD to config\.env: the Starter Pack's database login (ADR 0051)."
+    }
+    $profiles = ',' + ((Get-Setting 'COMPOSE_PROFILES') -replace '\s', '') + ','
+    $want = $false
+    if ((Get-Setting 'KILNMARK_STARTER') -eq 'allowed') {
+        if ((Get-Setting 'KILNMARK_PRODUCTION') -eq 'true') {
+            Write-Host 'Warning: KILNMARK_STARTER=allowed is ignored: this install is marked production (KILNMARK_PRODUCTION=true).' -ForegroundColor Yellow
+        } elseif (-not $profiles.Contains(',auth,')) {
+            Write-Host 'Note: KILNMARK_STARTER=allowed needs the bundled Keycloak (the auth profile); the example people are not managed.'
+        } else {
+            $want = $true
+        }
+    }
+    if ($want) {
+        if (-not (Get-Setting 'KILNMARK_KEYCLOAK_STARTER_SECRET')) { Set-Line $env 'KILNMARK_KEYCLOAK_STARTER_SECRET' (New-RandomValue) }
+    } elseif (Get-Setting 'KILNMARK_KEYCLOAK_STARTER_SECRET') {
+        Set-Line $env 'KILNMARK_KEYCLOAK_STARTER_SECRET' ''
+        Write-Host "Emptied KILNMARK_KEYCLOAK_STARTER_SECRET: the Starter Pack's service account is removed from Keycloak at this start."
+    }
 }
 
 # --- start, stop, health -----------------------------------------------------------------------
@@ -442,6 +484,7 @@ function Invoke-Up([string[]]$Options) {
     $browser = $true
     foreach ($o in $Options) { if ($o -eq '-NoBrowser') { $browser = $false } else { Fail ('Unknown option ' + $o + '.') } }
     $v = Get-CurrentVersion
+    Update-Settings
     if (-not (Test-ImagesPresent $v)) { Fail ('The images of Kilnmark ' + $v + ' are not here. Get them with one of: kilnmark.cmd pull, kilnmark.cmd load-images FILE, kilnmark.cmd build') }
     Write-Host ('Starting Kilnmark ' + $v + ' ...')
     if (-not (Invoke-ComposeQuietly up -d)) { Fail 'Kilnmark could not start. See why with: kilnmark.cmd logs' }
@@ -514,6 +557,7 @@ function Invoke-Install([string[]]$Options) {
             '-Root' { $i++; $script:Root = $Options[$i] }
             '-Offline' { $i++; $script:Offline = (Resolve-Path $Options[$i]).Path }
             '-Auth' { $script:WithAuth = $true }
+            '-Starter' { $script:WithStarter = $true }
             '-Build' { $script:Build = $true }
             '-SkipVerify' { $script:SkipVerify = $true }
             '-NoStart' { $start = $false }
@@ -534,7 +578,10 @@ function Invoke-Install([string[]]$Options) {
     Install-Release $Here $v
     New-Settings (Join-Path (Join-Path (Join-Path $script:Root 'versions') $v) '.env.example')
     Get-ImagesFor $v
-    if ($start) { Invoke-Up @('-NoBrowser') }
+    if ($start) {
+        Invoke-Up @('-NoBrowser')
+        if ($script:WithStarter) { Invoke-StarterOn }
+    }
     $envFile = Join-Path $script:Root 'config\.env'
     Write-Host ''
     Write-Host ('Kilnmark ' + $v + ' is installed in ' + $script:Root + '.')
@@ -621,6 +668,66 @@ function Invoke-Uninstall([string[]]$Options) {
     [void](Invoke-Compose --profile auth --profile ai down -v)
     foreach ($i in (Get-ImageNames $v)) { & $script:Engine rmi $i *> $null }
     Write-Host ("Kilnmark's containers, volumes and images are deleted. " + $script:Root + ' is kept: delete it yourself if you wish.')
+}
+
+# --- the Starter Pack (ADR 0051) ----------------------------------------------------------------
+
+# Waits for a one-off service (samples-db, keycloak-setup) of this start to finish; false when it
+# failed or did not finish in 5 minutes. By compose's labels, which Docker and Podman both set.
+function Wait-OneOff([string]$Service) {
+    Select-Engine
+    for ($i = 0; $i -lt 150; $i++) {
+        $state = (& $script:Engine ps -a --filter ('label=com.docker.compose.project=' + $Project) --filter ('label=com.docker.compose.service=' + $Service) --format '{{.Status}}' 2> $null | Select-Object -First 1)
+        $state = ('' + $state).Trim()
+        if ($state.StartsWith('Exited (0)')) { return $true }
+        if ($state.StartsWith('Exited')) { return $false }
+        Start-Sleep -Seconds 2
+    }
+    return $false
+}
+
+# Turns the Starter Pack on through Kilnmark's own API, as Settings > Starter Pack does: Kilnmark
+# does the work. The admin token reaches curl in a settings file in a new folder only this account
+# can open, deleted at once, never on a command line (Windows PowerShell can add a byte-order mark
+# to what it pipes, which curl would not read); the people's password, when there is one, is shown
+# here once and kept nowhere.
+function Invoke-StarterOn {
+    if (-not (Wait-OneOff 'samples-db')) { Write-Host 'Warning: samples-db did not finish well, so the Starter Pack may not find its database. See: kilnmark.cmd logs samples-db' -ForegroundColor Yellow }
+    $profiles = ',' + ((Get-Setting 'COMPOSE_PROFILES') -replace '\s', '') + ','
+    if ($profiles.Contains(',auth,')) {
+        if (-not (Wait-OneOff 'keycloak-setup')) { Write-Host 'Warning: keycloak-setup did not finish well, so the example people may not be added. See: kilnmark.cmd logs keycloak-setup' -ForegroundColor Yellow }
+    }
+    Write-Host 'Turning the Starter Pack on ...'
+    $work = Join-Path ([IO.Path]::GetTempPath()) ('kilnmark-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory $work | Out-Null
+    Protect-Folder $work
+    $configFile = Join-Path $work 'curl.conf'
+    $answerFile = Join-Path $work 'answer.json'
+    $text = ''
+    try {
+        $config = 'header = "Authorization: Bearer ' + (Get-Setting 'KILNMARK_ADMIN_TOKEN') + '"'
+        [IO.File]::WriteAllText($configFile, $config + "`n", (New-Object System.Text.ASCIIEncoding))
+        $config = $null
+        $code = (& curl.exe -k -s -K $configFile -X POST --max-time 600 -o $answerFile -w '%{http_code}' ((Get-LocalUrl) + '/api/v1/starter-pack') | Out-String).Trim()
+        if (Test-Path $answerFile) { $text = [IO.File]::ReadAllText($answerFile) }
+    } finally {
+        Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    $answer = $null
+    try { $answer = ConvertFrom-Json $text } catch { }
+    if ($code -ne '200' -or -not $answer) {
+        $why = ''; if ($answer -and $answer.error) { $why = ': ' + $answer.error }
+        Write-Host ('The Starter Pack was not turned on (HTTP ' + $code + ')' + $why) -ForegroundColor Red
+        Write-Host 'Turn it on later under Settings > Starter Pack.'
+        return
+    }
+    foreach ($st in $answer.steps) { Write-Host ('  ' + $st.step + ': ' + $st.outcome) }
+    Write-Host 'The Starter Pack is on: example data and accounts, not for production. Turn it off under Settings > Starter Pack.'
+    if ($answer.peoplePassword) {
+        # Straight to the console, past the transcript: what this script says otherwise goes to logs\ too.
+        [Console]::WriteLine('The example people (vera.lane, sam.okafor, dana.reyes, priya.shah and alex.morgan, @kilnmark.com) sign in')
+        [Console]::WriteLine('with this password, shown only now and kept nowhere, not even in logs\: ' + $answer.peoplePassword)
+    }
 }
 
 # --- backup and restore (as backup.sh and restore.sh do on Linux) ------------------------------
