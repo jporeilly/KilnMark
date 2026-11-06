@@ -352,7 +352,8 @@ public class PipelineResource {
         Integer version = body == null ? null : body.version();
         Map<String, Object> parameters = body == null || body.parameters() == null ? Map.of() : body.parameters();
         return runRequests.start("pipeline", name, version, parameters, wait, key, identity, headers, request,
-            () -> pipelines.queueRun(name, version, parameters, who(), role).id(), pipelines::runStatus, id -> {
+            () -> pipelines.checkRun(name, version, parameters),
+            checked -> pipelines.queueChecked(checked, who(), role).id(), pipelines::runStatus, id -> {
                 PipelineViews.RunSummary run = pipelines.runSummary(id, sights);
                 return new RunRequests.Shown(run, run.pipeline(), run.status(), run.error());
             });

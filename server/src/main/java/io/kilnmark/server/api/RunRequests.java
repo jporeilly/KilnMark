@@ -3,9 +3,10 @@ package io.kilnmark.server.api;
 import java.net.URI;
 import java.time.Duration;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.LongFunction;
-import java.util.function.LongSupplier;
 import java.util.function.Supplier;
+import java.util.function.ToLongFunction;
 
 import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -36,21 +37,36 @@ public class RunRequests {
      * refused for want of a wait place: with none free, it answers at once (202), and the caller
      * reads the run with wait.
      *
+     * <p>With a key, a retry first looks the key up, and gets its run without any check. Otherwise the
+     * run is checked ({@code check}, which opens connections of its own), and only then are the key
+     * and the run written, in one transaction ({@code queue}, which must touch the run's tables only).
+     *
      * @param kind {@code pipeline} or {@code flow}
-     * @param queue queues the run and gives its id
+     * @param check checks the run, queueing nothing
+     * @param queue queues the checked run and gives its id
      * @param status the run's status now, or null when it is gone
      * @param show the run as the start answers with it
      */
-    public Response start(String kind, String name, Integer version, Map<String, Object> parameters, String wait,
-                          String key, SecurityIdentity identity, HttpHeaders headers,
-                          io.vertx.core.http.HttpServerRequest request, LongSupplier queue,
-                          LongFunction<String> status, LongFunction<Shown> show) {
+    public <C> Response start(String kind, String name, Integer version, Map<String, Object> parameters, String wait,
+                              String key, SecurityIdentity identity, HttpHeaders headers,
+                              io.vertx.core.http.HttpServerRequest request, Supplier<C> check, ToLongFunction<C> queue,
+                              LongFunction<String> status, LongFunction<Shown> show) {
         Duration waitFor = waits.parse(wait);
         String checkedKey = RunRequestKeys.check(key);
         String caller = RunRequestKeys.caller(identity);
-        RunRequestKeys.Started started = checkedKey == null ? new RunRequestKeys.Started(queue.getAsLong(), false)
-            : keys.start(caller, checkedKey, kind, name, RunRequestKeys.requestHash(kind, name, version, parameters),
-                queue);
+        RunRequestKeys.Started started;
+        if (checkedKey == null) {
+            started = new RunRequestKeys.Started(queue.applyAsLong(check.get()), false);
+        } else {
+            String hash = RunRequestKeys.requestHash(kind, name, version, parameters);
+            Optional<RunRequestKeys.Started> earlier = keys.find(caller, checkedKey, kind, name, hash);
+            if (earlier.isPresent()) {
+                started = earlier.get();
+            } else {
+                C checked = check.get();
+                started = keys.start(caller, checkedKey, kind, name, hash, () -> queue.applyAsLong(checked));
+            }
+        }
         long id = started.runId();
         RunWaits.Place place = waits.tryEnter(waitFor, caller);
         if (place != null) {

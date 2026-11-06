@@ -563,18 +563,45 @@ public class PipelineService {
      */
     public PipelineViews.RunSummary queueRun(String name, Integer version, Map<String, Object> parameters, String by,
                                              AccessRole role) {
+        return summary(queueChecked(checkRun(name, version, parameters), by, role), null); // just queued: no error yet
+    }
+
+    /**
+     * A run checked and ready to queue: its version, and the values it starts with as JSON. Checking
+     * compiles the version, which reads the catalogue on connections of its own, so it is done before
+     * any transaction that queues the run (ADR 0047: a request key and its run commit together).
+     */
+    public record CheckedRun(String name, int version, String parameters, String variables) {
+    }
+
+    /**
+     * The checks of {@link #queueRun(String, Integer, Map, String, AccessRole)}, queueing nothing.
+     *
+     * @throws WebApplicationException (404, 409) and IllegalArgumentException (400) as queueRun does
+     */
+    public CheckedRun checkRun(String name, Integer version, Map<String, Object> parameters) {
         Map<String, Object> vars = variables();
         RunnableVersion checked = runnableVersion(name, version, parameters, vars);
-        int n = checked.version();
+        return new CheckedRun(name, checked.version(), writeJson(checked.parameters()), writeJson(vars));
+    }
+
+    /**
+     * Queues a run checked by {@link #checkRun}: one transaction on the run's tables only, which a
+     * caller's own transaction ({@code Db.together}) joins.
+     *
+     * @throws WebApplicationException (409) while a run of the pipeline is queued or running
+     */
+    public PipelineStore.Run queueChecked(CheckedRun checked, String by, AccessRole role) {
         PipelineStore.Run run;
         try {
-            run = store.queueRun(name, n, by, role.id(), null, null, writeJson(checked.parameters()), writeJson(vars));
+            run = store.queueRun(checked.name(), checked.version(), by, role.id(), null, null, checked.parameters(),
+                checked.variables());
         } catch (PipelineStore.Busy e) {
-            throw fail(Response.Status.CONFLICT, "A run of " + name + " is already queued or running. Wait for it to "
-                + "finish, or cancel it, then run the pipeline again.");
+            throw fail(Response.Status.CONFLICT, "A run of " + checked.name() + " is already queued or running. Wait "
+                + "for it to finish, or cancel it, then run the pipeline again.");
         }
-        LOG.infof("Run %d of pipeline %s (version %d) queued by %s", run.id(), name, n, by);
-        return summary(run, null); // just queued: no error yet
+        LOG.infof("Run %d of pipeline %s (version %d) queued by %s", run.id(), checked.name(), checked.version(), by);
+        return run;
     }
 
     /**

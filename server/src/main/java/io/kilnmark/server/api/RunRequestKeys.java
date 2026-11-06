@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.LongSupplier;
 
 import org.jboss.logging.Logger;
@@ -38,10 +39,11 @@ import jakarta.ws.rs.core.Response;
  * hours count as unused, and are deleted shortly after start and then every hour on processes with
  * the scheduler role.
  *
- * <p>Race-safe and all-or-nothing: the key's row is inserted first, and the run is queued in the
- * same transaction ({@link Db#together}), so the key and its run commit together or not at all. A
- * second request with the same key waits on the first's uncommitted row, then finds its run; if the
- * first could not start a run, its row is rolled back and the second tries itself.
+ * <p>Race-safe and all-or-nothing: the run is checked first, outside any transaction; then the key's
+ * row is written and the run queued in one transaction ({@link Db#together}), so the key and its
+ * run commit together or not at all. A second request with the same key waits on the first's
+ * uncommitted row, then finds its run; if the first could not start a run, its row is rolled back
+ * and the second tries itself.
  */
 @ApplicationScoped
 public class RunRequestKeys {
@@ -61,6 +63,8 @@ public class RunRequestKeys {
     private volatile Thread thread;
     /** Tests only: run after the run is queued and before the key commits. */
     private volatile Runnable afterQueue = () -> { };
+    /** Tests only: run after the key's row is written and before the run is queued. */
+    private volatile Runnable afterKey = () -> { };
 
     public RunRequestKeys(Db db, KilnmarkConfig config) {
         this.db = db;
@@ -124,40 +128,72 @@ public class RunRequestKeys {
     }
 
     /**
-     * Starts a run once per key: {@code queue} queues it and gives its id, in the same transaction as
-     * the key, unless this caller's {@code key} already started a run in the last 24 hours, whose id
-     * is given instead. When {@code queue} throws, nothing is kept, and the same key can try again.
+     * The run this caller's {@code key} started in the last 24 hours, read without locking anything;
+     * empty when there is none. A caller sending a key looks here first, so a retry finds its run
+     * without checking the pipeline or flow again (its latest version may have changed since).
+     *
+     * @throws WebApplicationException (422) when the key started a different request
+     */
+    public Optional<Started> find(String caller, String key, String kind, String target, String request) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("SELECT kind, target, request_hash, "
+                + "coalesce(pipeline_run_id, flow_run_id) FROM kilnmark.run_request_key WHERE caller = ? "
+                + "AND request_key = ? AND created_at >= now() - make_interval(secs => ?)")) {
+                ps.setString(1, caller);
+                ps.setString(2, key);
+                ps.setLong(3, KEPT.toSeconds());
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() ? Optional.of(same(rs, kind, target, request)) : Optional.<Started>empty();
+                }
+            }
+        });
+    }
+
+    /**
+     * Starts a run once per key: {@code queue} queues a run already checked, in the same transaction
+     * as the key, unless this caller's {@code key} started a run in the last 24 hours, whose id is
+     * given instead. When {@code queue} throws, nothing is kept, and the same key can try again.
+     *
+     * <p>Locks are taken in one order, as deleting a pipeline takes them: the pipeline's or flow's row,
+     * then the key's. A key older than 24 hours is taken over in place, never deleted here (the
+     * clean-up deletes old keys), so a start and a pipeline's delete cannot wait on each other. Only
+     * the key's row and the run's tables are touched inside: checking the run, which opens
+     * connections of its own, is done before ({@code checkRun}).
      *
      * @param kind {@code pipeline} or {@code flow}
      * @param request {@link #requestHash} of the start
      * @throws WebApplicationException (422) when the key started a different request
      */
     public Started start(String caller, String key, String kind, String target, String request, LongSupplier queue) {
+        boolean pipeline = "pipeline".equals(kind);
         return db.together(c -> {
-            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.run_request_key "
-                + "WHERE caller = ? AND request_key = ? AND created_at < now() - make_interval(secs => ?)")) {
-                ps.setString(1, caller);
-                ps.setString(2, key);
-                ps.setLong(3, KEPT.toSeconds());
-                ps.executeUpdate();
+            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark."
+                + (pipeline ? "pipeline" : "flow") + " WHERE name = ? FOR UPDATE")) {
+                ps.setString(1, target);
+                ps.executeQuery().close();
             }
             boolean mine;
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.run_request_key "
-                + "(caller, request_key, kind, target, request_hash) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")) {
+                + "(caller, request_key, kind, target, request_hash) VALUES (?, ?, ?, ?, ?) "
+                + "ON CONFLICT (caller, request_key) DO UPDATE SET kind = EXCLUDED.kind, target = EXCLUDED.target, "
+                + "request_hash = EXCLUDED.request_hash, created_at = now(), pipeline_run_id = NULL, flow_run_id = NULL "
+                + "WHERE run_request_key.created_at < now() - make_interval(secs => ?)")) {
                 ps.setString(1, caller);
                 ps.setString(2, key);
                 ps.setString(3, kind);
                 ps.setString(4, target);
                 ps.setString(5, request);
-                mine = ps.executeUpdate() == 1; // waits here while another request holds the same key
+                ps.setLong(6, KEPT.toSeconds());
+                // waits here while another request holds the same key; 0 when a live key is there
+                mine = ps.executeUpdate() == 1;
             }
             if (!mine) {
                 return earlier(c, caller, key, kind, target, request);
             }
+            afterKey.run();
             long id = queue.getAsLong(); // joins this transaction: the run commits with its key
             try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.run_request_key SET "
-                + ("pipeline".equals(kind) ? "pipeline_run_id" : "flow_run_id")
-                + " = ? WHERE caller = ? AND request_key = ?")) {
+                + (pipeline ? "pipeline_run_id" : "flow_run_id") + " = ? WHERE caller = ? AND request_key = ?")) {
                 ps.setLong(1, id);
                 ps.setString(2, caller);
                 ps.setString(3, key);
@@ -181,21 +217,26 @@ public class RunRequestKeys {
                     throw ApiError.of(Response.Status.CONFLICT, "The run this request key started has just been "
                         + "deleted. Send the request again.");
                 }
-                if (!kind.equals(rs.getString(1)) || !target.equals(rs.getString(2))) {
-                    throw unprocessable("This request key was used to start another pipeline or flow in the last "
-                        + "24 hours. Use a new key for this run.");
-                }
-                if (!request.equals(rs.getString(3))) {
-                    throw unprocessable("This request key was used in the last 24 hours with another version or "
-                        + "other parameter values. Send the same values to find that run, or use a new key.");
-                }
-                long id = rs.getLong(4);
-                if (rs.wasNull()) {
-                    throw new IllegalStateException("a request key stored with no run");
-                }
-                return new Started(id, true);
+                return same(rs, kind, target, request);
             }
         }
+    }
+
+    /** The key's run when the row is for this request; 422 when it is for another. */
+    private static Started same(ResultSet rs, String kind, String target, String request) throws java.sql.SQLException {
+        if (!kind.equals(rs.getString(1)) || !target.equals(rs.getString(2))) {
+            throw unprocessable("This request key was used to start another pipeline or flow in the last 24 hours. "
+                + "Use a new key for this run.");
+        }
+        if (!request.equals(rs.getString(3))) {
+            throw unprocessable("This request key was used in the last 24 hours with another version or other "
+                + "parameter values. Send the same values to find that run, or use a new key.");
+        }
+        long id = rs.getLong(4);
+        if (rs.wasNull()) {
+            throw new IllegalStateException("a request key stored with no run");
+        }
+        return new Started(id, true);
     }
 
     private static WebApplicationException unprocessable(String message) {
@@ -206,6 +247,11 @@ public class RunRequestKeys {
     /** Tests only: runs {@code hook} inside each keyed start, after its run is queued and before it commits. */
     void afterQueue(Runnable hook) {
         afterQueue = hook == null ? () -> { } : hook;
+    }
+
+    /** Tests only: runs {@code hook} inside each keyed start, after its key's row is written and before its run is queued. */
+    void afterKey(Runnable hook) {
+        afterKey = hook == null ? () -> { } : hook;
     }
 
     void onStart(@Observes StartupEvent event) {

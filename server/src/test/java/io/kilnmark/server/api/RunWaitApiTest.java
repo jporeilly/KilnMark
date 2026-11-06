@@ -87,6 +87,7 @@ class RunWaitApiTest {
     static final java.util.concurrent.ExecutorService THREADS = java.util.concurrent.Executors.newFixedThreadPool(4);
 
     static String steward;
+    static String designer;
     static String other;
     static String viewer;
     /** The slow flow's run, still going while the limits are tried. */
@@ -115,7 +116,7 @@ class RunWaitApiTest {
         steward = newToken("steward", false);
         other = newToken("steward", false);
         viewer = newToken("viewer", false);
-        String designer = newToken("designer", false);
+        designer = newToken("designer", false);
         admin().contentType(ContentType.JSON).body(Map.of("name", "rw-src", "kind", MemoryConnector.KIND,
             "settings", Map.of("rows", "50"), "password", "rw-in-token-41")).post("/api/v1/sources").then()
             .statusCode(201);
@@ -132,6 +133,17 @@ class RunWaitApiTest {
             Thread.sleep(100);
         }
         as(designer).body(Map.of("name", "rw-copy", "yaml", COPY)).post("/api/v1/pipelines").then().statusCode(201);
+        as(designer).body(Map.of("name", "rw-doomed", "yaml", COPY.replace("rw-copy", "rw-doomed")
+            .replace("rw_copy", "rw_doomed"))).post("/api/v1/pipelines").then().statusCode(201);
+        as(designer).body(Map.of("yaml", """
+            kilnmark: flow/v1
+            name: rw-params
+            parameters:
+              x: { type: number, default: 1 }
+              y: { type: text, default: a }
+            nodes:
+              - { id: pause, type: wait, for: 1s }
+            """)).post("/api/v1/flows").then().statusCode(201);
         for (String[] f : List.of(new String[] {"rw-quick", "2s"}, new String[] {"rw-slow", "10m"},
             new String[] {"rw-pair", "3s"}, new String[] {"rw-other", "1s"})) {
             as(designer).body(Map.of("yaml", waiting(f[0], f[1]))).post("/api/v1/flows").then().statusCode(201);
@@ -346,19 +358,59 @@ class RunWaitApiTest {
     @Test
     @Order(13)
     void theSameKeyWithOtherValuesIsRefused() {
-        long id = as(steward).header("Idempotency-Key", "values").body(Map.of())
-            .post("/api/v1/flows/rw-other/runs?wait=10").then().statusCode(200).extract().jsonPath().getLong("id");
-        as(steward).header("Idempotency-Key", "values").body(Map.of("version", 1))
-            .post("/api/v1/flows/rw-other/runs").then().statusCode(422).body("error", containsString("other"));
-        as(steward).header("Idempotency-Key", "values").body(Map.of("parameters", Map.of("x", 1)))
-            .post("/api/v1/flows/rw-other/runs").then().statusCode(422);
-        // the same values, written in another order or with no body at all, are the same request
-        as(steward).header("Idempotency-Key", "values").body(Map.of("parameters", Map.of()))
-            .post("/api/v1/flows/rw-other/runs").then().statusCode(200).body("id", equalTo((int) id));
+        long id = as(steward).header("Idempotency-Key", "values").body("{\"parameters\":{\"x\":2,\"y\":\"b\"}}")
+            .post("/api/v1/flows/rw-params/runs?wait=10").then().statusCode(200).extract().jsonPath().getLong("id");
+        as(steward).header("Idempotency-Key", "values").body("{\"parameters\":{\"x\":2,\"y\":\"b\"},\"version\":1}")
+            .post("/api/v1/flows/rw-params/runs").then().statusCode(422).body("error", containsString("other"));
+        as(steward).header("Idempotency-Key", "values").body("{\"parameters\":{\"x\":3,\"y\":\"b\"}}")
+            .post("/api/v1/flows/rw-params/runs").then().statusCode(422);
+        // the same values, written in another order, are the same request
+        as(steward).header("Idempotency-Key", "values").body("{\"parameters\":{\"y\":\"b\",\"x\":2}}")
+            .post("/api/v1/flows/rw-params/runs").then().statusCode(200).header(RunWaits.REPLAYED_HEADER, "true")
+            .body("id", equalTo((int) id));
     }
 
     @Test
     @Order(14)
+    void aStartAndADeleteOfItsPipelineNeverWaitOnEachOther() throws Exception {
+        // a key older than a day, for a run of the pipeline, which the start takes over
+        as(steward).header("Idempotency-Key", "doomed").body(Map.of()).post("/api/v1/pipelines/rw-doomed/runs?wait=10")
+            .then().statusCode(200).body("status", equalTo("succeeded"));
+        age("doomed");
+        CountDownLatch inside = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicBoolean first = new AtomicBoolean(true);
+        keys.afterKey(() -> {
+            if (first.getAndSet(false)) {
+                inside.countDown();
+                try {
+                    release.await(30, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+        try {
+            Future<Response> start = THREADS.submit(() -> as(steward).header("Idempotency-Key", "doomed")
+                .body(Map.of()).post("/api/v1/pipelines/rw-doomed/runs"));
+            assertTrue(inside.await(30, TimeUnit.SECONDS), "the start holds its key");
+            // deleting the pipeline deletes its runs and their keys: it must not wait on the start's key
+            // while the start waits on the pipeline
+            Future<Response> delete = THREADS.submit(() -> as(designer).delete("/api/v1/pipelines/rw-doomed"));
+            Thread.sleep(1_500);
+            release.countDown();
+            Response started = start.get(30, TimeUnit.SECONDS);
+            Response deleted = delete.get(30, TimeUnit.SECONDS);
+            assertTrue(List.of(200, 202).contains(started.statusCode()), started.asString());
+            assertTrue(List.of(204, 409).contains(deleted.statusCode()), deleted.statusCode() + " " + deleted.asString());
+        } finally {
+            release.countDown();
+            keys.afterKey(null);
+        }
+    }
+
+    @Test
+    @Order(15)
     void keysOlderThanADayAreUnusedAndCleanedUp() {
         long id = as(steward).header("Idempotency-Key", "aging").body(Map.of())
             .post("/api/v1/flows/rw-other/runs?wait=10").then().statusCode(200).extract().jsonPath().getLong("id");
