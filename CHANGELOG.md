@@ -7,10 +7,6 @@ details.
 
 ### Details
 
-- **Release images signed on the local runner**: `release.yml` signs the digest the registry
-  stores for each image, read back by tag after the push. On a Podman engine the digest recorded
-  locally is not the registry's, and signing it failed, which stopped the 0.0.10 release.
-
 - **Dependencies updated** (Dependabot's Gradle group): Jackson 2.22, the AWS SDK 2.57, LangChain4j
   1.23, Error Prone 2.52, the SQL Server driver's patch release, lz4, GreenMail
   and the licence report plug-in, with their checksums and signing keys in
@@ -198,6 +194,9 @@ details.
 
 ### Details
 
+- **Release images signed on the local runner**: `release.yml` signs the digest the registry
+  stores for each image, read back by tag after the push. On a Podman engine the digest recorded
+  locally is not the registry's, and signing it failed.
 - **Releases on the local runner**: on a tag, `release.yml` runs where `KILNMARK_RUNNER` says, as CI
   does; on a self-hosted runner it builds, signs, pushes the images and drafts the release, and
   leaves the install rehearsal to GitHub's runners. The runner image adds `gh`.
