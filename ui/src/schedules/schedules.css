@@ -51,7 +51,10 @@
   margin-top: 2px;
 }
 
+/* The row's buttons one above another, so the table keeps to the page's width. */
 .sc-table .buttons.tight {
+  flex-direction: column;
+  align-items: stretch;
   flex-wrap: nowrap;
 }
 

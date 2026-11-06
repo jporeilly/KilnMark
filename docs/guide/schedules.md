@@ -237,7 +237,7 @@ the role** or **Failed last time** to see only those; each says how many there a
 holds every schedule that is off, whoever paused it; **Paused: setter lost the role** only those
 Kilnmark paused because whoever set them lost the role.
 
-![The Schedules page: filters for All 6, On 5, Paused 1 and Failed last time 1; a note for access reviews saying the 6 schedules run in the name of 2 people; and a table of every schedule with when it runs, the pipeline or flow it runs, linked, who set it and its role, its state and next run, and the last time it was due: Started with a link to the run, Skipped because a run was still going, Not run yet for the paused one, and Failed with the reason, a server variable that was not set](images/schedules-page.png)
+![The Schedules page: filters for All 6, On 4, Paused 2, Paused: setter lost the role 1 and Failed last time 0; a note for access reviews saying the 6 schedules run in the name of 3 people, and that Kilnmark pauses the schedules of someone whose token is revoked or who loses their role; and a table of every schedule with when it runs, the pipeline or flow it runs, linked, who set it and its role, its state and next run, the last time it was due, and Edit, Pause or Resume, and Delete. The last time it was due reads Started with a link to the run, Skipped because a run was still going, Not run yet for the one a person paused, and, in amber, Paused: setter lost the role for the one set by a token that was revoked](images/schedules-page.png)
 
 **For access reviews**, admins see a note saying how many people the schedules run in the name of.
 Read the **Set by** column. When someone's token is revoked or expires, or they lose their role,
