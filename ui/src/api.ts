@@ -1586,6 +1586,49 @@ export const samplesApi = {
     call<{ offered: boolean }>("/api/v1/samples/offered", { method: "PUT", body: JSON.stringify({ offered }) }),
 };
 
+/** Whether the Starter Pack (ADR 0051) is on: everyone reads it, for the banner. */
+export type StarterPackState = { on: boolean; since: string | null; by: string | null };
+
+/** One step of turning the Starter Pack on or off, and how it went. */
+export type StarterPackStep = { step: string; outcome: "done" | "skipped" | "failed"; detail: string | null };
+
+/** What happened to one of the example people in Keycloak. */
+export type StarterPerson = { email: string; role: string; outcome: string; reason: string | null };
+
+/** Settings › Starter Pack, for admins. */
+export type StarterPackDetails = {
+  on: boolean;
+  since: string | null;
+  by: string | null;
+  /** This install is marked production (KILNMARK_PRODUCTION=true): the pack is refused. */
+  production: boolean;
+  /** Whether the pack can be turned on here; notReady says why not. */
+  ready: boolean;
+  notReady: string | null;
+  database: string;
+  files: string | null;
+  tablesRun: PipelineRun | null;
+  samples: number;
+  people: { allowed: boolean; why: string | null; present: string[]; presentError: string | null };
+};
+
+export type StarterPackResult = {
+  on: boolean;
+  steps: StarterPackStep[];
+  tablesRun: PipelineRun | null;
+  people: StarterPerson[];
+  /** The example people's new password, shown once: Kilnmark keeps it nowhere. */
+  peoplePassword: string | null;
+};
+
+export const starterPackApi = {
+  state: () => call<StarterPackState>("/api/v1/starter-pack"),
+  details: () => call<StarterPackDetails>("/api/v1/starter-pack/details"),
+  turnOn: () => call<StarterPackResult>("/api/v1/starter-pack", { method: "POST" }),
+  turnOff: (confirm: string) =>
+    call<StarterPackResult>("/api/v1/starter-pack", { method: "DELETE", body: JSON.stringify({ confirm }) }),
+};
+
 const pipe = (name: string) => `/api/v1/pipelines/${encodeURIComponent(name)}`;
 
 export const pipelinesApi = {
@@ -2060,6 +2103,8 @@ export type AccessReviewEntry = {
   /** For a token, its last use; for a person, their last sign-in. */
   lastUsedAt: string | null;
   signIns: number | null;
+  /** A kilnmark.com example account, such as the Starter Pack's people (ADR 0051): not for real data. */
+  example?: boolean;
 };
 
 /** Settings › Access review: who can do what, for admins. */

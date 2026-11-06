@@ -367,6 +367,15 @@ kbd {
   flex-direction: column;
 }
 
+/* The Starter Pack's banner (ADR 0051): above the top bar on every page while the pack is on. */
+.km-starter-banner {
+  padding: 8px 32px;
+  background: var(--km-tint-amber-bg);
+  color: var(--km-tint-amber-fg);
+  border-bottom: 2px solid var(--km-warn);
+  font-size: 0.9rem;
+}
+
 /* The top bar. */
 .topbar {
   position: sticky;

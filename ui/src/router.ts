@@ -17,6 +17,8 @@ export type Route =
   | { page: "audit" }
   // Who can do what: tokens and provider sign-ins, for admins (ADR 0037)
   | { page: "access-review" }
+  // The Starter Pack: example data and accounts, for admins (ADR 0051)
+  | { page: "starter-pack" }
   // Drivers the customer installs, for admins
   | { page: "drivers" }
   // JDBC drivers admins register for the generic JDBC connector
@@ -79,6 +81,7 @@ export function parse(hash: string): Route {
   if (path === "/settings/email/sent") return { page: "email-log" };
   if (path === "/settings/audit") return { page: "audit" };
   if (path === "/settings/access-review") return { page: "access-review" };
+  if (path === "/settings/starter-pack") return { page: "starter-pack" };
   if (path === "/settings/drivers") return { page: "drivers" };
   if (path === "/settings/jdbc-drivers") return { page: "jdbc-drivers" };
   if (path === "/quality/rules") return { page: "rules", urn: params.get("urn") ?? "" };
@@ -154,6 +157,7 @@ export const href = {
   emailLog: () => "#/settings/email/sent",
   audit: () => "#/settings/audit",
   accessReview: () => "#/settings/access-review",
+  starterPack: () => "#/settings/starter-pack",
   drivers: () => "#/settings/drivers",
   jdbcDrivers: () => "#/settings/jdbc-drivers",
   rules: (urn?: string) => (urn ? `#/quality/rules?urn=${encodeURIComponent(urn)}` : "#/quality/rules"),

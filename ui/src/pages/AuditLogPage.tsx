@@ -26,6 +26,10 @@ export const ACTIONS: { value: string; label: string; tone: Tone }[] = [
   { value: "schedule.set", label: "Schedule set", tone: "neutral" },
   { value: "schedule.deleted", label: "Schedule deleted", tone: "neutral" },
   { value: "schedule.paused", label: "Schedule paused", tone: "warn" },
+  { value: "starter.added", label: "Starter Pack turned on", tone: "warn" },
+  { value: "starter.removed", label: "Starter Pack turned off", tone: "neutral" },
+  { value: "starter.people_added", label: "Example people added", tone: "warn" },
+  { value: "starter.people_removed", label: "Example people removed", tone: "neutral" },
   { value: "api.request", label: "Request", tone: "neutral" },
   { value: "api.refused", label: "Request refused", tone: "bad" },
 ];
@@ -68,6 +72,16 @@ export function describe(e: AuditEvent): string {
   if (e.action === "schedule.set" || e.action === "schedule.deleted") {
     const what = d.pipeline ? `Pipeline ${String(d.pipeline)}` : `Flow ${String(d.flow ?? "")}`;
     return `${what}: ${String(d.cron ?? "")} (${String(d.zone ?? "UTC")}), as ${String(d.runAs ?? "steward")}${d.enabled === false ? ", paused" : ""}`;
+  }
+  if (e.action === "starter.added" || e.action === "starter.removed") {
+    const steps = (d.steps ?? {}) as Record<string, string>;
+    const failed = Object.entries(steps).filter(([, v]) => v === "failed").map(([k]) => k);
+    const forced = d.forced ? "Forced on an install marked production. " : "";
+    return `${forced}${failed.length ? `Not every step worked: ${failed.join(", ")}` : "Every step worked"}`;
+  }
+  if (e.action === "starter.people_added" || e.action === "starter.people_removed") {
+    const people = Array.isArray(d.people) ? (d.people as unknown[]).map(String) : [];
+    return people.length ? people.join(", ") : "No one";
   }
   if (e.action === "api.request" || e.action === "api.refused") {
     const call = `${String(d.method ?? "")} ${String(d.status ?? "")}`.trim();
