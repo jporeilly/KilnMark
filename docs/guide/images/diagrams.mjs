@@ -579,6 +579,28 @@ function svg(name, height, title, sub, body) {
   svg("flow-check-source", y3 + 104, "What a check-source node does", "Before the work starts: can the source be reached, and is everything it needs there?", b);
 }
 
+// ---- How a wait-for node waits ----
+{
+  const y1 = 96, y2 = 206;
+  const b =
+    card(40, y1 - 28, 200, { n: "1", color: C.blue, title: "Look", sub: "the files, or the query" }) +
+    arrow([[240, y1], [298, y1]], C.blue) +
+    `<polygon points="300,${y1} 380,${y1 - 34} 460,${y1} 380,${y1 + 34}" fill="${C.tint}" stroke="${C.axis}" stroke-width="1.25"/>` +
+    text(380, y1 + 4, "Ready?", { size: 12.5, weight: 600, anchor: "middle" }) +
+    arrow([[460, y1], [552, y1]], C.good) +
+    label(506, y1 - 8, "yes", C.good, "middle") +
+    card(554, y1 - 28, 182, { icon: "check", color: C.good, strong: true, title: "Succeeds", sub: "found, waited_s" }) +
+    arrow([[380, y1 + 34], [380, y2 - 30]], C.blue) +
+    label(390, y1 + 56, "no", C.quiet, "start") +
+    card(270, y2 - 28, 220, { icon: "lock", color: C.blue, title: "Wait its every", sub: "no worker, no connection" }) +
+    arrow([[270, y2], [140, y2], [140, y1 + 30]], C.blue) +
+    label(150, y2 - 8, "look again", C.blue, "start") +
+    arrow([[490, y2], [552, y2]], C.bad, { dash: "4 3" }) +
+    card(554, y2 - 28, 182, { icon: "cross", color: C.bad, title: "Gives up", sub: "past its timeout" }) +
+    foot(y2 + 52, "shield", "A query only reads, for at most 30 seconds, and what it returns is never kept or shown.");
+  svg("flow-wait-for", y2 + 104, "How a wait-for node waits", "It looks at once, then every so often, until it is ready or its timeout passes", b);
+}
+
 // ---- How a schedule fires ----
 {
   const W = 208, X = [40, 276, 512];

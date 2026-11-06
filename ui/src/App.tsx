@@ -349,7 +349,9 @@ function Shell({ me }: { me: Me }) {
           {route.page === "search" && <SearchPage q={route.q} ask={route.ask} />}
           {route.page === "asset" && <AssetPage urn={route.urn} tab={route.tab} />}
           {route.page === "sources" && <SourcesPage role={me.role} add={route.add} />}
-          {route.page === "source" && <SourcePage name={route.name} role={me.role} />}
+          {route.page === "source" && (
+            <SourcePage name={route.name} role={me.role} schema={route.schema} table={route.table} />
+          )}
           {(route.page === "ai" || route.page === "ai-usage") &&
             (allows(me.role, "admin") ? (
               route.page === "ai" ? <AiPage /> : <AiUsagePage />

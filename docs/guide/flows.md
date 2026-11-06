@@ -292,6 +292,64 @@ connections:
 
 ![A run of morning-orders: the check-source node arrived, "2 files on sample-data", is outlined red as Failed; its on failure connection led to the notice tell, which succeeded, and the load node was skipped. The Nodes table says arrived failed with "1 of 2 files is missing on sample-data: incoming/orders-today.csv"](images/flow-check-source-run.png)
 
+## Waiting until a file arrives or a query is true
+
+A `wait-for` node waits until something is ready, then lets the flow go on: a file has arrived on a
+file or object-store source, or a query on a PostgreSQL source has become true. It looks at once,
+then every so often, and gives up after its timeout.
+
+```yaml
+nodes:
+  - id: arrived
+    type: wait-for
+    source: landing                      # a file or object-store source
+    file: "incoming/orders-*.csv"        # * and ? in the file's name only
+    at_least: 1                          # how many must match (1 when left out)
+    every: 5m                            # 30s to 1h (5m when left out)
+    timeout: 2h                          # up to 24h (1h when left out)
+
+  - id: loaded
+    type: wait-for
+    source: warehouse                    # PostgreSQL, with Allow SQL on
+    query: "select max(loaded_at) > now() - interval '1 hour' from etl.batches"
+    every: 2m
+
+  - id: load
+    type: run-pipeline
+    pipeline: orders-load
+
+  - id: tell
+    type: notify
+    severity: high
+    title: "The orders had not arrived after ${arrived.waited_s} seconds"
+
+connections:
+  - { from: arrived, to: loaded }
+  - { from: loaded, to: load }
+  - { from: arrived, to: tell, when: failure }
+```
+
+![How a wait-for node waits: it looks at once; if what it waits for is ready it succeeds, reporting found and waited_s. If not, it waits its every, holding no worker and no connection, and looks again. Once its timeout has passed it gives up and fails. Cancelling the flow ends the wait at once](images/flow-wait-for.svg)
+
+- **A file:** it counts the files below the source's folder whose path matches the pattern, `*`
+  and `?` standing for any characters but `/`, so `incoming/orders-*.csv` never counts a file in
+  `incoming/old/`. It reads only names, and counts only the files the source's own include and
+  exclude patterns keep. On an object store with a prefix, write the pattern below the prefix.
+  `found` is how many matched; it succeeds once at least `at_least` do.
+- **A query:** SQL you write, so it follows the same rules as a custom SQL quality rule: one
+  `SELECT` (or `WITH`), on a PostgreSQL source with **Allow SQL** on, run on a read-only connection
+  for at most 30 seconds, under a login that is not a superuser. It is ready when the first value
+  of its first row is true; nothing it returns is kept or shown, except that whether it was true
+  (`found`, 1 or 0) shows on the run to whoever may see the run. Saving a flow with one needs a
+  designer who may see unmasked values, as for a `sql` node, and each run that waits on one is
+  recorded in the audit log, without the query.
+- **Between looks it holds no connection and no pipeline worker:** only the flow's own watcher
+  keeps watching, as it does for a `wait` node. A look that cannot be made (the source did not
+  answer, or did not list its files in time) is tried again at the next one; one that never can (the
+  source was deleted, or no longer allows SQL) fails the node at once.
+- It reports `found` and `waited_s` (seconds), for conditions and notices. Cancelling the flow, or
+  a `stop` node, ends the wait at once.
+
 ## The diagram
 
 The **Diagram** tab draws the flow as you write it. Each node is a card, as on a pipeline's

@@ -104,6 +104,66 @@ public final class PostgresConnector extends JdbcConnector {
         return WriteSql.Postgres.INSTANCE;
     }
 
+    /** Ordinary tables kept in this database only, for Count exactly (ADR 0045). */
+    @Override
+    protected String localTableSql(int major) {
+        return major >= 12 ? LOCAL_TABLE : LOCAL_TABLE_BEFORE_12;
+    }
+
+    private static final String LOCAL_TABLE_BEFORE_12 = "SELECT 1 FROM pg_catalog.pg_class c "
+        + "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ? AND c.relname = ? "
+        + "AND c.relkind = 'r' AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = c.oid)";
+
+    /**
+     * An ordinary table without child tables, or (PostgreSQL 12 and later, which have
+     * {@code pg_partition_tree}) a partitioned one with no foreign partition at any level: a count
+     * of either never reaches another server.
+     */
+    static final String LOCAL_TABLE = "SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n "
+        + "ON n.oid = c.relnamespace WHERE n.nspname = ? AND c.relname = ? AND ("
+        + "(c.relkind = 'r' AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = c.oid)) "
+        + "OR (c.relkind = 'p' AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_partition_tree(c.oid) t "
+        + "JOIN pg_catalog.pg_class k ON k.oid = t.relid WHERE k.relkind = 'f')))";
+
+    /**
+     * A relation an extension owns, wherever it sits ({@code pg_stat_statements} in {@code public}
+     * keeps other sessions' statements, literals and all).
+     */
+    @Override
+    protected String refusedTableSql() {
+        return "SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+            + "JOIN pg_catalog.pg_depend d ON d.objid = c.oid AND d.classid = 'pg_catalog.pg_class'::pg_catalog.regclass "
+            + "AND d.deptype = 'e' WHERE n.nspname = ? AND c.relname = ?";
+    }
+
+    /** The driver lists an index's {@code INCLUDE} columns as keys: keep the first {@code indnkeyatts}. */
+    @Override
+    protected java.util.List<io.kilnmark.kiln.connect.TableDetail.Index> refineIndexes(java.sql.Connection c,
+        String schema, String table, java.util.List<io.kilnmark.kiln.connect.TableDetail.Index> indexes)
+        throws java.sql.SQLException {
+        if (c.getMetaData().getDatabaseMajorVersion() < 11 || indexes.isEmpty()) {
+            return indexes;
+        }
+        java.util.Map<String, Integer> keys = new java.util.HashMap<>();
+        try (java.sql.PreparedStatement s = c.prepareStatement("SELECT i.relname, x.indnkeyatts "
+            + "FROM pg_catalog.pg_index x JOIN pg_catalog.pg_class i ON i.oid = x.indexrelid "
+            + "JOIN pg_catalog.pg_class t ON t.oid = x.indrelid JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace "
+            + "WHERE n.nspname = ? AND t.relname = ?")) {
+            s.setString(1, schema);
+            s.setString(2, table);
+            try (java.sql.ResultSet rs = s.executeQuery()) {
+                while (rs.next()) {
+                    keys.put(rs.getString(1), rs.getInt(2));
+                }
+            }
+        }
+        return indexes.stream().map(i -> {
+            Integer n = keys.get(i.name());
+            return n == null || n >= i.columns().size() ? i : new io.kilnmark.kiln.connect.TableDetail.Index(i.name(),
+                i.columns().subList(0, n), i.unique(), i.primaryKey(), i.method(), i.partial());
+        }).toList();
+    }
+
     /** The planner's estimate (-1 before the table was first analysed, so it is then read in full). */
     @Override
     protected String estimateRowsSql(io.kilnmark.kiln.connect.AssetInfo asset) {

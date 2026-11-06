@@ -5,7 +5,8 @@ export type Route =
   | { page: "search"; q: string; ask: boolean }
   | { page: "asset"; urn: string; tab: string | null }
   | { page: "sources"; add: boolean }
-  | { page: "source"; name: string }
+  /** A source; schema and table open that table in its Explore section (ADR 0045). */
+  | { page: "source"; name: string; schema: string | null; table: string | null }
   | { page: "tokens" }
   | { page: "settings" }
   // Notifications: each person's own choices; email settings and the send log for admins
@@ -58,7 +59,13 @@ export function parse(hash: string): Route {
   if (path === "/search") return { page: "search", q: params.get("q") ?? "", ask: params.get("ask") === "1" };
   if (path.startsWith("/asset/")) return { page: "asset", urn: decode(path.slice("/asset/".length)), tab: params.get("tab") };
   if (path === "/sources") return { page: "sources", add: params.get("add") === "1" };
-  if (path.startsWith("/source/")) return { page: "source", name: decode(path.slice("/source/".length)) };
+  if (path.startsWith("/source/"))
+    return {
+      page: "source",
+      name: decode(path.slice("/source/".length)),
+      schema: params.get("schema"),
+      table: params.get("table"),
+    };
   if (path === "/tokens") return { page: "tokens" };
   if (path === "/settings") return { page: "settings" };
   if (path === "/settings/notifications") return { page: "notifications", confirm: params.get("confirm") };
@@ -122,7 +129,14 @@ export const href = {
   sources: () => "#/sources",
   /** Sources, with the Add a connection gallery open. */
   addConnection: () => "#/sources?add=1",
-  source: (name: string) => `#/source/${encodeURIComponent(name)}`,
+  /** A source; with a schema (and a table), its Explore section opened there. */
+  source: (name: string, schema?: string | null, table?: string | null) => {
+    const q = new URLSearchParams();
+    if (schema) q.set("schema", schema);
+    if (schema && table) q.set("table", table);
+    const query = q.toString();
+    return `#/source/${encodeURIComponent(name)}${query ? `?${query}` : ""}`;
+  },
   tokens: () => "#/tokens",
   settings: () => "#/settings",
   notifications: () => "#/settings/notifications",

@@ -104,6 +104,10 @@ public final class Views {
                                 String defaultValue, String kind) {
     }
 
+    /** The exact number of rows of one table (Explore, ADR 0045). */
+    public record RowCount(String asset, long rows) {
+    }
+
     /** The outcome of a connection test. {@code problem} is null when it worked; it never holds a secret. */
     public record TestResult(boolean ok, String problem, long millis) {
     }
