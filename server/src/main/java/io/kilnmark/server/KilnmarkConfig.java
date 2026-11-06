@@ -42,6 +42,9 @@ public interface KilnmarkConfig {
 
     Worker worker();
 
+    /** The scheduler role: how often it looks for schedules that are due (ADR 0046). */
+    Schedules schedules();
+
     /** Settings for the {@code files} connector and Parquet reading. */
     Files files();
 
@@ -373,6 +376,20 @@ public interface KilnmarkConfig {
         /** On shutdown, how long running jobs may take to finish before they are stopped and requeued. */
         @WithDefault("30s")
         Duration shutdownTimeout();
+    }
+
+    /** Schedules of pipelines and flows (ADR 0046, docs/design/schedules.md). */
+    interface Schedules {
+        /** How often a process with the scheduler role looks for schedules that are due. */
+        @WithDefault("30s")
+        Duration pollInterval();
+
+        /**
+         * A fire due longer ago than this when it is found (the server was not running) is missed,
+         * not run late; one due more recently runs once.
+         */
+        @WithDefault("1h")
+        Duration catchUp();
     }
 
     interface Files {

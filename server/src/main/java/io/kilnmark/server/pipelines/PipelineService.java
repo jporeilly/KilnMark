@@ -570,8 +570,8 @@ public class PipelineService {
         try {
             run = store.queueRun(name, n, by, role.id(), null, null, writeJson(checked.parameters()), writeJson(vars));
         } catch (PipelineStore.Busy e) {
-            throw fail(Response.Status.CONFLICT, "A run of " + name + " is already queued or running. Wait for it to "
-                + "finish, or cancel it, then run the pipeline again.");
+            throw new io.kilnmark.server.api.AlreadyRunning("A run of " + name + " is already queued or running. Wait "
+                + "for it to finish, or cancel it, then run the pipeline again.");
         }
         LOG.infof("Run %d of pipeline %s (version %d) queued by %s", run.id(), name, n, by);
         return summary(run, null); // just queued: no error yet
@@ -617,6 +617,26 @@ public class PipelineService {
         LOG.infof("Run %d of pipeline %s (version %d) queued by %s for node %s%s of flow run %d", run.id(), name, n,
             by, flowNode, flowItem == null ? "" : ", item " + flowItem, flowRunId);
         return run;
+    }
+
+    /**
+     * Checks values for the parameters of the pipeline's latest version as a run of it would, without
+     * queueing anything: a schedule's values, when it is saved (ADR 0046), so a mistake is refused then
+     * rather than at the first fire.
+     *
+     * @throws IllegalArgumentException saying what is wrong, starting {@code parameters:}
+     * @throws WebApplicationException (404) when there is no such pipeline
+     */
+    public void checkParameters(String name, Map<String, Object> parameters) {
+        PipelineStore.Pipeline p = find(name);
+        PipelineStore.Version v = store.version(name, p.latestVersion()).orElseThrow(() -> fail(
+            Response.Status.NOT_FOUND, name + " has no version " + p.latestVersion()));
+        PipelineDefinition def = PipelineDefinition.parse(v.yaml()).definition();
+        try {
+            Parameters.resolve(name, def == null ? List.of() : def.parameters(), parameters, variables());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("parameters: " + e.getMessage(), e);
+        }
     }
 
     /** A version that can run, and its parameters' values for the run, defaults filled in. */

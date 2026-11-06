@@ -23,6 +23,8 @@ export const ACTIONS: { value: string; label: string; tone: Tone }[] = [
   { value: "unmask.approved", label: "Sensitive values approved", tone: "warn" },
   { value: "unmask.refused", label: "Sensitive values refused", tone: "neutral" },
   { value: "database.restored", label: "Database restored", tone: "warn" },
+  { value: "schedule.set", label: "Schedule set", tone: "neutral" },
+  { value: "schedule.deleted", label: "Schedule deleted", tone: "neutral" },
   { value: "api.request", label: "Request", tone: "neutral" },
   { value: "api.refused", label: "Request refused", tone: "bad" },
 ];
@@ -57,6 +59,10 @@ export function describe(e: AuditEvent): string {
   }
   if (e.action === "database.restored") {
     return `From ${String(d.backup ?? "a backup")}, taken ${d.takenAt ? formatTime(String(d.takenAt)) : "at an unknown time"}`;
+  }
+  if (e.action === "schedule.set" || e.action === "schedule.deleted") {
+    const what = d.pipeline ? `Pipeline ${String(d.pipeline)}` : `Flow ${String(d.flow ?? "")}`;
+    return `${what}: ${String(d.cron ?? "")} (${String(d.zone ?? "UTC")}), as ${String(d.runAs ?? "steward")}${d.enabled === false ? ", paused" : ""}`;
   }
   if (e.action === "api.request" || e.action === "api.refused") {
     const call = `${String(d.method ?? "")} ${String(d.status ?? "")}`.trim();

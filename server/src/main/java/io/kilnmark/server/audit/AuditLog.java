@@ -106,10 +106,19 @@ public class AuditLog {
      */
     public static final String DATABASE_RESTORED = "database.restored";
 
+    /**
+     * A schedule was added or changed (ADR 0046); detail: pipeline or flow, cron, zone, runAs,
+     * enabled. Never the values its runs start with. Target: schedule id.
+     */
+    public static final String SCHEDULE_SET = "schedule.set";
+    /** A schedule was deleted; detail as {@link #SCHEDULE_SET}. Target: schedule id. */
+    public static final String SCHEDULE_DELETED = "schedule.deleted";
+
     /** Every kind of event, for the API's filter. */
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
         SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, MAX_RUNS_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
-        SIGN_OUT, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED);
+        SIGN_OUT, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED, SCHEDULE_SET,
+        SCHEDULE_DELETED);
 
     /** The most events one request returns. */
     public static final int MAX_LIMIT = 500;
