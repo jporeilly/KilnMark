@@ -17,6 +17,8 @@
 # Windows PowerShell 5.1 misreads anything else.
 
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 writes a list as {"value": [...], "Count": n} unless this type data goes.
+if ($PSVersionTable.PSVersion.Major -le 5) { Remove-TypeData -TypeName System.Array -ErrorAction SilentlyContinue }
 $Me = 'kilnmark-run'
 $ExOk = 0; $ExFailed = 1; $ExRefused = 2; $ExTimeout = 3; $ExCancelled = 4; $ExUnreachable = 5
 # The longest one request asks to wait, in seconds; the server may cut it shorter (kilnmark.api.max-wait).
