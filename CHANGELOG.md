@@ -74,6 +74,13 @@ details.
 
 ### Details
 
+- **A plan for benchmarks** (docs/design/benchmarks.md, planned; nothing built yet). How volume and
+  throughput will be measured: generated data at 1 million to 1 billion rows (TPC-H-derived, wide,
+  text-heavy and with broken rows), eight workloads from a table copy to 200 small runs at once,
+  what each run records, the baselines (the database's bulk tools, the last release, the tool a
+  customer runs today), the machines (starting on the owner's server), soak, failure and scaling
+  runs, `lab bench`, and a nightly check that fails on a 15% slowdown. Two diagrams,
+  `benchmark-setup.svg` and `benchmark-cycle.svg`, drawn by `diagrams.mjs`.
 - **The components reference is generated and checked** (docs/development.md, "The components
   reference"). `ComponentsReference` (a server test class) writes each node type's, connector's,
   flow node's and rule type's facts and settings tables from the catalogue into marked parts of
