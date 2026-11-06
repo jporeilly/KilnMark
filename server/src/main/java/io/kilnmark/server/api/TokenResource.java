@@ -180,7 +180,11 @@ public class TokenResource {
         return Views.Token.of(t, Instant.now());
     }
 
-    /** Revokes a token at once. Revoking it again changes nothing. */
+    /** Pauses the schedules a revoked token set. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.schedules.ScheduleService schedules;
+
+    /** Revokes a token at once, and pauses the schedules it set. Revoking it again changes nothing. */
     @DELETE
     @Path("tokens/{id}")
     @RolesAllowed(AccessRole.ADMIN_ROLE)
@@ -189,6 +193,8 @@ public class TokenResource {
             "No token " + id));
         audit.record(io.kilnmark.server.audit.AuditLog.actor(identity), io.kilnmark.server.audit.AuditLog.TOKEN_REVOKED, "token " + t.id(),
             java.util.Map.of("name", t.name(), "role", t.role().id()));
+        // the schedules it set stop at once, each recorded (ADR 0046)
+        schedules.tokenRevoked(t.id(), io.kilnmark.server.audit.AuditLog.actor(identity));
         return Response.noContent().build();
     }
 

@@ -30,7 +30,7 @@ queue"), so "job" cannot also be the name of what orchestrates pipelines.
   logic is a pure state machine (`FlowEngine`) in kiln-core, with no threads and no database.
 - **Flows run as the person who started them.** The pipeline runs carry that person's name and
   role, fixed when the flow is queued; a flow cannot do what its starter could not when it started. Who runs a flow when nobody starts it (the
-  scheduler) is decided with the scheduler.
+  scheduler) is decided with the scheduler: see [ADR 0046](0046-scheduler.md).
 - **A flow job holds no worker slot.** It only watches, and the pipeline runs it queues need slots
   of their own; holding one could fill every slot with flows waiting for runs that never start. For
   the same reason a worker watches at most 8 flows at a time, since each holds a database connection
@@ -42,7 +42,8 @@ queue"), so "job" cannot also be the name of what orchestrates pipelines.
   pipelines it had started may have written. A pipeline run a flow node started is found again by
   `(flow run, node)`, so a node can never start its pipeline twice.
 - **The scheduler is built in** (cron and event triggers that start flows), in a later release; no
-  external scheduler is needed or used.
+  external scheduler is needed or used. Cron schedules, for pipelines and flows, are
+  [ADR 0046](0046-scheduler.md).
 
 ## Consequences
 

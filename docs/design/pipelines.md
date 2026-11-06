@@ -1017,5 +1017,6 @@ or not (`POST /api/v1/pipelines/preview` {yaml, node, port?, rows?}; for a saved
   pipeline's `quality.min_score` and `pipeline_low_quality` (done; docs/guide/pipelines.md,
   "Quality gates"); predicted scores beside the measured ones and suggestions (done;
   docs/guide/pipelines.md, "Predicted quality"); then version diffs.
-- Flows, which run pipelines in an order joined by connections, are in [flows.md](flows.md). Later:
-  scheduling (which starts flows), parameters, the importer, push-down to SQL.
+- Flows, which run pipelines in an order joined by connections, are in [flows.md](flows.md). Schedules,
+  which start pipelines and flows at set times, are in [schedules.md](schedules.md). Later: the
+  importer, push-down to SQL.

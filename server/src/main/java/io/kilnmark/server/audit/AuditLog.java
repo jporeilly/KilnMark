@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -24,7 +25,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.kilnmark.server.Db;
 import io.kilnmark.server.auth.ApiTokenIdentityProvider;
 import io.kilnmark.server.auth.OidcIdentityAugmentor;
+import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.auth.ApiTokens;
+import io.kilnmark.server.auth.OidcAccess;
 import io.kilnmark.server.sources.CommonSettings;
 import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.annotation.PreDestroy;
@@ -106,10 +109,24 @@ public class AuditLog {
      */
     public static final String DATABASE_RESTORED = "database.restored";
 
+    /**
+     * A schedule was added or changed (ADR 0046); detail: pipeline or flow, cron, zone, runAs,
+     * enabled. Never the values its runs start with. Target: schedule id.
+     */
+    public static final String SCHEDULE_SET = "schedule.set";
+    /** A schedule was deleted; detail as {@link #SCHEDULE_SET}. Target: schedule id. */
+    public static final String SCHEDULE_DELETED = "schedule.deleted";
+    /**
+     * A schedule was paused because whoever set it no longer holds its role (ADR 0046); detail as
+     * {@link #SCHEDULE_SET}, with reason. Target: schedule id.
+     */
+    public static final String SCHEDULE_PAUSED = "schedule.paused";
+
     /** Every kind of event, for the API's filter. */
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
         SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, MAX_RUNS_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
-        SIGN_OUT, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED);
+        SIGN_OUT, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED, SCHEDULE_SET,
+        SCHEDULE_DELETED, SCHEDULE_PAUSED);
 
     /** The most events one request returns. */
     public static final int MAX_LIMIT = 500;
@@ -155,6 +172,103 @@ public class AuditLog {
                                  String refused) {
     }
 
+    /**
+     * What a person signed in through the identity provider last had, as the access review reads it
+     * (ADR 0037): {@code role} as recorded (null for none, or one this server does not know),
+     * {@code groups} their group names (null for a sign-in recorded before they were), and
+     * {@code at}, when that sign-in was.
+     */
+    public record Standing(AccessRole role, List<String> groups, Instant at) {
+    }
+
+    /**
+     * The latest successful sign-in of a person, by their key; the actions are literals, so the
+     * partial index on sign-ins (V36) serves it. Shared with the test that reads its plan.
+     */
+    public static final String LATEST_SIGN_IN_BY_KEY = "SELECT id, detail::text, at FROM kilnmark.audit_event "
+        + "WHERE action = '" + SIGN_IN + "' AND detail ->> 'person' = ? ORDER BY id DESC LIMIT 1";
+    /** As {@link #LATEST_SIGN_IN_BY_KEY}, by name, among sign-ins recorded before the key was. */
+    public static final String LATEST_SIGN_IN_BY_NAME = "SELECT id, detail::text, at FROM kilnmark.audit_event "
+        + "WHERE action = '" + SIGN_IN + "' AND actor = ? AND detail ->> 'person' IS NULL ORDER BY id DESC LIMIT 1";
+    /** Whether the person, by key, was refused for want of a group after sign-in event {@code id}. */
+    public static final String NO_GROUP_AFTER_BY_KEY = "SELECT 1 FROM kilnmark.audit_event WHERE action = '"
+        + SIGN_IN_REFUSED + "' AND detail ->> 'person' = ? AND id > ? AND detail ->> 'reason' = ? LIMIT 1";
+    /** As {@link #NO_GROUP_AFTER_BY_KEY}, by name, among refusals recorded before the key was. */
+    public static final String NO_GROUP_AFTER_BY_NAME = "SELECT 1 FROM kilnmark.audit_event WHERE action = '"
+        + SIGN_IN_REFUSED + "' AND actor = ? AND detail ->> 'person' IS NULL AND id > ? AND detail ->> 'reason' = ? "
+        + "LIMIT 1";
+
+    /**
+     * A person's standing now: their latest successful sign-in (by their key, {@code person};
+     * only when none carries it, by their name, {@code actor}, among sign-ins recorded before the
+     * key was), unless a later sign-in was refused because none of their groups has a role any
+     * more. Other refusals (no second factor, say) take nothing away, however many there are. Events
+     * are ordered by their id, the order the database stored them, not by the times different
+     * servers' clocks gave them. Empty when they hold no role or Kilnmark has no sign-in of theirs.
+     */
+    public Optional<Standing> providerStanding(String person, String actor) {
+        return db.tx(c -> {
+            boolean keyed = true;
+            Object[] latest = latest(c, LATEST_SIGN_IN_BY_KEY, person);
+            if (latest == null) {
+                keyed = false;
+                latest = latest(c, LATEST_SIGN_IN_BY_NAME, actor);
+            }
+            if (latest == null) {
+                return Optional.<Standing>empty();
+            }
+            long id = (Long) latest[0];
+            if (refusedAfter(c, NO_GROUP_AFTER_BY_KEY, person, id)
+                || (!keyed && refusedAfter(c, NO_GROUP_AFTER_BY_NAME, actor, id))) {
+                return Optional.<Standing>empty();
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> d = (Map<String, Object>) latest[1];
+            return Optional.of(new Standing(knownRole(d.get("role")), groupNames(d.get("groups")), (Instant) latest[2]));
+        });
+    }
+
+    /** {id, detail, at} of the one sign-in {@code sql} finds, or null. */
+    private static Object[] latest(java.sql.Connection c, String sql, String value) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, value);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? new Object[] {rs.getLong(1), detail(rs.getString(2)), Db.instant(rs.getTimestamp(3))}
+                    : null;
+            }
+        }
+    }
+
+    private static boolean refusedAfter(java.sql.Connection c, String sql, String value, long id) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, value);
+            ps.setLong(2, id);
+            ps.setString(3, OidcAccess.NO_GROUP);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    /** A recorded role, or null when there is none or this server does not know it (counts as none). */
+    private static AccessRole knownRole(Object role) {
+        if (role == null) {
+            return null;
+        }
+        try {
+            return AccessRole.parse(String.valueOf(role));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private static List<String> groupNames(Object groups) {
+        if (!(groups instanceof List<?> l)) {
+            return null;
+        }
+        return l.stream().filter(g -> g != null).map(String::valueOf).toList();
+    }
+
     /** Everyone who has signed in with the identity provider and been given a role, most recent first. */
     public List<ProviderAccess> providerAccess() {
         return db.tx(c -> {
@@ -176,7 +290,7 @@ public class AuditLog {
                         String next = more ? rs.getString(1) : null;
                         if (actor != null && (!more || !actor.equals(next))) {
                             if (given != null) {
-                                boolean gone = io.kilnmark.server.auth.OidcAccess.NO_GROUP.equals(refused);
+                                boolean gone = OidcAccess.NO_GROUP.equals(refused);
                                 out.add(new ProviderAccess(actor, last, gone || given.get("role") == null ? null
                                     : String.valueOf(given.get("role")), !gone && Boolean.TRUE.equals(given.get("unmask")),
                                     count, refused));

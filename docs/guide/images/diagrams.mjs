@@ -600,3 +600,60 @@ function svg(name, height, title, sub, body) {
     foot(y2 + 52, "shield", "A query only reads, for at most 30 seconds, and what it returns is never kept or shown.");
   svg("flow-wait-for", y2 + 104, "How a wait-for node waits", "It looks at once, then every so often, until it is ready or its timeout passes", b);
 }
+
+// ---- How a schedule fires ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 188;
+  const b =
+    lane(y1, 96, "One short transaction", C.navy) +
+    card(X[0], y1 + 30, W, { n: "1", color: C.navy, title: "Due schedules found", sub: "every 30 s, scheduler role" }) +
+    card(X[1], y1 + 30, W, { n: "2", color: C.navy, title: "Each one locked", sub: "others are skipped" }) +
+    card(X[2], y1 + 30, W, { n: "3", color: C.navy, title: "Next fire moved on", sub: "past now; then it commits" }) +
+    arrow([[X[0] + W, y1 + 58], [X[1] - 2, y1 + 58]], C.navy) +
+    arrow([[X[1] + W, y1 + 58], [X[2] - 2, y1 + 58]], C.navy) +
+    lane(y2, 96, "After it commits", C.blue) +
+    card(X[2], y2 + 30, W, { n: "4", color: C.blue, title: "The run is queued", sub: "latest version, as Run now" }) +
+    card(X[1], y2 + 30, W, { n: "5", color: C.blue, title: "Acts as the schedule", sub: "as steward or designer" }) +
+    card(X[0], y2 + 30, W, { icon: "check", color: C.good, strong: true, title: "Outcome recorded", sub: "started, skipped, failed" }) +
+    arrow([[X[2] + W / 2, y1 + 86], [X[2] + W / 2, y2 + 28]], C.blue) +
+    arrow([[X[2], y2 + 58], [X[1] + W + 2, y2 + 58]], C.blue) +
+    arrow([[X[1], y2 + 58], [X[0] + W + 2, y2 + 58]], C.blue) +
+    foot(300, "shield", "Two schedulers never fire one schedule twice. A crash between claim and queue loses that fire, never doubles it.");
+  svg("schedule-fire", 350, "How a schedule fires", "The claim commits before the run is queued, so each fire happens at most once", b);
+}
+
+// ---- What happens to a fire ----
+{
+  const dx = 330;
+  const diamond = (cy, a, z) =>
+    `<polygon points="${dx - 82},${cy} ${dx},${cy - 34} ${dx + 82},${cy} ${dx},${cy + 34}" fill="${C.tint}" stroke="${C.axis}" stroke-width="1.25"/>` +
+    text(dx, cy - 4, a, { size: 12.5, weight: 600, anchor: "middle" }) +
+    text(dx, cy + 12, z, { size: 12.5, weight: 600, anchor: "middle" });
+  const d1 = 112, d2 = 220, d3 = 328, d4 = 436;
+  const side = (cy, word, color, icon, title, sub, dash) =>
+    arrow([[dx + 82, cy], [520, cy]], color, dash ? { dash: "4 3" } : {}) +
+    label(dx + 92, cy - 10, word, color, "start") +
+    card(522, cy - 28, 214, { icon, color, dash: dash ? "4 3" : undefined, strong: !dash, title, sub });
+  const down = (from, to, word) => arrow([[dx, from + 34], [dx, to - 36]], C.blue) + label(dx + 8, from + 54, word, C.quiet, "start");
+  const b =
+    card(24, d1 - 28, 200, { icon: "clock", color: C.blue, title: "A fire is due", sub: "found by the scheduler" }) +
+    arrow([[224, d1], [dx - 84, d1]], C.blue) +
+    diamond(d1, "Due more than", "an hour ago?") +
+    side(d1, "yes", C.warn, "clock", "missed", "the server was not running", true) +
+    down(d1, d2, "no") +
+    diamond(d2, "Its setter still", "has the role?") +
+    side(d2, "no", C.warn, "lock", "paused", "and in the audit log", true) +
+    down(d2, d3, "yes") +
+    diamond(d3, "A run of it", "still going?") +
+    side(d3, "yes", C.warn, "play", "skipped", "a run was still going", true) +
+    down(d3, d4, "no") +
+    diamond(d4, "Can the latest", "version run?") +
+    side(d4, "yes", C.good, "check", "started", "the run is queued", false) +
+    arrow([[dx - 82, d4], [206, d4]], C.bad, { dash: "4 3" }) +
+    label(227, d4 - 10, "no", C.bad) +
+    card(24, d4 - 28, 180, { icon: "cross", color: C.bad, title: "failed", sub: "the server's reason" }) +
+    foot(492, "gear", "A paused schedule waits for a designer or admin to resume it. Missed and skipped times are not made up.");
+  svg("schedule-outcomes", 542, "What happens when a schedule is due", "Each fire ends in one of five outcomes, shown on the schedule", b);
+}
+

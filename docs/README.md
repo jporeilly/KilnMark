@@ -24,6 +24,7 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 - [Pipeline nodes and expressions](guide/pipeline-nodes.md): filter, compute, select, lookup, aggregate, union, dedupe, route and limit, and the expression language for conditions and computed columns
 - [The Library: samples and templates](guide/library.md): the samples, kept apart from your own pipelines and flows; the starter pack; templates to start your own from
 - [Building and running a flow](guide/flows.md): flows that run pipelines in an order, connections and conditions, the diagram, running a flow and reading a run
+- [Running pipelines and flows on a schedule](guide/schedules.md): cron times in a time zone, who a scheduled run acts as, what happens to a missed or busy time, and pausing a schedule
 - [Installing database drivers](guide/drivers.md): the drivers Kilnmark ships, and registering one whose licence keeps it out of the release
 - [Backing up and restoring Kilnmark](guide/backup-and-restore.md): what to back up, the backup and restore scripts, what to check after a restore, and testing a restore
 - [The audit log](guide/audit-log.md): what is recorded, why it cannot be changed, sending it to a SIEM, and reading it
@@ -41,6 +42,7 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 - [Writing a connector](design/connectors.md): the connector interface, the reader and writer nodes, registering and testing
 - [Pipelines](design/pipelines.md): graphs of nodes, the YAML format, expressions, the node catalogue, running and recording
 - [Flows](design/flows.md): pipelines run in an order joined by connections (on success, on failure, always, or on a quality condition), conditions, how a flow runs and is recorded
+- [Schedules](design/schedules.md): pipelines and flows that run at set times; the table, cron, firing at most once, missed and busy fires, daylight saving, who a run acts as
 - [Parallel runs](design/parallel-runs.md): how much runs at once, worker slots, limits per source and per flow, and the for-each node
 - [Database tools](design/database-tools.md): Explore a source's tables, generate their SQL, connection settings on tabs, and changing a database with controls
 - [Flow controls](design/flow-controls.md): nodes that check or wait for what a pipeline needs, and timeout, retries and priority on a node

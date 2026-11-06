@@ -44,6 +44,10 @@ public class PipelineResource {
     @jakarta.inject.Inject
     io.kilnmark.server.pipelines.PipelinePreviews previews;
 
+    /** The audit log, for a deleted pipeline's schedules. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.audit.AuditLog audit;
+
     /** Who is looking: a failed run's messages may quote values from the data (see PipelineService). */
     @jakarta.inject.Inject
     io.kilnmark.server.quality.Sights sights;
@@ -238,9 +242,9 @@ public class PipelineResource {
     @DELETE
     @Path("{name}")
     @RolesAllowed(AccessRole.DESIGNER_ROLE)
-    @Operation(summary = "Delete a pipeline", description = "Deletes the pipeline with its versions and runs. What its "
-        + "runs wrote, and the lineage they recorded, stay in the catalogue. Refused while a run is queued or running. "
-        + "Role: designer.")
+    @Operation(summary = "Delete a pipeline", description = "Deletes the pipeline with its versions, runs and schedules. "
+        + "What its runs wrote, and the lineage they recorded, stay in the catalogue. Refused while a run is queued "
+        + "or running. Role: designer.")
     @APIResponses({
         @APIResponse(responseCode = "204", description = "Deleted"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
@@ -248,7 +252,14 @@ public class PipelineResource {
         @APIResponse(responseCode = "404", description = "No such pipeline"),
         @APIResponse(responseCode = "409", description = "A run is queued or running")})
     public Response delete(@PathParam("name") String name) {
-        pipelines.delete(name, who());
+        // its schedules are deleted with it, in the same transaction: each is recorded (ADR 0029, ADR 0046)
+        for (io.kilnmark.server.pipelines.PipelineStore.GoneSchedule s : pipelines.deleteWithSchedules(name, who())) {
+            Map<String, Object> detail = io.kilnmark.server.schedules.ScheduleService.auditDetail(name, null, s.cron(),
+                s.zone(), s.runAs(), s.enabled());
+            detail.put("via", "pipeline deleted");
+            audit.record(io.kilnmark.server.audit.AuditLog.actor(identity),
+                io.kilnmark.server.audit.AuditLog.SCHEDULE_DELETED, "schedule " + s.id(), detail);
+        }
         return Response.noContent().build();
     }
 

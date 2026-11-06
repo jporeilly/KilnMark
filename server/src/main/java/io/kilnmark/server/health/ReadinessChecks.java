@@ -19,7 +19,8 @@ import jakarta.enterprise.inject.Instance;
 /**
  * Health for orchestrators (Compose, Kubernetes), on SmallRye Health's public endpoints:
  * {@code /q/health/ready} is up when the database answers, every migration is applied and, in a
- * process with the worker role, the worker is taking jobs; {@code /q/health/live} is up while the
+ * process with the worker role, the worker is taking jobs and, in one with the scheduler role, the
+ * scheduler is looking for due schedules (ADR 0046); {@code /q/health/live} is up while the
  * process runs. Each check reports only its name and UP or DOWN: no host, user or error text,
  * since anyone who can reach the server can read them. Why a check is down goes to the log.
  */
@@ -32,6 +33,9 @@ public class ReadinessChecks {
     private final Instance<Flyway> flyway;
     private final JobWorker worker;
     private final KilnmarkConfig config;
+    /** The scheduler's loop, for its check. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.schedules.Scheduler scheduler;
     /** Migrations cannot be undone while the server runs, so once applied this stays true. */
     private volatile boolean migrated;
 
@@ -69,6 +73,14 @@ public class ReadinessChecks {
 
     boolean workerUp() {
         return !config.roles().contains(Role.WORKER) || worker.running();
+    }
+
+    boolean schedulerUp() {
+        boolean up = scheduler == null || scheduler.running();
+        if (!up) {
+            LOG.warn("Readiness: the scheduler has not looked for due schedules within three poll intervals");
+        }
+        return up;
     }
 
     private static HealthCheckResponse response(String name, boolean up) {
@@ -118,6 +130,22 @@ public class ReadinessChecks {
         @Override
         public HealthCheckResponse call() {
             return response("worker", checks.workerUp());
+        }
+    }
+
+    /** Up in a process without the scheduler role, which never fires schedules. */
+    @Readiness
+    @ApplicationScoped
+    public static class SchedulerCheck implements HealthCheck {
+        private final ReadinessChecks checks;
+
+        public SchedulerCheck(ReadinessChecks checks) {
+            this.checks = checks;
+        }
+
+        @Override
+        public HealthCheckResponse call() {
+            return response("scheduler", checks.schedulerUp());
         }
     }
 
