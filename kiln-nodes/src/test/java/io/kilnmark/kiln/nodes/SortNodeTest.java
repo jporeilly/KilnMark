@@ -147,6 +147,49 @@ class SortNodeTest {
     }
 
     @Test
+    void nanosecondsAndUnsignedNumbersOrderExactly() throws Exception {
+        Schema ns = schema(field("ts", new org.apache.arrow.vector.types.pojo.ArrowType.Timestamp(
+            org.apache.arrow.vector.types.TimeUnit.NANOSECOND, "UTC")), field("u", new org.apache.arrow.vector.types.pojo.ArrowType.Int(64, false)),
+            field("n", INT64));
+        try (Harness h = new Harness()) {
+            org.apache.arrow.vector.VectorSchemaRoot b = org.apache.arrow.vector.VectorSchemaRoot.create(ns, h.source);
+            org.apache.arrow.vector.TimeStampNanoTZVector ts = (org.apache.arrow.vector.TimeStampNanoTZVector) b.getVector(0);
+            org.apache.arrow.vector.UInt8Vector u = (org.apache.arrow.vector.UInt8Vector) b.getVector(1);
+            org.apache.arrow.vector.BigIntVector n = (org.apache.arrow.vector.BigIntVector) b.getVector(2);
+            b.allocateNew();
+            long[] nanos = {1_000_000_999L, 1_000_000_001L, -1L, 1_000_000_500L, -2_000L};
+            long[] unsigned = {Long.MIN_VALUE, 5L, -1L /* 2^64 - 1 */, 0L, Long.MAX_VALUE};
+            for (int i = 0; i < nanos.length; i++) {
+                ts.set(i, nanos[i]);
+                u.set(i, unsigned[i]);
+                n.set(i, i);
+            }
+            b.setRowCount(nanos.length);
+            h.input("in", b).connect("out");
+            h.run(new SortFactory(), config("by", List.of("ts")));
+            // all five lie within two microseconds of 1970: ordered to the nanosecond, not by arrival
+            assertEquals(List.of(4L, 2L, 1L, 3L, 0L), h.column("out", "n"));
+        }
+        try (Harness h = new Harness()) {
+            org.apache.arrow.vector.VectorSchemaRoot b = org.apache.arrow.vector.VectorSchemaRoot.create(ns, h.source);
+            org.apache.arrow.vector.UInt8Vector u = (org.apache.arrow.vector.UInt8Vector) b.getVector(1);
+            org.apache.arrow.vector.BigIntVector n = (org.apache.arrow.vector.BigIntVector) b.getVector(2);
+            b.allocateNew();
+            long[] unsigned = {Long.MIN_VALUE, 5L, -1L, 0L, Long.MAX_VALUE};
+            for (int i = 0; i < unsigned.length; i++) {
+                b.getVector(0).setNull(i);
+                u.set(i, unsigned[i]);
+                n.set(i, i);
+            }
+            b.setRowCount(unsigned.length);
+            h.input("in", b).connect("out");
+            h.run(new SortFactory(), config("by", List.of("u")));
+            // 0, 5, 2^63 - 1, 2^63, 2^64 - 1: the top half after, not before
+            assertEquals(List.of(3L, 1L, 4L, 0L, 2L), h.column("out", "n"));
+        }
+    }
+
+    @Test
     void anEmptyInputGivesNoRows() throws Exception {
         try (Harness h = new Harness().input("in").connect("out")) {
             h.run(new SortFactory(), config("by", List.of("id")));

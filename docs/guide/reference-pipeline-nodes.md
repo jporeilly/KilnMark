@@ -816,13 +816,13 @@ Orders rows by one or more columns, each ascending or descending.
 **What to know.** Each entry in `by` is a column, then perhaps `desc` (largest first; `asc` is the
 default), then perhaps `nulls first` (empty values go last by default, whichever the direction).
 Values order as conditions compare them: numbers by value, text by Unicode code point with no
-collation (so `B` comes before `a`, and accented letters after `z`), dates and timestamps in time,
-`false` before `true`, and a floating-point NaN after every other number. Rows with equal values
+collation (so `B` comes before `a`, and accented letters after `z`), dates and timestamps in time
+(to the nanosecond), whole numbers by value (unsigned ones too), `false` before `true`, and a floating-point NaN after every other number. Rows with equal values
 keep the order they arrived in. Nothing is passed on until every row has arrived. Rows are held up
 to `memory_limit_mb`; past it they are sorted in parts, written to a private temporary folder on
 the server (encrypted, with a key only the running node holds) and merged at the end, so any number
 of rows can be sorted; the run's log says when that happened and how much was written. The folder
-is deleted when the node ends, fails or is stopped.
+is deleted when the node ends, fails or is stopped, and a file damaged while there fails the run.
 
 ```yaml
 kilnmark: pipeline/v1

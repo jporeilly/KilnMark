@@ -28,9 +28,14 @@ details.
   Up to `memory_limit_mb` (256) rows are sorted in memory with a stable merge sort; past it they are
   written as sorted runs (Arrow IPC with the key as an extra column, AES-CTR with a key held only in
   the node's memory) to a folder of the node's own under `kilnmark.spill-dir` or `java.io.tmpdir`,
-  and merged at most 64 at a time, earlier runs first on a tie so the sort stays stable. The folder
-  is deleted when the node ends, fails or is stopped; folders a crashed process left are deleted
-  the next time a node spills. New setting kind `ORDER` (`[region, amount desc, closed_at nulls
+  and merged at most 64 at a time (neighbouring runs a pass, so each row is written once a pass),
+  earlier runs first on a tie so the sort stays stable. Dates and timestamps order to the
+  nanosecond, and unsigned 64-bit numbers as unsigned. Batches are bounded by bytes as well as
+  rows, so wide rows stay within the limit. Each run's rows, size and SHA-256 digest are checked
+  as it is read back. Folders are owner-only (`rwx------`, or an owner-only access list on
+  Windows) and deleted when the node ends, fails or is stopped; a process keeps a lock on its own
+  folder, and folders whose lock can be taken (their process has gone, on this machine or another
+  sharing the folder) are deleted the next time a node spills. New setting kind `ORDER` (`[region, amount desc, closed_at nulls
   first]`), with its own control on the canvas: each column with Smallest first or Largest first,
   Empty last or Empty first, and Up. A preview runs a sort with its share of the preview's memory,
   and refuses one that orders by a column hidden from the caller.

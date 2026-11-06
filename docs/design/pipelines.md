@@ -568,8 +568,11 @@ found through `ServiceLoader`. Settings, with defaults:
 `sort` (and each side of a `join`) is an external merge sort, `ExternalSorter` in `kiln-nodes`:
 
 - **Keys as bytes.** Each row's key is encoded once, as it arrives, into bytes whose unsigned
-  order is the order of the values (`KeyCodec`): whole numbers, dates and timestamps as eight
-  bytes with the sign bit flipped; floating point as eight bytes in `Double.compare` order, -0.0
+  order is the order of the values (`KeyCodec`): whole numbers as eight bytes with the sign bit
+  flipped (unsigned 64-bit numbers as their bits, so 2^63 and above sort after the rest); dates
+  and timestamps as the instant to the nanosecond, whatever the column's unit (seconds since 1970,
+  sign flipped, then nanoseconds into the second), so nanosecond timestamps within one microsecond
+  still sort apart, although the expression language reads them to the microsecond; floating point as eight bytes in `Double.compare` order, -0.0
   made 0.0 and every NaN one value after +infinity; decimals by value at the column's scale (sign,
   length, magnitude, inverted when negative); text as its UTF-8 bytes (code point order) with zero
   bytes escaped and a two-byte end, so no key is the start of another; booleans as one byte. Each
@@ -589,26 +592,40 @@ found through `ServiceLoader`. Settings, with defaults:
 - **Memory.** Rows are held as their Arrow batches, moved into an allocator of the sorter's own,
   plus their keys on the heap. When those (and 24 bytes a row for the sort's arrays) pass
   `memory_limit_mb`, the rows held are sorted and written as one **run**, and let go. At the end,
-  with nothing spilled, rows are gathered in order straight from memory, 8,192 a batch. Otherwise
-  what is held is written as a last run and the runs are merged, at most 64 at a time (more runs
-  are first merged into fewer, bigger ones, keeping their order). Runs are written in batches small
-  enough that 64 of them take a quarter of the limit, so a merge holds about that much.
+  with nothing spilled, rows are gathered in order straight from memory. Otherwise what is held is
+  written as a last run and the runs are merged, at most 64 at a time: with more, each pass merges
+  neighbouring runs (1-64, 65-128, ...) into one each, so every row is written once a pass and
+  ties still go to the earlier run. Batches are bounded by bytes as well as rows: runs are written
+  in batches small enough that 64 of them take a quarter of the limit (one row at the least, for
+  very wide rows), so a merge holds about that much, and batches handed on are at most 8,192 rows
+  and about an eighth of the limit.
 - **Files.** A run is an Arrow IPC stream of the rows with the key as an extra binary column. Each
   file is encrypted with AES in counter mode, under a 256-bit key made for the node and held only
   in its memory, with a random IV at the head of the file: rows from a source whose columns are
   marked sensitive are never on disk in clear, and a file a crash leaves behind cannot be read.
-  Files go in a folder of the node's own (owner-only on POSIX) inside one per process,
-  `kilnmark-spill-<pid>-*`, under the system property `kilnmark.spill-dir` or else
-  `java.io.tmpdir`; folders of processes no longer running are deleted when a node next spills. A
-  run's files are deleted as the merge finishes with them, and the node's folder when it closes:
+  Each run's rows, its size and a SHA-256 digest of what was written are kept in memory and
+  checked as it is read back, so a file cut short (even at a batch boundary) or changed fails the
+  node rather than dropping or changing rows. Files go in a folder of the node's own inside one
+  per process, `kilnmark-spill-<pid>-*`, under the system property `kilnmark.spill-dir` or else
+  `java.io.tmpdir`. On POSIX the folders are `rwx------`; on Windows their access list is set to
+  the folder's owner only (inherited by the files), and where that cannot be set they keep the
+  temporary folder's, the user's own by default. Each process folder holds a `.lock` file its
+  process keeps locked (`FileChannel.tryLock`); a folder whose lock can be taken belongs to a
+  process that has gone and is deleted when a node next spills. A process ID is never relied on:
+  in a container it is always 1, and a spill folder shared between machines holds others' live
+  folders. A folder with no lock file yet is left for an hour, as its process may be making it.
+  A run's files are deleted as the merge finishes with them, and the node's folder when it closes:
   after it finishes, fails or is stopped (an interrupt ends the sort, the merge and file reads,
-  which use interruptible channels).
+  which use interruptible channels; a stop that closes a file mid-write is a stop, not a failure
+  of the folder).
 - **What a run shows.** The node counts the bytes it wrote (`NodeContext.spilled`, on the run's
   `NodeResult.spilledBytes`) and adds a line to the run's log (`NodeContext.note`): how many rows
   were sorted on disk, in how many parts, and how many megabytes. The bytes are not yet stored with
   the node's other figures in the database.
 - **Preview.** A sort is previewable and counts as a node holding rows (its `memory_limit_mb` is
-  clamped to its share of the preview's); it may spill there too, on the API process. It looks
+  clamped to its share of the preview's). It may spill there too: on the API process, into the
+  same kind of private, encrypted folder, within the preview's caps on nodes, reads, memory and
+  time, and deleted when the preview ends or is stopped. It looks
   at the values of the columns it orders by, so a preview refuses it for a caller who may not
   see a hidden column it orders by: the order would give the values' order away.
 
