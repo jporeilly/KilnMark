@@ -1176,6 +1176,8 @@ textarea {
 input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
 select {
   min-height: var(--km-control-h);
+  /* A set line height, so a box in the code face is as tall as one in the text face beside it. */
+  line-height: 1.35;
 }
 
 input[type="file"] {
@@ -1259,7 +1261,9 @@ label {
   margin-bottom: 16px;
 }
 
-.form .primary {
+/* A button in a form is as wide as its words, never stretched across the form's column. */
+.form .primary,
+.form > button {
   justify-self: start;
 }
 
@@ -2535,15 +2539,22 @@ a.km-stat--link:hover {
   box-shadow: inset 0 0 0 2px var(--km-warn), var(--km-shadow-card);
 }
 
+/* A box with what goes beside it: a button, or a number's unit, centred on the box. */
 .copy-row {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
 }
 
 .copy-row input {
   flex: 1;
   min-width: 0;
+}
+
+/* A whole number needs a few digits, not the row: its unit follows it, the same place in every row. */
+.copy-row input[type="number"] {
+  flex: 0 1 14ch;
 }
 
 .picker {
@@ -4371,7 +4382,8 @@ h1.with-tile {
 /* Explore on a database source's page (ADR 0045): schemas, tables, then the chosen table. */
 .explore-panes {
   display: grid;
-  grid-template-columns: minmax(8rem, 11rem) minmax(10rem, 15rem) minmax(0, 1fr);
+  /* Wide enough for a long table name with its kind on the same line. */
+  grid-template-columns: minmax(8rem, 11rem) minmax(10rem, 18rem) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -4410,6 +4422,16 @@ h1.with-tile {
 }
 
 /* The SQL generator on Explore's SQL tab (ADR 0045): the statements, read-only, to copy or save. */
+.generate-sql {
+  /* Its intro, choices and buttons spaced as a form's fields are, not touching. */
+  display: grid;
+  gap: 12px;
+}
+
+.generate-sql > fieldset {
+  margin: 0;
+}
+
 .sql-out {
   margin: 12px 0 8px;
   padding: 12px 14px;
