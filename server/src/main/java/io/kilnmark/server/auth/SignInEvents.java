@@ -22,6 +22,10 @@ public class SignInEvents {
     private final KilnmarkConfig config;
     private final AuditLog audit;
 
+    /** Pauses the schedules a person set when a sign-in gives them less of a role (ADR 0046). */
+    @jakarta.inject.Inject
+    io.kilnmark.server.schedules.ScheduleService schedules;
+
     public SignInEvents(KilnmarkConfig config, AuditLog audit) {
         this.config = config;
         this.audit = audit;
@@ -40,7 +44,19 @@ public class SignInEvents {
         } else {
             detail.put("reason", d.refusal());
         }
-        audit.record(new AuditLog.Actor(OidcIdentityAugmentor.actorName(token), null), d.allowed() ? AuditLog.SIGN_IN
-            : AuditLog.SIGN_IN_REFUSED, "session", detail);
+        String person = OidcIdentityAugmentor.personRef(event.getSecurityIdentity());
+        if (person != null) {
+            detail.put("person", person); // opaque: what a schedule set by this person is checked by
+        }
+        AuditLog.Actor actor = new AuditLog.Actor(OidcIdentityAugmentor.actorName(token), null);
+        audit.record(actor, d.allowed() ? AuditLog.SIGN_IN : AuditLog.SIGN_IN_REFUSED, "session", detail);
+        if (person != null && schedules != null) {
+            // as the access review reads it: no group takes the role away, other refusals do not
+            if (d.allowed()) {
+                schedules.personSignedIn(person, d.role(), actor);
+            } else if (OidcAccess.NO_GROUP.equals(d.refusal())) {
+                schedules.personSignedIn(person, null, actor);
+            }
+        }
     }
 }

@@ -31,9 +31,35 @@ schedule, with the role the schedule gives them:
 A scheduled run never acts as an admin, and you cannot choose a role above your own. Whoever
 changes a schedule becomes the name its later runs carry, so they are answerable for them.
 
-The role is checked when the schedule is saved. If someone leaves, or their token is revoked,
-their schedules keep running in their name: change each one, so it carries a current person's
-name, or delete it. List them with `GET /api/v1/schedules` and look at `updatedBy`.
+## When the person who set it loses the role
+
+A schedule runs only while whoever last set it could still run it themselves. Before every run,
+Kilnmark checks:
+
+- **for an API token:** it has not been revoked or expired, and still has the role;
+- **for someone who signs in with your organisation's login:** their latest sign-in gave them the
+  role. A sign-in refused because none of their groups has a role any more takes it away; one
+  refused for another reason, such as no second factor, does not, as in the access review.
+
+If not, nothing runs. The schedule is **paused**: it is off, has no next time, and says
+`paused: the person who set it no longer has the role` (viewers see just `paused`). The audit log
+records **Schedule paused**, with why. Kilnmark also pauses at once, without waiting for the next
+time, when an admin revokes the token, or when the person signs in with less of a role (or none).
+
+**What you do:** list the paused schedules (`GET /api/v1/schedules`, then look for
+`"enabled": false` and a `lastOutcome` starting `paused`). For each, decide whether the work should
+go on. To resume it, save it with `"enabled": true`: you become its setter, so its runs carry your
+name and are checked against your role from then on. Otherwise delete it. Nothing resumes by
+itself, even if the person's role comes back.
+
+Two things to know:
+
+- **The server's own admin token** (`KILNMARK_ADMIN_TOKEN`): if its value changes, the old token is
+  set aside and the schedules it set are paused at their next time. Set schedules with your own
+  token or login, not that one.
+- **Someone removed from their groups at your provider** is seen by Kilnmark only when they next
+  sign in. To stop their schedules at once, revoke their tokens, or pause or reassign their
+  schedules yourself.
 
 A scheduled flow's pipeline runs carry the same name and role. Like any run, it can only write to
 sources that allow writing.
@@ -131,7 +157,7 @@ run you can see is safer than a doubled one.
 
 Each schedule shows `lastAt`, when it was last due, and `lastOutcome`, what happened then:
 
-![What happens when a schedule is due: a time due more than an hour ago is missed and not run late; if a run of the pipeline or flow is still going, the time is skipped; if the latest version cannot run, it fails with the server's reason; otherwise the run starts. Either way the next time is worked out from now](images/schedule-outcomes.svg)
+![What happens when a schedule is due: a time due more than an hour ago is missed and not run late; if whoever set the schedule no longer has its role, the schedule is paused and the audit log says so; if a run of the pipeline or flow is still going, the time is skipped; if the latest version cannot run, it fails with the server's reason; otherwise the run starts. Either way the next time is worked out from now](images/schedule-outcomes.svg)
 
 | Outcome | What it means | What to do |
 | --- | --- | --- |
@@ -140,6 +166,7 @@ Each schedule shows `lastAt`, when it was last due, and `lastOutcome`, what happ
 | `skipped: a run was still going` | The last run had not finished, and only one runs at a time | If it happens often, the runs take longer than the gap between them: space the times out |
 | `missed: the server was not running` | Kilnmark was stopped when it was due, for longer than an hour. It does not run late | Run it now by hand if the work is still needed |
 | `failed: …` | The run could not start, for the reason given: the latest version has problems, a value no longer suits it, a source no longer allows writing. Viewers see only `failed` | Fix what it says; the next time runs as usual |
+| `paused: the person who set it no longer has the role` | Whoever last set it no longer has the role: their token was revoked or expired, or they signed in with less of a role. The schedule is off. Viewers see just `paused` | Resume it by saving it (you become its setter), or delete it |
 | `missed: changed while it was due` | Someone changed its times, zone or pausing just as it was due, so that time did not run | Run it now by hand if the work is still needed |
 | `failed: the server stopped before the run was queued` | Kilnmark stopped at the moment it was starting the run, so that time was lost. It shows once it has said `starting` for a few minutes | Run it now by hand if the work is still needed |
 

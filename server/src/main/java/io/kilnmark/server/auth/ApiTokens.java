@@ -345,6 +345,22 @@ public class ApiTokens {
         });
     }
 
+    /**
+     * The role of token {@code id} if it still works (not revoked, not expired, within the longest
+     * lifetime, by the database's clock), else empty: what a schedule it set is checked by.
+     */
+    public Optional<AccessRole> workingRole(long id) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                "SELECT t.role FROM kilnmark.api_token t WHERE t.id = ? AND " + worksSql("t"))) {
+                ps.setLong(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() ? Optional.of(AccessRole.parse(rs.getString(1))) : Optional.empty();
+                }
+            }
+        });
+    }
+
     public Optional<Token> find(long id) {
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement(

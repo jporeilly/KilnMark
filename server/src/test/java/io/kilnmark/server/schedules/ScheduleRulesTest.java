@@ -21,7 +21,7 @@ class ScheduleRulesTest {
 
     private static ScheduleStore.Schedule due(String cron, String zone, Instant nextAt) {
         return new ScheduleStore.Schedule(7, "p", null, cron, zone, "{}", "steward", true, null, "jo", NOW, "jo", NOW,
-            nextAt, null, null, null, null);
+            nextAt, null, null, null, null, 3L, null);
     }
 
     @Test
@@ -50,11 +50,21 @@ class ScheduleRulesTest {
     }
 
     @Test
+    void aSetterWithNoIdentityIsRefusedWhileSignInIsOn() {
+        ScheduleService service = new ScheduleService(null, null, null, null);
+        WebApplicationException refused = assertThrows(WebApplicationException.class,
+            () -> service.requireIdentity(new ScheduleStore.Setter("someone", null, null)));
+        assertEquals(403, refused.getResponse().getStatus());
+        service.requireIdentity(new ScheduleStore.Setter("ci", 4L, null));
+        service.requireIdentity(new ScheduleStore.Setter("sso:Pat (p1)", null, "p:0123"));
+    }
+
+    @Test
     void theNextFireIsNeverBeforeTheLastOne() {
         // claimed by a process whose clock was ahead: the next fire comes after that claim, not now
         Instant claimedAt = NOW.plus(Duration.ofMinutes(12));
         ScheduleStore.Schedule s = new ScheduleStore.Schedule(7, "p", null, "*/5 * * * *", "UTC", "{}", "steward",
-            true, null, "jo", NOW, "jo", NOW, NOW, claimedAt, null, null, null);
+            true, null, "jo", NOW, "jo", NOW, NOW, claimedAt, null, null, null, 3L, null);
         assertEquals(Instant.parse("2026-11-06T10:15:00Z"), Scheduler.plan(s, NOW, HOUR).nextAt());
         assertEquals(claimedAt, ScheduleStore.later(NOW, claimedAt));
         assertEquals(NOW, ScheduleStore.later(NOW, null));
@@ -105,6 +115,7 @@ class ScheduleRulesTest {
         assertEquals(Scheduler.SKIPPED, ScheduleService.outcomeWithoutReason(Scheduler.SKIPPED));
         assertEquals(Scheduler.MISSED, ScheduleService.outcomeWithoutReason(Scheduler.MISSED));
         assertEquals(Scheduler.STARTED, ScheduleService.outcomeWithoutReason(Scheduler.STARTED));
+        assertEquals("paused", ScheduleService.outcomeWithoutReason(ScheduleStore.PAUSED));
         assertNull(ScheduleService.outcomeWithoutReason(null));
     }
 

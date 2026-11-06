@@ -9,7 +9,10 @@ SET search_path = kilnmark, public;
 -- pipeline or flow deletes its schedules. cron is five fields read in zone (an IANA name);
 -- parameters are the values each run starts with, as given (defaults are filled in at each run).
 -- run_as is the role the run has, never admin; the run is requested by
--- 'schedule <id> (set by <updated_by>)'. next_at is when it fires next, null while it is paused or
+-- 'schedule <id> (set by <updated_by>)'. Who set it is kept as an identity too, so a run stops when
+-- they lose the role: set_by_token is the API token they used, set_by_person an opaque key for a
+-- person signed in through the identity provider (a hash of its issuer and their subject); both are
+-- null only for a schedule saved with sign-in off (a lab). next_at is when it fires next, null while it is paused or
 -- when it never fires again. last_* say what happened the last time it was due: last_outcome is a
 -- few words a person reads (started, skipped, missed or failed, with why), never values.
 CREATE TABLE schedule (
@@ -26,6 +29,8 @@ CREATE TABLE schedule (
     created_at         timestamptz NOT NULL DEFAULT now(),
     updated_by         text NOT NULL,
     updated_at         timestamptz NOT NULL DEFAULT now(),
+    set_by_token       bigint,
+    set_by_person      text CHECK (set_by_person IS NULL OR length(set_by_person) BETWEEN 1 AND 128),
     next_at            timestamptz,
     last_at            timestamptz,
     last_outcome       text CHECK (last_outcome IS NULL OR length(last_outcome) <= 500),
@@ -33,9 +38,13 @@ CREATE TABLE schedule (
     -- never leads to a run that is gone; the table is small, so they need no index of their own.
     last_pipeline_run  bigint REFERENCES pipeline_run (id) ON DELETE SET NULL,
     last_flow_run      bigint REFERENCES flow_run (id) ON DELETE SET NULL,
-    CONSTRAINT schedule_one_target CHECK ((pipeline IS NULL) <> (flow IS NULL))
+    CONSTRAINT schedule_one_target CHECK ((pipeline IS NULL) <> (flow IS NULL)),
+    CONSTRAINT schedule_one_setter CHECK (set_by_token IS NULL OR set_by_person IS NULL)
 );
 CREATE INDEX schedule_pipeline_idx ON schedule (pipeline) WHERE pipeline IS NOT NULL;
 CREATE INDEX schedule_flow_idx ON schedule (flow) WHERE flow IS NOT NULL;
+-- What revoking a token, or a person's sign-in with less of a role, looks up to pause their schedules.
+CREATE INDEX schedule_token_idx ON schedule (set_by_token) WHERE set_by_token IS NOT NULL;
+CREATE INDEX schedule_person_idx ON schedule (set_by_person) WHERE set_by_person IS NOT NULL;
 -- What the scheduler reads every poll: the schedules that are due.
 CREATE INDEX schedule_due_idx ON schedule (next_at) WHERE enabled;

@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -24,7 +25,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.kilnmark.server.Db;
 import io.kilnmark.server.auth.ApiTokenIdentityProvider;
 import io.kilnmark.server.auth.OidcIdentityAugmentor;
+import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.auth.ApiTokens;
+import io.kilnmark.server.auth.OidcAccess;
 import io.kilnmark.server.sources.CommonSettings;
 import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.annotation.PreDestroy;
@@ -113,12 +116,17 @@ public class AuditLog {
     public static final String SCHEDULE_SET = "schedule.set";
     /** A schedule was deleted; detail as {@link #SCHEDULE_SET}. Target: schedule id. */
     public static final String SCHEDULE_DELETED = "schedule.deleted";
+    /**
+     * A schedule was paused because whoever set it no longer holds its role (ADR 0046); detail as
+     * {@link #SCHEDULE_SET}, with reason. Target: schedule id.
+     */
+    public static final String SCHEDULE_PAUSED = "schedule.paused";
 
     /** Every kind of event, for the API's filter. */
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
         SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, MAX_RUNS_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
         SIGN_OUT, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED, SCHEDULE_SET,
-        SCHEDULE_DELETED);
+        SCHEDULE_DELETED, SCHEDULE_PAUSED);
 
     /** The most events one request returns. */
     public static final int MAX_LIMIT = 500;
@@ -164,6 +172,41 @@ public class AuditLog {
                                  String refused) {
     }
 
+    /**
+     * The role a person signed in through the identity provider holds now, as the access review
+     * reads it (ADR 0037): their latest sign-in's role, unless a later sign-in was refused because
+     * none of their groups has a role any more; other refusals (no second factor, say) take nothing
+     * away. Empty when they hold none, or Kilnmark has no sign-in of theirs. {@code person} is the
+     * key sign-ins record ({@code OidcIdentityAugmentor.personRef}); {@code actor} their name, for
+     * sign-ins recorded before that key was.
+     */
+    public Optional<AccessRole> providerRole(String person, String actor) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("SELECT action, detail::text FROM kilnmark.audit_event "
+                + "WHERE action IN (?, ?) AND (detail ->> 'person' = ? OR actor = ?) ORDER BY at DESC, id DESC "
+                + "LIMIT 500")) {
+                ps.setString(1, SIGN_IN);
+                ps.setString(2, SIGN_IN_REFUSED);
+                ps.setString(3, person);
+                ps.setString(4, actor);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> d = detail(rs.getString(2));
+                        if (SIGN_IN.equals(rs.getString(1))) {
+                            Object role = d.get("role");
+                            return role == null ? Optional.<AccessRole>empty()
+                                : Optional.of(AccessRole.parse(String.valueOf(role)));
+                        }
+                        if (OidcAccess.NO_GROUP.equals(d.get("reason"))) {
+                            return Optional.<AccessRole>empty();
+                        }
+                    }
+                }
+            }
+            return Optional.<AccessRole>empty();
+        });
+    }
+
     /** Everyone who has signed in with the identity provider and been given a role, most recent first. */
     public List<ProviderAccess> providerAccess() {
         return db.tx(c -> {
@@ -185,7 +228,7 @@ public class AuditLog {
                         String next = more ? rs.getString(1) : null;
                         if (actor != null && (!more || !actor.equals(next))) {
                             if (given != null) {
-                                boolean gone = io.kilnmark.server.auth.OidcAccess.NO_GROUP.equals(refused);
+                                boolean gone = OidcAccess.NO_GROUP.equals(refused);
                                 out.add(new ProviderAccess(actor, last, gone || given.get("role") == null ? null
                                     : String.valueOf(given.get("role")), !gone && Boolean.TRUE.equals(given.get("unmask")),
                                     count, refused));

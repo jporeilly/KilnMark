@@ -92,7 +92,7 @@ public class ScheduleResource {
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "403", description = "Not a designer")})
     public Response create(ScheduleViews.ScheduleChange body) {
-        ScheduleStore.Schedule s = schedules.create(body, who(), role());
+        ScheduleStore.Schedule s = schedules.create(body, setter(), role());
         audit.record(AuditLog.actor(identity), AuditLog.SCHEDULE_SET, "schedule " + s.id(),
             ScheduleService.auditDetail(s));
         return Response.created(URI.create("/api/v1/schedules/" + s.id())).entity(schedules.get(s.id(), true))
@@ -115,7 +115,7 @@ public class ScheduleResource {
         @APIResponse(responseCode = "403", description = "Not a designer"),
         @APIResponse(responseCode = "404", description = "No such schedule")})
     public ScheduleViews.Schedule replace(@PathParam("id") long id, ScheduleViews.ScheduleChange body) {
-        ScheduleStore.Schedule s = schedules.replace(id, body, who(), role());
+        ScheduleStore.Schedule s = schedules.replace(id, body, setter(), role());
         audit.record(AuditLog.actor(identity), AuditLog.SCHEDULE_SET, "schedule " + s.id(),
             ScheduleService.auditDetail(s));
         return schedules.get(s.id(), true);
@@ -153,6 +153,17 @@ public class ScheduleResource {
             throw new IllegalArgumentException("Send {\"cron\": \"0 2 * * *\", \"zone\": \"Europe/London\"}");
         }
         return schedules.preview(body.cron(), body.zone());
+    }
+
+    /**
+     * Who is setting a schedule: their name, and the identity each fire checks the role of: a
+     * person signed in through the identity provider by an opaque key, else the API token used.
+     */
+    private ScheduleStore.Setter setter() {
+        String person = io.kilnmark.server.auth.OidcIdentityAugmentor.personRef(identity);
+        Long token = person != null || identity.isAnonymous() ? null
+            : identity.getAttribute(io.kilnmark.server.auth.ApiTokenIdentityProvider.TOKEN_ID);
+        return new ScheduleStore.Setter(who(), token == null || token == 0 ? null : token, person);
     }
 
     private AccessRole role() {

@@ -9,7 +9,8 @@ details.
 
 - **Pipelines and flows run on a schedule** (ADR 0046). Designers and admins give a pipeline or flow
   one or more schedules: a five-field cron time in a time zone, the values its runs start with, and
-  the role they act as (steward or designer, never admin). Each run is of the latest version,
+  the role they act as (steward or designer, never admin). A schedule pauses itself when whoever set
+  it loses the role. Each run is of the latest version,
   checked as Run now checks it, and is recorded as asked for by the schedule. A schedule fires at
   most once per time; a time missed while Kilnmark was stopped, or one that finds the last run still
   going, is not made up. Set through the API for now; the pages follow.
@@ -82,6 +83,13 @@ details.
   apart by its own exception (`AlreadyRunning`, still a 409). The audit log records
   `schedule.set` and `schedule.deleted` (for a deleted pipeline's schedules, exactly those its
   transaction deleted), never the values, and the audit page lists them.
+- **A schedule stops when whoever set it loses the role** (ADR 0046). A schedule keeps who set it
+  as an identity (`set_by_token`, or `set_by_person`, an opaque key for a provider sign-in, which
+  sign-in events now record as `person`). Before every fire the token must still work and have the
+  role, or the person must have it as the access review reads their sign-ins; if not, nothing runs,
+  the schedule is paused with `paused: the person who set it no longer has the role` and
+  `schedule.paused` is recorded. Revoking a token, or a sign-in with less of a role, pauses that
+  identity's schedules at once. Saving a paused schedule makes the person saving it its setter.
 - **The `wait-for` flow node** (ADR 0041, docs/design/flow-controls.md, C2). It takes `source` and
   either `file` (a pattern with `*` and `?` in its last part; `at_least`, 1 by default) or `query`,
   plus `every` (30s to 1h, 5m) and `timeout` (up to 24h, 1h). It looks at once, then every `every`,

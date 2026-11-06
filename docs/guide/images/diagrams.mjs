@@ -630,29 +630,30 @@ function svg(name, height, title, sub, body) {
     `<polygon points="${dx - 82},${cy} ${dx},${cy - 34} ${dx + 82},${cy} ${dx},${cy + 34}" fill="${C.tint}" stroke="${C.axis}" stroke-width="1.25"/>` +
     text(dx, cy - 4, a, { size: 12.5, weight: 600, anchor: "middle" }) +
     text(dx, cy + 12, z, { size: 12.5, weight: 600, anchor: "middle" });
-  const d1 = 112, d2 = 220, d3 = 328;
+  const d1 = 112, d2 = 220, d3 = 328, d4 = 436;
+  const side = (cy, word, color, icon, title, sub, dash) =>
+    arrow([[dx + 82, cy], [520, cy]], color, dash ? { dash: "4 3" } : {}) +
+    label(dx + 92, cy - 10, word, color, "start") +
+    card(522, cy - 28, 214, { icon, color, dash: dash ? "4 3" : undefined, strong: !dash, title, sub });
+  const down = (from, to, word) => arrow([[dx, from + 34], [dx, to - 36]], C.blue) + label(dx + 8, from + 54, word, C.quiet, "start");
   const b =
     card(24, d1 - 28, 200, { icon: "clock", color: C.blue, title: "A fire is due", sub: "found by the scheduler" }) +
     arrow([[224, d1], [dx - 84, d1]], C.blue) +
     diamond(d1, "Due more than", "an hour ago?") +
-    arrow([[dx + 82, d1], [520, d1]], C.warn, { dash: "4 3" }) +
-    label(dx + 92, d1 - 10, "yes", C.warn, "start") +
-    card(522, d1 - 28, 214, { icon: "clock", color: C.warn, dash: "4 3", title: "missed", sub: "the server was not running" }) +
-    arrow([[dx, d1 + 34], [dx, d2 - 36]], C.blue) +
-    label(dx + 8, d1 + 54, "no", C.quiet, "start") +
-    diamond(d2, "A run of it", "still going?") +
-    arrow([[dx + 82, d2], [520, d2]], C.warn, { dash: "4 3" }) +
-    label(dx + 92, d2 - 10, "yes", C.warn, "start") +
-    card(522, d2 - 28, 214, { icon: "play", color: C.warn, dash: "4 3", title: "skipped", sub: "a run was still going" }) +
-    arrow([[dx, d2 + 34], [dx, d3 - 36]], C.blue) +
-    label(dx + 8, d2 + 54, "no", C.quiet, "start") +
-    diamond(d3, "Can the latest", "version run?") +
-    arrow([[dx + 82, d3], [520, d3]], C.good) +
-    label(dx + 92, d3 - 10, "yes", C.good, "start") +
-    card(522, d3 - 28, 214, { icon: "check", color: C.good, strong: true, title: "started", sub: "the run is queued" }) +
-    arrow([[dx - 82, d3], [206, d3]], C.bad, { dash: "4 3" }) +
-    label(227, d3 - 10, "no", C.bad) +
-    card(24, d3 - 28, 180, { icon: "cross", color: C.bad, title: "failed", sub: "the server's reason" }) +
-    foot(384, "gear", "Either way the next fire is worked out from now: a missed or skipped fire is not made up later.");
-  svg("schedule-outcomes", 434, "What happens when a schedule is due", "Each fire ends in one of four outcomes, shown on the schedule", b);
+    side(d1, "yes", C.warn, "clock", "missed", "the server was not running", true) +
+    down(d1, d2, "no") +
+    diamond(d2, "Its setter still", "has the role?") +
+    side(d2, "no", C.warn, "lock", "paused", "and in the audit log", true) +
+    down(d2, d3, "yes") +
+    diamond(d3, "A run of it", "still going?") +
+    side(d3, "yes", C.warn, "play", "skipped", "a run was still going", true) +
+    down(d3, d4, "no") +
+    diamond(d4, "Can the latest", "version run?") +
+    side(d4, "yes", C.good, "check", "started", "the run is queued", false) +
+    arrow([[dx - 82, d4], [206, d4]], C.bad, { dash: "4 3" }) +
+    label(227, d4 - 10, "no", C.bad) +
+    card(24, d4 - 28, 180, { icon: "cross", color: C.bad, title: "failed", sub: "the server's reason" }) +
+    foot(492, "gear", "A paused schedule waits for a designer or admin to resume it. Missed and skipped times are not made up.");
+  svg("schedule-outcomes", 542, "What happens when a schedule is due", "Each fire ends in one of five outcomes, shown on the schedule", b);
 }
+

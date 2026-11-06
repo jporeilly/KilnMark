@@ -64,6 +64,25 @@ public class OidcIdentityAugmentor implements SecurityIdentityAugmentor {
     }
 
     /**
+     * An opaque key for the person behind a provider sign-in: a hash of {@link #personKey}, so it
+     * names no provider address. Schedules keep it to check the person's role at each run, and
+     * sign-in events record it (ADR 0046); null for anything but a provider sign-in.
+     */
+    public static String personRef(SecurityIdentity identity) {
+        String key = personKey(identity);
+        if (key == null) {
+            return null;
+        }
+        try {
+            byte[] h = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(key.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return "p:" + java.util.HexFormat.of().formatHex(h, 0, 16);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("This Java runtime has no SHA-256", e);
+        }
+    }
+
+    /**
      * The name a provider sign-in goes by in the audit log, usage records and "created by" columns:
      * {@code sso:} with the person's name and, in brackets, the provider's fixed ID for them
      * ({@code sub}). The name is whatever the provider sends, which some let people choose, so the
