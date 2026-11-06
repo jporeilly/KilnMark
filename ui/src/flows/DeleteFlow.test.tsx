@@ -63,14 +63,24 @@ describe("deleting a flow", () => {
     const fetch = server(204);
     const cancel = vi.fn();
     await show(<DeleteFlowConfirm name="nightly-load" title="Nightly load" onCancel={cancel} onError={vi.fn()} />);
-    const text = host.querySelector('[role="alert"]')!.textContent!;
+    // One announcement: a group named by its text, read as the focus moves to Cancel; no alert as well.
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    const group = host.querySelector('[role="group"]')!;
+    const text = document.getElementById(group.getAttribute("aria-labelledby")!)!.textContent!;
     expect(text).toContain("Delete the flow Nightly load (nightly-load)?");
     expect(text).toContain("Its versions, its runs with what each node did, and its schedules are deleted.");
     expect(text).toContain("The pipeline runs it started stay");
+    expect(text).not.toContain("not saved");
     expect(document.activeElement).toBe(button("Cancel"));
     await act(async () => button("Cancel")!.click());
     expect(cancel).toHaveBeenCalledOnce();
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  test("unsaved changes on the page are said to be lost", async () => {
+    server(204);
+    await show(<DeleteFlowConfirm name="nightly-load" title="nightly-load" unsaved onCancel={vi.fn()} onError={vi.fn()} />);
+    expect(host.textContent).toContain("Your changes on this page that are not saved are lost too.");
   });
 
   test("Delete sends DELETE for the flow, then shows the Flows list", async () => {

@@ -116,6 +116,16 @@ public class PipelineStore {
         }
     }
 
+    /** The pipeline named is not there (it was deleted a moment ago). */
+    public static final class Missing extends RuntimeException {
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        Missing() {
+            super("missing", null, false, false);
+        }
+    }
+
     /** The pipeline has a run queued or running. */
     public static final class Busy extends RuntimeException {
         @java.io.Serial
@@ -333,12 +343,14 @@ public class PipelineStore {
 
     /**
      * Deletes the pipeline and, in the same transaction, its schedules, returning exactly those, so
-     * each can be recorded; empty when there is no such pipeline.
+     * each can be recorded; empty when there is no such pipeline. Its open problem for notifications
+     * is cleared, so a pipeline saved later under the name is told of afresh.
      *
      * @throws Busy when a run is queued or running
+     * @throws ScheduleStore.LockWaitTooLong when a lock was not granted in time; nothing was deleted
      */
     public Optional<List<ScheduleStore.Gone>> deleteWithSchedules(String name) {
-        return db.tx(c -> {
+        return ScheduleStore.deleting(db, c -> {
             // the schedules' rows first, then the pipeline's: a schedule's fire holds its row while it
             // queues a run, which locks the pipeline, so the other order could deadlock
             ScheduleStore.lockFor(c, ScheduleStore.Target.PIPELINE, name);
@@ -361,6 +373,11 @@ public class PipelineStore {
                 }
             }
             List<ScheduleStore.Gone> gone = ScheduleStore.deleteFor(c, ScheduleStore.Target.PIPELINE, name);
+            // a name used again starts with no open problem: its next failure is told (notify_state, V13)
+            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.notify_state WHERE dedupe_key = ?")) {
+                ps.setString(1, "pipeline:" + name);
+                ps.executeUpdate();
+            }
             try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.pipeline WHERE name = ?")) {
                 ps.setString(1, name);
                 ps.executeUpdate();
@@ -388,6 +405,7 @@ public class PipelineStore {
      * transaction. A pipeline job is tried once: its writes are not repeated on their own.
      *
      * @throws Busy while a run of the pipeline is queued or running
+     * @throws Missing when the pipeline is not there (it was deleted a moment ago)
      */
     public Run queueRun(String name, int version, String by, String role) {
         return queueRun(name, version, by, role, null, null, "{}", "{}");
@@ -441,11 +459,16 @@ public class PipelineStore {
             throw new IllegalArgumentException("An item's run belongs to a flow run and node");
         }
         return db.tx(c -> {
-            // One run of a pipeline at a time: the pipeline's row is locked while checking.
+            // One run of a pipeline at a time: the pipeline's row is locked while checking. It can have
+            // been deleted since the caller found it.
             try (PreparedStatement ps = c.prepareStatement(
                 "SELECT 1 FROM kilnmark.pipeline WHERE name = ? FOR UPDATE")) {
                 ps.setString(1, name);
-                ps.executeQuery().close();
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        throw new Missing();
+                    }
+                }
             }
             try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.pipeline_run WHERE pipeline = ? "
                 + "AND status IN ('queued', 'running')"

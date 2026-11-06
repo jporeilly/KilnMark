@@ -73,7 +73,13 @@ details.
   still records no audit event of its own: a gap for both, noted in ADR 0048. No node runs another
   flow, so nothing refuses a delete for being used. The flow page's **Delete** (designers and
   admins) asks on the page, starts on Cancel, and goes to the Flows list (or the Library for a
-  sample) once deleted.
+  sample) once deleted. Every lock wait in a pipeline's or a flow's delete is limited to 5 seconds:
+  past that nothing is deleted and the answer is 409 saying to try again, so a schedule moved onto
+  it and fired at that moment cannot hang the two. Deleting a pipeline or a flow clears its open
+  problem for notifications, so one saved later under the name is mailed at its first failure. A
+  run queued, or a version saved, just as its pipeline or flow is deleted is answered 404 instead of
+  failing with a server error. A flow's delete also waits for the job of a run that has just ended,
+  which tells of a failure before it ends.
 
 - **Error Prone checks the flow files too** (ADR 0042, decision 5). `FlowDefinition`, its test,
   `FlowService` and `JobQueue` are no longer left out. What it found is fixed: case changes now

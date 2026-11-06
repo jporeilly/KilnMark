@@ -483,6 +483,7 @@ export function FlowPage({
           name={name}
           title={title}
           sample={detail?.library === "sample"}
+          unsaved={dirty}
           onCancel={() => {
             setConfirmDelete(false);
             document.getElementById(DELETE_BUTTON_ID)?.focus();

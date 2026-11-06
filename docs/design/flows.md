@@ -207,10 +207,18 @@ leans on V20's foreign keys: deleting the `flow` row cascades to `flow_version`,
 `flow_run` and on to `flow_node_run`, and sets `pipeline_run.flow_run_id` to null, so the pipeline
 runs a flow started stay, with what they wrote and recorded (their `flow_node`, `flow_item` and
 `flow_try` stay as written, read by nothing once the flow run is gone). One transaction locks the
-flow's schedules, then the flow's row, refuses (409) while a run is queued or running, deletes the
-schedules with `DELETE … RETURNING` to record each (docs/design/schedules.md, section 8), then the
-flow. No node runs another flow yet; a `run-flow` node (F2b) must decide what deleting a flow it
-names does.
+flow's schedules, then the flow's row, refuses (409) while a run is queued or running or the job of
+one is still finishing, deletes the schedules with `DELETE … RETURNING` to record each
+(docs/design/schedules.md, section 8), clears the flow's open problem for notifications
+(`notify_state` key `flow:<name>`, so a flow saved later under the name is told of afresh), then
+the flow. Each lock wait is limited to 5 seconds; past that nothing is deleted and the answer is 409
+"try again". A run queued or a version saved just as the flow goes finds its row missing and is
+answered 404. The runs' `job` rows stay, as a deleted pipeline's do. A failure is told after its run
+is recorded as ended but before its job ends, which is why the delete waits for the job; a run
+failed because its worker stopped (`failOrphanedRuns`) is told outside any job, so a delete in that
+moment can still be followed by a failure told of the deleted flow, which leaves `flow:<name>`
+open until that name's next success, or until it is purged. No node runs another flow yet; a
+`run-flow` node (F2b) must decide what deleting a flow it names does.
 
 ## 5. Who may do what
 

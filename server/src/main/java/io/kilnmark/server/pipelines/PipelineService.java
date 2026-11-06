@@ -536,6 +536,9 @@ public class PipelineService {
         } catch (PipelineStore.Busy e) {
             throw fail(Response.Status.CONFLICT, "A run of " + name + " is queued or running. Wait for it to finish, "
                 + "or cancel it, then delete the pipeline.");
+        } catch (io.kilnmark.server.schedules.ScheduleStore.LockWaitTooLong e) {
+            throw fail(Response.Status.CONFLICT, "Nothing was deleted: " + name + " or one of its schedules was busy "
+                + "a moment ago, perhaps with a scheduled run starting. Try again.");
         }
     }
 
@@ -577,6 +580,8 @@ public class PipelineService {
         } catch (PipelineStore.Busy e) {
             throw new io.kilnmark.server.api.AlreadyRunning("A run of " + name + " is already queued or running. Wait "
                 + "for it to finish, or cancel it, then run the pipeline again.");
+        } catch (PipelineStore.Missing e) {
+            throw fail(Response.Status.NOT_FOUND, "No pipeline called " + name);
         }
         LOG.infof("Run %d of pipeline %s (version %d) queued by %s", run.id(), name, n, by);
         return summary(run, null); // just queued: no error yet
@@ -629,8 +634,13 @@ public class PipelineService {
                                              int priority, int flowTry) {
         RunnableVersion checked = runnableVersion(name, version, parameters, variables);
         int n = checked.version();
-        PipelineStore.Run run = store.queueRun(name, n, by, role.id(), flowRunId, flowNode, flowItem,
-            writeJson(checked.parameters()), writeJson(variables), priority, flowTry);
+        PipelineStore.Run run;
+        try {
+            run = store.queueRun(name, n, by, role.id(), flowRunId, flowNode, flowItem,
+                writeJson(checked.parameters()), writeJson(variables), priority, flowTry);
+        } catch (PipelineStore.Missing e) {
+            throw fail(Response.Status.NOT_FOUND, "No pipeline called " + name);
+        }
         LOG.infof("Run %d of pipeline %s (version %d) queued by %s for node %s%s of flow run %d", run.id(), name, n,
             by, flowNode, flowItem == null ? "" : ", item " + flowItem, flowRunId);
         return run;

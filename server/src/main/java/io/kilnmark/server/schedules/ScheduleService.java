@@ -353,8 +353,9 @@ public class ScheduleService {
     }
 
     /**
-     * Records {@code schedule.deleted} for each schedule deleted with a pipeline or flow, in that
-     * delete's own transaction (ADR 0029, ADR 0046), with {@code via} saying which was deleted.
+     * Records {@code schedule.deleted} for each schedule deleted with a pipeline or flow (ADR 0029,
+     * ADR 0046), with {@code via} saying which was deleted. {@code gone} is exactly what that delete's
+     * transaction deleted; the events are recorded after it commits, by the audit log's own writer.
      */
     public static void recordDeletedWith(AuditLog audit, AuditLog.Actor actor, ScheduleStore.Target target,
                                          String name, List<ScheduleStore.Gone> gone) {

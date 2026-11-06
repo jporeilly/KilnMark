@@ -605,7 +605,9 @@ Library for a sample. Choose **Cancel** to keep it. Nothing can bring a deleted 
 YAML can be saved again under the same name as a new flow, starting at version 1.
 
 A flow cannot be deleted while a run of it is queued or running: the page says so. Cancel the run,
-or wait for it to finish, then delete. A sample from the Library is deleted the same way; the
+or wait for it to finish, then delete. For a moment after a run ends, and while a scheduled run of
+the flow is starting, the page may say the flow is busy: nothing was deleted, so try again. If you
+have changed the flow on the page without saving, those changes go too, and the warning says so. A sample from the Library is deleted the same way; the
 Library then shows it as not added, and **Add samples** adds it again.
 
 Through the API: `DELETE /api/v1/flows/<name>` (designers and admins) answers 204 when the flow is

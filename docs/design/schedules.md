@@ -211,9 +211,15 @@ meanwhile either comes first (the check fails, or the row is no longer as claime
 `skipped: the schedule was changed while it was starting`) or waits until the run is queued and
 recorded. A run already queued or running is never cancelled by a pause. Deleting a pipeline or
 a flow locks its schedules' rows before its own row (`ScheduleStore.lockFor`), the order a fire
-takes them (its run locks the pipeline or flow), so the two never deadlock. The order matters more than usual: the fire's row lock
-is held on one connection while its run is queued on another, so PostgreSQL could not see such a
-deadlock and break it; a test for each (`ScheduleApiTest`) shows the other order hangs.
+takes them (its run locks the pipeline or flow). The order matters more than usual: the fire's row
+lock is held on one connection while its run is queued on another, so PostgreSQL could not see
+such a deadlock and break it; a test for each (`ScheduleApiTest`) shows the delete waiting for the
+fire and then refused because the run is queued. The order covers the schedules the pipeline or
+flow has when the delete starts. A schedule changed to run it just after that, and fired, is not
+locked by the delete, so the two could still wait for each other. What is guaranteed: the delete
+limits every lock wait to 5 seconds (`lock_timeout`, `ScheduleStore.DELETE_LOCK_TIMEOUT`), so it
+never hangs. A lock not granted in time rolls the delete back, deletes nothing, and answers 409
+saying to try again; the fire then goes ahead (ADR 0048).
 
 If the check fails, nothing is queued: the row is turned off, its next fire cleared,
 `last_at` set to now, and the outcome written; `schedule.paused` is recorded by the server with the

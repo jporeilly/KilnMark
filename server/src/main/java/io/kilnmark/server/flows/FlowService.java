@@ -494,6 +494,8 @@ public class FlowService {
         } catch (FlowStore.Changed e) {
             throw fail(Response.Status.CONFLICT, "Someone saved another version of " + check.name()
                 + " since you opened it. Reload it, then make your change again.");
+        } catch (FlowStore.Missing e) {
+            throw fail(Response.Status.NOT_FOUND, "No flow called " + check.name());
         }
     }
 
@@ -527,9 +529,12 @@ public class FlowService {
 
     /**
      * Deletes the flow with its versions, runs and schedules (ADR 0048); the pipeline runs it started
-     * stay. Returns the schedules deleted with it, to record.
+     * stay. Takes the designer role. Returns the schedules deleted with it, to record.
      */
-    public List<io.kilnmark.server.schedules.ScheduleStore.Gone> delete(String name, String by) {
+    public List<io.kilnmark.server.schedules.ScheduleStore.Gone> delete(String name, String by, AccessRole role) {
+        if (!role.atLeast(AccessRole.DESIGNER)) {
+            throw fail(Response.Status.FORBIDDEN, "Deleting a flow takes the designer role");
+        }
         try {
             List<io.kilnmark.server.schedules.ScheduleStore.Gone> gone = store.deleteWithSchedules(name)
                 .orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No flow called " + name));
@@ -538,6 +543,9 @@ public class FlowService {
         } catch (FlowStore.Busy e) {
             throw fail(Response.Status.CONFLICT, "A run of " + name + " is queued or running. Wait for it to finish, "
                 + "or cancel it, then delete the flow.");
+        } catch (io.kilnmark.server.schedules.ScheduleStore.LockWaitTooLong e) {
+            throw fail(Response.Status.CONFLICT, "Nothing was deleted: " + name + " or one of its schedules was busy "
+                + "a moment ago, perhaps with a scheduled run starting. Try again.");
         }
     }
 
@@ -576,6 +584,8 @@ public class FlowService {
         } catch (FlowStore.Busy e) {
             throw new io.kilnmark.server.api.AlreadyRunning("A run of " + name + " is already queued or running. Wait "
                 + "for it to finish, or cancel it, then run the flow again.");
+        } catch (FlowStore.Missing e) {
+            throw fail(Response.Status.NOT_FOUND, "No flow called " + name);
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("parameters: could not be read");
         }

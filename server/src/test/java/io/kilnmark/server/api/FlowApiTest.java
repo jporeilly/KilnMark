@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
@@ -19,6 +20,10 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -30,12 +35,16 @@ import org.junit.jupiter.api.TestMethodOrder;
 import io.agroal.api.AgroalDataSource;
 import io.kilnmark.server.Tokens;
 import io.kilnmark.server.audit.AuditLog;
+import io.kilnmark.server.auth.AccessRole;
+import io.kilnmark.server.flows.FlowService;
+import io.kilnmark.server.flows.FlowStore;
 import io.kilnmark.server.pipelines.MemoryConnector;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import io.restassured.path.json.JsonPath;
 import io.restassured.specification.RequestSpecification;
 import jakarta.inject.Inject;
+import jakarta.ws.rs.WebApplicationException;
 
 /**
  * The flows API (docs/design/flows.md, F3): viewers read, designers save, stewards run and cancel;
@@ -106,6 +115,12 @@ class FlowApiTest {
     @Inject
     AuditLog audit;
 
+    @Inject
+    FlowService flowService;
+
+    @Inject
+    FlowStore flowStore;
+
     private static RequestSpecification as(String token) {
         return Tokens.as(token).contentType(ContentType.JSON);
     }
@@ -132,6 +147,29 @@ class FlowApiTest {
                 return rs.getLong(1);
             }
         }
+    }
+
+    /** Runs one statement with {@code values}; returns how many rows it changed. */
+    private int sql(String statement, Object... values) throws SQLException {
+        try (Connection c = db.getConnection(); PreparedStatement ps = c.prepareStatement(statement)) {
+            for (int i = 0; i < values.length; i++) {
+                ps.setObject(i + 1, values[i]);
+            }
+            return ps.executeUpdate();
+        }
+    }
+
+    /** Waits until no job of a run of {@code flow} is queued or running: a job ends just after its run. */
+    private void awaitFlowJobsEnded(String flow) throws InterruptedException {
+        await("the jobs of " + flow + " to end", () -> {
+            try {
+                return count("SELECT count(*) FROM kilnmark.job j JOIN kilnmark.flow_run r "
+                    + "ON (j.payload ->> 'flowRunId')::bigint = r.id WHERE r.flow = ? AND j.kind = 'flow' "
+                    + "AND j.status IN ('queued', 'running')", flow);
+            } catch (SQLException e) {
+                throw new IllegalStateException(e);
+            }
+        }, n -> n == 0);
     }
 
     private static JsonPath run(long id) {
@@ -389,7 +427,37 @@ class FlowApiTest {
 
         as(steward).post("/api/v1/flow-runs/" + id + "/cancel").then().statusCode(200);
         await("the run to be cancelled", () -> run(id), j -> "cancelled".equals(j.getString("run.status")));
+        awaitFlowJobsEnded("fa-gone");
+
+        // while the job of a run is still finishing (it tells of a failure after the run is recorded),
+        // the delete waits for it
+        String jobWas;
+        try (Connection c = db.getConnection(); PreparedStatement ps = c.prepareStatement("SELECT status FROM "
+            + "kilnmark.job WHERE kind = 'flow' AND (payload ->> 'flowRunId')::bigint = ?")) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next());
+                jobWas = rs.getString(1);
+            }
+        }
+        String job = "UPDATE kilnmark.job SET status = ? WHERE kind = 'flow' AND (payload ->> 'flowRunId')::bigint = ?";
+        assertEquals(1, sql(job, "running", id));
+        try {
+            as(designer).delete("/api/v1/flows/fa-gone").then().statusCode(409)
+                .body("error", containsString("queued or running"));
+        } finally {
+            sql(job, jobWas, id);
+        }
+
+        // the service checks the role too, as saving and running do
+        WebApplicationException refused = assertThrows(WebApplicationException.class,
+            () -> flowService.delete("fa-gone", "a steward", AccessRole.STEWARD));
+        assertEquals(403, refused.getResponse().getStatus());
+
+        // an open failure of the flow is cleared with it, so a flow saved later under the name is told of
+        sql("INSERT INTO kilnmark.notify_state (dedupe_key, open, severity) VALUES (?, true, 'high')", "flow:fa-gone");
         admin().delete("/api/v1/flows/fa-gone").then().statusCode(204);
+        assertEquals(0, count("SELECT count(*) FROM kilnmark.notify_state WHERE dedupe_key = ?", "flow:fa-gone"));
 
         // the flow, its versions, runs and node runs are gone
         Tokens.as(viewer).get("/api/v1/flows/fa-gone").then().statusCode(404);
@@ -424,5 +492,43 @@ class FlowApiTest {
         as(designer).body(Map.of("yaml", holds)).post("/api/v1/flows").then().statusCode(201)
             .body("latestVersion", equalTo(1));
         as(designer).delete("/api/v1/flows/fa-gone").then().statusCode(204);
+    }
+
+    @Test
+    @Order(10)
+    void aDeleteThatCannotHaveItsLocksSoonIsRefusedAndAFlowGoneIsNotFound() throws Exception {
+        as(designer).body(Map.of("yaml", """
+            kilnmark: flow/v1
+            name: fa-held
+            nodes:
+              - { id: pause, type: wait, for: 1s }
+            """)).post("/api/v1/flows").then().statusCode(201);
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try (Connection held = db.getConnection()) {
+            // something else holds the flow's row, for longer than a delete waits for a lock
+            held.setAutoCommit(false);
+            try (PreparedStatement ps = held.prepareStatement("SELECT 1 FROM kilnmark.flow WHERE name = ? FOR UPDATE")) {
+                ps.setString(1, "fa-held");
+                ps.executeQuery().close();
+            }
+            try {
+                Future<JsonPath> delete = pool.submit(() -> as(designer).delete("/api/v1/flows/fa-held").then()
+                    .statusCode(409).extract().jsonPath());
+                // without the lock timeout this would wait for as long as the row is held
+                assertTrue(delete.get(60, TimeUnit.SECONDS).getString("error").contains("Try again"));
+            } finally {
+                held.rollback();
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        Tokens.as(viewer).get("/api/v1/flows/fa-held").then().statusCode(200);
+        as(designer).delete("/api/v1/flows/fa-held").then().statusCode(204);
+
+        // a run queued, or a version saved, just as the flow is deleted finds it gone: not a server error
+        assertThrows(FlowStore.Missing.class, () -> flowStore.queueRun("fa-held", 1, "a steward", "steward", "{}",
+            "{}"));
+        assertThrows(FlowStore.Missing.class, () -> flowStore.save("fa-held", null, false, "fa-held", null,
+            "kilnmark: flow/v1", null, "a designer", true, "[]"));
     }
 }
