@@ -45,7 +45,9 @@ run timelines).
    owner chose to allow with controls: a per-source **Allow changes** switch (off by default),
    designers and admins only, a preview of every statement, typing the table's name to confirm a
    drop or truncate, an audit event for each, and a second person's approval on production
-   sources. An ADR amending ADR 0028 comes first.
+   sources. Decided in [ADR 0045](../adr/0045-database-tools.md) (amends ADR 0028); the design and
+   its order (Explore, the SQL generator, settings on tabs, operations) are in
+   [docs/design/database-tools.md](../design/database-tools.md).
 9. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
    pre-run checks, flags on slow pipelines. Run tools on the MCP server fold in here (parked item
    in Plan & Scope).
@@ -68,6 +70,8 @@ dependency verification (ADR 0042, #99) and signed images with an offline instal
 12. **The SSDF gaps**: build provenance, a threat model, a security analyser; the rest of the
     evidence pack when a customer's due diligence asks.
 13. **Change approval and environments**, which also gives database tools their second person.
+    With it, marks keyed by the database's identity rather than the source record, and password references
+    (`env:`, `secret:`) for admins only (ADR 0045, "Related gap").
 14. **Generic JDBC drivers in a process of their own** (ADR 0030, decision 5); new table names
     checked against the driver's longest table name, not its longest column name (ADR 0042).
 15. **Small items**: a JDBC `socketTimeout`, masking on the run quality view, a metric for preview
