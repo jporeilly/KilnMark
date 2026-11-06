@@ -5,6 +5,13 @@ details.
 
 ## Unreleased
 
+### Details
+
+- **Dev mode starts again**: `./gradlew :server:quarkusDev` needs two POMs the build itself does
+  not (`org.jboss:jboss-parent:37`, `org.jboss.slf4j:slf4j-jboss-logmanager:1.1.0.Final`); their
+  checksums, matched against Maven Central, are now in `gradle/verification-metadata.xml`
+  (ADR 0042).
+
 ## 0.0.10 (5 November 2026)
 
 ### What's new
