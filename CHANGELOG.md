@@ -38,6 +38,9 @@ details.
   node that names its table with `table:` (or its file with `path:`) no longer shows an empty
   "Table or file" box beside it. A setting with several controls, such as Key columns, no longer
   draws a rule and padding above itself, and its box comes before the list of what is chosen.
+- **A refactoring plan** on the backlog (item 21): one run lifecycle for pipelines and flows first,
+  then the UI's API file split by area, one form-field building block, and the two largest server
+  classes split. Each step changes no behaviour.
 
 - **Quieter start and stop**: `kilnmark.sh` and `kilnmark.cmd` no longer show Podman's notice
   that it runs an external compose tool (they set `PODMAN_COMPOSE_WARNING_LOGS=false` for their
