@@ -131,6 +131,26 @@ class SourcePreviewTest {
     }
 
     @Test
+    void generatesSqlForATableAndRunsNothing() {
+        JsonPath g = designer().contentType(ContentType.JSON)
+            .body(Map.of("statement", "create-table", "asset", "prev.people"))
+            .post("/api/v1/sources/prev-db/explore/sql").then().statusCode(200).extract().jsonPath();
+        assertEquals("postgresql", g.getString("dialect"));
+        assertTrue(g.getString("sql[0]").startsWith("CREATE TABLE \"prev\".\"people\" ("), g.getString("sql[0]"));
+        assertTrue(g.getString("sql[0]").contains("PRIMARY KEY (\"id\")"), g.getString("sql[0]"));
+        designer().contentType(ContentType.JSON).body(Map.of("statement", "truncate", "asset", "prev.people",
+            "dialect", "sqlserver")).post("/api/v1/sources/prev-db/explore/sql").then().statusCode(200)
+            .body("sql[0]", equalTo("TRUNCATE TABLE [prev].[people]"));
+        designer().contentType(ContentType.JSON).body(Map.of("statement", "delete", "asset", "prev.people"))
+            .post("/api/v1/sources/prev-db/explore/sql").then().statusCode(400);
+        Tokens.as(viewer).contentType(ContentType.JSON).body(Map.of("statement", "drop-table", "asset", "prev.people"))
+            .post("/api/v1/sources/prev-db/explore/sql").then().statusCode(403);
+        // only text came back: the table is still there with its rows
+        designer().queryParam("asset", "prev.people").get("/api/v1/sources/prev-db/explore/count")
+            .then().statusCode(200).body("rows", equalTo(250));
+    }
+
+    @Test
     void viewersCannotExploreAndFileSourcesHaveNoExplore() {
         Tokens.as(viewer).queryParam("asset", "prev.people").get("/api/v1/sources/prev-db/explore")
             .then().statusCode(403);
@@ -140,6 +160,8 @@ class SourcePreviewTest {
             Map.of("path", folder.toString()))).post("/api/v1/sources").then().statusCode(201);
         designer().queryParam("asset", "data.csv").get("/api/v1/sources/prev-files/explore")
             .then().statusCode(404).body("error", containsString("database sources"));
+        designer().contentType(ContentType.JSON).body(Map.of("statement", "create-table", "asset", "data.csv"))
+            .post("/api/v1/sources/prev-files/explore/sql").then().statusCode(404);
     }
 
     @Test

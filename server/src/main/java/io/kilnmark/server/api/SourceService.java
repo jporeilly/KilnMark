@@ -712,6 +712,21 @@ public class SourceService {
             () -> connector.explore(config, asset, checks.timeout()));
     }
 
+    /**
+     * SQL for one table of the source, generated and never run (ADR 0045, D2). The table is read
+     * live first, as Explore reads it, so names and columns are the catalogue's.
+     */
+    Views.GeneratedSql generateSql(Connector connector, SourceConfig config, SqlGenerator.Request request) {
+        if (request == null) {
+            throw new IllegalArgumentException("statement: what to generate");
+        }
+        explorable(connector, request.asset());
+        io.kilnmark.kiln.plugins.jdbc.DdlWriter.Dialect dialect = SqlGenerator.dialect(request.dialect(), config.kind());
+        io.kilnmark.kiln.connect.TableDetail table = explore(connector, config, request.asset());
+        return SqlGenerator.generate(request, table, dialect,
+            io.kilnmark.kiln.plugins.jdbc.DdlWriter.Dialect.forKind(config.kind()).orElse(null));
+    }
+
     /** The exact number of rows of one table, counted by the database under the check time limit. */
     Views.RowCount countRows(Connector connector, SourceConfig config, String asset) {
         explorable(connector, asset);

@@ -248,6 +248,22 @@ public class SourceResource {
         return SourceService.noStore(sources.explore(sources.connector(s.kind()), config, asset));
     }
 
+    /**
+     * SQL for one table of the saved source, in its dialect or another's: {@code CREATE TABLE},
+     * {@code ALTER TABLE … ADD}, {@code CREATE INDEX}, {@code DROP INDEX}, {@code DROP TABLE} or
+     * {@code TRUNCATE}. Generated as text and never run (ADR 0045).
+     */
+    @POST
+    @Path("{name}/explore/sql")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    public Views.GeneratedSql generateSql(@PathParam("name") String name, SqlGenerator.Request body) {
+        Records.Source s = find(name);
+        SourceConfig config = sources.config(s);
+        sources.checkHosts(sources.connector(s.kind()), config);
+        return sources.generateSql(sources.connector(s.kind()), config, body);
+    }
+
     /** The exact number of rows of one table of the saved source, counted by the database. */
     @GET
     @Path("{name}/explore/count")

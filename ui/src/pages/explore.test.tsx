@@ -32,6 +32,8 @@ const tables: AssetList = {
 
 const orders: TableDetail = {
   path: "shop.orders",
+  schema: "shop",
+  table: "orders",
   kind: "table",
   columns: [
     { name: "order_id", position: 1, sourceType: "int4", size: null, scale: null, nullable: false, hasDefault: false, generated: true, kind: "int32" },
@@ -108,7 +110,7 @@ describe("Explore", () => {
   });
 
   test("lists schemas, and asks for a schema before tables", async () => {
-    await act(async () => root.render(<SourceExplore source="db" schema={null} table={null} />));
+    await act(async () => root.render(<SourceExplore source="db" kind="postgresql" schema={null} table={null} />));
     await settle();
     expect(host.textContent).toContain("shop");
     expect(host.textContent).toContain("Choose a schema");
@@ -116,7 +118,7 @@ describe("Explore", () => {
   });
 
   test("shows a table's columns, keys and indexes, and counts rows only when asked", async () => {
-    await act(async () => root.render(<SourceExplore source="db" schema="shop" table="orders" />));
+    await act(async () => root.render(<SourceExplore source="db" kind="postgresql" schema="shop" table="orders" />));
     await settle();
     expect(assets).toHaveBeenCalledWith("db", "shop", 0);
     expect(explore).toHaveBeenCalledWith("db", "shop.orders");
