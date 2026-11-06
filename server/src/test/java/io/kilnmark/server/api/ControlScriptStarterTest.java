@@ -86,6 +86,12 @@ class ControlScriptStarterTest {
         assertFalse(c.contains("/srv/files:ro"), "never read-only");
         assertTrue(c.contains("  samples-db:\n") && c.contains("entrypoint: [\"/usr/local/bin/kilnmark-samples-db.sh\"]"));
         assertTrue(c.contains("KILNMARK_SAMPLES_DB_PASSWORD: ${KILNMARK_SAMPLES_DB_PASSWORD}\n"), "no default");
+        String image = Files.readString(Path.of("../containers/postgres/Containerfile"));
+        assertTrue(image.contains("COPY kilnmark-samples-db.sh /usr/local/bin/kilnmark-samples-db.sh"),
+            "the database image carries the script samples-db runs");
+        assertTrue(Files.readString(Path.of("../containers/server/Containerfile"))
+            .contains("chown 1001:1001 /var/lib/kilnmark /srv/files"),
+            "the server image makes /srv/files its user's, so a new files volume is writable");
         assertTrue(c.contains("KILNMARK_STARTER_KEYCLOAK_CLIENT_SECRET: ${KILNMARK_KEYCLOAK_STARTER_SECRET}\n"), "no default");
         // Keycloak's admin password is passed to keycloak and keycloak-setup only, never to the kilnmark service
         String kilnmark = c.substring(c.indexOf("\n  kilnmark:\n"), c.indexOf("\n  keycloak-db:\n"));

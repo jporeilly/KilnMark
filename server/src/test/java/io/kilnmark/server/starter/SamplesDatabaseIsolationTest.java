@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -22,11 +23,11 @@ import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
+import org.testcontainers.utility.MountableFile;
 
 /**
- * The Starter Pack's database (ADR 0051), against the real kilnmark-postgres image (built as
- * kilnmark-postgres:dev, as CI does, or the tag KILNMARK_TEST_POSTGRES_IMAGE names, for a machine
- * where other work shares that tag) and its own script, kilnmark-samples-db.sh, which the samples-db
+ * The Starter Pack's database (ADR 0051), against the real kilnmark-postgres image and this tree's
+ * kilnmark-samples-db.sh, kilnmark-samples-db.sh, which the samples-db
  * service runs at every start: the login kilnmark_samples connects to kilnmark_samples only, over
  * TLS; it cannot connect to Kilnmark's own database, nor read its tables even if it were let in;
  * and every start closes again a database a restore left open.
@@ -38,11 +39,20 @@ class SamplesDatabaseIsolationTest {
     static final String SUPER_PASSWORD = "super-0123456789-abcdef";
     static final String SAMPLES_PASSWORD = "samples-0123456789-abcdef";
 
-    /** The image under test: kilnmark-postgres:dev as CI builds it, or KILNMARK_TEST_POSTGRES_IMAGE. */
+    /** The database image: kilnmark-postgres:dev, as CI builds it, or KILNMARK_TEST_POSTGRES_IMAGE. */
     static final String IMAGE = System.getenv().getOrDefault("KILNMARK_TEST_POSTGRES_IMAGE", "kilnmark-postgres:dev");
+
+    /**
+     * The script under test: this tree's, copied in, so a kilnmark-postgres:dev that other work on the
+     * same machine has tagged meanwhile (CI's runners share one engine) cannot stand in for it. The
+     * release's image carries the same file (containers/postgres/Containerfile).
+     */
+    static final String SCRIPT = "/tmp/kilnmark-samples-db.sh";
 
     @Container
     static final GenericContainer<?> PG = new GenericContainer<>(DockerImageName.parse(IMAGE))
+        .withCopyFileToContainer(MountableFile.forHostPath(Path.of("../containers/postgres/kilnmark-samples-db.sh")
+            .toAbsolutePath().normalize()), SCRIPT)
         .withEnv("POSTGRES_DB", "kilnmark").withEnv("POSTGRES_USER", "kilnmark")
         .withEnv("POSTGRES_PASSWORD", SUPER_PASSWORD).withExposedPorts(5432)
         .waitingFor(Wait.forLogMessage(".*database system is ready to accept connections.*", 2));
@@ -70,7 +80,7 @@ class SamplesDatabaseIsolationTest {
     private static ExecResult provision(String samplesPassword) throws Exception {
         return PG.execInContainer("sh", "-c", "PGHOST=127.0.0.1 PGUSER=kilnmark PGPASSWORD='" + SUPER_PASSWORD
             + "' PGSSLMODE=require KILNMARK_SAMPLES_DB_PASSWORD='" + samplesPassword
-            + "' /usr/local/bin/kilnmark-samples-db.sh");
+            + "' sh " + SCRIPT);
     }
 
     private static void exec(Connection c, String... sql) throws SQLException {

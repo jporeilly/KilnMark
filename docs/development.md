@@ -215,8 +215,8 @@ server turns the pack on and off itself (`StarterPack`, `/api/v1/starter-pack`).
 | `KILNMARK_KEYCLOAK_STARTER_SECRET` (`kilnmark.starter.keycloak.client-secret`, as `KILNMARK_STARTER_KEYCLOAK_CLIENT_SECRET`) | none | Secret of the Keycloak client `kilnmark-starter`, whose service account manages people and groups in the `kilnmark` realm only; `keycloak-setup` makes the client while it and `KILNMARK_STARTER=allowed` are set, and deletes it otherwise |
 | `kilnmark.starter.keycloak.client-id` | `kilnmark-starter` | That client |
 
-The isolation is tested against the real image (`SamplesDatabaseIsolationTest`, which needs
-`kilnmark-postgres:dev` built as CI builds it) and the service account against the Keycloak image
+The isolation is tested against the real image (`SamplesDatabaseIsolationTest`, which runs this tree's
+script in it, so a `kilnmark-postgres:dev` other work has tagged meanwhile cannot stand in) and the service account against the Keycloak image
 compose pins (`StarterKeycloakTest`); both use Testcontainers.
 
 On a developer machine, the source checkout's `compose.yaml` already uses the project name

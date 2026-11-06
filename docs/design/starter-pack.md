@@ -51,7 +51,7 @@ or the pack given Kilnmark's own login, is refused before anything is dropped.
 
 ## Tests
 
-- `SamplesDatabaseIsolationTest`: the real image and script; the login reaches only its own
+- `SamplesDatabaseIsolationTest`: the real image and this tree's script, copied in; the login reaches only its own
   database, over TLS, with no powers; it cannot open Kilnmark's, `postgres` or `template1`; let in
   by mistake it reads and makes nothing, and the next start shuts it out; a database a restore made
   is closed at the next start.
