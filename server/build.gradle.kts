@@ -117,6 +117,36 @@ tasks.withType<Test>().configureEach {
     inputs.file(rootProject.file("tests/ai-eval/docs.json"))
 }
 
+// Checks the components reference (docs/guide/components-reference.md and reference-*.md) against the
+// catalogue, and its versions tested against the integration tests' images: part of `check`, and run
+// again when a guide or those tests change, without running the rest of the server's tests.
+val referenceTest = "io.kilnmark.server.pipelines.ComponentsReferenceTest"
+val checkReference by tasks.registering(Test::class) {
+    group = "verification"
+    description = "Checks the components reference against the catalogue and its examples as saving does."
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform()
+    filter { includeTestsMatching(referenceTest) }
+    inputs.files(rootProject.fileTree("docs/guide") { include("*.md") })
+    inputs.dir(rootProject.file("kiln-plugins/src/test/java"))
+}
+tasks.named("check") { dependsOn(checkReference) }
+
+// Writes the generated parts of the components reference (docs/guide/components-reference.md and
+// reference-*.md) from the catalogue again: run it after changing a node's, connector's or rule's
+// settings, and commit the pages. ComponentsReferenceTest fails until it is run.
+tasks.register<Test>("writeReference") {
+    group = "documentation"
+    description = "Writes the components reference's generated settings tables from the catalogue."
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform()
+    filter { includeTestsMatching(referenceTest) }
+    systemProperty("kmtest.reference.write", "true")
+    outputs.upToDateWhen { false }
+}
+
 // AI evaluation (ADR 0016): scores a running server's search and question answering against
 // tests/ai-eval/golden.json with the models it is configured to use. Never part of `build`:
 //   KILNMARK_TOKEN=km_... ./gradlew :server:aiEval [-Pkilnmark.eval.url=http://localhost:8780] [-Pkilnmark.eval.source=lab]
@@ -124,6 +154,8 @@ tasks.withType<Test>().configureEach {
 // gate of ADR 0012; -Pkilnmark.eval.update-baseline=true accepts the new scores instead.
 tasks.named<Test>("test") {
     useJUnitPlatform { excludeTags("ai-eval") }
+    // Run by checkReference, which also reruns it when only the guides change.
+    filter { excludeTestsMatching(referenceTest) }
     // Each test profile starts the application again in the same JVM; Gradle's default 512 MB ran out
     // once the sign-in and token profiles (ADR 0036-0038) were added.
     maxHeapSize = "1536m"
