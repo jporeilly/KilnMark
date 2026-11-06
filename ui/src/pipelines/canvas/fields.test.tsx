@@ -52,6 +52,16 @@ describe("a setting's width follows its kind of control, never what it holds", (
     expect(wide(html(spec("keep", "columns"), ["customer_id", "status"]))).toBe(false);
   });
 
+  test("a read node's columns take the whole row whether or not the table's columns are known yet", () => {
+    expect(wide(html(spec("columns", "columns"), [], { nodeType: "read", columns: { main: null, lookup: null } }))).toBe(true);
+    expect(wide(html(spec("columns", "columns"), [], { nodeType: "read" }))).toBe(true);
+  });
+
+  test("a chosen column never makes its chip wider than the setting", () => {
+    expect(canvasCss).toMatch(/\.cv-chip-row \{[^}]*max-width: 100%;\s*min-width: 0;/);
+    expect(canvasCss).toMatch(/\.cv-chip-row > \.mono \{\s*min-width: 0;\s*overflow-wrap: anywhere;/);
+  });
+
   test("the dock spans a setting by its class, not by what is inside it", () => {
     const css = dockCss;
     const rule = css.match(/([^{}]*)\{\s*grid-column: 1 \/ -1;\s*\}/)?.[1] ?? "";

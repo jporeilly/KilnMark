@@ -830,6 +830,14 @@ p.cv-field-problems {
   padding: 2px 4px 2px 10px;
   border: 1px solid var(--km-border-control);
   border-radius: var(--km-radius-pill);
+  /* Never wider than the setting: a long column name breaks inside its chip. */
+  max-width: 100%;
+  min-width: 0;
+}
+
+.cv-chip-row > .mono {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .cv-add-row {

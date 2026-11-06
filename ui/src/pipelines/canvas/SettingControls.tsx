@@ -574,7 +574,9 @@ function ColumnsControl(p: ControlProps) {
     setAdding("");
   };
   return (
-    <Field spec={p.spec} id={p.id} problems={p.problems} group>
+    // A read node shows its columns as a full-row checklist once the table's columns are known; this
+    // stand-in takes the same row before then, so the setting does not change width when they arrive.
+    <Field spec={p.spec} id={p.id} problems={p.problems} group wide={p.context.nodeType === "read"}>
       {(describedBy, invalid) => (
         <>
           {/* The box first, under the name as in every other setting; what is chosen under it. */}

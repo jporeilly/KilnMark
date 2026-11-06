@@ -44,12 +44,14 @@ details.
   - Node settings: an on/off setting's name now sits level with the names beside it (it was
     11 pixels lower), and every setting's name is the same size, whether one box or several.
     A list of columns keeps one column's width whether or not any are chosen, instead of
-    stretching across the panel once the first is added. A pair's two boxes (a column and its
-    expression, a column and the one it matches, a column and its new name) sit side by side
-    where there is room. A read node's checklist says what it reads under the boxes, a node's id
-    has its help under the box, "None chosen." no longer leaves a gap before the help, and a
-    long node id wraps in the side column instead of running into the settings. A setting's
-    default no longer pulls the word before it onto the next line.
+    stretching across the panel once the first is added, and a long column name wraps inside its
+    chip (a read node's columns take the whole row, before and after the table's columns are
+    known). A pair's two boxes (a column and its expression, a column and the one it matches, a
+    column and its new name) sit side by side where there is room. A read node's checklist says
+    what it reads under the boxes, a node's id has its help under the box, "None chosen." no
+    longer leaves a gap before the help, and a long node id wraps in the side column instead of
+    running into the settings. A setting's default no longer pulls the word before it onto the
+    next line.
   - Boxes in the code face are as tall as the others (40 pixels, not 41).
   - Email settings: a number's unit sits beside its box, centred, and the boxes are a number's
     width; Send a test email is as wide as its words; Allowed email domains has the box under
