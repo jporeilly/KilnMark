@@ -842,6 +842,7 @@ function svg(name, height, title, sub, body) {
     arrow([[X[0] + W, y3 + 58], [X[1] - 2, y3 + 58]], C.violet) +
     foot(y3 + 112, "lock", "Admins turn the data on and off under Settings. Kilnmark holds no Keycloak credential; backups hold kilnmark only.");
   svg("starter-pack", y3 + 162, "What the Starter Pack adds", "Example data in a database of its own, files in a folder of its own, and example people where allowed", b);
+}
 
 // ---- How a sort carries on on disk ----
 {
