@@ -373,7 +373,7 @@ class ScheduleApiTest {
     @Order(8)
     void aFireMissedWhileTheServerWasDownDoesNotRun() throws Exception {
         long id = create(designer, body("flow", "sc-flow", "cron", "@hourly", "parameters", Map.of("label", "x")));
-        dueAgo(id, Duration.ofHours(3));
+        dueAgo(id, Duration.ofDays(3)); // the test profile's catch-up is 48 hours
         Instant now = Instant.now();
         assertEquals(1, scheduler.tick(now));
         JsonPath s = schedule(id);

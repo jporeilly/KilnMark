@@ -526,7 +526,8 @@ found later than the catch-up is recorded as missed and not run. The schedules a
 | `kilnmark.schedules.poll-interval` (`KILNMARK_SCHEDULES_POLL_INTERVAL`) | `30s` | How often a process with the scheduler role looks for schedules that are due |
 | `kilnmark.schedules.catch-up` (`KILNMARK_SCHEDULES_CATCH_UP`) | `1h` | A fire due longer ago than this when it is found (the server was not running) is missed, not run late |
 
-Tests set the poll interval to a day and fire schedules themselves with `Scheduler.tick`.
+Tests set the poll interval to a day (and the catch-up to two) and fire schedules themselves with
+`Scheduler.tick`.
 
 ## Data quality
 
