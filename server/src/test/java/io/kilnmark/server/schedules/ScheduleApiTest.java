@@ -51,7 +51,8 @@ import jakarta.inject.Inject;
  * Schedules (ADR 0046): who may read and set them, what is refused when saved, and firing them
  * through {@link Scheduler#tick}: a pipeline run and a flow run as the schedule, a busy fire
  * skipped, a missed fire not run, two schedulers firing once, schedules deleted with their
- * pipeline, and audit events without parameter values.
+ * pipeline or flow (a delete waiting for a fire, never deadlocking), and audit events without
+ * parameter values.
  */
 @QuarkusTest
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -539,10 +540,19 @@ class ScheduleApiTest {
 
     @Test
     @Order(12)
-    void deletingAPipelineDeletesItsSchedules() {
+    void deletingAPipelineDeletesItsSchedules() throws SQLException {
         long id = create(designer, body("pipeline", "sc-gone", "cron", "@daily"));
+        // an open failure of the pipeline is cleared with it, so one saved later under the name is told of
+        sql("INSERT INTO kilnmark.notify_state (dedupe_key, open, severity) VALUES (?, true, 'high')",
+            "pipeline:sc-gone");
         as(designer).delete("/api/v1/pipelines/sc-gone").then().statusCode(204);
         as(steward).get("/api/v1/schedules/" + id).then().statusCode(404);
+        try (Connection c = db.getConnection(); PreparedStatement ps = c.prepareStatement(
+            "SELECT count(*) FROM kilnmark.notify_state WHERE dedupe_key = 'pipeline:sc-gone'");
+             ResultSet rs = ps.executeQuery()) {
+            rs.next();
+            assertEquals(0, rs.getLong(1));
+        }
         audit.awaitStored(5000);
         JsonPath deleted = admin().queryParam("action", AuditLog.SCHEDULE_DELETED).queryParam("limit", 200)
             .get("/api/v1/audit").then().statusCode(200).extract().jsonPath();
@@ -881,6 +891,52 @@ class ScheduleApiTest {
     @Inject
     io.kilnmark.server.pipelines.PipelineService pipelineService;
 
+    @Inject
+    io.kilnmark.server.pipelines.PipelineStore pipelineStore;
+
+    /** A delete's status and error, as "409 A run of ..."; the error is empty for a 204. */
+    private static String refusal(io.restassured.response.Response r) {
+        String error = r.statusCode() == 204 ? "" : r.jsonPath().getString("error");
+        return r.statusCode() + " " + error;
+    }
+
+    @Test
+    @Order(31)
+    void aPipelineDeleteThatCannotHaveItsLocksSoonIsRefusedAndAPipelineGoneIsNotFound() throws Exception {
+        as(designer).body(Map.of("name", "sc-held", "yaml", pipeline("sc-held"))).post("/api/v1/pipelines").then()
+            .statusCode(201);
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try (Connection held = db.getConnection()) {
+            // something else holds the pipeline's row, for longer than a delete waits for a lock
+            held.setAutoCommit(false);
+            try (PreparedStatement ps = held.prepareStatement(
+                "SELECT 1 FROM kilnmark.pipeline WHERE name = ? FOR UPDATE")) {
+                ps.setString(1, "sc-held");
+                ps.executeQuery().close();
+            }
+            try {
+                Future<String> delete = pool.submit(() -> refusal(as(designer).delete("/api/v1/pipelines/sc-held")));
+                // without the lock timeout this would wait for as long as the row is held
+                String refused = delete.get(60, java.util.concurrent.TimeUnit.SECONDS);
+                assertTrue(refused.startsWith("409 ") && refused.contains("Try again"), refused);
+            } finally {
+                held.rollback();
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        as(designer).delete("/api/v1/pipelines/sc-held").then().statusCode(204);
+        // a run queued just as the pipeline is deleted finds it gone: not a server error
+        org.junit.jupiter.api.Assertions.assertThrows(io.kilnmark.server.pipelines.PipelineStore.Missing.class,
+            () -> pipelineStore.queueRun("sc-held", 1, "a steward", "steward"));
+        // and through the service, as a start that was checked before the delete queues it: 404
+        jakarta.ws.rs.WebApplicationException gone = org.junit.jupiter.api.Assertions.assertThrows(
+            jakarta.ws.rs.WebApplicationException.class, () -> pipelineService.queueChecked(
+                new io.kilnmark.server.pipelines.PipelineService.CheckedRun("sc-held", 1, "{}", "{}"), "a steward",
+                io.kilnmark.server.auth.AccessRole.STEWARD));
+        assertEquals(404, gone.getResponse().getStatus());
+    }
+
     @Test
     @Order(28)
     void deletingAPipelineWhileItsScheduleFiresWaitsInsteadOfDeadlocking() throws Exception {
@@ -910,7 +966,7 @@ class ScheduleApiTest {
                 }
             }));
             assertTrue(holding.await(30, java.util.concurrent.TimeUnit.SECONDS));
-            Future<Integer> delete = pool.submit(() -> as(designer).delete("/api/v1/pipelines/sc-race").statusCode());
+            Future<String> delete = pool.submit(() -> refusal(as(designer).delete("/api/v1/pipelines/sc-race")));
             // the delete is waiting for the schedule's row, which the fire holds
             awaitLockWait("kilnmark.schedule WHERE pipeline = $1");
             release.countDown();
@@ -918,8 +974,10 @@ class ScheduleApiTest {
             // PostgreSQL cannot see that the fire's transaction waits on its own run's connection
             ScheduleStore.Fired fired = fire.get(60, java.util.concurrent.TimeUnit.SECONDS).orElseThrow();
             assertEquals(Scheduler.STARTED, fired.outcome());
-            // the delete waited for the fire, then found its run queued
-            assertEquals(409, delete.get(60, java.util.concurrent.TimeUnit.SECONDS));
+            // the delete waited for the fire, then found its run queued: not a lock wait given up on, as
+            // it would be with the locks taken in the other order
+            String refused = delete.get(60, java.util.concurrent.TimeUnit.SECONDS);
+            assertTrue(refused.startsWith("409 ") && refused.contains("queued or running"), refused);
             run = fired.pipelineRun();
         } finally {
             release.countDown();
@@ -928,6 +986,71 @@ class ScheduleApiTest {
         }
         awaitPipelineRunDone(run);
         as(designer).delete("/api/v1/pipelines/sc-race").then().statusCode(204);
+        as(steward).get("/api/v1/schedules/" + id).then().statusCode(404);
+    }
+
+    @Inject
+    io.kilnmark.server.flows.FlowService flowService;
+
+    @Test
+    @Order(29)
+    void deletingAFlowWhileItsScheduleFiresWaitsInsteadOfDeadlocking() throws Exception {
+        as(designer).body(Map.of("yaml", """
+            kilnmark: flow/v1
+            name: sc-flow-race
+            nodes:
+              - { id: pause, type: wait, for: 1s }
+            """)).post("/api/v1/flows").then().statusCode(201);
+        long id = create(designer, body("flow", "sc-flow-race", "cron", "@hourly"));
+        dueAgo(id, Duration.ofSeconds(5));
+        ScheduleStore.Schedule claimed = store.claimDue(null, Scheduler.BATCH,
+                (s, at) -> Scheduler.plan(s, at, Duration.ofHours(1))).stream()
+            .filter(x -> x.schedule().id() == id).findFirst().orElseThrow().schedule();
+        CountDownLatch holding = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        long run;
+        try {
+            // the fire holds the schedule's row, then queues a run, which locks the flow
+            Future<Optional<ScheduleStore.Fired>> fire = pool.submit(() -> store.fire(claimed, s -> {
+                holding.countDown();
+                try {
+                    release.await();
+                    long r = flowService.queueRun("sc-flow-race", null, Map.of(), "schedule " + id,
+                        io.kilnmark.server.auth.AccessRole.STEWARD).id();
+                    return new ScheduleStore.Fired(Scheduler.STARTED, null, r, null);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return new ScheduleStore.Fired(Scheduler.FAILED + "interrupted", null, null, null);
+                } catch (RuntimeException e) {
+                    return new ScheduleStore.Fired(Scheduler.FAILED + e.getClass().getSimpleName(), null, null, null);
+                }
+            }));
+            assertTrue(holding.await(60, java.util.concurrent.TimeUnit.SECONDS));
+            Future<String> delete = pool.submit(() -> refusal(as(designer).delete("/api/v1/flows/sc-flow-race")));
+            // the delete is waiting for the schedule's row, which the fire holds
+            awaitLockWait("kilnmark.schedule WHERE flow = $1");
+            release.countDown();
+            // with the locks taken in the other order these would wait for each other for ever:
+            // PostgreSQL cannot see that the fire's transaction waits on its own run's connection
+            ScheduleStore.Fired fired = fire.get(60, java.util.concurrent.TimeUnit.SECONDS).orElseThrow();
+            assertEquals(Scheduler.STARTED, fired.outcome());
+            // the delete waited for the fire, then found its run queued: not a lock wait given up on, as
+            // it would be with the locks taken in the other order
+            String refused = delete.get(60, java.util.concurrent.TimeUnit.SECONDS);
+            assertTrue(refused.startsWith("409 ") && refused.contains("queued or running"), refused);
+            run = fired.flowRun();
+        } finally {
+            release.countDown();
+            endLockWaits();
+            pool.shutdownNow();
+        }
+        await("flow run " + run, () -> as(viewer).get("/api/v1/flow-runs/" + run).then().extract().jsonPath()
+            .getString("run.status"), "succeeded"::equals);
+        // its job ends just after the run, and a delete waits for that
+        await("flow run " + run + "'s job", () -> refusal(as(designer).delete("/api/v1/flows/sc-flow-race")),
+            r -> !r.contains("queued or running"));
+        as(viewer).get("/api/v1/flows/sc-flow-race").then().statusCode(404);
         as(steward).get("/api/v1/schedules/" + id).then().statusCode(404);
     }
 

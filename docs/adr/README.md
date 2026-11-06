@@ -50,3 +50,4 @@ Add a new record rather than editing an accepted one; mark the old one supersede
 | [0045](0045-database-tools.md) | Database tools: explore a source, generate its SQL, and change it only with controls (amends 0028) | Accepted |
 | [0046](0046-scheduler.md) | One built-in scheduler for pipelines and flows | Accepted |
 | [0047](0047-external-schedulers.md) | External schedulers start runs and wait for them, with request keys and a run script | Accepted |
+| [0048](0048-deleting-a-flow.md) | Deleting a flow: its runs and schedules go, the pipeline runs it started stay | Accepted |

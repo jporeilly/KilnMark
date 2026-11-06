@@ -7,6 +7,11 @@ details.
 
 ### What's new
 
+- **Delete a flow** (ADR 0048). Designers and admins delete a flow from its page, after a warning
+  that names it and says what goes and what stays: its versions, its runs and its schedules go
+  (each schedule recorded in the audit log); the pipeline runs it started stay, with what they
+  wrote and the lineage they recorded. Refused while a run of it is queued or running.
+  ([Deleting a flow](docs/guide/flows.md#deleting-a-flow))
 - **A components reference.** One place for every pipeline node, flow node, connector, quality rule
   and expression function, with what it does and every setting it takes: its type, whether it is
   required, its default and what `${...}` may do in it, then what to know, who may use it and an
@@ -81,6 +86,26 @@ details.
   customer runs today), the machines (starting on the owner's server), soak, failure and scaling
   runs, `lab bench`, and a nightly check that fails on a 15% slowdown. Two diagrams,
   `benchmark-setup.svg` and `benchmark-cycle.svg`, drawn by `diagrams.mjs`.
+- **Deleting a flow** (ADR 0048, docs/design/flows.md section 4). `DELETE /api/v1/flows/{name}`
+  (designer; 204, 404, or 409 while a run is queued or running) runs `FlowStore.deleteWithSchedules`
+  in one transaction: the flow's schedules are locked first, then the flow's row, the order a
+  scheduled fire takes them, so the two never deadlock (a test holds a fire between its two locks
+  and shows the delete waits, then is refused). V20's foreign keys take the versions, runs and node
+  runs, and set the started pipeline runs' `flow_run_id` to null; no migration. Its schedules are
+  deleted with `DELETE … RETURNING` and each recorded as `schedule.deleted` with
+  `via: flow deleted`. Pipelines and flows now share that code (`ScheduleStore.lockFor`,
+  `ScheduleStore.deleteFor`, `ScheduleService.recordDeletedWith`). Deleting a pipeline or a flow
+  still records no audit event of its own: a gap for both, noted in ADR 0048. No node runs another
+  flow, so nothing refuses a delete for being used. The flow page's **Delete** (designers and
+  admins) asks on the page, starts on Cancel, and goes to the Flows list (or the Library for a
+  sample) once deleted. Every lock wait in a pipeline's or a flow's delete is limited to 5 seconds:
+  past that nothing is deleted and the answer is 409 saying to try again, so a schedule moved onto
+  it and fired at that moment cannot hang the two. Deleting a pipeline or a flow clears its open
+  problem for notifications, so one saved later under the name is mailed at its first failure. A
+  run queued, or a version saved, just as its pipeline or flow is deleted is answered 404 instead of
+  failing with a server error, a start with a request key included (it then keeps no key); the
+  request keys of deleted runs go with them (V37's cascade). A flow's delete also waits for the job of a run that has just ended,
+  which tells of a failure before it ends.
 - **The components reference is generated and checked** (docs/development.md, "The components
   reference"). `ComponentsReference` (a server test class) writes each node type's, connector's,
   flow node's and rule type's facts and settings tables from the catalogue into marked parts of
