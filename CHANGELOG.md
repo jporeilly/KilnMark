@@ -54,6 +54,11 @@ details.
 
 ### Details
 
+- **Error Prone checks the flow files too** (ADR 0042, decision 5). `FlowDefinition`, its test,
+  `FlowService` and `JobQueue` are no longer left out. What it found is fixed: case changes now
+  name `Locale.ROOT`, so a server in a Turkish locale reads `PRIORITY: HIGH` and the like as
+  written; a nested class is static; unused parameters and a field are gone.
+
 - **The scheduler** (ADR 0046, docs/design/schedules.md). Migration V36 adds `schedule`: one
   pipeline or flow (each a foreign key that cascades, so deleting a pipeline deletes its
   schedules), `cron`, `zone`, `parameters`, `run_as` (steward or designer), `enabled`,

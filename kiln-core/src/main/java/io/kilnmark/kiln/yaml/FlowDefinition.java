@@ -9,6 +9,8 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -487,7 +489,7 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
             return null;
         }
         var m = e.value() instanceof YamlReader.Scalar sc && sc.value() != null
-            ? DURATION.matcher(sc.written().strip().toLowerCase()) : null;
+            ? DURATION.matcher(sc.written().strip().toLowerCase(Locale.ROOT)) : null;
         if (m == null || !m.matches()) {
             problems.add(Problem.at(e.value().position(), null,
                 "queue_timeout is a time such as 30m, 90s or 2h: how long a node waits for a pipeline already running"));
@@ -623,7 +625,7 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         String status = "failed";
         YamlReader.Entry s = m.entries().get("status");
         if (s != null) {
-            String t = s.value().value() instanceof String str ? str.strip().toLowerCase() : null;
+            String t = s.value().value() instanceof String str ? str.strip().toLowerCase(Locale.ROOT) : null;
             if ("succeeded".equals(t) || "failed".equals(t)) {
                 status = t;
             } else {
@@ -758,7 +760,7 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         String severity = "info";
         YamlReader.Entry s = m.entries().get("severity");
         if (s != null) {
-            String t = s.value().value() instanceof String str ? str.strip().toLowerCase() : null;
+            String t = s.value().value() instanceof String str ? str.strip().toLowerCase(Locale.ROOT) : null;
             if (SEVERITIES.contains(t)) {
                 severity = t;
             } else {
@@ -1024,7 +1026,7 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
             return null;
         }
         var m = e.value() instanceof YamlReader.Scalar sc && sc.value() != null
-            ? TIMEOUT.matcher(sc.written().strip().toLowerCase()) : null;
+            ? TIMEOUT.matcher(sc.written().strip().toLowerCase(Locale.ROOT)) : null;
         Duration d = null;
         if (m != null && m.matches()) {
             long n = Long.parseLong(m.group(1));
@@ -1078,7 +1080,7 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
     /** A time such as 30m, 90s or 2h, or null. */
     private static Duration duration(YamlReader.Entry e) {
         var m = e.value() instanceof YamlReader.Scalar sc && sc.value() != null
-            ? DURATION.matcher(sc.written().strip().toLowerCase()) : null;
+            ? DURATION.matcher(sc.written().strip().toLowerCase(Locale.ROOT)) : null;
         if (m == null || !m.matches()) {
             return null;
         }
@@ -1132,7 +1134,7 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         }
         Set<String> seen = new HashSet<>();
         for (RawConnection r : raw) {
-            String word = r.when().strip().toLowerCase();
+            String word = r.when().strip().toLowerCase(Locale.ROOT);
             FlowEngine.Kind kind;
             FlowCondition condition = null;
             switch (word) {
