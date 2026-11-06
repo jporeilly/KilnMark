@@ -24,6 +24,19 @@ details.
   that a source can be reached and holds the tables or files the flow needs, keeping no data, and
   fails at once, naming what is missing, if not. Its `missing` value can go in a notice.
   ([Checking a source before the work starts](docs/guide/flows.md#checking-a-source-before-the-work-starts))
+- **Explore a database source** ([Database tools](docs/guide/database-tools.md), ADR 0045). A
+  database source's page shows its schemas, the tables and views of one, and a table's columns,
+  keys (both ways), indexes and the database's estimate of its rows, read live; **Count exactly**
+  counts them now, and **Preview** shows the first rows, masked as everywhere. For stewards,
+  designers and admins; no default's text, index expression or database error text is shown, as
+  each can quote a value.
+- **Database tools are decided** ([ADR 0045](docs/adr/0045-database-tools.md),
+  [design](docs/design/database-tools.md)): Explore a source's schemas, tables, columns, keys and
+  indexes with a masked preview; generate `CREATE TABLE`, `ALTER`, `CREATE INDEX` and `DROP` in
+  each database's dialect; connection settings on tabs; and operations that change a database,
+  behind a per-source Allow changes switch, previewed, confirmed and audited, with a second
+  person's approval on production sources. ADR 0045 amends ADR 0028. Explore is built (above);
+  the rest follows.
 
 ### Details
 
@@ -61,10 +74,17 @@ details.
   names, or with "Could not reach <source>"; it reports `missing`. Messages never quote the source's
   settings or its driver. Saving checks that the source exists and holds tables (databases) or files
   (file and object stores). The diagram, Settings tab and run timeline show it.
-
-- **Release images signed on the local runner**: `release.yml` signs the digest the registry
-  stores for each image, read back by tag after the push. On a Podman engine the digest recorded
-  locally is not the registry's, and signing it failed, which stopped the 0.0.10 release.
+- **Dev mode starts again**: `./gradlew :server:quarkusDev` needs two POMs the build itself does
+  not (`org.jboss:jboss-parent:37`, `org.jboss.slf4j:slf4j-jboss-logmanager:1.1.0.Final`); their
+  checksums, matched against Maven Central, are now in `gradle/verification-metadata.xml`
+  (ADR 0042).
+- **Dependencies updated** (Dependabot's Gradle group): Jackson 2.22, the AWS SDK 2.57, LangChain4j
+  1.23, Error Prone 2.52, the SQL Server driver's patch release, lz4, GreenMail
+  and the licence report plug-in, with their checksums and signing keys in
+  `gradle/verification-metadata.xml` (ADR 0042). `mime4j` stays at 0.8.12, the version the Quarkus
+  platform pins: 0.8.15 cannot be resolved against it. The MariaDB driver stays at 3.5.10: 3.5.11
+  fails every connection to MariaDB, and Dependabot is told to skip it. Oracle's driver stays at
+  23.26.3.0.0, the version Kilnmark pins with its checksum; Dependabot no longer proposes it.
 
 ## 0.0.10 (5 November 2026)
 
@@ -245,6 +265,9 @@ details.
 
 ### Details
 
+- **Release images signed on the local runner**: `release.yml` signs the digest the registry
+  stores for each image, read back by tag after the push. On a Podman engine the digest recorded
+  locally is not the registry's, and signing it failed.
 - **Releases on the local runner**: on a tag, `release.yml` runs where `KILNMARK_RUNNER` says, as CI
   does; on a self-hosted runner it builds, signs, pushes the images and drafts the release, and
   leaves the install rehearsal to GitHub's runners. The runner image adds `gh`.

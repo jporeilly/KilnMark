@@ -346,8 +346,8 @@ names a Linux path (`/srv/...`, `/run/...`), or Git Bash rewrites it to a Window
   the other (about 25 minutes). For more at once, run another with its own base folder, mounted at
   the same path inside and out: `-e RUNNER_BASE=/srv/gh-runner-2 -e RUNNER_NAME=pc-kilnmark-linux-2
   -v /srv/gh-runner-2:/srv/gh-runner-2`, with its own token in `/srv/gh-runner-2/token`. The
-  owner's PC runs two. Each heavy-databases job starts SQL Server, MySQL, MariaDB and Oracle containers in the
-  machine; give it the memory (the machine has 24 GB on the owner's PC).
+  owner's PC runs three. Each heavy-databases job starts SQL Server, MySQL, MariaDB and Oracle
+  containers in the machine, so give it the memory (the machine has 24 GB on the owner's PC).
 - To remove it: `podman rm -f kilnmark-ci-runner`, delete it under the repository's Settings,
   Actions, Runners, and delete `/srv/gh-runner`.
 

@@ -702,6 +702,28 @@ public class GenericJdbcConnector extends JdbcConnector {
 
     // ------------------------------------------------------------------ reading
 
+    /**
+     * Explore on a Generic JDBC source shows the columns and primary key the catalogue reads, and
+     * no foreign keys, indexes or row estimate: drivers place schemas and catalogues their own
+     * ways, and Kilnmark reads those only as far as a scan needs (ADR 0045).
+     */
+    @Override
+    public io.kilnmark.kiln.connect.TableDetail explore(SourceConfig source, String path, Duration timeout)
+        throws ConnectorException {
+        AssetInfo a = asset(source, path);
+        return new io.kilnmark.kiln.connect.TableDetail(a.path(), a.kind(), a.fields().stream()
+            .map(f -> new io.kilnmark.kiln.connect.TableDetail.Column(f.name(), f.position(), f.sourceType(), null,
+                null, f.nullable(), false, false, f.kind())).toList(),
+            a.primaryKey(), List.of(), List.of(), List.of(), null);
+    }
+
+    /** Not offered on Generic JDBC sources: names are quoted as each driver says only once a read connects. */
+    @Override
+    public long countRows(SourceConfig source, String path, Duration timeout) throws ConnectorException {
+        throw new ConnectorException("Counting rows exactly is not offered for Generic JDBC sources yet. "
+            + "Scan the table to record its row count.");
+    }
+
     /** Not used: the reader builds its query once connected, quoting as the driver says. */
     @Override
     protected String selectSql(String schema, String table, long rowLimit) {
