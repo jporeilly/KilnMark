@@ -90,7 +90,8 @@ export function ScheduleForm({
   const [paramsError, setParamsError] = useState<string | null>(null);
   const [typed, setTyped] = useState<Record<string, string>>({});
   const [problems, setProblems] = useState<Record<string, string>>({});
-  const [preview, setPreview] = useState<SchedulePreview | null>(null);
+  // The answer, with the expression and zone it was asked for, so an older one is never shown as this one's.
+  const [preview, setPreview] = useState<{ asked: string; answer: SchedulePreview } | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -138,11 +139,13 @@ export function ScheduleForm({
       return;
     }
     const abort = new AbortController();
+    const asked = `${cron.trim()}|${zone}`;
+    setPreviewError(null);
     const t = window.setTimeout(() => {
       schedulesApi
         .preview(cron.trim(), zone, abort.signal)
         .then((p) => {
-          setPreview(p);
+          setPreview({ asked, answer: p });
           setPreviewError(null);
         })
         .catch((e: Error) => {
@@ -155,11 +158,14 @@ export function ScheduleForm({
     };
   }, [cron, zone]);
 
-  /** Sets a preset's part and the expression it gives. */
+  /**
+   * Sets a preset's part and the expression it gives. A part that is not right yet (no time, the
+   * 32nd) empties the expression, so the times shown and saved are never an earlier choice's.
+   */
   const choose = (p: Preset) => {
     setKind(p.kind);
-    const c = presetCron(p);
-    if (c) setCron(c);
+    if (p.kind === "custom") return;
+    setCron(presetCron(p) ?? "");
   };
   const presetNow = (over: Partial<{ kind: PresetKind; time: string; minute: number; every: number; day: number }>): Preset => {
     const k = over.kind ?? kind;
@@ -200,7 +206,14 @@ export function ScheduleForm({
     if (saving) return;
     setError(null);
     if (!cron.trim()) {
-      setError("Give the times: choose a preset or write a cron expression.");
+      setError(
+        kind === "custom" ? "Give the times: choose a preset or write a cron expression." : "Finish the times: a part of them is not right yet.",
+      );
+      return;
+    }
+    if (params == null || paramsError) {
+      // Saving now would replace the values the schedule holds with none.
+      setError("The parameters could not be read, so the values cannot be saved. Close the form and try again.");
       return;
     }
     const { values, problems: found } = runValues(params ?? [], typed);
@@ -231,6 +244,7 @@ export function ScheduleForm({
     }
   };
 
+  const shownPreview = preview && preview.asked === `${cron.trim()}|${zone}` ? preview.answer : null;
   const id = "sf";
   const heading = schedule ? `Change schedule ${schedule.id}` : `Add a schedule for ${name}`;
 
@@ -380,19 +394,23 @@ export function ScheduleForm({
           <div className="sf-preview" aria-live="polite">
             <h3 className="sf-preview-h">Next five runs</h3>
             {!cron.trim() ? (
-              <p className="small muted">Choose a preset or write an expression to see when it runs.</p>
+              <p className="small muted">
+                {kind === "custom"
+                  ? "Choose a preset or write an expression to see when it runs."
+                  : "Finish the times above to see when it runs."}
+              </p>
             ) : previewError ? (
               <p className="small pl-bad">Could not work out the times: {previewError}</p>
-            ) : !preview ? (
+            ) : !shownPreview ? (
               <p className="small muted">Working out the times…</p>
-            ) : !preview.valid ? (
+            ) : !shownPreview.valid ? (
               <p className="small pl-bad">
-                <strong>Cannot be used:</strong> {preview.problem}
+                <strong>Cannot be used:</strong> {shownPreview.problem}
               </p>
             ) : (
               <ol className="sf-next small">
-                {preview.next.map((t) => (
-                  <li key={t}>{whenText(t, preview.zone)}</li>
+                {shownPreview.next.map((t) => (
+                  <li key={t}>{whenText(t, shownPreview.zone)}</li>
                 ))}
               </ol>
             )}
@@ -470,7 +488,7 @@ export function ScheduleForm({
           </p>
         )}
         <div className="buttons">
-          <button type="submit" className="primary" disabled={saving}>
+          <button type="submit" className="primary" disabled={saving || params == null || paramsError != null}>
             {saving ? "Saving…" : schedule ? "Save changes" : "Add schedule"}
           </button>
           <button type="button" onClick={close}>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   allows,
   formatTime,
@@ -17,15 +17,19 @@ export function useSchedules(target: ScheduleTarget | null, enabled = true) {
   const key = target == null ? "" : "pipeline" in target ? `p:${target.pipeline}` : `f:${target.flow}`;
   const [schedules, setSchedules] = useState<Schedule[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Only the latest answer counts, so a slow look never undoes a newer one.
+  const sequence = useRef(0);
   const reload = useCallback(() => {
     if (!enabled) return;
+    const n = ++sequence.current;
     schedulesApi
       .list(key === "" ? undefined : key.startsWith("p:") ? { pipeline: key.slice(2) } : { flow: key.slice(2) })
       .then((s) => {
+        if (sequence.current !== n) return;
         setSchedules(s);
         setError(null);
       })
-      .catch((e: Error) => setError(e.message));
+      .catch((e: Error) => sequence.current === n && setError(e.message));
   }, [key, enabled]);
   useEffect(reload, [reload]);
   return { schedules, error, reload };
@@ -67,19 +71,28 @@ export function ScheduledNext({ schedules, onShow }: { schedules: Schedule[] | n
 export const scheduleWords = (s: Schedule) => cronWords(s.cron) ?? `At the times ${s.cron} gives`;
 
 /**
- * Pause, resume and delete, for designers and admins. Pausing and resuming send the schedule back
- * as it is with only `enabled` changed; deleting asks first.
+ * Pause, resume, delete and opening one to edit, for designers and admins. Pausing and resuming
+ * read the schedule again and send it back with only `enabled` changed, so a change someone made
+ * since the list was read is kept; the API replaces everything, and makes the person saving its
+ * new "set by". Deleting asks first, then moves the focus to the message saying it is done.
  */
 export function useScheduleActions(reload: () => void) {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
+  const noticeRef = useRef<HTMLParagraphElement>(null);
   const toggle = async (s: Schedule) => {
+    if (busy != null) return;
     setBusy(s.id);
     setError(null);
     try {
-      await schedulesApi.replace(s.id, { ...scheduleChange(s), enabled: !s.enabled });
-      setNotice(s.enabled ? `Schedule ${s.id} is paused.` : `Schedule ${s.id} is resumed: it runs next at its next time.`);
+      const now = await schedulesApi.get(s.id);
+      await schedulesApi.replace(s.id, { ...scheduleChange(now), enabled: !now.enabled });
+      setNotice(
+        now.enabled
+          ? `Schedule ${s.id} is paused, and is now set by you.`
+          : `Schedule ${s.id} is resumed, and is now set by you: its runs carry your name.`,
+      );
       reload();
     } catch (e) {
       setError((e as Error).message);
@@ -88,12 +101,15 @@ export function useScheduleActions(reload: () => void) {
     }
   };
   const remove = async (s: Schedule) => {
+    if (busy != null) return;
     if (!window.confirm(`Delete schedule ${s.id} (${scheduleWords(s)})? It stops running. The runs it started stay.`)) return;
     setBusy(s.id);
     setError(null);
     try {
       await schedulesApi.remove(s.id);
       setNotice(`Schedule ${s.id} is deleted.`);
+      // Its row and the button that had the focus are gone: the focus goes to the message.
+      window.setTimeout(() => noticeRef.current?.focus(), 0);
       reload();
     } catch (e) {
       setError((e as Error).message);
@@ -101,7 +117,16 @@ export function useScheduleActions(reload: () => void) {
       setBusy(null);
     }
   };
-  return { notice, setNotice, error, setError, busy, toggle, remove };
+  /** Opens a schedule to edit as it is now, not as the list last read it. */
+  const open = async (s: Schedule, edit: (fresh: Schedule) => void) => {
+    setError(null);
+    try {
+      edit(await schedulesApi.get(s.id));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  return { notice, setNotice, noticeRef, error, setError, busy, toggle, remove, open };
 }
 
 /** What happened the last time a schedule was due: in words, with a tone, the reason and the run. */
@@ -225,18 +250,18 @@ export function SchedulesTable({
               {writes && (
                 <td>
                   <div className="buttons tight">
-                    <button type="button" onClick={() => onEdit?.(s)} disabled={busy === s.id} aria-label={`Edit schedule ${s.id}`}>
+                    <button type="button" onClick={() => onEdit?.(s)} aria-disabled={busy === s.id ? true : undefined} aria-label={`Edit schedule ${s.id}`}>
                       Edit
                     </button>
                     <button
                       type="button"
                       onClick={() => onToggle?.(s)}
-                      disabled={busy === s.id}
+                      aria-disabled={busy === s.id ? true : undefined}
                       aria-label={`${s.enabled ? "Pause" : "Resume"} schedule ${s.id}`}
                     >
                       {s.enabled ? "Pause" : "Resume"}
                     </button>
-                    <button type="button" onClick={() => onDelete?.(s)} disabled={busy === s.id} aria-label={`Delete schedule ${s.id}`}>
+                    <button type="button" onClick={() => onDelete?.(s)} aria-disabled={busy === s.id ? true : undefined} aria-label={`Delete schedule ${s.id}`}>
                       Delete
                     </button>
                   </div>

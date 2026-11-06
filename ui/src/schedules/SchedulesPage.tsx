@@ -79,7 +79,7 @@ export function SchedulesPage({ role, show }: { role: AccessRole; show: Schedule
           </>
         }
       />
-      <p role="status" className="notice">
+      <p role="status" className="notice" tabIndex={-1} ref={actions.noticeRef}>
         {actions.notice}
       </p>
       {(actions.error || loadError) && (
@@ -131,7 +131,7 @@ export function SchedulesPage({ role, show }: { role: AccessRole; show: Schedule
             label="Schedules"
             names={names}
             busy={actions.busy}
-            onEdit={designer ? setEditing : undefined}
+            onEdit={designer ? (s) => void actions.open(s, setEditing) : undefined}
             onToggle={designer ? actions.toggle : undefined}
             onDelete={designer ? actions.remove : undefined}
           />

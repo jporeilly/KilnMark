@@ -52,13 +52,18 @@ export function SchedulesSection({
             className="primary"
             onClick={() => setEditing("new")}
             disabled={!canAdd}
-            title={canAdd ? undefined : `Save the ${what} first`}
+            aria-describedby={canAdd ? undefined : "sc-add-hint"}
           >
             Add a schedule
           </button>
         )}
       </div>
-      <p role="status" className="notice">
+      {designer && !canAdd && (
+        <p id="sc-add-hint" className="hint">
+          Save the {what} first: a schedule runs its latest saved version.
+        </p>
+      )}
+      <p role="status" className="notice" tabIndex={-1} ref={actions.noticeRef}>
         {actions.notice}
       </p>
       {(actions.error || loadError) && (
@@ -78,7 +83,7 @@ export function SchedulesSection({
           role={role}
           label={`Schedules of ${targetName(target)}`}
           busy={actions.busy}
-          onEdit={designer ? (s) => setEditing(s) : undefined}
+          onEdit={designer ? (s) => void actions.open(s, setEditing) : undefined}
           onToggle={designer ? actions.toggle : undefined}
           onDelete={designer ? actions.remove : undefined}
         />

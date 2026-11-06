@@ -33,6 +33,7 @@ const SLOW = { timeout: 30_000 };
 let listed: Schedule[] = [];
 const api = vi.hoisted(() => ({
   list: vi.fn(),
+  get: vi.fn(),
   preview: vi.fn(),
   replace: vi.fn(),
   remove: vi.fn(),
@@ -44,7 +45,7 @@ vi.mock("../api", async (original) => {
   const real = await original<typeof import("../api")>();
   return {
     ...real,
-    schedulesApi: { ...real.schedulesApi, list: api.list, preview: api.preview, replace: api.replace, remove: api.remove, create: api.create },
+    schedulesApi: { ...real.schedulesApi, list: api.list, get: api.get, preview: api.preview, replace: api.replace, remove: api.remove, create: api.create },
     pipelinesApi: { ...real.pipelinesApi, get: api.getPipeline },
   };
 });
@@ -68,6 +69,7 @@ beforeEach(() => {
     schedule({ id: 4, cron: "*/15 * * * *", enabled: false, nextAt: null, lastOutcome: "failed: Version 2 cannot run", lastPipelineRun: null, parameters: {} }),
   ];
   api.list.mockReset().mockImplementation(async () => listed);
+  api.get.mockReset().mockImplementation(async (id: number) => listed.find((s) => s.id === id));
   api.replace.mockReset().mockImplementation(async (id: number, body: { enabled: boolean }) => schedule({ id, enabled: body.enabled }));
   api.remove.mockReset().mockResolvedValue(null);
   api.create.mockReset().mockImplementation(async () => schedule({ id: 9 }));
@@ -154,7 +156,12 @@ describe("a pipeline's schedules", () => {
   test("designers pause, resume and delete, each sending its call", SLOW, async () => {
     await show("designer");
     expect(button("Add a schedule")).toBeDefined();
+    // Someone changed the description since the list was read: pausing keeps their change.
+    listed = listed.map((s) => (s.id === 3 ? { ...s, description: "Changed since" } : s));
     await act(async () => button("Pause schedule 3")!.click());
+    expect(api.get).toHaveBeenCalledWith(3);
+    expect(api.replace).toHaveBeenCalledWith(3, expect.objectContaining({ description: "Changed since" }));
+    expect(host.textContent).toContain("Schedule 3 is paused, and is now set by you.");
     expect(api.replace).toHaveBeenCalledWith(3, expect.objectContaining({ pipeline: "orders", cron: "0 2 * * *", enabled: false, parameters: { region: "EMEA" } }));
     await act(async () => button("Resume schedule 4")!.click());
     expect(api.replace).toHaveBeenCalledWith(4, expect.objectContaining({ cron: "*/15 * * * *", enabled: true }));
@@ -166,6 +173,8 @@ describe("a pipeline's schedules", () => {
     expect(confirm).toHaveBeenCalledTimes(2);
     expect(api.remove).toHaveBeenCalledWith(3);
     expect(host.textContent).toContain("Schedule 3 is deleted.");
+    await settle();
+    expect(document.activeElement?.textContent).toBe("Schedule 3 is deleted.");
   });
 });
 
@@ -230,6 +239,36 @@ describe("the schedule form", () => {
       description: "Weekly APAC load",
     });
     expect(host.textContent).toContain("Schedule 9 is added.");
+  });
+
+  test("a part of a preset that is not right empties the expression rather than keep an older one", SLOW, async () => {
+    const user = userEvent.setup();
+    await show("designer");
+    await user.click(button("Add a schedule")!);
+    await settle(500);
+    const dialog = host.querySelector("dialog")!;
+    await user.selectOptions(dialog.querySelector("#sf-repeat")!, "monthly");
+    const day = dialog.querySelector("#sf-day") as HTMLInputElement;
+    await user.clear(day);
+    await user.type(day, "32");
+    await settle(500);
+    expect((dialog.querySelector("#sf-cron") as HTMLInputElement).value).toBe("");
+    expect(dialog.textContent).toContain("Finish the times above to see when it runs.");
+    await user.click(button("Add schedule")!);
+    expect(api.create).not.toHaveBeenCalled();
+    expect(dialog.querySelector('[role="alert"]')?.textContent).toBe("Finish the times: a part of them is not right yet.");
+  });
+
+  test("cannot save while the parameters are unread, so stored values are never wiped", SLOW, async () => {
+    const user = userEvent.setup();
+    api.getPipeline.mockRejectedValue(new Error("The server answered 500"));
+    await show("designer");
+    await user.click(button("Edit schedule 3")!);
+    await settle(500);
+    const dialog = host.querySelector("dialog")!;
+    expect(dialog.textContent).toContain("parameters could not be read");
+    expect(button("Save changes")!.disabled).toBe(true);
+    expect(api.replace).not.toHaveBeenCalled();
   });
 
   test("shows the server's refusal in the form", SLOW, async () => {
