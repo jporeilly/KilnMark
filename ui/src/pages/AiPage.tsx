@@ -755,16 +755,23 @@ function ProfileForm({
           </div>
           <div className="field">
             <label htmlFor="ai-purpose">Purpose</label>
-            <select id="ai-purpose" value={f.purpose} onChange={(e) => set("purpose", e.target.value as AiPurpose)}>
-              <option value="chat">Chat: answers questions and drafts text</option>
-              <option value="embedding">Embedding: turns text into numbers for search by meaning</option>
+            <select id="ai-purpose" value={f.purpose} onChange={(e) => set("purpose", e.target.value as AiPurpose)}
+              aria-describedby="ai-purpose-hint">
+              <option value="chat">Chat</option>
+              <option value="embedding">Embedding</option>
             </select>
+            <p id="ai-purpose-hint" className="hint">
+              {f.purpose === "embedding"
+                ? "Turns text into numbers, for search by meaning."
+                : "Answers questions and drafts text."}
+            </p>
           </div>
         </div>
         <div className="field-row">
           <div className="field">
             <label htmlFor="ai-provider">Provider</label>
-            <select id="ai-provider" value={f.provider} onChange={(e) => set("provider", e.target.value)}>
+            <select id="ai-provider" value={f.provider} onChange={(e) => set("provider", e.target.value)}
+              aria-describedby="ai-provider-hint">
               {providers.map((p) => (
                 <option key={p.id} value={p.id} disabled={f.purpose === "embedding" && !p.embeds}>
                   {p.label}
@@ -772,6 +779,9 @@ function ProfileForm({
                 </option>
               ))}
             </select>
+            {f.provider === "openai-compatible" && (
+              <p id="ai-provider-hint" className="hint">For llama-server, vLLM, Ollama, LM Studio and others with the OpenAI API.</p>
+            )}
           </div>
           <div className="field">
             <label htmlFor="ai-model">Model name</label>

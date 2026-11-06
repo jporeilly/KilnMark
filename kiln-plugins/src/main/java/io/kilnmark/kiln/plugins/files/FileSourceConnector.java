@@ -36,7 +36,7 @@ public abstract class FileSourceConnector implements Connector {
 
     /** The optional setting saying delimited files have no header row. */
     static final Setting HEADER = Setting.bool("header", "Header row", true,
-        "true (the default): the first row names the columns. false: it is data, and columns are named "
+        "The first row names the columns. Off: the first row is data, and the columns are named "
             + "column_1, column_2 and so on");
 
     /** The formats read as rows (Excel sheets as tables), and documents read as text. */
@@ -73,8 +73,8 @@ public abstract class FileSourceConnector implements Connector {
 
     /** Whether to keep the text of documents, or only their properties. */
     static final Setting KEEP_TEXT = Setting.bool("keep_text", "Keep document text", true,
-        "true (the default) stores documents' text in Kilnmark for search and reading. false stores only their "
-            + "properties (title, author, pages, language, words) and deletes text stored before at the next scan");
+        "Stores documents' text in Kilnmark for search and reading. Off stores only their properties "
+            + "(title, author, pages, language, words) and deletes text stored before at the next scan");
 
     /** With keep_text false, whether stewards may have a document's text read from the source to view it. */
     static final Setting READ_TEXT_ON_DEMAND = Setting.bool("read_text_on_demand", "Read text on demand", false,

@@ -427,7 +427,7 @@ function NumberField({
 }
 
 /** The allowed email domains: a list with Remove buttons, and a box to add one (Enter adds). */
-function DomainList({ value, onChange, readOnly }: { value: string[]; onChange: (v: string[]) => void; readOnly?: boolean }) {
+export function DomainList({ value, onChange, readOnly }: { value: string[]; onChange: (v: string[]) => void; readOnly?: boolean }) {
   const [draft, setDraft] = useState("");
   const [status, setStatus] = useState("");
   const add = () => {
@@ -448,10 +448,19 @@ function DomainList({ value, onChange, readOnly }: { value: string[]; onChange: 
       <span id="domains-label">
         <strong>Allowed email domains</strong>
       </span>
-      <p id="domains-hint" className="hint">
-        Empty: any domain. Otherwise email goes only to these domains and their subdomains (example.com also allows
-        mail.example.com), for personal and team addresses alike. Addresses outside them are paused, not deleted.
-      </p>
+      {/* As every field: the box under the name, what is listed under the box, the help last. */}
+      {!readOnly && (
+        <span className="copy-row">
+          <label htmlFor="domain-new" className="visually-hidden">
+            Domain to add
+          </label>
+          <input id="domain-new" value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={onKey}
+            placeholder="example.com" aria-describedby="domains-hint" autoComplete="off" />
+          <Button onClick={add} disabled={!draft.trim()}>
+            Add domain
+          </Button>
+        </span>
+      )}
       {readOnly && <Locked id="domains-locked" />}
       {value.length === 0 ? (
         <p className="hint">No domains listed: any domain.</p>
@@ -473,20 +482,12 @@ function DomainList({ value, onChange, readOnly }: { value: string[]; onChange: 
           ))}
         </ul>
       )}
-      {!readOnly && (
-        <span className="copy-row">
-          <label htmlFor="domain-new" className="visually-hidden">
-            Domain to add
-          </label>
-          <input id="domain-new" value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={onKey}
-            placeholder="example.com" aria-describedby="domains-hint" autoComplete="off" />
-          <Button onClick={add} disabled={!draft.trim()}>
-            Add domain
-          </Button>
-        </span>
-      )}
       <p role="status" className="hint">
         {status}
+      </p>
+      <p id="domains-hint" className="hint">
+        Empty: any domain. Otherwise email goes only to these domains and their subdomains (example.com also allows
+        mail.example.com), for personal and team addresses alike. Addresses outside them are paused, not deleted.
       </p>
     </div>
   );
