@@ -69,6 +69,15 @@ export const NAV: NavItem[] = [
     tint: "sky",
     current: (r) => (r.page === "flows" ? "page" : r.page === "flow" || r.page === "flow-run" ? "true" : undefined),
   },
+  // Schedules run pipelines and flows at set times (ADR 0046), so they come right after them.
+  {
+    id: "schedules",
+    label: "Schedules",
+    href: href.schedules(),
+    icon: "schedules",
+    tint: "pink",
+    current: on("schedules"),
+  },
   // Samples and templates, apart from a team's own pipelines and flows (ADR 0043).
   { id: "library", label: "Library", href: href.library(), icon: "library", tint: "amber", current: on("library") },
   { id: "issues", label: "Issues", href: href.issues(), icon: "issues", tint: "red", current: on("issues"), badge: "issues" },

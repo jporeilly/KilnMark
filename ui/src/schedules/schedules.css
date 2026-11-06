@@ -1,0 +1,122 @@
+/* Schedules: the section under a pipeline's or flow's canvas, the Schedules page and the form. */
+
+.sc-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 8px;
+}
+
+.sc-intro {
+  margin: 0;
+  max-width: 70ch;
+}
+
+.sc-words {
+  font-weight: 600;
+}
+
+/* Who set it: the name its runs carry, so it stands out for access reviews. */
+.sc-setby {
+  font-weight: 600;
+  color: var(--km-ink);
+}
+
+.sc-table td,
+.sc-table th {
+  vertical-align: top;
+}
+
+/* The row's heading is the schedule's times; the lines under it read as ordinary text. */
+.sc-table th[scope="row"] {
+  font-weight: 400;
+  min-width: 200px;
+}
+
+.sc-target,
+.sc-setby,
+.sc-nowrap {
+  white-space: nowrap;
+}
+
+.sc-next {
+  margin-top: 4px;
+  min-width: 150px;
+}
+
+.sc-description,
+.sc-values {
+  margin-top: 2px;
+}
+
+/* The row's buttons one above another, so the table keeps to the page's width. */
+.sc-table .buttons.tight {
+  flex-direction: column;
+  align-items: stretch;
+  flex-wrap: nowrap;
+}
+
+.sc-review {
+  margin-top: 12px;
+}
+
+/* The form, in a dialog: longer than most, so it scrolls within the screen. */
+.sf-dialog {
+  max-width: 600px;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+
+.sf-dialog fieldset {
+  border: 1px solid var(--km-border-control);
+  border-radius: var(--km-radius-sm);
+  padding: 8px 14px 4px;
+  margin: 0 0 16px;
+  min-width: 0;
+}
+
+.sf-dialog legend {
+  font-weight: 600;
+  padding: 0 4px;
+}
+
+.sf-dialog .field {
+  margin-bottom: 14px;
+}
+
+.sf-dialog .field .hint {
+  margin-bottom: 0;
+}
+
+.sf-preview {
+  margin: 4px 0 12px;
+}
+
+.sf-preview-h {
+  font-size: 0.875rem;
+  margin: 0 0 4px;
+}
+
+.sf-next {
+  margin: 0;
+  padding-left: 1.4em;
+}
+
+.sf-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sf-check input {
+  width: auto;
+  margin: 0;
+}
+
+@media (forced-colors: active) {
+  .sf-dialog fieldset {
+    border-color: CanvasText;
+  }
+}
