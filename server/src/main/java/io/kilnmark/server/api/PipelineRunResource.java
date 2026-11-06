@@ -1,6 +1,8 @@
 package io.kilnmark.server.api;
 
 import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.media.Content;
+import org.eclipse.microprofile.openapi.annotations.media.Schema;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
 
@@ -8,6 +10,7 @@ import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.pipelines.PipelineService;
 import io.kilnmark.server.pipelines.PipelineViews;
 import io.quarkus.security.identity.SecurityIdentity;
+import io.smallrye.common.annotation.RunOnVirtualThread;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
@@ -34,6 +37,10 @@ public class PipelineRunResource {
     @jakarta.inject.Inject
     com.fasterxml.jackson.databind.ObjectMapper json;
 
+    /** Starting and reading runs for callers that wait, with request keys (ADR 0047). */
+    @jakarta.inject.Inject
+    RunRequests runRequests;
+
     public PipelineRunResource(PipelineService pipelines, SecurityIdentity identity) {
         this.pipelines = pipelines;
         this.identity = identity;
@@ -41,17 +48,32 @@ public class PipelineRunResource {
 
     @GET
     @Path("{id}")
+    @Produces({MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN})
+    @RunOnVirtualThread
     @Operation(summary = "A pipeline run", description = "The run's status and timings and, per node, rows in and out "
         + "per port, peak memory, when it started, had its first row, handed on its last and ended, and the error "
         + "where it failed; the assets its writes wrote, whether they are now catalogued, the assets it read and the "
         + "lineage recorded between them; and, while it runs, where its rows are (progress, every two seconds), with "
-        + "the node holding it back. Role: viewer.")
+        + "the node holding it back. With wait (whole seconds, at most kilnmark.api.max-wait, 15 minutes by "
+        + "default) the answer comes when the run has ended or when the wait is up, whichever is first; the status "
+        + "says which. With Accept: text/plain the run comes as name: value lines (id, kind, name, status, ended, "
+        + "page, message). Role: viewer.")
     @APIResponses({
-        @APIResponse(responseCode = "200", description = "The run"),
+        @APIResponse(responseCode = "200", description = "The run", content = @Content(
+            mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = PipelineViews.RunDetail.class))),
+        @APIResponse(responseCode = "400", description = "A wait that is not a whole number of seconds"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
-        @APIResponse(responseCode = "404", description = "No such run")})
-    public PipelineViews.RunDetail get(@PathParam("id") long id) {
-        return pipelines.run(id, sights);
+        @APIResponse(responseCode = "404", description = "No such run"),
+        @APIResponse(responseCode = "503", description = "With wait, on a run still going: as many requests as "
+            + "allowed are waiting, on this server or for this caller; ask again after Retry-After seconds, or "
+            + "without wait")})
+    public Response get(@PathParam("id") long id, @QueryParam("wait") String wait,
+                        @jakarta.ws.rs.core.Context jakarta.ws.rs.core.HttpHeaders headers,
+                        @jakarta.ws.rs.core.Context io.vertx.core.http.HttpServerRequest request) {
+        return runRequests.read("pipeline", id, wait, identity, headers, request, pipelines::runStatus, runId -> {
+            PipelineViews.RunSummary run = pipelines.runSummary(runId, sights);
+            return new RunRequests.Shown(run, run.pipeline(), run.status(), run.error());
+        }, () -> pipelines.run(id, sights));
     }
 
     @GET

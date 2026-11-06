@@ -49,5 +49,6 @@ Add a new record rather than editing an accepted one; mark the old one supersede
 | [0044](0044-installing-with-one-control-script.md) | Installing and running Kilnmark with one control script, from signed images | Accepted |
 | [0045](0045-database-tools.md) | Database tools: explore a source, generate its SQL, and change it only with controls (amends 0028) | Accepted |
 | [0046](0046-scheduler.md) | One built-in scheduler for pipelines and flows | Accepted |
+| [0047](0047-external-schedulers.md) | External schedulers start runs and wait for them, with request keys and a run script | Accepted |
 | [0049](0049-more-nodes-and-how-coarse-they-are.md) | More nodes, and how coarse a node is: one per shape of work, single-value operations as expression functions; web calls behind allowed hosts | Accepted |
 | [0050](0050-ai-in-pipelines.md) | AI in pipelines: an `ai` node (classify, extract, summarise, translate, find personal data) and an `embed` node, under the model rules, never on unmasked sensitive values | Accepted |

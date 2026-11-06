@@ -21,7 +21,10 @@ run timelines).
    `gradle/verification-metadata.xml` (ADR 0042).
 3. **The scheduler's pages, and deleting a flow** (Flows F4, [ADR 0026](../adr/0026-flows.md),
    [ADR 0046](../adr/0046-scheduler.md)): the scheduler's server, API and pages are built, for
-   pipelines and flows (docs/design/schedules.md); deleting a flow remains.
+   pipelines and flows (docs/design/schedules.md); deleting a flow remains. External schedulers
+   are supported too (built, [ADR 0047](../adr/0047-external-schedulers.md)): Control-M,
+   AutoSys, cron and Windows Task Scheduler start pipelines and flows with `kilnmark-run`, wait
+   for them, and get an exit code; a retry with the same request key never runs the work twice.
 
 ## 2. Get a release out
 
@@ -66,6 +69,8 @@ run timelines).
    Exasol as connectors of their own, with the SQL that moves files refused (ADR 0030).
 12. **Templates of a team's own** ("save as template", after the Library's, ADR 0043), and
     comparing a pipeline's or flow's versions; then v0.1.0.
+13. **Business calendars for schedules (holidays, working days, last working day of the month)**,
+    for the built-in scheduler (ADR 0046). External schedulers bring their own calendars (ADR 0047).
 
 ## 4. Hardening, as customers ask
 
@@ -78,24 +83,24 @@ sources (ADR 0034), OIDC sign-in with MFA (ADR 0036, #78), access reviews and to
 #83), the SSDF self-assessment (#84), the bundled Keycloak (ADR 0014, #93), static analysis with
 dependency verification (ADR 0042, #99) and signed images with an offline install (ADR 0044, #102).
 
-13. **The SSDF gaps**: build provenance, a threat model, a security analyser; the rest of the
+14. **The SSDF gaps**: build provenance, a threat model, a security analyser; the rest of the
     evidence pack when a customer's due diligence asks.
-14. **Change approval and environments**, which also gives database tools their second person.
+15. **Change approval and environments**, which also gives database tools their second person.
     With it, marks keyed by the database's identity rather than the source record, and password references
     (`env:`, `secret:`) for admins only (ADR 0045, "Related gap").
-15. **Generic JDBC drivers in a process of their own** (ADR 0030, decision 5); new table names
+16. **Generic JDBC drivers in a process of their own** (ADR 0030, decision 5); new table names
     checked against the driver's longest table name, not its longest column name (ADR 0042).
-16. **Small items**: a JDBC `socketTimeout`, masking on the run quality view, a metric for preview
+17. **Small items**: a JDBC `socketTimeout`, masking on the run quality view, a metric for preview
     slots, `KILNMARK_DB_PASSWORD` in the dev compose.
-17. **Audit events** for data read with the unmask grant, and for MCP refusals (ADR 0029).
-18. **A full export in open formats** (for exit), and a FIPS mode when a federal customer needs it.
+18. **Audit events** for data read with the unmask grant, and for MCP refusals (ADR 0029).
+19. **A full export in open formats** (for exit), and a FIPS mode when a federal customer needs it.
 
 ## 5. Housekeeping
 
-19. **The local CI runner on a Podman machine of its own**, without the Windows drives mounted,
+20. **The local CI runner on a Podman machine of its own**, without the Windows drives mounted,
     starting afresh for each job (ephemeral), and its PostgreSQL image under a CI-only tag
     (docs/development.md, "CI on a local runner"; review of #111).
-20. **The server tests on Windows**: Testcontainers cannot reach Podman from the tool shell, so
+21. **The server tests on Windows**: Testcontainers cannot reach Podman from the tool shell, so
     server tests run only in CI there.
 
 ## Owner's items

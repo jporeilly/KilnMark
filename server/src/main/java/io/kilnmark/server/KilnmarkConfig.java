@@ -42,6 +42,9 @@ public interface KilnmarkConfig {
 
     Worker worker();
 
+    /** The API: how long a request may wait for a run to end, and how many may wait at once (ADR 0047). */
+    Api api();
+
     /** The scheduler role: how often it looks for schedules that are due (ADR 0046). */
     Schedules schedules();
 
@@ -376,6 +379,28 @@ public interface KilnmarkConfig {
         /** On shutdown, how long running jobs may take to finish before they are stopped and requeued. */
         @WithDefault("30s")
         Duration shutdownTimeout();
+    }
+
+    /** The API role: requests that wait for a run to end (docs/guide/external-schedulers.md). */
+    interface Api {
+        /** The longest one request waits for a run to end; a longer {@code wait} is cut to this. */
+        @WithDefault("15m")
+        Duration maxWait();
+
+        /**
+         * Requests that may wait for a run at the same time, on each process with the api role. One
+         * more read is refused with 503 and Retry-After, so waiting schedulers cannot crowd out the API.
+         */
+        @WithDefault("100")
+        int maxWaiting();
+
+        /**
+         * Of those, how many one token or person may hold, so one caller cannot take every place.
+         * One more is refused as above; a start that finds no place still starts its run, and
+         * answers at once.
+         */
+        @WithDefault("10")
+        int maxWaitingPerCaller();
     }
 
     /** Schedules of pipelines and flows (ADR 0046, docs/design/schedules.md). */

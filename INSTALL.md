@@ -402,6 +402,15 @@ quarter: the runbook, with what to check after a restore, is
 ([ADR 0039](docs/adr/0039-backup-and-restore.md)). The release folder's `backup.sh` and `restore.sh`
 are what the control script runs on Linux.
 
+### Run pipelines and flows from your scheduler
+
+The release folder holds `kilnmark-run.sh` (Linux and Unix) and `kilnmark-run.cmd` with
+`kilnmark-run.ps1` (Windows). Copy them to the machines where Control-M, AutoSys, cron or Windows
+Task Scheduler run their jobs: each starts a pipeline or flow, waits for it to end and exits with
+what happened. Give the scheduler a steward token of its own, in a file only its jobs can read. See
+[Running from an external scheduler](docs/guide/external-schedulers.md)
+([ADR 0047](docs/adr/0047-external-schedulers.md)).
+
 ## B. From source, with the reference lab and the samples
 
 1. `git clone https://github.com/jporeilly/KilnMark.git` and `cd KilnMark`.
