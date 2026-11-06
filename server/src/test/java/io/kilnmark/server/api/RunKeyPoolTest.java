@@ -36,12 +36,19 @@ import io.restassured.response.Response;
 @TestProfile(RunKeyPoolTest.SmallPool.class)
 class RunKeyPoolTest {
 
-    /** A pool of six connections, and a short wait for one, so a start that holds two fails fast. */
+    /**
+     * A pool of ten connections, fewer than the starts, and a short wait for one, so a start that
+     * holds two fails fast. Ten is the least the server starts with for one slot and one flow on a
+     * process with the api and worker roles (PoolSizeCheck); the scheduler is not needed here.
+     */
     public static class SmallPool implements QuarkusTestProfile {
         @Override
         public Map<String, String> getConfigOverrides() {
-            return Map.of("quarkus.datasource.jdbc.max-size", "6",
-                "quarkus.datasource.jdbc.acquisition-timeout", "3S");
+            return Map.of("quarkus.datasource.jdbc.max-size", "10",
+                "quarkus.datasource.jdbc.acquisition-timeout", "3S",
+                "kilnmark.roles", "api,worker",
+                "kilnmark.worker.concurrency", "1",
+                "kilnmark.worker.flows", "1");
         }
     }
 

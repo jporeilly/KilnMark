@@ -27,7 +27,8 @@ public final class WriteSettings {
         SettingSpec.optional(PROFILE, "Profile what is written", SettingSpec.Kind.BOOLEAN, true,
             "Profile the rows in the same pass and record the profile with the written table or file"),
         SettingSpec.optional(KEEP_VALUES, "Keep example values", SettingSpec.Kind.BOOLEAN, true,
-            "false keeps statistics without example values or sample rows; the source's own rule still applies"));
+            "Whether the profile keeps example values and sample rows; off keeps the statistics only. The "
+                + "source's own rule still applies"));
 
     /** A whole-number setting. */
     public static SettingSpec number(String key, String label, long fallback, String help) {

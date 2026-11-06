@@ -9,8 +9,8 @@ Status: version 0.0.9, early and moving fast; see the [changelog](CHANGELOG.md).
 - **Sources:** PostgreSQL, SQL Server, MySQL, MariaDB, Oracle, any database with a JDBC driver an
   admin registers, local folders and S3, with CSV, JSON and Parquet files. Scan them, search
   tables, views and columns, and open each asset with its column profiles and quality score.
-- **Pipelines:** graphs of nodes (read, filter, compute, select, lookup, aggregate, union, dedupe,
-  route, limit, quality gate, write), built on a canvas or in YAML, with parameters, server
+- **Pipelines:** graphs of nodes (read, filter, compute, select, lookup, join, aggregate, union,
+  dedupe, route, limit, sort, quality gate, write), built on a canvas or in YAML, with parameters, server
   variables, previews at any node and a predicted quality before they run.
 - **Flows:** run pipelines in an order, on success, failure or a condition over what they
   measured, with SQL, notice, wait and stop nodes, and one pipeline for each item of a list. Nodes
@@ -36,7 +36,7 @@ under it a panel with the latest run, its nodes, suggestions, every run and ever
 A flow's page: its diagram, connections labelled with when they are taken, and the same panel, here
 listing each node with what it runs after and how it went in the latest run.
 
-![A flow's page: a diagram running a pipeline, then either a second pipeline or a notice depending on the share of customers set aside; under it the Nodes tab, a table of each node, what it runs after, and its status, start, time and result in the latest run](docs/images/flow-page.png)
+![A flow's page, with Run now and Delete beside its name: a diagram running a pipeline, then either a second pipeline or a notice depending on the share of customers set aside; under it the Nodes tab, a table of each node, what it runs after, and its status, start, time and result in the latest run](docs/images/flow-page.png)
 
 ## Quick start
 

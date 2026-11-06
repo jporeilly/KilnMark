@@ -464,6 +464,7 @@ worker is running, scans stay `queued`.
 | --- | --- | --- |
 | `kilnmark.worker.concurrency` (`KILNMARK_WORKER_CONCURRENCY`) | `2` | Jobs (scans, quality checks and pipeline runs) one worker runs at the same time: its slots |
 | `kilnmark.worker.flows` (`KILNMARK_WORKER_FLOWS`) | `8` | Flows one worker watches at the same time; they hold no slot, but a database connection each |
+| `quarkus.datasource.jdbc.max-size` (`QUARKUS_DATASOURCE_JDBC_MAX_SIZE`) | `30` | Connections to Kilnmark's database this process may open. At least `concurrency × 3 + flows + 1` with the worker role, plus 5 with the api or scheduler role (20 with the defaults); the server refuses to start with fewer (`PoolSizeCheck`) and names the settings to change |
 | `kilnmark.worker.poll-interval` | `5s` | How often to look for jobs when no notification arrives |
 | `kilnmark.worker.heartbeat-interval` | `10s` | How often a running job reports that it is alive |
 | `kilnmark.worker.stale-after` | `2m` | A running job silent this long, whose worker is gone, is recovered |
@@ -507,7 +508,12 @@ Workers wake at once on a PostgreSQL notification and poll as a fallback. A sour
 one scan waiting or running: asking for another returns the one in progress. While a worker scans
 a source it holds a lock on that source, so two scans of one source never overlap. If a worker
 dies, the next worker to check (on start, then every 30 seconds) puts its jobs back in the queue,
-or marks them failed once they have been tried `max-attempts` times.
+or marks them failed once they have been tried `max-attempts` times. In the same pass it marks
+failed the flow, pipeline and quality runs whose jobs have failed. A pipeline or flow run is
+tried once, so when its worker dies it is failed within `stale-after` plus about 40 seconds of its
+last heartbeat (a pass runs every 30 seconds, checked at each heartbeat); a quality evaluation is
+tried `max-attempts` times first. Reading a run never does this:
+`GET /api/v1/quality/runs/{id}`, which the UI asks every second while rules run, only reads.
 
 **Stopping a worker.** On shutdown a worker stops taking jobs and lets running scans finish for
 up to `shutdown-timeout` (30 s). Scans still running are then asked to stop, which takes up to
@@ -1153,6 +1159,33 @@ The UI's code is not kept by a formatter: most files would change under Prettier
 Keep a change in the file's own style (lines up to about 120 characters), and never run a formatter
 over a whole file you are only changing in part, since the diff then hides the change.
 
+### The components reference
+
+`docs/guide/components-reference.md` and the `reference-*.md` pages beside it describe every
+pipeline node, flow node, connector and quality rule. Each entry's facts and settings tables are
+made from the catalogue the server uses (`NodeFactory` and its `SettingSpec`s, `Connector` and its
+settings, writer settings and abilities, `CommonSettings`, `FlowDefinition`'s controls and values,
+`RuleType` and the keys a gate takes), between two lines that neither the app nor GitHub shows:
+
+```text
+[generated: node read]: #
+...
+[end: node read]: #
+```
+
+`ComponentsReferenceTest` (server) fails when a part differs from what the catalogue makes now, when
+a component has no entry or a page has one for a component the server lacks, when a flow node's or
+rule's hand-written settings table names other keys than the reader takes (the flow node and rule
+tables are hand-written: only their keys are checked, not their types or defaults), when the
+expression function tables in `pipeline-nodes.md` miss a function, when the images under Versions
+tested are not exactly those the integration tests use, and when an entry has no example. Every
+YAML example on the pages is a whole pipeline or flow, checked as saving checks it against stub
+sources; every JSON example is a rule, checked as `POST /api/v1/quality/rules` checks it. After
+changing a setting, a connector or a node, run `./gradlew :server:writeReference -PskipUi` and
+commit the pages; write the prose around a new entry by hand. The check runs as its own task,
+`:server:checkReference`, part of `check`, so a change to a guide reruns it without the rest of the
+server's tests.
+
 ### Pictures in the guides
 
 The guides' diagrams and screenshots are in `docs/guide/images`, shown in the app's documentation and
@@ -1178,7 +1211,9 @@ they stay sharp at GitHub's width.
 
 ## Rules
 
-- Versions go up by exactly 0.0.1 per release.
+- Versions count like digits: each release adds one to the last part, and each part counts from 0 to 9 like a digit, carrying into the part before it (0.0.9 is followed by 0.1.0, 0.1.9 by 0.2.0 and 0.9.9 by
+  1.0.0). No part is ever 10 or more; the release tagged 0.0.10 counts as 0.1.0, so the next was
+  0.1.1. Milestones have names, not numbers.
 - Run the full regression suite before every package.
 - Anything hard to reverse gets a [decision record](adr/README.md).
 - Code adapted from Kettle 10.2 is logged in [provenance.md](legal/provenance.md).

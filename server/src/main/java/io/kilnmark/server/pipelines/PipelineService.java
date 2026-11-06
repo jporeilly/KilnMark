@@ -527,15 +527,18 @@ public class PipelineService {
     }
 
     /** Deletes the pipeline as {@link #delete} does; returns the schedules deleted with it, to record. */
-    public List<PipelineStore.GoneSchedule> deleteWithSchedules(String name, String by) {
+    public List<io.kilnmark.server.schedules.ScheduleStore.Gone> deleteWithSchedules(String name, String by) {
         try {
-            List<PipelineStore.GoneSchedule> gone = store.deleteWithSchedules(name).orElseThrow(() ->
-                fail(Response.Status.NOT_FOUND, "No pipeline called " + name));
+            List<io.kilnmark.server.schedules.ScheduleStore.Gone> gone = store.deleteWithSchedules(name)
+                .orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No pipeline called " + name));
             LOG.infof("Pipeline %s deleted by %s, with %d schedules", name, by, gone.size());
             return gone;
         } catch (PipelineStore.Busy e) {
             throw fail(Response.Status.CONFLICT, "A run of " + name + " is queued or running. Wait for it to finish, "
                 + "or cancel it, then delete the pipeline.");
+        } catch (io.kilnmark.server.schedules.ScheduleStore.LockWaitTooLong e) {
+            throw fail(Response.Status.CONFLICT, "Nothing was deleted: " + name + " or one of its schedules was busy "
+                + "a moment ago, perhaps with a scheduled run starting. Try again.");
         }
     }
 
@@ -595,6 +598,7 @@ public class PipelineService {
      * caller's own transaction ({@code Db.together}) joins.
      *
      * @throws io.kilnmark.server.api.AlreadyRunning (409) while a run of the pipeline is queued or running
+     * @throws WebApplicationException (404) when the pipeline was deleted since it was checked
      */
     public PipelineStore.Run queueChecked(CheckedRun checked, String by, AccessRole role) {
         PipelineStore.Run run;
@@ -604,6 +608,9 @@ public class PipelineService {
         } catch (PipelineStore.Busy e) {
             throw new io.kilnmark.server.api.AlreadyRunning("A run of " + checked.name() + " is already queued or "
                 + "running. Wait for it to finish, or cancel it, then run the pipeline again.");
+        } catch (PipelineStore.Missing e) {
+            // deleted since it was checked
+            throw fail(Response.Status.NOT_FOUND, "No pipeline called " + checked.name());
         }
         LOG.infof("Run %d of pipeline %s (version %d) queued by %s", run.id(), checked.name(), checked.version(), by);
         return run;
@@ -656,8 +663,13 @@ public class PipelineService {
                                              int priority, int flowTry) {
         RunnableVersion checked = runnableVersion(name, version, parameters, variables);
         int n = checked.version();
-        PipelineStore.Run run = store.queueRun(name, n, by, role.id(), flowRunId, flowNode, flowItem,
-            writeJson(checked.parameters()), writeJson(variables), priority, flowTry);
+        PipelineStore.Run run;
+        try {
+            run = store.queueRun(name, n, by, role.id(), flowRunId, flowNode, flowItem,
+                writeJson(checked.parameters()), writeJson(variables), priority, flowTry);
+        } catch (PipelineStore.Missing e) {
+            throw fail(Response.Status.NOT_FOUND, "No pipeline called " + name);
+        }
         LOG.infof("Run %d of pipeline %s (version %d) queued by %s for node %s%s of flow run %d", run.id(), name, n,
             by, flowNode, flowItem == null ? "" : ", item " + flowItem, flowRunId);
         return run;

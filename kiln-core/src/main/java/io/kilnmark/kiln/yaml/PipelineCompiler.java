@@ -288,28 +288,16 @@ public final class PipelineCompiler {
         /** Puts the values into one setting; what is wrong, or null. */
         private String fill(SettingSpec spec, Object written, String key, Map<String, Object> config,
                             Map<String, Object> text) {
-            if (spec.parameters() == SettingSpec.Parameters.NONE) {
-                return "cannot take a parameter: it names something a run must not choose";
-            }
-            if (spec.parameters() == SettingSpec.Parameters.NAME_PART_ONLY) {
-                if (!(written instanceof String w)) {
-                    return "must be a single value";
-                }
-                Parameters.Filled r = Parameters.fill(w, values, Parameters.Use.TARGET_PART);
-                if (r.problem() != null) {
-                    return r.problem();
-                }
-                config.put(key, r.text());
-                text.put(key, r.text());
-                return null;
-            }
-            switch (spec.kind()) {
-                case TEXT, EXPRESSION -> {
+            switch (spec.fill()) {
+                case TARGET_PART, TEXT, EXPRESSION -> {
                     if (!(written instanceof String w)) {
                         return "must be a single value";
                     }
-                    Parameters.Filled r = Parameters.fill(w, values, spec.kind() == SettingSpec.Kind.TEXT
-                        ? Parameters.Use.NAME_PART : Parameters.Use.EXPRESSION);
+                    Parameters.Filled r = Parameters.fill(w, values, switch (spec.fill()) {
+                        case TARGET_PART -> Parameters.Use.TARGET_PART;
+                        case TEXT -> Parameters.Use.NAME_PART;
+                        default -> Parameters.Use.EXPRESSION;
+                    });
                     if (r.problem() != null) {
                         return r.problem();
                     }
@@ -317,7 +305,7 @@ public final class PipelineCompiler {
                     text.put(key, r.text());
                     return null;
                 }
-                case EXPRESSIONS, CONDITIONS -> {
+                case EXPRESSIONS -> {
                     if (!(written instanceof Map<?, ?> m)) {
                         return "must be a mapping of names to expressions";
                     }
@@ -337,7 +325,7 @@ public final class PipelineCompiler {
                     text.put(key, out);
                     return null;
                 }
-                case NUMBER, BOOLEAN -> {
+                case WHOLE_VALUE -> {
                     String name = written instanceof String w ? Parameters.whole(w) : null;
                     if (name == null) {
                         return "takes a parameter only as its whole value, such as " + key + ": ${name}";
@@ -359,11 +347,15 @@ public final class PipelineCompiler {
                     text.put(key, v instanceof Double d ? Parameters.numberText(d) : String.valueOf(v));
                     return null;
                 }
-                default -> {
+                case NONE -> {
+                    if (spec.parameters() == SettingSpec.Parameters.NONE) {
+                        return "cannot take a parameter: it names something a run must not choose";
+                    }
                     return "cannot take a parameter: parameters fill text, expression, number and true/false "
                         + "settings, never a source, asset, column, choice or address";
                 }
             }
+            throw new AssertionError("Every way of filling a setting is handled above: " + spec.fill());
         }
 
         /** Whether a setting as written names a parameter or variable, at any depth. */
@@ -466,9 +458,11 @@ public final class PipelineCompiler {
                     : Checked.wrong("must be one of " + String.join(", ", spec.choices()));
                 case NUMBER -> number(v);
                 case BOOLEAN -> v instanceof Boolean ? Checked.ok(v) : Checked.wrong("must be true or false");
-                case COLUMNS -> {
+                case COLUMNS, ORDER -> {
                     if (!(v instanceof List<?> l) || !l.stream().allMatch(i -> i instanceof String || i instanceof Number)) {
-                        yield Checked.wrong("must be a list of columns, such as [customer_id, email]");
+                        yield Checked.wrong(spec.kind() == SettingSpec.Kind.ORDER
+                            ? "must be a list of columns, each perhaps followed by desc, such as [region, amount desc]"
+                            : "must be a list of columns, such as [customer_id, email]");
                     }
                     List<?> t = text instanceof List<?> tl && tl.size() == l.size() ? tl : l;
                     List<Object> out = new ArrayList<>();

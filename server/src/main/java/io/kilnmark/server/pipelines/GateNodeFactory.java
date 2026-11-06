@@ -91,9 +91,9 @@ public final class GateNodeFactory implements NodeFactory {
     @Override
     public List<SettingSpec> settings() {
         return List.of(
-            SettingSpec.choice("on_fail", "When rows fail", false, "stop", "stop fails the run, so the writes after the "
-                + "gate do not commit; quarantine sends failing rows to the quarantine port and the rest on; warn lets "
-                + "every row through and records what failed", ON_FAIL),
+            SettingSpec.choice("on_fail", "When rows fail", false, "stop", "What to do when rows fail: stop fails the run, so "
+                + "the writes after the gate do not commit; quarantine sends failing rows to the quarantine port and "
+                + "the rest on; warn lets every row through and records what failed", ON_FAIL),
             SettingSpec.optional("asset_rules", "Check the asset's rules", SettingSpec.Kind.BOOLEAN, true,
                 "Checks the enabled quality rules of the table or file read upstream"),
             SettingSpec.optional("rules_from", "Rules of read node", SettingSpec.Kind.TEXT, null,

@@ -452,6 +452,7 @@ final class QualityPredictor {
             case "dedupe" -> dedupe(s, in);
             case "route" -> route(s, in);
             case "limit" -> Map.of("out", limit(s, in));
+            case "sort" -> Map.of("out", in); // the same rows, in another order
             case "gate" -> gate(plan, s, in, predicted);
             case "write" -> {
                 predicted.add(write(s, in));

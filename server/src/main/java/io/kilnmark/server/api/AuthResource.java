@@ -12,7 +12,9 @@ import io.kilnmark.server.KilnmarkConfig;
 import io.kilnmark.server.audit.AuditLog;
 import io.kilnmark.server.auth.MaxAgeRedirect;
 import io.kilnmark.server.auth.OidcIdentityAugmentor;
+import io.quarkus.oidc.OidcProviderClient;
 import io.quarkus.oidc.OidcSession;
+import io.quarkus.oidc.RefreshToken;
 import io.quarkus.security.Authenticated;
 import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.annotation.security.PermitAll;
@@ -44,6 +46,12 @@ public class AuthResource {
 
     @Inject
     jakarta.enterprise.inject.Instance<OidcSession> session;
+
+    /** The session's refresh token, which signing out asks the provider to revoke. */
+    @Inject
+    jakarta.enterprise.inject.Instance<RefreshToken> refreshToken;
+
+    private static final org.jboss.logging.Logger LOG = org.jboss.logging.Logger.getLogger(AuthResource.class);
 
     /** Whether sign-in with the identity provider is on: Quarkus's OIDC client has a tenant. */
     @ConfigProperty(name = "quarkus.oidc.tenant-enabled", defaultValue = "false")
@@ -98,8 +106,29 @@ public class AuthResource {
     public Response signOut() {
         if (OidcIdentityAugmentor.fromProvider(identity) && session.isResolvable()) {
             audit.record(AuditLog.actor(identity), AuditLog.SIGN_OUT, "session", Map.of());
+            revokeRefreshToken();
             session.get().logout().await().indefinitely();
         }
         return Response.noContent().build();
+    }
+
+    /**
+     * Asks the provider to revoke the session's refresh token (RFC 7009), so a copy of the session
+     * cookie taken before signing out cannot renew itself afterwards: it ends with the ID token in it.
+     * Best effort: a provider without a revocation endpoint, or one that does not answer, never stops
+     * the person signing out.
+     */
+    private void revokeRefreshToken() {
+        try {
+            String token = refreshToken.isResolvable() ? refreshToken.get().getToken() : null;
+            if (token != null && identity.getAttribute(OidcProviderClient.class.getName()) instanceof OidcProviderClient c
+                && !Boolean.TRUE.equals(c.revokeRefreshToken(token).await().atMost(java.time.Duration.ofSeconds(5)))) {
+                LOG.info("The identity provider did not revoke the refresh token of a session signed out "
+                    + "(it may not offer revocation); a copy of the session can renew until the provider's session ends");
+            }
+        } catch (RuntimeException e) {
+            LOG.warnf("Could not ask the identity provider to revoke a signed-out session's refresh token (%s)",
+                e.getClass().getSimpleName());
+        }
     }
 }

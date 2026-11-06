@@ -1,5 +1,5 @@
 // Pipeline nodes that change rows (filter, compute, select, lookup, aggregate, union, dedupe, route,
-// limit) and the expression language they share (docs/design/pipelines.md, sections 3 and 4).
+// limit, sort) and the expression language they share (docs/design/pipelines.md, sections 3 and 4).
 // No dependencies beyond the engine core: the expression language is written here, by hand.
 plugins {
     `java-library`
@@ -13,4 +13,8 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     jvmArgs("--add-opens=java.base/java.nio=ALL-UNNAMED")
+    // SortJoinTiming, run only with KILNMARK_TIMING=1, holds ten million rows in memory.
+    if (providers.environmentVariable("KILNMARK_TIMING").orNull == "1") {
+        maxHeapSize = "8g"
+    }
 }

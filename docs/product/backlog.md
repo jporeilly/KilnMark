@@ -21,10 +21,11 @@ run timelines).
    `gradle/verification-metadata.xml` (ADR 0042).
 3. **The scheduler's pages, and deleting a flow** (Flows F4, [ADR 0026](../adr/0026-flows.md),
    [ADR 0046](../adr/0046-scheduler.md)): the scheduler's server, API and pages are built, for
-   pipelines and flows (docs/design/schedules.md); deleting a flow remains. External schedulers
-   are supported too (built, [ADR 0047](../adr/0047-external-schedulers.md)): Control-M,
-   AutoSys, cron and Windows Task Scheduler start pipelines and flows with `kilnmark-run`, wait
-   for them, and get an exit code; a retry with the same request key never runs the work twice.
+   pipelines and flows (docs/design/schedules.md), and deleting a flow is built
+   ([ADR 0048](../adr/0048-deleting-a-flow.md)). External schedulers are supported too (built,
+   [ADR 0047](../adr/0047-external-schedulers.md)): Control-M, AutoSys, cron and Windows Task
+   Scheduler start pipelines and flows with `kilnmark-run`, wait for them, and get an exit code; a
+   retry with the same request key never runs the work twice. Done.
 
 ## 2. Get a release out
 
@@ -52,9 +53,9 @@ run timelines).
    sources. Decided in [ADR 0045](../adr/0045-database-tools.md) (amends ADR 0028); the design and
    its order (Explore, the SQL generator, settings on tabs, operations) are in
    [docs/design/database-tools.md](../design/database-tools.md).
-9. **More nodes** (owner, 6 November 2026; [ADR 0049](../adr/0049-more-nodes-and-how-coarse-they-are.md)),
-   starting after release 0.1.1: `sort` and `join` (two inputs of any size, spilling to disk),
-   `window`, and more expression functions first; then web calls (a REST connector, an `http`
+9. **More nodes** (owner, 6 November 2026; [ADR 0049](../adr/0049-more-nodes-and-how-coarse-they-are.md)).
+   `sort` and `join` (two inputs of any size, spilling to disk) are done (#137, #140); next
+   `window` and more expression functions; then web calls (a REST connector, an `http`
    node and an `http` flow node, behind the allowed hosts an admin sets), JSON and XML, `pivot`
    and `unpivot`, change detection and dimension history, `sequence`, `mask`, generated rows, and
    file actions in flows. Nodes stay coarse: one per shape of work, single-value operations as
@@ -64,11 +65,15 @@ run timelines).
    pipeline from a description, suggesting quality rules, and run tools on the MCP server.
 10. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
    pre-run checks, flags on slow pipelines. Run tools on the MCP server fold in here (parked item
-   in Plan & Scope).
+   in Plan & Scope). **Benchmarks come first** (owner, 6 November 2026; planned in
+   [docs/design/benchmarks.md](../design/benchmarks.md)): a data generator and `lab bench`, the
+   copy, file-load and join workloads at 1 and 10 million rows on the owner's server, a nightly
+   check that fails on a 15% slowdown, then the rest of the workloads, two benchmark machines and
+   a comparison with the tool a customer runs today. What they find decides what to optimise.
 11. **Connectors** (brief of 28 October): SFTP/FTP, SMB, Azure Blob, REST; Snowflake, Vertica and
    Exasol as connectors of their own, with the SQL that moves files refused (ADR 0030).
 12. **Templates of a team's own** ("save as template", after the Library's, ADR 0043), and
-    comparing a pipeline's or flow's versions; then v0.1.0.
+    comparing a pipeline's or flow's versions; then the Foundation milestone.
 13. **Business calendars for schedules (holidays, working days, last working day of the month)**,
     for the built-in scheduler (ADR 0046). External schedulers bring their own calendars (ADR 0047).
 
@@ -91,7 +96,14 @@ dependency verification (ADR 0042, #99) and signed images with an offline instal
 16. **Generic JDBC drivers in a process of their own** (ADR 0030, decision 5); new table names
     checked against the driver's longest table name, not its longest column name (ADR 0042).
 17. **Small items**: a JDBC `socketTimeout`, masking on the run quality view, a metric for preview
-    slots, `KILNMARK_DB_PASSWORD` in the dev compose.
+    slots, `KILNMARK_DB_PASSWORD` in the dev compose. **Job retention**: the job table keeps every
+    job ever queued (done and failed too), so it only grows; deleting old finished jobs, and how
+    long to keep them, needs the owner's decision first, as it deletes records (efficiency review,
+    6 November 2026; V38 indexed its lookups by run meanwhile). **Indexes on the other foreign
+    keys** that V38 left out (it took the five the review named): `profile.run_id` (ON DELETE
+    CASCADE, not led by any index, so deleting a source still reads `profile` once per scan run),
+    and the ON DELETE SET NULL keys `ai_usage.profile_id` and `source_id`,
+    `accepted_pattern.rule_id`, `drift_event.compared_with` and `quality_issue.drift_event_id`.
 18. **Audit events** for data read with the unmask grant, and for MCP refusals (ADR 0029).
 19. **A full export in open formats** (for exit), and a FIPS mode when a federal customer needs it.
 
@@ -102,7 +114,23 @@ dependency verification (ADR 0042, #99) and signed images with an offline instal
     (docs/development.md, "CI on a local runner"; review of #111).
 21. **The server tests on Windows**: Testcontainers cannot reach Podman from the tool shell, so
     server tests run only in CI there.
+22. **Refactoring, in small steps** (owner, 6 November 2026): each its own pull request that changes
+    no behaviour, with every test green before and after. In order:
+    1. **One run lifecycle for pipelines and flows**: checking, queueing, request keys, schedules
+       and deleting are written twice today, in `PipelineService` (about 2,000 lines) and
+       `FlowService` (about 2,400), and every change to one had to be made to the other
+       (#124, #128 and the scheduler). First, before the `sort` and `join` nodes (item 9), which
+       touch the same code. It also takes the efficiency review's findings in that code (6
+       November 2026), not fixed on their own: the flow watcher (each watched flow holds a database
+       connection and asks after its runs on a timer), runs asking the database whether they are
+       cancelled while they work, and the lock a schedule's fire holds while it queues its run.
+    2. **`ui/src/api.ts` split by area** (about 2,100 lines of every API type and call), so UI
+       changes stop meeting in one file.
+    3. **One form-field building block and form styles for the whole UI**: the node panel's
+       layout faults (#133) came from fields laid out separately and from app-wide fieldset rules
+       leaking into forms; the panel layout sweep starts this.
+    4. **`FlowService` and `QualityPredictor` (about 2,600 lines) split** into focused parts.
 
 ## Owner's items
 
-- The demo deck and the partnership status slide, last made for 0.0.8: refresh for 0.1.0.
+- The demo deck and the partnership status slide, last made for 0.0.8: refresh for the Foundation milestone.

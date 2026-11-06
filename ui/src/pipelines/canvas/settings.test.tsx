@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { PipelineProblem, PipelineValidation, Source, NodeType, NodeTypeSetting } from "../../api";
 import { arrivingColumns, defaultText, problemSetting, shownSettings, nodeSummary } from "./insight";
 import type { GraphNode } from "./model";
-import { SettingControl, type ControlContext } from "./SettingControls";
+import { SettingControl, orderTermText, parseOrderTerm, type ControlContext } from "./SettingControls";
 import { categoryOf, Palette } from "./Palette";
 
 const spec = (key: string, kind: string, extra: Partial<NodeTypeSetting> = {}): NodeTypeSetting => ({
@@ -38,6 +38,28 @@ const html = (s: NodeTypeSetting, value: unknown, over: Partial<ControlContext> 
   renderToStaticMarkup(
     <SettingControl spec={s} id="t" value={value as never} onChange={() => {}} readOnly={false} problems={problems} context={ctx(over)} />,
   );
+
+describe("each setting's box sits under its name, its help under the box", () => {
+  // So the boxes of a row line up whatever the length of each one's help (the node settings panel).
+  const order = (out: string, box: RegExp) => {
+    const at = out.search(box);
+    const help = out.indexOf('class="hint"');
+    expect(at).toBeGreaterThan(-1);
+    expect(help).toBeGreaterThan(at);
+  };
+
+  test("a text, a choice and a source", () => {
+    order(html(spec("label", "text"), "x"), /<input/);
+    order(html(spec("mode", "choice", { choices: ["create", "replace"] }), "replace"), /<select/);
+    order(html(spec("source", "source"), "crm-db"), /<select|<input/);
+  });
+
+  test("a list of columns: the box to add one first, then what is chosen", () => {
+    const out = html(spec("key", "columns"), []);
+    order(out, /<input|<select/);
+    expect(out.indexOf("None chosen")).toBeGreaterThan(out.search(/<input|<select/));
+  });
+});
 
 describe("each setting kind gets its control, with help and default", () => {
   test("BOOLEAN: a switch, showing the default when unset", () => {
@@ -99,6 +121,30 @@ describe("each setting kind gets its control, with help and default", () => {
     expect(html(spec("keep", "columns"), [], { side: "lookup", nodeType: "lookup" })).toMatch(/<option value="id">id \(int64\)<\/option>/);
   });
 
+  test("ORDER: columns in order, each with its direction and where empty values go", () => {
+    const out = html(spec("by", "order"), ["status desc", "customer_id nulls first"], { nodeType: "sort" });
+    expect(out).toMatch(/<ol class="cv-order"/);
+    expect(out.indexOf(">status<")).toBeLessThan(out.indexOf(">customer_id<"));
+    expect(out).toMatch(/aria-label="Direction for status"[^>]*>.*?<option value="desc" selected="">Largest first<\/option>/);
+    expect(out).toMatch(/aria-label="Empty values in customer_id"[^>]*>.*?<option value="first" selected="">Empty first<\/option>/);
+    expect(out).toContain('aria-label="Move customer_id up"');
+    expect(out).not.toContain('aria-label="Move status up"'); // the first cannot move up
+    expect(out).toContain('aria-label="Remove status from by"');
+    // only columns not chosen yet can be added
+    expect(out).toMatch(/<option value="first name">first name \(utf8\)<\/option>/);
+    expect(out).not.toMatch(/<option value="status">/);
+    expect(html(spec("by", "order"), [], { columns: { main: null, lookup: null } })).toContain('aria-label="Column to add to by"');
+  });
+
+  test("ORDER entries are read and written as the sort node reads them", () => {
+    expect(parseOrderTerm("amount")).toEqual({ column: "amount", descending: false, nullsFirst: false });
+    expect(parseOrderTerm(" first name DESC NULLS FIRST ")).toEqual({ column: "first name", descending: true, nullsFirst: true });
+    expect(parseOrderTerm("x asc nulls last")).toEqual({ column: "x", descending: false, nullsFirst: false });
+    expect(orderTermText({ column: "amount", descending: true, nullsFirst: false })).toBe("amount desc");
+    expect(orderTermText({ column: "amount", descending: false, nullsFirst: true })).toBe("amount nulls first");
+    expect(orderTermText(parseOrderTerm("a desc nulls first"))).toBe("a desc nulls first");
+  });
+
   test("A read node's query: SQL in a monospace box over several lines; other text stays one line", () => {
     const out = html(spec("query", "text"), "SELECT 1\nFROM t", { nodeType: "read" });
     expect(out).toMatch(/<textarea[^>]*class="mono cv-sql"/);
@@ -134,6 +180,10 @@ describe("each setting kind gets its control, with help and default", () => {
     expect(out).toContain("Main column 1");
     expect(out).toContain("Lookup column 1");
     expect(out).toMatch(/<option value="id" selected="">id \(int64\)<\/option>/);
+    const join = html(spec("on", "column_map"), { customer_id: "id" }, { nodeType: "join" });
+    expect(join).toContain("Left column 1");
+    expect(join).toContain("Right column 1");
+    expect(join).toMatch(/<option value="id" selected="">id \(int64\)<\/option>/); // from the right input
     const rename = html(spec("rename", "column_map"), { status: "state" }, { nodeType: "select" });
     expect(rename).toContain("New name 1");
     expect(rename).toContain('value="state"');
@@ -167,6 +217,9 @@ describe("what the canvas says about nodes", () => {
     expect(nodeSummary(node({ type: "filter", settings: { condition: "a > 1" } }))).toBe("a > 1");
     expect(nodeSummary(node({ type: "compute", settings: { columns: { x: "1", y: "2" } } }))).toBe("x, y");
     expect(nodeSummary(node({ type: "lookup", settings: { on: { a: "b" } } }))).toBe("on a = b");
+    expect(nodeSummary(node({ type: "sort", settings: { by: ["region", "amount desc"] } }))).toBe("by region, amount desc");
+    expect(nodeSummary(node({ type: "join", settings: { on: { customer_id: "id" }, how: "left" } }))).toBe("left on customer_id = id");
+    expect(nodeSummary(node({ type: "join", settings: { on: { a: "b" } } }))).toBe("inner on a = b");
     expect(nodeSummary(node({ type: "write", settings: { source: "w", path: "x.csv", mode: "replace" } }))).toBe("w · x.csv · replace");
     expect(nodeSummary(node({ type: "read", settings: { source: "db", asset: 2024.1 }, texts: { asset: "2024.10" } }))).toBe("db · 2024.10");
   });
@@ -203,7 +256,7 @@ describe("what the canvas says about nodes", () => {
     const write = {
       type: "write",
       kind: "sink",
-      settings: [spec("source", "source"), spec("target", "asset"), spec("table", "text"), spec("commit_every", "number"), spec("overwrite", "boolean")],
+      settings: [spec("source", "source"), spec("target", "asset"), spec("table", "text"), spec("path", "text"), spec("commit_every", "number"), spec("overwrite", "boolean")],
       writerSettings: { postgresql: ["commit_every"], s3: ["overwrite"] },
     } as unknown as NodeType;
     const keys = (kind: string | null, settings = {}) => shownSettings(write, node({ type: "write", settings }), kind).specs.map((s) => s.key);
@@ -211,8 +264,12 @@ describe("what the canvas says about nodes", () => {
     expect(keys("postgresql")).toEqual(["source", "target", "commit_every"]);
     expect(keys(null)).toEqual(["source", "target"]);
     expect(shownSettings(write, node({ type: "write" }), null).writerHidden).toBe(2);
-    // A setting the YAML has is always shown, so it can be seen and removed.
-    expect(keys("s3", { table: "a.b", commit_every: 5 })).toEqual(["source", "target", "table", "commit_every", "overwrite"]);
+    // A setting the YAML has is always shown, so it can be seen and removed; `table` (or `path`) in
+    // the YAML names where the write goes, so the empty `target` box beside it is not shown.
+    expect(keys("s3", { table: "a.b", commit_every: 5 })).toEqual(["source", "table", "commit_every", "overwrite"]);
+    expect(keys(null, { path: "out/a.csv" })).toEqual(["source", "path"]);
+    // A target the YAML has stays, with a table beside it, so both can be seen and one removed.
+    expect(keys(null, { target: "a.b", table: "a.c" })).toEqual(["source", "target", "table"]);
   });
 
   test("defaults in words", () => {

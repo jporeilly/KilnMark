@@ -4,7 +4,9 @@ import {
   IconAlertTriangle,
   IconArrowMerge,
   IconArrowsJoin,
+  IconArrowsJoin2,
   IconArrowsSplit,
+  IconArrowsSort,
   IconBox,
   IconColumns,
   IconCopyOff,
@@ -64,11 +66,13 @@ const ICONS: Record<string, typeof IconBox> = {
   compute: IconMathFunction,
   select: IconColumns,
   lookup: IconArrowsJoin,
+  join: IconArrowsJoin2,
   aggregate: IconSum,
   union: IconArrowMerge,
   dedupe: IconCopyOff,
   route: IconArrowsSplit,
   limit: IconListNumbers,
+  sort: IconArrowsSort,
   gate: IconShieldCheck,
 };
 

@@ -709,3 +709,176 @@ function svg(name, height, title, sub, body) {
     foot(rows[2] + 50, "shield", "A key lasts 24 hours, for one token or person. A request that could not start a run keeps no key.");
   svg("request-key-retry", rows[2] + 100, "A retry with the same request key gets the same run", "The work never runs twice because a scheduler asked twice", b);
 }
+
+// ---- The benchmark machines ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 200, y3 = 324;
+  const mid = (i) => X[i] + W / 2;
+  const b =
+    lane(y1, 96, "Bench machine", C.blue) +
+    card(X[0], y1 + 30, W, { icon: "gear", color: C.blue, title: "Data generator", sub: "fixed seeds, 1M to 1B rows" }) +
+    card(X[1], y1 + 30, W, { icon: "terminal", color: C.blue, title: "lab bench", sub: "starts each run, five times" }) +
+    card(X[2], y1 + 30, W, { icon: "play", color: C.blue, strong: true, title: "Kilnmark", sub: "server and workers" }) +
+    arrow([[X[1] + W, y1 + 58], [X[2] - 2, y1 + 58]], C.blue) +
+    arrow([[X[0] + 170, y1 + 86], [X[0] + 170, y2 + 28]], C.green) +
+    label(X[0] + 178, y1 + 106, "makes the data once", C.green, "start") +
+    arrow([[mid(2), y1 + 86], [mid(2), y2 + 28]], C.blue) +
+    label(mid(2) + 8, y1 + 106, "reads and writes", C.blue, "start") +
+    lane(y2, 96, "Database machine", C.green) +
+    card(X[0], y2 + 30, W, { icon: "db", color: C.green, title: "Source databases", sub: "PostgreSQL first, then others" }) +
+    card(X[1], y2 + 30, W, { icon: "file", color: C.green, title: "Files", sub: "CSV and Parquet" }) +
+    card(X[2], y2 + 30, W, { icon: "db", color: C.green, title: "Target databases", sub: "written by each run" }) +
+    lane(y3, 96, "Results", C.violet) +
+    card(X[0], y3 + 30, W, { icon: "log", color: C.violet, title: "A CSV per benchmark", sub: "one row per run, with setup" }) +
+    card(X[1], y3 + 30, W, { icon: "book", color: C.violet, title: "Charts, results note", sub: "every run, not the best" }) +
+    card(X[2], y3 + 30, W, { icon: "check", color: C.violet, title: "Nightly check", sub: "fails if 15% slower" }) +
+    arrow([[X[0] + W, y3 + 58], [X[1] - 2, y3 + 58]], C.violet) +
+    arrow([[X[1] + W, y3 + 58], [X[2] - 2, y3 + 58]], C.violet) +
+    foot(y3 + 112, "gear", "To start, one machine holds both: stop the CI runners first and keep the same memory shares every run.");
+  svg("benchmark-setup", y3 + 162, "The benchmark machines", "Kilnmark on one machine, the data on another, the results kept with the setup", b);
+}
+
+// ---- A benchmark's cycle ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 200, y3 = 324;
+  const mid = (i) => X[i] + W / 2;
+  const b =
+    lane(y1, 96, "Each benchmark", C.blue) +
+    card(X[0], y1 + 30, W, { n: "1", color: C.blue, title: "Generate the data", sub: "once, at a fixed size" }) +
+    card(X[1], y1 + 30, W, { n: "2", color: C.blue, title: "Warm up", sub: "one run, thrown away" }) +
+    card(X[2], y1 + 30, W, { n: "3", color: C.blue, title: "Run it five times", sub: "nothing else running" }) +
+    arrow([[X[0] + W, y1 + 58], [X[1] - 2, y1 + 58]], C.blue) +
+    arrow([[X[1] + W, y1 + 58], [X[2] - 2, y1 + 58]], C.blue) +
+    arrow([[mid(2), y1 + 86], [mid(2), y1 + 108], [X[0] + 170, y1 + 108], [X[0] + 170, y2 + 28]], C.blue) +
+    lane(y2, 96, "Every run", C.orange) +
+    card(X[0], y2 + 30, W, { n: "4", color: C.orange, title: "Measure", sub: "rows/s, MB/s, memory, CPU" }) +
+    card(X[1], y2 + 30, W, { n: "5", color: C.orange, title: "Compare", sub: "median and slowest run" }) +
+    card(X[2], y2 + 30, W, { n: "6", color: C.orange, strong: true, title: "Report", sub: "CSV, chart and the setup" }) +
+    arrow([[X[0] + W, y2 + 58], [X[1] - 2, y2 + 58]], C.orange) +
+    arrow([[X[1] + W, y2 + 58], [X[2] - 2, y2 + 58]], C.orange) +
+    arrow([[mid(1), y2 + 86], [mid(1), y3 + 28]], C.orange) +
+    label(mid(1) + 8, y2 + 106, "with", C.orange, "start") +
+    lane(y3, 96, "Compared with", C.green) +
+    card(X[0], y3 + 30, W, { icon: "db", color: C.green, title: "The ceiling", sub: "the database's bulk tools" }) +
+    card(X[1], y3 + 30, W, { icon: "clock", color: C.green, title: "The last release", sub: "15% slower fails" }) +
+    card(X[2], y3 + 30, W, { icon: "book", color: C.green, title: "Today's tool", sub: "same data, built well" }) +
+    foot(y3 + 112, "check", "A run that writes the wrong number of rows has failed, however fast it was.");
+  svg("benchmark-cycle", y3 + 162, "A benchmark's cycle", "Generate once, warm up, run five times, measure each run, compare, report every run", b);
+}
+
+// ---- What deleting a flow does ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 188;
+  const b =
+    lane(y1, 96, "Deleted with the flow", C.bad) +
+    card(X[0], y1 + 30, W, { icon: "file", color: C.bad, dash: "4 3", title: "The flow", sub: "and every version of it" }) +
+    card(X[1], y1 + 30, W, { icon: "play", color: C.bad, dash: "4 3", title: "Its runs", sub: "with what each node did" }) +
+    card(X[2], y1 + 30, W, { icon: "clock", color: C.bad, dash: "4 3", title: "Its schedules", sub: "each one in the audit log" }) +
+    lane(y2, 96, "Kept", C.good) +
+    card(X[0], y2 + 30, W, { icon: "play", color: C.good, strong: true, title: "Its pipeline runs", sub: "in their pipelines' history" }) +
+    card(X[1], y2 + 30, W, { icon: "db", color: C.good, strong: true, title: "What they wrote", sub: "tables and files stay" }) +
+    card(X[2], y2 + 30, W, { icon: "log", color: C.good, strong: true, title: "Lineage and quality", sub: "in the catalogue" }) +
+    foot(300, "lock", "Refused while a run of the flow is queued or running: cancel it, or let it finish, then delete.");
+  svg("flow-delete", 350, "What deleting a flow does", "Designers and admins delete a flow; what its pipeline runs did stays", b);
+}
+
+// ---- The components reference: the families of components ----
+{
+  const W = 160, X = [40, 214, 388, 562];
+  const y1 = 76, y2 = 188, y3 = 300, y4 = 412;
+  const F = [40, 276, 512], FW = 208;
+  const b =
+    lane(y1, 96, "Connectors", C.navy) +
+    card(40, y1 + 30, 682, { icon: "db", color: C.navy, title: "One per kind of source", sub: "databases, folders, object storage and the sample data: what each can scan, read, write and explore" }) +
+    lane(y2, 96, "Pipeline nodes", C.blue) +
+    card(X[0], y2 + 30, W, { icon: "db", color: C.blue, title: "Source", sub: "read" }) +
+    card(X[1], y2 + 30, W, { icon: "gear", color: C.blue, title: "Transforms", sub: "filter, compute, ..." }) +
+    card(X[2], y2 + 30, W, { icon: "shield", color: C.blue, title: "Gate", sub: "checks rows" }) +
+    card(X[3], y2 + 30, W, { icon: "save", color: C.blue, title: "Sink", sub: "write" }) +
+    arrow([[X[0] + W, y2 + 58], [X[1] - 2, y2 + 58]], C.blue) +
+    arrow([[X[1] + W, y2 + 58], [X[2] - 2, y2 + 58]], C.blue) +
+    arrow([[X[2] + W, y2 + 58], [X[3] - 2, y2 + 58]], C.blue) +
+    arrow([[X[0] + W - 30, y1 + 86], [X[0] + W - 30, y2 + 28]], C.navy) +
+    label(X[0] + W - 22, y1 + 105, "reads", C.navy, "start") +
+    arrow([[X[3] + W / 2, y2 + 28], [X[3] + W / 2, y1 + 88]], C.navy) +
+    label(X[3] + W / 2 + 8, y1 + 105, "writes", C.navy, "start") +
+    lane(y3, 96, "What nodes check with", C.green) +
+    card(X[1], y3 + 30, W, { icon: "pencil", color: C.green, title: "Expressions", sub: "conditions, values" }) +
+    card(X[2], y3 + 30, W, { icon: "check", color: C.green, title: "Quality rules", sub: "what must hold" }) +
+    arrow([[X[1] + W / 2, y3 + 28], [X[1] + W / 2, y2 + 88]], C.green) +
+    arrow([[X[2] + W / 2, y3 + 28], [X[2] + W / 2, y2 + 88]], C.green) +
+    lane(y4, 96, "Flow nodes", C.violet) +
+    card(F[0], y4 + 30, FW, { icon: "play", color: C.violet, title: "Run the work", sub: "run-pipeline, for-each, sql" }) +
+    card(F[1], y4 + 30, FW, { icon: "clock", color: C.violet, title: "Check and wait", sub: "check-source, wait-for, wait" }) +
+    card(F[2], y4 + 30, FW, { icon: "bell", color: C.violet, title: "Tell and end", sub: "notify, stop" }) +
+    arrow([[F[0] + FW, y4 + 58], [F[1] - 2, y4 + 58]], C.violet) +
+    arrow([[F[1] + FW, y4 + 58], [F[2] - 2, y4 + 58]], C.violet) +
+    foot(y4 + 112, "book", "Every settings table in the reference is made from the catalogue the server uses, and the build checks it.");
+  svg("component-families", y4 + 162, "The components a pipeline or flow is built from", "Connectors reach the data, nodes do the work, expressions and rules check it, flow nodes order it", b);
+}
+
+// ---- How a sort carries on on disk ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 200;
+  const mid = (i) => X[i] + W / 2;
+  const b =
+    lane(y1, 96, "As rows arrive", C.blue) +
+    card(X[0], y1 + 30, W, { icon: "play", color: C.blue, title: "Rows arrive", sub: "a batch at a time" }) +
+    card(X[1], y1 + 30, W, { icon: "chip", color: C.blue, title: "Held in memory", sub: "up to memory_limit_mb" }) +
+    card(X[2], y1 + 30, W, { icon: "lock", color: C.orange, title: "Past the limit", sub: "sorted, written as a run" }) +
+    arrow([[X[0] + W, y1 + 58], [X[1] - 2, y1 + 58]], C.blue) +
+    arrow([[X[1] + W, y1 + 58], [X[2] - 2, y1 + 58]], C.orange) +
+    arrow([[mid(2), y1 + 86], [mid(2), y2 + 28]], C.orange) +
+    label(mid(2) + 8, y1 + 106, "each run a file", C.orange, "start") +
+    arrow([[mid(1), y1 + 86], [mid(1), y2 + 28]], C.blue) +
+    label(mid(1) + 8, y1 + 106, "nothing spilled: sorted here", C.blue, "start") +
+    lane(y2, 96, "When the input ends", C.green) +
+    card(X[2], y2 + 30, W, { icon: "file", color: C.orange, title: "Runs on disk", sub: "merged 64 at a time" }) +
+    card(X[1], y2 + 30, W, { icon: "check", color: C.green, title: "Rows in order", sub: "equal rows keep their order" }) +
+    card(X[0], y2 + 30, W, { icon: "play", color: C.green, strong: true, title: "The next node", sub: "8,192 rows a batch" }) +
+    arrow([[X[2] - 2, y2 + 58], [X[1] + W + 2, y2 + 58]], C.orange) +
+    arrow([[X[1] - 2, y2 + 58], [X[0] + W + 2, y2 + 58]], C.green) +
+    foot(y2 + 112, "lock", "Runs are encrypted with a key only the node holds, in its own temporary folder, deleted when it ends, fails or stops.");
+  svg("sort-spill", y2 + 162, "How a sort carries on on disk", "In memory while the rows fit; past the limit, sorted runs on disk, merged at the end", b);
+}
+
+// ---- The four kinds of join ----
+{
+  // Two overlapping circles per kind: the parts a join keeps are filled, the rest outlined.
+  const kinds = [
+    ["inner", "Pairs that match", [false, true, false]],
+    ["left", "Plus left rows with none", [true, true, false]],
+    ["right", "Plus right rows with none", [false, true, true]],
+    ["full", "Every row of both", [true, true, true]],
+  ];
+  const W = 160, X = [40, 214, 388, 562], y = 76;
+  let b = "";
+  kinds.forEach(([name, sub, keep], i) => {
+    const x = X[i];
+    const cx1 = x + 58, cx2 = x + 102, cy = y + 74, r = 34;
+    const id = `j${i}`;
+    b += rect(x, y, W, 190, { fill: C.tint, stroke: C.axis });
+    b += `<defs><clipPath id="${id}l"><circle cx="${cx1}" cy="${cy}" r="${r}"/></clipPath><clipPath id="${id}r"><circle cx="${cx2}" cy="${cy}" r="${r}"/></clipPath></defs>`;
+    // left only, then right only, then the overlap, each filled when kept
+    if (keep[0]) b += `<circle cx="${cx1}" cy="${cy}" r="${r}" fill="${C.blue}" fill-opacity="0.35"/><circle cx="${cx2}" cy="${cy}" r="${r}" fill="${C.tint}" clip-path="url(#${id}l)"/>`;
+    if (keep[2]) b += `<circle cx="${cx2}" cy="${cy}" r="${r}" fill="${C.orange}" fill-opacity="0.35"/><circle cx="${cx1}" cy="${cy}" r="${r}" fill="${C.tint}" clip-path="url(#${id}r)"/>`;
+    if (keep[1]) b += `<circle cx="${cx2}" cy="${cy}" r="${r}" fill="${C.green}" fill-opacity="0.55" clip-path="url(#${id}l)"/>`;
+    b += `<circle cx="${cx1}" cy="${cy}" r="${r}" fill="none" stroke="${C.blue}" stroke-width="1.5"/>`;
+    b += `<circle cx="${cx2}" cy="${cy}" r="${r}" fill="none" stroke="${C.orange}" stroke-width="1.5"/>`;
+    b += text(cx1 - 20, cy + 4, "L", { size: 12, weight: 700, fill: C.blue, anchor: "middle" });
+    b += text(cx2 + 20, cy + 4, "R", { size: 12, weight: 700, fill: C.orange, anchor: "middle" });
+    b += text(x + W / 2, y + 140, `how: ${name}`, { weight: 600, anchor: "middle" });
+    b += text(x + W / 2, y + 160, sub, { size: 11.5, fill: C.quiet, anchor: "middle" });
+  });
+  const y2 = y + 214;
+  b +=
+    lane(y2, 96, "Where there is no match", C.navy) +
+    card(40, y2 + 30, 330, { icon: "log", color: C.navy, title: "The other side's columns are empty", sub: "and every column keeps its type" }) +
+    card(392, y2 + 30, 330, { icon: "key", color: C.navy, title: "An empty key matches nothing", sub: "not even another empty key" }) +
+    foot(y2 + 112, "file", "Rows come out in order of their keys; a key on 3 left rows and 2 right rows gives 6 pairs.");
+  svg("join-kinds", y2 + 162, "The four kinds of join", "Which rows a join keeps: the pairs whose keys are equal, and the rows of either side with no match", b);
+}

@@ -30,8 +30,9 @@ import jakarta.ws.rs.core.Response;
 
 /**
  * Pipelines (docs/design/pipelines.md section 6): saved as YAML with every version, checked as
- * they are written, and run by workers. Viewers read; stewards add, change, delete and run. A
- * pipeline that writes also needs each target source to allow writing, which an admin sets.
+ * they are written, and run by workers. Viewers read; designers add, change and delete them;
+ * stewards run them. A pipeline that writes also needs each target source to allow writing, which a
+ * designer or an admin sets.
  */
 @Path("/api/v1/pipelines")
 @Produces(MediaType.APPLICATION_JSON)
@@ -255,16 +256,13 @@ public class PipelineResource {
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "403", description = "Not a designer"),
         @APIResponse(responseCode = "404", description = "No such pipeline"),
-        @APIResponse(responseCode = "409", description = "A run is queued or running")})
+        @APIResponse(responseCode = "409", description = "A run is queued or running, or the pipeline or one of its "
+            + "schedules was busy for a moment (nothing was deleted; try again)")})
     public Response delete(@PathParam("name") String name) {
         // its schedules are deleted with it, in the same transaction: each is recorded (ADR 0029, ADR 0046)
-        for (io.kilnmark.server.pipelines.PipelineStore.GoneSchedule s : pipelines.deleteWithSchedules(name, who())) {
-            Map<String, Object> detail = io.kilnmark.server.schedules.ScheduleService.auditDetail(name, null, s.cron(),
-                s.zone(), s.runAs(), s.enabled());
-            detail.put("via", "pipeline deleted");
-            audit.record(io.kilnmark.server.audit.AuditLog.actor(identity),
-                io.kilnmark.server.audit.AuditLog.SCHEDULE_DELETED, "schedule " + s.id(), detail);
-        }
+        io.kilnmark.server.schedules.ScheduleService.recordDeletedWith(audit,
+            io.kilnmark.server.audit.AuditLog.actor(identity), io.kilnmark.server.schedules.ScheduleStore.Target.PIPELINE,
+            name, pipelines.deleteWithSchedules(name, who()));
         return Response.noContent().build();
     }
 

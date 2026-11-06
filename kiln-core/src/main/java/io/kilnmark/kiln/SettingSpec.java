@@ -54,6 +54,11 @@ public record SettingSpec(String key, String label, Kind kind, boolean required,
         COLUMN,
         /** A list of columns of an input. */
         COLUMNS,
+        /**
+         * A list of columns to order rows by, each with its direction and where nulls go, as in SQL's
+         * {@code order by}: {@code [region, amount desc, closed_at desc nulls first]}.
+         */
+        ORDER,
         /** Column name → column name, for renames and lookup keys. */
         COLUMN_MAP,
         /** Port name → condition, for route. */
@@ -76,6 +81,42 @@ public record SettingSpec(String key, String label, Kind kind, boolean required,
         help = help == null ? "" : help;
         choices = choices == null ? List.of() : List.copyOf(choices);
         parameters = parameters == null ? Parameters.BY_KIND : parameters;
+    }
+
+    /** How a parameter or server variable fills a setting, when a pipeline is read. */
+    public enum Fill {
+        /** It takes none. */
+        NONE,
+        /** Part of the last name of where a node writes, beside text the pipeline fixes. */
+        TARGET_PART,
+        /** A value in text, holding only safe characters. */
+        TEXT,
+        /** A value of the expression language, in one expression. */
+        EXPRESSION,
+        /** A value of the expression language, in any of the expressions of a mapping. */
+        EXPRESSIONS,
+        /** The whole value, a number or true/false, written as one ${name}. */
+        WHOLE_VALUE
+    }
+
+    /**
+     * How ${...} fills this setting: what {@link #parameters()} allows, and within that what its kind
+     * allows. The pipeline compiler fills settings by this, and the components reference describes it.
+     */
+    public Fill fill() {
+        if (parameters == Parameters.NONE) {
+            return Fill.NONE;
+        }
+        if (parameters == Parameters.NAME_PART_ONLY) {
+            return Fill.TARGET_PART;
+        }
+        return switch (kind) {
+            case TEXT -> Fill.TEXT;
+            case EXPRESSION -> Fill.EXPRESSION;
+            case EXPRESSIONS, CONDITIONS -> Fill.EXPRESSIONS;
+            case NUMBER, BOOLEAN -> Fill.WHOLE_VALUE;
+            case CHOICE, URL, COLUMN, COLUMNS, ORDER, COLUMN_MAP, SOURCE, ASSET, RULES -> Fill.NONE;
+        };
     }
 
     /** This setting, with what a parameter may do in it. */

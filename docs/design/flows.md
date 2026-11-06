@@ -202,10 +202,30 @@ index allows one queued or running run per flow. V20 named them `flow_step_run`,
 V29 adds `flow_version.sql_checked` (section 7). V31 adds `pipeline_run.flow_item` (section 8) and
 moves the unique index to `(flow_run_id, flow_node, coalesce(flow_item, -1))`.
 
+**Deleting a flow** ([ADR 0048](../adr/0048-deleting-a-flow.md), `FlowStore.deleteWithSchedules`)
+leans on V20's foreign keys: deleting the `flow` row cascades to `flow_version`, from there to
+`flow_run` and on to `flow_node_run`, and sets `pipeline_run.flow_run_id` to null, so the pipeline
+runs a flow started stay, with what they wrote and recorded (their `flow_node`, `flow_item` and
+`flow_try` stay as written, read by nothing once the flow run is gone). One transaction locks the
+flow's schedules, then the flow's row, refuses (409) while a run is queued or running or the job of
+one is still finishing, deletes the schedules with `DELETE … RETURNING` to record each
+(docs/design/schedules.md, section 8), clears the flow's open problem for notifications
+(`notify_state` key `flow:<name>`, so a flow saved later under the name is told of afresh), then
+the flow. Each lock wait is limited to 5 seconds; past that nothing is deleted and the answer is 409
+"try again". A run queued or a version saved just as the flow goes finds its row missing and is
+answered 404, also inside a start with a request key, which then keeps no key. The runs' request
+keys (V37) go with them by cascade, after the flow's row is taken, the order a keyed start takes
+them. The runs' `job` rows stay, as a deleted pipeline's do. A failure is told after its run
+is recorded as ended but before its job ends, which is why the delete waits for the job; a run
+failed because its worker stopped (`failOrphanedRuns`) is told outside any job, so a delete in that
+moment can still be followed by a failure told of the deleted flow, which leaves `flow:<name>`
+open until that name's next success, or until it is purged. No node runs another flow yet; a
+`run-flow` node (F2b) must decide what deleting a flow it names does.
+
 ## 5. Who may do what
 
-- **Saving a flow takes a designer, running and cancelling one a steward** (`FlowService` checks,
-  and the API's roles). A flow with a `sql` node is saved only by a designer whose token sees
+- **Saving or deleting a flow takes a designer, running and cancelling one a steward**
+  (`FlowService` checks, and the API's roles). A flow with a `sql` node is saved only by a designer whose token sees
   unmasked values (section 7); the API passes the caller's grant. Viewers see flows and their runs
   (F3), but not the values a run started with, nor node messages that quote them (a notice's title,
   the values a pipeline refused): those can hold server variables, which only stewards read. The
@@ -236,8 +256,7 @@ moves the unique index to `(flow_run_id, flow_node, coalesce(flow_item, -1))`.
   yet started shown `pending`, and its cancel) and the pages: Flows in the sidebar after Pipelines, a
   flow page with the YAML editor, checked as it is typed, Run now with a dialog for parameter values,
   and a run page listing each node's status, time and message, linked to the pipeline run it
-  started. No delete: a flow's runs and the pipeline runs they started stay linked, and deleting
-  waits until what that means is decided. The sample flows are added by Add samples, after the pipelines they run, and listed in the
+  started. Deleting a flow came later (section 4, [ADR 0048](../adr/0048-deleting-a-flow.md)). The sample flows are added by Add samples, after the pipelines they run, and listed in the
   Library (ADR 0043).
 - **F4a, built.** `FlowDiagram` (ui/src/flows): the flow read from its YAML on the page
   (`readFlowGraph`, which reads only what it draws; the server's check says whether it is valid),

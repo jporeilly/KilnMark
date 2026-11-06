@@ -31,6 +31,7 @@ import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.jobs.JobQueue;
 import io.kilnmark.server.notify.NotificationPublisher;
 import io.kilnmark.server.pipelines.PipelineService;
+import io.kilnmark.server.pipelines.PipelineSources;
 import io.kilnmark.server.pipelines.PipelineStore;
 import io.kilnmark.server.pipelines.WriteNodeFactory;
 import io.kilnmark.server.scan.ScanService;
@@ -127,28 +128,7 @@ public class FlowService {
             Map<String, Object> vars = variables();
             for (FlowDefinition.Node s : def.nodes()) {
                 variablesSet(s, vars, problems);
-                if (FlowDefinition.SQL.equals(s.type())) {
-                    sqlProblems(s, problems);
-                    continue;
-                }
-                if (FlowDefinition.WAIT_FOR.equals(s.type())) {
-                    if (s.source() != null && (s.until().file() != null || s.until().query() != null)) {
-                        String why = WaitFor.refusal(s, sqlSources);
-                        if (why != null) {
-                            Position at = s.at(s.until().query() != null ? "query" : "source");
-                            problems.add(new Problem(at.line(), at.column(), s.id(), why));
-                        }
-                    }
-                    continue;
-                }
-                if (FlowDefinition.CHECK_SOURCE.equals(s.type())) {
-                    if (s.source() != null) {
-                        String why = CheckSource.sourceRefusal(s, sqlSources);
-                        if (why != null) {
-                            Position at = s.at("source");
-                            problems.add(new Problem(at.line(), at.column(), s.id(), why));
-                        }
-                    }
+                if (sourceProblems(s, sqlSources, problems)) {
                     continue;
                 }
                 if (!runsPipeline(s) || s.pipeline() == null) {
@@ -165,25 +145,31 @@ public class FlowService {
                         + s.version() + " of " + s.pipeline() + ", which has only " + p.get().latestVersion()));
                 } else {
                     int n = s.version() == null ? p.get().latestVersion() : s.version();
-                    pipelineStore.version(s.pipeline(), n).ifPresent(v -> {
-                        PipelineDefinition pd = PipelineDefinition.parse(v.yaml()).definition();
-                        withProblems(def, s, pd, vars, problems);
-                        if (s.each() != null) {
-                            eachProblems(def, s, pd, problems);
-                        }
-                        String unsafe = s.retries() > 0 ? unsafeWrite(pd) : null;
-                        if (unsafe != null) {
-                            Position r = s.at("retries");
-                            problems.add(new Problem(r.line(), r.column(), s.id(), "Node " + s.id() + " is tried "
-                                + "again after a failure, so every write in " + s.pipeline() + " must replace or "
-                                + "upsert: " + unsafe));
-                        }
-                    });
+                    pipelineStore.version(s.pipeline(), n).ifPresent(v -> pipelineProblems(def, s,
+                        PipelineDefinition.parse(v.yaml()).definition(), vars, problems));
                 }
             }
         }
         problems.sort(Problem.BY_POSITION);
         return new Validation(problems.isEmpty() && def != null, def == null ? null : def.name(), problems);
+    }
+
+    /**
+     * What is wrong with a node that runs a pipeline, against the version of it that it runs: its
+     * {@code with:}, a for-each node's items, and whether trying it again could write twice.
+     */
+    static void pipelineProblems(FlowDefinition def, FlowDefinition.Node s, PipelineDefinition pd,
+                                 Map<String, Object> vars, List<Problem> problems) {
+        withProblems(def, s, pd, vars, problems);
+        if (s.each() != null) {
+            eachProblems(def, s, pd, problems);
+        }
+        String unsafe = s.retries() > 0 ? unsafeWrite(pd) : null;
+        if (unsafe != null) {
+            Position r = s.at("retries");
+            problems.add(new Problem(r.line(), r.column(), s.id(), "Node " + s.id() + " is tried again after a "
+                + "failure, so every write in " + s.pipeline() + " must replace or upsert: " + unsafe));
+        }
     }
 
     /**
@@ -281,10 +267,43 @@ public class FlowService {
     }
 
     /**
+     * What is wrong with a sql, wait-for or check-source node against the sources on this server
+     * ({@code sources}, null in tests that build the service by hand): its source must exist and allow
+     * what the node does. True when {@code s} is such a node, which runs no pipeline.
+     */
+    static boolean sourceProblems(FlowDefinition.Node s, PipelineSources sources, List<Problem> problems) {
+        if (FlowDefinition.SQL.equals(s.type())) {
+            sqlProblems(s, sources, problems);
+            return true;
+        }
+        if (FlowDefinition.WAIT_FOR.equals(s.type())) {
+            if (s.source() != null && (s.until().file() != null || s.until().query() != null)) {
+                String why = WaitFor.refusal(s, sources);
+                if (why != null) {
+                    Position at = s.at(s.until().query() != null ? "query" : "source");
+                    problems.add(new Problem(at.line(), at.column(), s.id(), why));
+                }
+            }
+            return true;
+        }
+        if (FlowDefinition.CHECK_SOURCE.equals(s.type())) {
+            if (s.source() != null) {
+                String why = CheckSource.sourceRefusal(s, sources);
+                if (why != null) {
+                    Position at = s.at("source");
+                    problems.add(new Problem(at.line(), at.column(), s.id(), why));
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /**
      * What is wrong with a sql node on this server: its source must exist, be PostgreSQL and allow SQL
      * and writing, and each statement must be one a sql node runs (ADR 0028).
      */
-    private void sqlProblems(FlowDefinition.Node s, List<Problem> problems) {
+    private static void sqlProblems(FlowDefinition.Node s, PipelineSources sqlSources, List<Problem> problems) {
         if (s.source() != null) {
             Position at = s.at("source");
             Optional<io.kilnmark.graph.store.Records.Source> src = sqlSources == null ? Optional.empty()
@@ -494,6 +513,8 @@ public class FlowService {
         } catch (FlowStore.Changed e) {
             throw fail(Response.Status.CONFLICT, "Someone saved another version of " + check.name()
                 + " since you opened it. Reload it, then make your change again.");
+        } catch (FlowStore.Missing e) {
+            throw fail(Response.Status.NOT_FOUND, "No flow called " + check.name());
         }
     }
 
@@ -523,6 +544,28 @@ public class FlowService {
 
     public Optional<FlowStore.Flow> find(String name) {
         return store.find(name);
+    }
+
+    /**
+     * Deletes the flow with its versions, runs and schedules (ADR 0048); the pipeline runs it started
+     * stay. Takes the designer role. Returns the schedules deleted with it, to record.
+     */
+    public List<io.kilnmark.server.schedules.ScheduleStore.Gone> delete(String name, String by, AccessRole role) {
+        if (!role.atLeast(AccessRole.DESIGNER)) {
+            throw fail(Response.Status.FORBIDDEN, "Deleting a flow takes the designer role");
+        }
+        try {
+            List<io.kilnmark.server.schedules.ScheduleStore.Gone> gone = store.deleteWithSchedules(name)
+                .orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No flow called " + name));
+            LOG.infof("Flow %s deleted by %s, with %d schedules", name, by, gone.size());
+            return gone;
+        } catch (FlowStore.Busy e) {
+            throw fail(Response.Status.CONFLICT, "A run of " + name + " is queued or running. Wait for it to finish, "
+                + "or cancel it, then delete the flow.");
+        } catch (io.kilnmark.server.schedules.ScheduleStore.LockWaitTooLong e) {
+            throw fail(Response.Status.CONFLICT, "Nothing was deleted: " + name + " or one of its schedules was busy "
+                + "a moment ago, perhaps with a scheduled run starting. Try again.");
+        }
     }
 
     public Optional<FlowStore.Version> version(String name, int n) {
@@ -584,6 +627,7 @@ public class FlowService {
      * caller's own transaction ({@code Db.together}) joins.
      *
      * @throws io.kilnmark.server.api.AlreadyRunning (409) while a run of the flow is queued or running
+     * @throws WebApplicationException (404) when the flow was deleted since it was checked
      */
     public FlowStore.Run queueChecked(CheckedRun checked, String by, AccessRole role) {
         try {
@@ -592,6 +636,9 @@ public class FlowService {
         } catch (FlowStore.Busy e) {
             throw new io.kilnmark.server.api.AlreadyRunning("A run of " + checked.name() + " is already queued or "
                 + "running. Wait for it to finish, or cancel it, then run the flow again.");
+        } catch (FlowStore.Missing e) {
+            // deleted since it was checked
+            throw fail(Response.Status.NOT_FOUND, "No flow called " + checked.name());
         }
     }
 

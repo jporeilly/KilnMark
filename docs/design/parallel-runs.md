@@ -56,12 +56,21 @@ A job runs when all of these have room:
 - The installation guide gains **Sizing the workers**: what a slot is, how to raise the slots, and
   the database connections it takes. Each running job holds one connection for its lease and uses
   one or two more while it works; each watched flow holds one; each worker keeps one for `LISTEN`.
-  The pool (`QUARKUS_DATASOURCE_JDBC_MAX_SIZE`, 20 by default) must be at least
+  The pool (`QUARKUS_DATASOURCE_JDBC_MAX_SIZE`, 30 by default) must be at least
   `concurrency × 3 + flows + 6` (five of them for the API and scheduler); PostgreSQL's `max_connections` at least the sum over
   all Kilnmark processes.
+- **The pool is checked at start** (`PoolSizeCheck`): a process needs `concurrency × 3 + flows + 1`
+  with the worker role and 5 more with the api or scheduler role (concurrency and flows counted as
+  at least 1, as the worker reads them), and refuses to start with a smaller
+  `quarkus.datasource.jdbc.max-size`, naming the settings to raise or lower. It refuses rather than
+  warns: a small pool works while little runs and fails under load (requests answer 500, jobs fail
+  when no connection comes within the pool's wait), and an operator would rather be told at start
+  than by a failed night's runs. The default pool was 20, Agroal's own, exactly the need of the
+  default settings with nothing checking it; it is now 30, so the slots can go to 5 untouched.
 - `docs/development.md` says the concurrency setting is jobs, not scans.
 
-Built: `KilnmarkConfig.Worker.flows()`, read by `JobWorker.start`; INSTALL.md, "Sizing the workers".
+Built: `KilnmarkConfig.Worker.flows()`, read by `JobWorker.start`; INSTALL.md, "Sizing the workers";
+`PoolSizeCheck` and the pool of 30 in `application.properties` (later).
 
 ## P2. Source limits (built)
 

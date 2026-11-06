@@ -21,7 +21,8 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 - [Writing data from a pipeline](guide/writing-data.md): writing to tables (create, append, replace, upsert) and to CSV and Parquet files, the rights a write needs, and what replace keeps
 - [Branding and appearance](guide/branding.md): themes, accent colours and density; the branding folder for an organisation's name, logo and connector logos
 - [Building and running a pipeline](guide/pipelines.md): the Pipelines page, YAML basics, checking as you type, saving versions, running, and reading a run
-- [Pipeline nodes and expressions](guide/pipeline-nodes.md): filter, compute, select, lookup, aggregate, union, dedupe, route and limit, and the expression language for conditions and computed columns
+- [Components reference](guide/components-reference.md): every pipeline node, flow node, connector, quality rule and expression function, with every setting, its type and default, and an example; the settings tables are made from the server's own catalogue ([pipeline nodes](guide/reference-pipeline-nodes.md), [flow nodes](guide/reference-flow-nodes.md), [connectors](guide/reference-connectors.md), [quality rules](guide/reference-quality-rules.md))
+- [Pipeline nodes and expressions](guide/pipeline-nodes.md): filter, compute, select, lookup, join, aggregate, union, dedupe, route, limit and sort, and the expression language for conditions and computed columns
 - [The Library: samples and templates](guide/library.md): the samples, kept apart from your own pipelines and flows; the starter pack; templates to start your own from
 - [Building and running a flow](guide/flows.md): flows that run pipelines in an order, connections and conditions, the diagram, running a flow and reading a run
 - [Running pipelines and flows on a schedule](guide/schedules.md): cron times in a time zone, who a scheduled run acts as, what happens to a missed or busy time, and pausing a schedule
@@ -47,6 +48,7 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 - [Parallel runs](design/parallel-runs.md): how much runs at once, worker slots, limits per source and per flow, and the for-each node
 - [Database tools](design/database-tools.md): Explore a source's tables, generate their SQL, connection settings on tabs, and changing a database with controls
 - [Flow controls](design/flow-controls.md): nodes that check or wait for what a pipeline needs, and timeout, retries and priority on a node
+- [Benchmarks](design/benchmarks.md) (planned): how volume and throughput are measured; the data, the workloads, what is measured and compared with, the machines, and the nightly check
 - [The assistant](design/assistant.md): a chat window that answers from knowledge domains, starting with the documentation
 - [Notifications](design/notifications.md): one event type, dedupe, masking per recipient, the email worker and the in-app feed's contract
 - [Supply chain](design/supply-chain.md): the SBOMs every release carries, vulnerability scanning in CI, and how releases are signed

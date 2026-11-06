@@ -7,6 +7,171 @@ details.
 
 ### What's new
 
+- **Sort rows** (a new `sort` node, ADR 0049): orders rows by one or more columns, each smallest or
+  largest first, with empty values last unless a column says `nulls first`. Rows with equal values
+  keep their order. Any number of rows can be sorted: past the node's memory limit it carries on on
+  disk, in a temporary folder only the server can read, encrypted and deleted when the node ends,
+  and the run's log says how much it wrote. In the Transform folder of the canvas, with a sample,
+  `sample-sort`. ([sort](docs/guide/pipeline-nodes.md#sort))
+- **Join two inputs** (a new `join` node, ADR 0049): `inner`, `left`, `right` or `full`, on one or
+  more pairs of key columns, with every pair kept when a key repeats on both sides. Either input
+  may be larger than memory: both are sorted by their keys, on disk past the node's memory limit.
+  Keys match by value as a lookup's do, and an empty key never matches. Every column of both
+  sides comes out with its type; a right column whose name the left already has is renamed
+  `right_...`. In the Combine folder of the canvas, with a sample, `sample-join`. A `lookup` is
+  still the quicker choice for a small table. ([join](docs/guide/pipeline-nodes.md#join))
+- **Signing in through your organisation's provider no longer ends after a few minutes.** A sign-in
+  now renews itself while the person works, and lasts until 8 hours after they signed in at the
+  provider, until the provider's own session ends, or until they sign out. With the bundled
+  Keycloak it ended after 5 minutes. Microsoft Entra ID and Okta need
+  `KILNMARK_OIDC_SCOPES=offline_access` for it. ([Signing in](docs/guide/signing-in.md#signing-in-with-your-organisation))
+
+### Details
+
+- **`sort` is an external merge sort** (`ExternalSorter` in `kiln-nodes`; docs/design/pipelines.md,
+  "Sorting, and spilling to disk"). Each row's key is encoded once into bytes that order as the
+  values do (`KeyCodec`), as the expression language's `<` orders them: numbers by value, -0.0 equal
+  to 0.0 and NaN last, dates and timestamps in time, text by Unicode code point with no collation.
+  Up to `memory_limit_mb` (256) rows are sorted in memory with a stable merge sort; past it they are
+  written as sorted runs (Arrow IPC with the key as an extra column, AES-CTR with a key held only in
+  the node's memory) to a folder of the node's own under `kilnmark.spill-dir` or `java.io.tmpdir`,
+  and merged at most 64 at a time (neighbouring runs a pass, so each row is written once a pass),
+  earlier runs first on a tie so the sort stays stable. Dates and timestamps order to the
+  nanosecond, and unsigned 64-bit numbers as unsigned. Batches are bounded by bytes as well as
+  rows, so wide rows stay within the limit. Each run's rows, size and SHA-256 digest are checked
+  as it is read back. Folders are owner-only (`rwx------`, or an owner-only access list on
+  Windows) and deleted when the node ends, fails or is stopped; a process keeps a lock on its own
+  folder, and folders whose lock can be taken (their process has gone, on this machine or another
+  sharing the folder) are deleted the next time a node spills. New setting kind `ORDER` (`[region, amount desc, closed_at nulls
+  first]`), with its own control on the canvas: each column with Smallest first or Largest first,
+  Empty last or Empty first, and Up. A preview runs a sort with its share of the preview's memory,
+  and refuses one that orders by a column hidden from the caller.
+- **`join` is a sort-merge join** on `sort`'s `ExternalSorter` (docs/design/pipelines.md, "Joining
+  two inputs of any size"): both inputs read at once and sorted by their keys within one
+  `memory_limit_mb`, the larger spilling first; then merged, rows out in key order with null keys
+  last. Join keys are encoded by family (numbers by exact value, unsigned ones as unsigned, floats
+  by their shortest decimal; dates and timestamps as the instant to the nanosecond, a date at its
+  midnight), so each side is encoded without the other's types. A key's right rows are joined
+  from the batch at hand, pointed at while the right side's sorter holds them, or copied into a
+  group that goes to disk past a quarter of the limit (in bytes, checked row by row), with its
+  rows and digest checked when read back. A join that can give no rows (an `inner` join with an
+  empty input) stops reading at once. Right columns' new names come from one walk the node and
+  the preview's masking share. Settings `on`, `how`
+  (`inner` by default), `right_prefix` (`right_`), `memory_limit_mb` (256). A preview runs it,
+  refuses one matching on a hidden column, and masks a hidden right column under its new name;
+  marks follow the rename to what a write writes. The canvas shows Left column and Right column
+  for its keys.
+- **A node can say how much it wrote to disk.** `NodeContext.spilled(bytes)` adds to the run's
+  `NodeResult.spilledBytes` (not yet stored in the database), and `NodeContext.note(text)` adds a
+  line in the node's own words to the run's log (`node_note`, through `RunListener.nodeNote`).
+- **Wording**: every setting's help reads as a sentence, starting with what the setting does rather
+  than a value ("How rows are written: create fails if ...", "Lets pipelines write ...; off keeps it
+  read-only"); 20 settings of nodes, sources and connectors are rewritten, and the components
+  reference with them. A new check fails the build when a setting's help starts with a small
+  letter. The token form's role list and the AI model form's purpose list show short names, with
+  what the chosen one means under the box, so no option is cut short; the OpenAI-compatible
+  provider's name is shorter, with the servers it suits said under it. Predicted quality's row
+  count starts its sentence with a capital.
+
+- **Efficiency fixes** from a review of what the server and the UI do over and over:
+  - **The database pool is checked at start** (`PoolSizeCheck`, docs/design/parallel-runs.md P1).
+    A process needs `kilnmark.worker.concurrency × 3 + kilnmark.worker.flows + 1` connections with
+    the worker role and 5 more with the api or scheduler role; with fewer in
+    `quarkus.datasource.jdbc.max-size` the server refuses to start and says which settings to
+    raise or lower, rather than answer 500 and fail jobs under load. The default pool is now 30
+    (it was Agroal's 20, exactly what the default settings need).
+  - **Migration V38 adds indexes** on five foreign keys set to null when their run is deleted
+    (`asset.last_seen_run`, `sample.run_id`, `document.run_id`, `quality_run.scan_run_id`,
+    `quality_result.quality_run_id`), which deleting a source with many runs read whole once per
+    run; and on the job table by pipeline run and by quality run, as scans and flows already had,
+    for the workers' sweeps (every 30 seconds) for runs whose worker stopped.
+  - **Reading a quality run only reads.** `GET /api/v1/quality/runs/{id}`, which the UI asks every
+    second while rules run, and the start of every quality job no longer mark failed the
+    evaluations whose worker stopped: the workers' recovery does, on start and every 30 seconds,
+    in the same pass that fails such jobs, as it already did for pipeline and flow runs, which is
+    no later than before for a worker that died (recovery is what fails its job). An evaluation is
+    still tried `kilnmark.worker.max-attempts` times, and marked failed in the pass that gives up
+    its last attempt: within `kilnmark.worker.stale-after` (2 minutes) plus about 40 seconds of that
+    attempt's last heartbeat.
+  - **Running rules from an asset's Quality tab** stops asking about the run when the tab is left
+    or another asset is shown, and does not ask while the browser tab is hidden.
+  - Upgrading: V38 builds its indexes in one transaction (not `CONCURRENTLY`, as V36), so writes
+    to the job queue and to `asset`, `sample`, `document`, `quality_run` and `quality_result` wait
+    until all seven are built; reads go on. The job table keeps every job ever queued, so on a
+    long-used install its two take longest. The migrations run at start, before the worker takes
+    jobs; other processes sharing the database wait meanwhile. A process whose pool is smaller than it needs no longer starts: one that raised
+    `KILNMARK_WORKER_CONCURRENCY` above 5 (with 8 flows) without raising `QUARKUS_DATASOURCE_JDBC_MAX_SIZE` must
+    raise it (INSTALL.md, "Sizing the workers").
+- **A provider sign-in renews with the refresh token** (ADR 0036, decision 4, amended). Quarkus's
+  OIDC client was set up without `quarkus.oidc.token.refresh-expired`, so a session lasted only as
+  long as the provider's first ID token: 5 minutes with Keycloak's default, about an hour with
+  Entra ID. It now gets a fresh ID token when that one expires, and the session cookie outlives the
+  ID token by `kilnmark.auth.oidc.max-session`, so the expired token is there to renew. Each renewal
+  is checked as a sign-in is: MFA, groups, and `auth_time`, which stays when the person signed in,
+  so the 8-hour limit still ends the session and a renewed token without it is refused. A renewal
+  that is refused, or that the provider refuses (its session ended, the person disabled), ends the
+  session; the page says to sign in again. A renewal records no `auth.sign_in` (Quarkus announces it
+  as a login, and `SignInEvents` now passes over it); it pauses the schedules set above a role the
+  provider has lowered since, and nothing when the role is the same. Signing out asks the provider
+  to revoke the refresh token (RFC 7009) where the provider offers that (Keycloak and Okta do, Entra
+  ID does not), so a copy of the session cookie cannot renew afterwards;
+  with the bundled Keycloak this ends its session too, so signing in again asks for the password
+  and code. A session that can no longer sign anyone in is answered 401 "Your sign-in has ended.
+  Sign in again." with its cookie cleared, so later requests do not ask the provider again.
+  New `KILNMARK_OIDC_SCOPES` (`quarkus.oidc.authentication.scopes`) for providers that issue a
+  refresh token only for `offline_access`. The bundled Keycloak keeps its 5-minute tokens.
+- **A tidier node settings panel**: each setting's box now sits straight under its name, with its
+  help under the box, so the boxes of a row line up however long each one's help is. A write
+  node that names its table with `table:` (or its file with `path:`) no longer shows an empty
+  "Table or file" box beside it. A setting with several controls, such as Key columns, no longer
+  draws a rule and padding above itself, and its box comes before the list of what is chosen.
+- **A refactoring plan** on the backlog (item 21): one run lifecycle for pipelines and flows first,
+  then the UI's API file split by area, one form-field building block, and the two largest server
+  classes split. Each step changes no behaviour.
+
+- **Panels laid out evenly**: a sweep of every panel at 1900, 1280 and 1024 pixels, measured
+  rather than eyeballed.
+  - Node settings: an on/off setting's name now sits level with the names beside it (it was
+    11 pixels lower), and every setting's name is the same size, whether one box or several.
+    A list of columns keeps one column's width whether or not any are chosen, instead of
+    stretching across the panel once the first is added, and a long column name wraps inside its
+    chip (a read node's columns take the whole row, before and after the table's columns are
+    known). A pair's two boxes (a column and its expression, a column and the one it matches, a
+    column and its new name) sit side by side where there is room. A read node's checklist says
+    what it reads under the boxes, a node's id has its help under the box, "None chosen." no
+    longer leaves a gap before the help, and a long node id wraps in the side column instead of
+    running into the settings. A setting's default no longer pulls the word before it onto the
+    next line.
+  - Boxes in the code face are as tall as the others (40 pixels, not 41).
+  - Email settings: a number's unit sits beside its box, centred, and the boxes are a number's
+    width; Send a test email is as wide as its words; Allowed email domains has the box under
+    its name and the help last.
+  - Explore: a long table name keeps its kind on the same line, and the SQL tab's choices and
+    Generate SQL no longer touch the text above them.
+
+- **Quieter start and stop**: `kilnmark.sh` and `kilnmark.cmd` no longer show Podman's notice
+  that it runs an external compose tool (they set `PODMAN_COMPOSE_WARNING_LOGS=false` for their
+  own compose commands), and `up` and `down` show compose's container ids and names only when
+  compose fails. Their own lines still say what happened.
+
+## 0.1.1 (6 November 2026)
+
+### What's new
+
+- **Delete a flow** (ADR 0048). Designers and admins delete a flow from its page, after a warning
+  that names it and says what goes and what stays: its versions, its runs and its schedules go
+  (each schedule recorded in the audit log); the pipeline runs it started stay, with what they
+  wrote and the lineage they recorded. Refused while a run of it is queued or running.
+  ([Deleting a flow](docs/guide/flows.md#deleting-a-flow))
+- **A components reference.** One place for every pipeline node, flow node, connector, quality rule
+  and expression function, with what it does and every setting it takes: its type, whether it is
+  required, its default and what `${...}` may do in it, then what to know, who may use it and an
+  example to copy. Connectors also say what each can scan, read, write, preview and explore, where
+  SQL you write may run, the driver, and the database versions they are tested against. The node and
+  connector settings tables are made from the server's own catalogue, so they match the version you
+  run, and the build checks that every other table names exactly the keys Kilnmark reads.
+  ([Components reference](docs/guide/components-reference.md))
+
 - **Pipelines and flows run on a schedule** (ADR 0046). Designers and admins give a pipeline or flow
   one or more schedules: a five-field cron time in a time zone, the values its runs start with, and
   the role they act as (steward or designer, never admin). A schedule pauses itself when whoever set
@@ -64,6 +229,54 @@ details.
   ([Running from an external scheduler](docs/guide/external-schedulers.md))
 
 ### Details
+
+- **Version numbers count like digits**: each part goes from 0 to 9 and carries into the part
+  before it, so 0.0.9 is followed by 0.1.0 and 0.9.9 by 1.0.0. The release tagged 0.0.10 counts as
+  0.1.0, so this one is 0.1.1. `gradle.properties`, `docs/development.md` and the plan say so;
+  milestones are named, not numbered.
+
+- **A plan for benchmarks** (docs/design/benchmarks.md, planned; nothing built yet). How volume and
+  throughput will be measured: generated data at 1 million to 1 billion rows (TPC-H-derived, wide,
+  text-heavy and with broken rows), eight workloads from a table copy to 200 small runs at once,
+  what each run records, the baselines (the database's bulk tools, the last release, the tool a
+  customer runs today), the machines (starting on the owner's server), soak, failure and scaling
+  runs, `lab bench`, and a nightly check that fails on a 15% slowdown. Two diagrams,
+  `benchmark-setup.svg` and `benchmark-cycle.svg`, drawn by `diagrams.mjs`.
+- **Deleting a flow** (ADR 0048, docs/design/flows.md section 4). `DELETE /api/v1/flows/{name}`
+  (designer; 204, 404, or 409 while a run is queued or running) runs `FlowStore.deleteWithSchedules`
+  in one transaction: the flow's schedules are locked first, then the flow's row, the order a
+  scheduled fire takes them, so the two never deadlock (a test holds a fire between its two locks
+  and shows the delete waits, then is refused). V20's foreign keys take the versions, runs and node
+  runs, and set the started pipeline runs' `flow_run_id` to null; no migration. Its schedules are
+  deleted with `DELETE … RETURNING` and each recorded as `schedule.deleted` with
+  `via: flow deleted`. Pipelines and flows now share that code (`ScheduleStore.lockFor`,
+  `ScheduleStore.deleteFor`, `ScheduleService.recordDeletedWith`). Deleting a pipeline or a flow
+  still records no audit event of its own: a gap for both, noted in ADR 0048. No node runs another
+  flow, so nothing refuses a delete for being used. The flow page's **Delete** (designers and
+  admins) asks on the page, starts on Cancel, and goes to the Flows list (or the Library for a
+  sample) once deleted. Every lock wait in a pipeline's or a flow's delete is limited to 5 seconds:
+  past that nothing is deleted and the answer is 409 saying to try again, so a schedule moved onto
+  it and fired at that moment cannot hang the two. Deleting a pipeline or a flow clears its open
+  problem for notifications, so one saved later under the name is mailed at its first failure. A
+  run queued, or a version saved, just as its pipeline or flow is deleted is answered 404 instead of
+  failing with a server error, a start with a request key included (it then keeps no key); the
+  request keys of deleted runs go with them (V37's cascade). A flow's delete also waits for the job of a run that has just ended,
+  which tells of a failure before it ends.
+- **The components reference is generated and checked** (docs/development.md, "The components
+  reference"). `ComponentsReference` (a server test class) writes each node type's, connector's,
+  flow node's and rule type's facts and settings tables from the catalogue into marked parts of
+  `docs/guide/components-reference.md` and `reference-*.md`; `./gradlew :server:writeReference`
+  writes them again. `ComponentsReferenceTest`, run by `:server:checkReference` as part of `check`,
+  fails when a part is out of date, a component has no entry, a hand-written flow node or rule table
+  names other keys than the reader takes, an expression function is missing from
+  `pipeline-nodes.md`, the versions tested differ from the integration tests' images, or an example
+  does not save: every YAML example is checked as saving a pipeline or flow checks it, every JSON
+  one as the rules API does. To share the checks, `FlowDefinition.TYPE_KEYS` is public, `Expression`
+  lists its functions, `SettingSpec.fill()` says how `${...}` fills a setting (the compiler fills by
+  it), and `FlowService`'s checks of a node's sources and of the pipeline it runs are two methods,
+  `sourceProblems` and `pipelineProblems`. The `allow_writing` hint and the write node's help now
+  say designers and admins turn writing on, as the server enforces. A diagram of the component
+  families joins the guides.
 
 - **AI in pipelines is decided** ([ADR 0050](docs/adr/0050-ai-in-pipelines.md)): an `ai` node
   with the tasks classify, extract, summarise, translate and find personal data, and an `embed`

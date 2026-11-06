@@ -342,7 +342,7 @@ public final class KilnGraphRunner implements GraphRunner {
             try {
                 Map<RunNode, Context> contexts = new LinkedHashMap<>();
                 for (RunNode n : runNodes) {
-                    contexts.put(n, new Context(n, metadata));
+                    contexts.put(n, new Context(n, metadata, text -> nodeNote(n, text)));
                 }
                 synchronized (lock) { // a failure while starting waits until every thread is known
                     for (RunNode n : runNodes) {
@@ -478,7 +478,14 @@ public final class KilnGraphRunner implements GraphRunner {
 
         private void note(RunListener.Level level, RunNode n, String text) {
             if (!RunListener.NONE.equals(listener)) {
-                notes.add(new Note(level, n == null ? null : n.id(), text, System.nanoTime()));
+                notes.add(new Note(level, n == null ? null : n.id(), text, System.nanoTime(), false));
+            }
+        }
+
+        /** A line a node adds about its own work ({@link NodeContext#note}). */
+        private void nodeNote(RunNode n, String text) {
+            if (!RunListener.NONE.equals(listener)) {
+                notes.add(new Note(RunListener.Level.INFO, n.id(), text, System.nanoTime(), true));
             }
         }
 
@@ -533,7 +540,11 @@ public final class KilnGraphRunner implements GraphRunner {
             while ((note = notes.poll()) != null) {
                 Note told = note;
                 Instant when = at(told.nanos());
-                teller.tell(() -> listener.note(told.level(), told.node(), told.text(), when));
+                if (told.own()) {
+                    teller.tell(() -> listener.nodeNote(told.node(), told.text(), when));
+                } else {
+                    teller.tell(() -> listener.note(told.level(), told.node(), told.text(), when));
+                }
             }
             long now = System.nanoTime();
             if (last || lastProgress == 0 || now - lastProgress >= progressEvery.toNanos()) {
@@ -642,7 +653,7 @@ public final class KilnGraphRunner implements GraphRunner {
                 RunResult.Outcome outcome = n.outcome != null ? n.outcome : RunResult.Outcome.STOPPED; // never started
                 nodes.add(new RunResult.NodeResult(n.id(), n.node().type(), rowsOut, n.peak, n.error, rowsIn, in, out,
                     outcome, at(n.startedNanos), at(firstRow(n)), at(lastRow(n)), at(n.finishedNanos), waitIn(n),
-                    waitOut(n)));
+                    waitOut(n), n.spilled.get()));
                 if (n.error != null && (first == null || n.errorOrder < first.errorOrder)) {
                     first = n;
                 }
@@ -1068,7 +1079,7 @@ public final class KilnGraphRunner implements GraphRunner {
     }
 
     /** A note for the listener. */
-    private record Note(RunListener.Level level, String node, String text, long nanos) {
+    private record Note(RunListener.Level level, String node, String text, long nanos, boolean own) {
     }
 
     /** Whether every thread copying the node's rows to several readers has ended. */
@@ -1212,6 +1223,8 @@ public final class KilnGraphRunner implements GraphRunner {
         RunResult.Outcome toldOutcome;
         /** Memory a stopped node did not free, logged rather than reported. */
         String quietLeak;
+        /** Bytes the node wrote to disk because its rows did not fit in memory ({@link NodeContext#spilled}). */
+        final java.util.concurrent.atomic.AtomicLong spilled = new java.util.concurrent.atomic.AtomicLong();
 
         RunNode(GraphNode graphNode, int index) {
             this.graphNode = graphNode;
@@ -1296,10 +1309,12 @@ public final class KilnGraphRunner implements GraphRunner {
         private final Map<String, List<RowSet>> in = new LinkedHashMap<>();
         private final Map<String, RowSet> out = new LinkedHashMap<>();
         private final Map<String, String> settings;
+        private final Consumer<String> notes;
 
-        Context(RunNode node, MetadataEmitter metadata) {
+        Context(RunNode node, MetadataEmitter metadata, Consumer<String> notes) {
             this.node = node;
             this.metadata = metadata;
+            this.notes = notes;
             node.inputs.forEach((port, rs) -> in.put(port, rs.stream().map(r -> r.rowSet).toList()));
             node.outputs.forEach((port, p) -> out.put(port, p.rowSet));
             Map<String, String> s = new LinkedHashMap<>();
@@ -1421,6 +1436,20 @@ public final class KilnGraphRunner implements GraphRunner {
         @Override
         public Schema inputSchema(String port) {
             return node.graphNode.inputSchemas().get(port);
+        }
+
+        @Override
+        public void spilled(long bytes) {
+            if (bytes > 0) {
+                node.spilled.addAndGet(bytes);
+            }
+        }
+
+        @Override
+        public void note(String text) {
+            if (text != null && !text.isBlank()) {
+                notes.accept(text);
+            }
         }
 
         @Override

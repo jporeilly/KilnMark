@@ -48,7 +48,7 @@ to a source you have saved:
 | Placeholder | Stands for | Used by |
 | --- | --- | --- |
 | `crm-db` | A database with schemas `crm` (customers, customers_archive_2023, accounts) and `billing` (transactions, invoices) | read and write, read with a query (PostgreSQL with Allow SQL on), limit, compute, dedupe, union, quarantine gate |
-| `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed) | filter, route, select, lookup, both aggregates, warn and stop gates, both parameter samples |
+| `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed) | filter, route, select, sort, lookup, join, both aggregates, warn and stop gates, both parameter samples |
 | `files` | File storage the samples write to, under `samples/`; it must allow writing | every pipeline |
 
 A placeholder you do not map skips the samples that use it. Each sample is checked against what
@@ -106,8 +106,10 @@ preview a node, and choose **Run now**.
 | `03-transform` | `sample-compute` | New and tidied columns with expressions |
 | | `sample-select` | Keep, retype, rename and order columns |
 | | `sample-dedupe` | One row per key; the repeats through `rejected` |
+| | `sample-sort` | Rows in order: several columns, largest first, empty values last |
 | `04-combine` | `sample-lookup` | Add columns from another input, like a join; no match through `rejected` |
 | | `sample-union` | The rows of several inputs together |
+| | `sample-join` | Two inputs side by side by key: a full join, with the rows that have no partner |
 | `05-aggregate` | `sample-aggregate` | One row per group: counts, sums and distinct counts |
 | | `sample-catalogue-summary` | A summary per category, with an expression over the group |
 | `06-quality` | `sample-gate-quarantine` | A quality gate setting failing rows aside, with a threshold |

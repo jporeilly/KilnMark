@@ -67,6 +67,11 @@ export function nodeSummary(node: GraphNode): string {
       const on = s.on && typeof s.on === "object" && !Array.isArray(s.on) ? Object.entries(s.on).map(([a, b]) => `${a} = ${text(b)}`) : [];
       return on.length ? `on ${on.join(", ")}` : "";
     }
+    case "join": {
+      const on = s.on && typeof s.on === "object" && !Array.isArray(s.on) ? Object.entries(s.on).map(([a, b]) => `${a} = ${text(b)}`) : [];
+      const how = s.how != null ? t("how") : "inner";
+      return on.length ? `${how} on ${on.join(", ")}` : how;
+    }
     case "select": {
       const parts = [];
       if (s.keep != null) parts.push(`keep ${text(s.keep)}`);
@@ -83,6 +88,8 @@ export function nodeSummary(node: GraphNode): string {
       return keysOf(s.routes).join(", ");
     case "limit":
       return s.rows != null ? `first ${t("rows")} rows` : "";
+    case "sort":
+      return s.by != null ? `by ${text(s.by)}` : "";
     case "gate": {
       const n = Array.isArray(s.rules) ? s.rules.length : 0;
       const own = s.asset_rules === false || s.asset_rules === "false" ? "" : "asset's rules";
@@ -172,6 +179,10 @@ export function shownSettings(
   const specs = type.settings.filter((spec) => {
     const set = spec.key in node.settings;
     if (type.type === "write" && KEY_OF_TARGET.has(spec.key)) return set;
+    // One place names where a write goes: `target`, or `table` or `path` in its stead, never two boxes.
+    if (type.type === "write" && spec.key === "target" && !set && [...KEY_OF_TARGET].some((k) => k in node.settings)) {
+      return false;
+    }
     if (writerKeys.has(spec.key) && !allowed.has(spec.key) && !set) {
       writerHidden++;
       return false;

@@ -35,7 +35,7 @@ class SqlServerConnectorTest {
         assertEquals("Trust the server certificate", c.settings().get(3).label());
         assertEquals("Only for test servers with a self-signed certificate. Off by default. With it off, the "
             + "certificate must be valid", c.settings().get(3).hint());
-        assertTrue(c.settings().get(4).hint().startsWith("read-uncommitted (the default)"));
+        assertTrue(c.settings().get(4).hint().startsWith("How reads lock: read-uncommitted"));
     }
 
     @Test

@@ -7,3 +7,5 @@ io.kilnmark.kiln.nodes.UnionFactory
 io.kilnmark.kiln.nodes.DedupeFactory
 io.kilnmark.kiln.nodes.RouteFactory
 io.kilnmark.kiln.nodes.LimitFactory
+io.kilnmark.kiln.nodes.SortFactory
+io.kilnmark.kiln.nodes.JoinFactory

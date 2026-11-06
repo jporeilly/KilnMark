@@ -522,6 +522,8 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
 | `dedupe` | `in` → `out`, `rejected` | Keeps the first row per key |
 | `route` | `in` → named outputs, `out` | Sends each row to the first matching condition's port, others to `out` |
 | `limit` | `in` → `out` | First N rows, for trying a pipeline out |
+| `sort` | `in` → `out` | Orders rows by columns, spilling to disk past its memory limit |
+| `join` | `left`, `right` → `out` | Inner, left, right or full join of two inputs of any size (sort-merge, spilling) |
 | `gate` | `in` → `out`, `quarantine` | Checks rows against the asset's rules and its own in the stream; stops the run, quarantines failing rows or warns (docs/design/data-quality.md section 7) |
 | `write` | `in` → | Writes to a database table or a file in a saved source |
 
@@ -559,6 +561,128 @@ found through `ServiceLoader`. Settings, with defaults:
 - `route`: `routes` (port → condition, in order; port names are lower case, not `in` or `out`).
 - `limit`: `rows`. Stops reading once it has its rows; the runner ends the nodes before it that
   feed nothing else.
+- `sort`: `by` (kind `ORDER`: a list of `column [asc|desc] [nulls first|last]`, as SQL writes it;
+  the UI writes the same text), `memory_limit_mb` (256). See "Sorting, and spilling to disk" below.
+
+### Sorting, and spilling to disk (ADR 0049)
+
+`sort` (and each side of a `join`) is an external merge sort, `ExternalSorter` in `kiln-nodes`:
+
+- **Keys as bytes.** Each row's key is encoded once, as it arrives, into bytes whose unsigned
+  order is the order of the values (`KeyCodec`): whole numbers as eight bytes with the sign bit
+  flipped (unsigned 64-bit numbers as their bits, so 2^63 and above sort after the rest); dates
+  and timestamps as the instant to the nanosecond, whatever the column's unit (seconds since 1970,
+  sign flipped, then nanoseconds into the second), so nanosecond timestamps within one microsecond
+  still sort apart, although the expression language reads them to the microsecond; floating point as eight bytes in `Double.compare` order, -0.0
+  made 0.0 and every NaN one value after +infinity; decimals by value at the column's scale (sign,
+  length, magnitude, inverted when negative); text as its UTF-8 bytes (code point order) with zero
+  bytes escaped and a two-byte end, so no key is the start of another; booleans as one byte. Each
+  part starts with a byte placing its null first or last; a descending part inverts its value's
+  bytes, never that byte. Sorting and merging then compare bytes only, whatever the types.
+- **Ordering decisions.** The order is the expression language's `<` (section 3), so a sort agrees
+  with a filter's comparisons. Text has **no collation**: Unicode code point order, the order of
+  UTF-8 bytes (`B` before `a`, `é` after `z`), the same on every server and the order PostgreSQL's
+  `C` collation gives. A collation per locale is left for when a customer needs one; `lower(x)` in
+  a compute node gives a case-blind order today. **Nulls go last** by default in both directions
+  (unlike PostgreSQL, which puts them first when descending), so the rows with values are always
+  what a reader sees first; `nulls first` says otherwise.
+- **Stable.** In memory, a bottom-up merge sort of row references (with each key's first eight
+  bytes alongside, so most comparisons never touch the key) keeps equal rows in arrival order.
+  Runs on disk hold rows that arrived before those of later runs, and merging takes the earlier
+  run's row on a tie, and merges runs next to each other only, so the whole sort is stable.
+- **Memory.** Rows are held as their Arrow batches, moved into an allocator of the sorter's own,
+  plus their keys on the heap. When those (and 24 bytes a row for the sort's arrays) pass
+  `memory_limit_mb`, the rows held are sorted and written as one **run**, and let go. At the end,
+  with nothing spilled, rows are gathered in order straight from memory. Otherwise what is held is
+  written as a last run and the runs are merged, at most 64 at a time: with more, each pass merges
+  neighbouring runs (1-64, 65-128, ...) into one each, so every row is written once a pass and
+  ties still go to the earlier run. Batches are bounded by bytes as well as rows: runs are written
+  in batches small enough that 64 of them take a quarter of the limit (one row at the least, for
+  very wide rows), so a merge holds about that much, and batches handed on are at most 8,192 rows
+  and about an eighth of the limit.
+- **Files.** A run is an Arrow IPC stream of the rows with the key as an extra binary column. Each
+  file is encrypted with AES in counter mode, under a 256-bit key made for the node and held only
+  in its memory, with a random IV at the head of the file: rows from a source whose columns are
+  marked sensitive are never on disk in clear, and a file a crash leaves behind cannot be read.
+  Each run's rows, its size and a SHA-256 digest of what was written are kept in memory and
+  checked as it is read back, so a file cut short (even at a batch boundary) or changed fails the
+  node rather than dropping or changing rows. Files go in a folder of the node's own inside one
+  per process, `kilnmark-spill-<pid>-*`, under the system property `kilnmark.spill-dir` or else
+  `java.io.tmpdir`. On POSIX the folders are `rwx------`; on Windows their access list is set to
+  the folder's owner only (inherited by the files), and where that cannot be set they keep the
+  temporary folder's, the user's own by default. Each process folder holds a `.lock` file its
+  process keeps locked (`FileChannel.tryLock`); a folder whose lock can be taken belongs to a
+  process that has gone and is deleted when a node next spills. A process ID is never relied on:
+  in a container it is always 1, and a spill folder shared between machines holds others' live
+  folders. A folder with no lock file yet is left for an hour, as its process may be making it.
+  A run's files are deleted as the merge finishes with them, and the node's folder when it closes:
+  after it finishes, fails or is stopped (an interrupt ends the sort, the merge and file reads,
+  which use interruptible channels; a stop that closes a file mid-write is a stop, not a failure
+  of the folder).
+- **What a run shows.** The node counts the bytes it wrote (`NodeContext.spilled`, on the run's
+  `NodeResult.spilledBytes`) and adds a line to the run's log (`NodeContext.note`): how many rows
+  were sorted on disk, in how many parts, and how many megabytes. The bytes are not yet stored with
+  the node's other figures in the database.
+- **Preview.** A sort is previewable and counts as a node holding rows (its `memory_limit_mb` is
+  clamped to its share of the preview's). It may spill there too: on the API process, into the
+  same kind of private, encrypted folder, within the preview's caps on nodes, reads, memory and
+  time, and deleted when the preview ends or is stopped. It looks
+  at the values of the columns it orders by, so a preview refuses it for a caller who may not
+  see a hidden column it orders by: the order would give the values' order away.
+
+### Joining two inputs of any size (ADR 0049)
+
+`join`: `on` (left column → right column, several allowed), `how` (`inner`, `left`, `right`,
+`full`; `inner` by default, as SQL's `join`), `right_prefix` (`right_`), `memory_limit_mb` (256).
+
+- **A sort-merge join, reusing sort's engine.** Each side goes into an `ExternalSorter` of its own
+  as its batches arrive (both read at once with `RowSet.takeAny`, so two inputs fed by one node
+  never stall); the two share `memory_limit_mb`, and when together they pass it the larger spills a
+  run. Then the two sorted streams are merged. A hybrid hash join was the other choice: quicker
+  when one side fits in memory, but its output order is not defined, it needs a second strategy
+  for a skewed key anyway, and the small-side case is what `lookup` is for. Sort-merge gives a
+  defined order and one code path that is already proven to spill.
+- **Keys encoded by family, not by the other side's type.** A join key part is encoded without
+  knowing the other side (`KeyCodec`, join mode): whole numbers and decimals by exact value (sign,
+  power of ten, digits without trailing zeros, so `1`, `1.0` and `1.00` are one key; unsigned
+  64-bit numbers as unsigned); a float as its shortest decimal, as `lookup` matches it, so `1.0`
+  matches `1` but a float is not always its exact binary value (the float 2^60 does not match the
+  whole number 1152921504606846976, as its shortest decimal is 1.15292150460684698E18); NaN and
+  the infinities apart. Dates and timestamps as the instant to the nanosecond whatever their unit
+  (a date at its midnight; every date Arrow can hold fits), so nanosecond timestamps match only
+  the same nanosecond. Text as UTF-8, booleans as a byte. So each side starts sorting with its
+  first batch. The check refuses keys of different families (text and a number)
+  before the run, with "cast one of them first", as `lookup` does.
+- **Nulls never match** (SQL). A key with any null part is encoded as one marker byte that sorts
+  after every other key, and the merge never pairs such rows: they come out last, unmatched, the
+  left's then the right's, for the kinds of join that keep them.
+- **The merge.** Right rows with a smaller key than the left's come out alone (`right`, `full`);
+  for an equal key, the right rows of that key (the group) are joined to each left row of that
+  key, in arrival order on both sides; left rows with no match come out alone (`left`, `full`).
+  An inner join stops as soon as either side is used up, and when one input ends with no rows
+  while the other is still arriving, a join that cannot give a row (`inner` with either side
+  empty, `left` with its left empty, `right` with its right empty) stops reading at once. When a
+  key's right rows all lie in the batch at hand they are joined from it directly. Otherwise they
+  form a group: rows the right side's sorter still holds (it did not spill) are pointed at, never
+  copied, so the join keeps to its limit; rows read back from disk are copied, and the copies
+  are written to disk (encrypted, with their rows and digest checked as runs are) once they pass
+  a quarter of the limit, measured in bytes as each row is added. A group's file is read back
+  once per left row of that key: a many-to-many key costs about what its output costs. Closing a
+  group closes each of its parts on its own, so a stop or a full disk part-way through a write
+  (when the writer fails again as it closes) still frees its memory and deletes its file.
+- **Names and types.** Output columns are the left's, then the right's, each with its Arrow type
+  and metadata; a right column whose name a left column has (ignoring case, as a database target
+  would) is renamed with `right_prefix`, and a clash that renaming cannot clear is refused by name
+  before the run. Columns of a side that may be missing are made nullable.
+- **What it shows, and preview.** Bytes written count in `spilledBytes` and the run's log says how
+  much each side wrote (and how many keys held their right rows on disk). A preview runs a join
+  with its share of memory, refuses one matching on a column hidden from the caller, and masks a
+  hidden right column under the name it leaves by, worked out by the node's own walk
+  (`JoinFactory.rightNames`, so two right columns differing only in case are followed too), or
+  under both names when either side's columns are not known before the run; marks follow the
+  rename the same way, so a write carries them to `right_name`.
+- **Quality predictor.** It does not yet estimate a join (rows depend on how keys repeat): the
+  join's output columns are known, its rows are reported as not known.
 
 Memory: a node closes every batch it takes or hands it on, and splits batches by copying only
 when rows go to more than one port (a batch whose rows all go one way is handed on whole).
@@ -809,7 +933,9 @@ asset's previous profile.
   each snapshot and at the end: the run starting and ending, each node starting, its first row in
   and out, its last row out and how it ended, the engine's notes (stamped with when the engine
   noticed them), a gate starting to set rows aside (`gate_quarantining`: the first rows a gate node
-  sends anywhere but `out`), each gate's verdict (`gate_verdict`: "Gate check quarantined 229 rows (email
+  sends anywhere but `out`), a node's own words about its work (`node_note`, from
+  `NodeContext.note` through `RunListener.nodeNote`: "Node ordered: Sorted 60,000 rows on disk ...",
+  Kilnmark's words, never values, so they are the text), each gate's verdict (`gate_verdict`: "Gate check quarantined 229 rows (email
   format: 229)": rule names and counts, as the run's quality section shows everyone; a rule's
   message and a stop reason are the detail, as they can hold values) and the run's own notes, as
   information or warnings as each is. At most 10,000 events a run, then one `log_truncated`;
@@ -915,6 +1041,11 @@ its run ends, and a retried start never to run the work twice.
   also has `writerSettings`: for each kind of source that can be written to, the keys of the writer
   settings a node writing to such a source takes, so the canvas offers only those of the chosen
   source (round 3, step 2).
+- The same catalogue writes the user guide's components reference (docs/guide/components-reference.md
+  and reference-*.md): each node type's and connector's ports, abilities and settings (types,
+  defaults and help), and each flow node's and rule type's facts, go into marked parts of the pages, and `ComponentsReferenceTest` fails
+  when a part differs from the catalogue or a component has no entry (docs/development.md, "The
+  components reference"). So a `SettingSpec`'s `help` is also the reference's description of it.
 - The write node calls the writers' contract directly: `Connector.writeOptions()` for its
   allow-list, `Connector.writtenAssetPath(...)` for the written asset's URN, `WriteOptions.profiling`
   for the source's profiling settings, and `WriteReport.PROFILED` and `PROFILE_ERROR` for a profile

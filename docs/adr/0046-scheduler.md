@@ -24,8 +24,7 @@ Three things make a schedule different from what a pipeline or flow says:
 1. **One scheduler, for pipelines and flows.** A schedule is a row of its own (`schedule`, V36),
    not part of the YAML. It names one pipeline or one flow; each may have several schedules.
    Deleting a pipeline deletes its schedules, in the same transaction, and records each one.
-   Flows cannot be deleted yet; when deleting a flow arrives (the next change), the same foreign
-   key, which cascades, takes its schedules.
+   Deleting a flow does the same ([ADR 0048](0048-deleting-a-flow.md), which came after).
 2. **Designers and admins set schedules**: add, change, pause, resume and delete them (owner,
    6 November 2026), checked by the API's roles and again inside `ScheduleService`. Stewards read
    them with the values their runs start with; viewers read them without those values, as they
@@ -117,7 +116,7 @@ Three things make a schedule different from what a pipeline or flow says:
    sign-in is off (a lab) runs only while sign-in is still off.
 10. **Audited** (ADR 0029): `schedule.set` when one is added or changed, `schedule.deleted` when
    one is deleted, with what it runs, its cron, zone, role and whether it is on, and never its
-   parameter values. A pipeline deleted with schedules records `schedule.deleted` for exactly the
+   parameter values. A pipeline or flow deleted with schedules records `schedule.deleted` for exactly the
    schedules its own transaction deleted. A schedule paused because its setter lost the role
    records `schedule.paused`, with the reason. The runs themselves are recorded as runs requested by
    the schedule.

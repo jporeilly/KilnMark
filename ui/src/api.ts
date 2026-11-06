@@ -1800,6 +1800,8 @@ export const flowsApi = {
   runs: (name: string) => call<FlowRun[]>(`${flowPath(name)}/runs?limit=50`),
   runDetail: (id: number) => call<FlowRunDetail>(`/api/v1/flow-runs/${id}`),
   cancel: (id: number) => call<FlowRun>(`/api/v1/flow-runs/${id}/cancel`, { method: "POST" }),
+  /** Deletes the flow with its versions, runs and schedules; refused (409) while a run is queued or running. */
+  remove: (name: string) => call<null>(flowPath(name), { method: "DELETE" }),
 };
 
 // ---- Schedules (docs/design/schedules.md, ADR 0046) ----

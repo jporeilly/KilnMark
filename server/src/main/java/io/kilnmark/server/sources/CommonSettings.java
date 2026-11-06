@@ -120,23 +120,23 @@ public final class CommonSettings {
     private static final List<Definition> DEFINITIONS = List.of(
         new Definition(DESCRIPTION, "Description", "What this source holds and who looks after it", false, List.of(),
             null),
-        new Definition(AI_EGRESS, "AI models", "local_only: only models on servers marked local may see this source's "
-            + "metadata and data. allowed: any configured model. none: no model at all", false,
+        new Definition(AI_EGRESS, "AI models", "Which models may see this source's metadata and data: "
+            + "local_only, only models on servers marked local; allowed, any configured model; none, no model at all", false,
             List.of(AiEgress.LOCAL_ONLY.id(), AiEgress.ALLOWED.id(), AiEgress.NONE.id()), AiEgress.LOCAL_ONLY.id()),
         new Definition(AssetFilter.INCLUDE, "Include", "Only tables or files matching these patterns, ignoring case. "
             + "cust* or *.csv match names; crm.* (a schema's tables) or raw/** (a folder's files) match paths. "
             + "Leave empty for all", true, List.of(), null),
         new Definition(AssetFilter.EXCLUDE, "Exclude", "Leave out tables or files matching these patterns, for "
             + "example tmp_*, *_backup or archive/**", true, List.of(), null),
-        new Definition(ALLOW_WRITING, "Allow writing", "true lets pipelines write tables or files to this source, "
-            + "with an account that has write rights; false keeps it read-only. Only admins can change it", false,
+        new Definition(ALLOW_WRITING, "Allow writing", "Lets pipelines write tables or files to this source, with "
+            + "an account that has write rights; off keeps it read-only. Only designers and admins can change it", false,
             List.of("false", "true"), "false", SettingSpec.Kind.BOOLEAN),
         new Definition(ALLOW_SQL, "Allow SQL", "PostgreSQL only: true lets designers whose token sees unmasked "
             + "values write SQL that runs on this source (custom quality rules). Give the source a login that can read "
             + "only what that SQL needs. false (the default) runs only the SQL Kilnmark builds", false,
             List.of("false", "true"), "false", SettingSpec.Kind.BOOLEAN),
-        new Definition(KEEP_SAMPLES, "Keep samples", "true (the default) keeps sample rows, example values and "
-            + "failing rows for stewards to see; false keeps only shapes and statistics", false, List.of(), "true",
+        new Definition(KEEP_SAMPLES, "Keep samples", "Keeps sample rows, example values and failing rows for "
+            + "stewards to see; off keeps only shapes and statistics", false, List.of(), "true",
             SettingSpec.Kind.BOOLEAN),
         new Definition(SAMPLE_ROWS, "Rows sampled", "Rows sampled from each table or file for profiling, up to "
             + MAX_SAMPLE_ROWS + ". Leave empty for the server's setting", false, List.of(), null,

@@ -6,7 +6,7 @@ import type { Value } from "./model";
 
 /** What a control needs besides its setting: the columns it can offer, sources, and assets. */
 export type ControlContext = {
-  /** Columns arriving at the node (for a lookup: main and lookup sides); null when not known. */
+  /** Columns arriving at the node (for a lookup: main and lookup sides; for a join: left and right); null when not known. */
   columns: { main: PipelineColumn[] | null; lookup: PipelineColumn[] | null };
   /** Which side a column setting names; the right-hand side of a column map may name the other. */
   side: "main" | "lookup" | null;
@@ -40,19 +40,25 @@ const asList = (v: Value | undefined): string[] =>
 const asPairs = (v: Value | undefined): [string, string][] =>
   v && typeof v === "object" && !Array.isArray(v) ? Object.entries(v).map(([k, x]) => [k, x == null ? "" : String(x)]) : [];
 
-/** The label, help, default and problems around a control; `describedBy` ties them to it. */
+/**
+ * The label, help, default and problems around a control; `describedBy` ties them to it. A `wide`
+ * control (SQL, an expression, a list of pairs or rules, a read's column checklist) takes the whole
+ * row of the panel, whatever it holds at the moment, so a setting never changes width as it fills.
+ */
 function Field({
   spec,
   id,
   problems,
   children,
   group,
+  wide,
 }: {
   spec: NodeTypeSetting;
   id: string;
   problems: string[];
   children: (describedBy: string, invalid: boolean) => ReactNode;
   group?: boolean;
+  wide?: boolean;
 }) {
   const def = defaultText(spec);
   const described = [`${id}-help`, problems.length ? `${id}-problems` : null].filter(Boolean).join(" ");
@@ -62,13 +68,10 @@ function Field({
       {spec.required ? <span className="cv-required"> (required)</span> : null}
     </>
   );
+  // The box straight under its name and the help under the box, so the boxes of a row line up
+  // however long each one's help is.
   const body = (
     <>
-      <p id={`${id}-help`} className="hint">
-        {spec.help}
-        {spec.help && !/[.!?]$/.test(spec.help) ? "." : ""}
-        {def != null && <span className="cv-default"> Default: {def}.</span>}
-      </p>
       {children(described, problems.length > 0)}
       {problems.length > 0 && (
         <ul id={`${id}-problems`} className="cv-field-problems">
@@ -77,15 +80,27 @@ function Field({
           ))}
         </ul>
       )}
+      <p id={`${id}-help`} className="hint">
+        {spec.help}
+        {spec.help && !/[.!?]$/.test(spec.help) ? "." : ""}
+        {/* The space outside the unbroken default, so the help wraps before it, not a word early. */}
+        {def != null && (
+          <>
+            {" "}
+            <span className="cv-default">Default: {def}.</span>
+          </>
+        )}
+      </p>
     </>
   );
+  const cls = wide ? "cv-field cv-field-wide" : "cv-field";
   return group ? (
-    <fieldset className="cv-field" data-setting={spec.key}>
+    <fieldset className={cls} data-setting={spec.key}>
       <legend className="cv-label">{label}</legend>
       {body}
     </fieldset>
   ) : (
-    <div className="cv-field" data-setting={spec.key}>
+    <div className={cls} data-setting={spec.key}>
       <label className="cv-label" htmlFor={id}>
         {label}
       </label>
@@ -150,7 +165,7 @@ function SqlControl(p: ControlProps) {
   const outside = asText(p.value, p.text);
   const { draft, setDraft, focusProps } = useDraft(outside);
   return (
-    <Field spec={p.spec} id={p.id} problems={p.problems}>
+    <Field spec={p.spec} id={p.id} problems={p.problems} wide>
       {(describedBy, invalid) => (
         <textarea
           id={p.id}
@@ -371,7 +386,7 @@ function ExpressionControl(p: ControlProps) {
     });
   };
   return (
-    <Field spec={p.spec} id={p.id} problems={p.problems}>
+    <Field spec={p.spec} id={p.id} problems={p.problems} wide>
       {(describedBy, invalid) => (
         <>
           <textarea
@@ -505,12 +520,10 @@ function ColumnChecklist(p: ControlProps & { columns: PipelineColumn[] }) {
     p.onChange(next.length ? next : undefined);
   };
   return (
-    <Field spec={p.spec} id={p.id} problems={p.problems} group>
+    <Field spec={p.spec} id={p.id} problems={p.problems} group wide>
       {(describedBy, invalid) => (
         <>
-          <p className="small muted" id={`${p.id}-state`}>
-            {chosen.length === 0 ? "None ticked: every column is read." : `${chosen.length} of ${p.columns.length} read, in this order: ${chosen.join(", ")}.`}
-          </p>
+          {/* The box under the name as in every setting; what it reads, in words, under the box. */}
           <ul className="cv-checklist" id={p.id} aria-describedby={`${describedBy} ${p.id}-state`} aria-invalid={invalid || undefined}>
             {p.columns.map((c) => {
               const at = chosen.indexOf(c.name);
@@ -533,6 +546,9 @@ function ColumnChecklist(p: ControlProps & { columns: PipelineColumn[] }) {
               </li>
             ))}
           </ul>
+          <p className="small muted" id={`${p.id}-state`}>
+            {chosen.length === 0 ? "None ticked: every column is read." : `${chosen.length} of ${p.columns.length} read, in this order: ${chosen.join(", ")}.`}
+          </p>
           {!p.readOnly && chosen.length > 0 && (
             <button type="button" className="cv-mini" onClick={() => p.onChange(undefined)}>
               Read every column
@@ -558,32 +574,12 @@ function ColumnsControl(p: ControlProps) {
     setAdding("");
   };
   return (
-    <Field spec={p.spec} id={p.id} problems={p.problems} group>
+    // A read node shows its columns as a full-row checklist once the table's columns are known; this
+    // stand-in takes the same row before then, so the setting does not change width when they arrive.
+    <Field spec={p.spec} id={p.id} problems={p.problems} group wide={p.context.nodeType === "read"}>
       {(describedBy, invalid) => (
         <>
-          {chosen.length > 0 ? (
-            <ul className="cv-chosen" id={p.id} aria-describedby={describedBy}>
-              {chosen.map((c, i) => (
-                <li key={`${c}-${i}`} className="cv-chip-row">
-                  <span className="mono">{c}</span>
-                  {!p.readOnly && (
-                    <button
-                      type="button"
-                      className="cv-mini"
-                      aria-label={`Remove ${c} from ${p.spec.label}`}
-                      onClick={() => p.onChange(chosen.filter((_, j) => j !== i))}
-                    >
-                      Remove
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="small muted" id={p.id}>
-              None chosen.
-            </p>
-          )}
+          {/* The box first, under the name as in every other setting; what is chosen under it. */}
           {!p.readOnly && (
             <div className="cv-add-row">
               {rest && rest.length > 0 ? (
@@ -626,6 +622,167 @@ function ColumnsControl(p: ControlProps) {
               )}
             </div>
           )}
+          {chosen.length > 0 ? (
+            <ul className="cv-chosen" id={p.id} aria-describedby={describedBy}>
+              {chosen.map((c, i) => (
+                <li key={`${c}-${i}`} className="cv-chip-row">
+                  <span className="mono">{c}</span>
+                  {!p.readOnly && (
+                    <button
+                      type="button"
+                      className="cv-mini"
+                      aria-label={`Remove ${c} from ${p.spec.label}`}
+                      onClick={() => p.onChange(chosen.filter((_, j) => j !== i))}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="small muted" id={p.id}>
+              None chosen.
+            </p>
+          )}
+        </>
+      )}
+    </Field>
+  );
+}
+
+/** One column a sort orders by, as its `by` setting writes it: `amount desc nulls first`. */
+export type OrderTerm = { column: string; descending: boolean; nullsFirst: boolean };
+
+const ORDER_TERM = /^(.*?)(?:\s+(asc|desc))?(?:\s+nulls\s+(first|last))?$/is;
+
+/** Reads one entry of a sort's `by` as the sort node reads it. */
+export function parseOrderTerm(entry: string): OrderTerm {
+  const m = ORDER_TERM.exec(entry.trim());
+  const column = m?.[1]?.trim() || entry.trim();
+  return { column, descending: m?.[2]?.toLowerCase() === "desc", nullsFirst: m?.[3]?.toLowerCase() === "first" };
+}
+
+/** Writes one entry of a sort's `by`, leaving out what is the default (ascending, nulls last). */
+export function orderTermText(t: OrderTerm): string {
+  return t.column + (t.descending ? " desc" : "") + (t.nullsFirst ? " nulls first" : "");
+}
+
+/**
+ * The columns a sort orders by, first to last: each with its direction and where its empty values
+ * go, which can be moved up or removed; new ones are added from the arriving columns.
+ */
+function OrderControl(p: ControlProps) {
+  const terms = asList(p.value).map(parseOrderTerm);
+  const cols = p.context.columns.main;
+  const [adding, setAdding] = useState("");
+  const addId = `${p.id}-add`;
+  const rest = cols?.filter((c) => !terms.some((t) => t.column === c.name)) ?? null;
+  const write = (next: OrderTerm[]) => p.onChange(next.length ? next.map(orderTermText) : undefined);
+  const add = (name: string) => {
+    const n = name.trim();
+    if (!n || terms.some((t) => t.column === n)) return;
+    write([...terms, { column: n, descending: false, nullsFirst: false }]);
+    setAdding("");
+  };
+  const change = (i: number, t: Partial<OrderTerm>) => write(terms.map((x, j) => (j === i ? { ...x, ...t } : x)));
+  return (
+    <Field spec={p.spec} id={p.id} problems={p.problems} group wide>
+      {(describedBy, invalid) => (
+        <>
+          {!p.readOnly && (
+            <div className="cv-add-row">
+              {rest && rest.length > 0 ? (
+                <select
+                  id={addId}
+                  value=""
+                  aria-label={`Add a column to ${p.spec.label}`}
+                  aria-describedby={describedBy}
+                  aria-invalid={invalid || undefined}
+                  onChange={(e) => add(e.target.value)}
+                >
+                  <option value="">Add a column…</option>
+                  {rest.map((c) => (
+                    <option key={c.name} value={c.name}>
+                      {c.name} ({c.type})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <>
+                  <input
+                    id={addId}
+                    className="mono"
+                    value={adding}
+                    aria-label={`Column to add to ${p.spec.label}`}
+                    aria-describedby={describedBy}
+                    spellCheck={false}
+                    onChange={(e) => setAdding(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        add(adding);
+                      }
+                    }}
+                  />
+                  <button type="button" onClick={() => add(adding)} disabled={!adding.trim()}>
+                    Add
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+          {terms.length > 0 ? (
+            <ol className="cv-order" id={p.id} aria-describedby={describedBy}>
+              {terms.map((t, i) => (
+                <li key={`${t.column}-${i}`} className="cv-order-row">
+                  <span className="mono cv-order-column">{t.column}</span>
+                  <select
+                    value={t.descending ? "desc" : "asc"}
+                    disabled={p.readOnly}
+                    aria-label={`Direction for ${t.column}`}
+                    onChange={(e) => change(i, { descending: e.target.value === "desc" })}
+                  >
+                    <option value="asc">Smallest first</option>
+                    <option value="desc">Largest first</option>
+                  </select>
+                  <select
+                    value={t.nullsFirst ? "first" : "last"}
+                    disabled={p.readOnly}
+                    aria-label={`Empty values in ${t.column}`}
+                    onChange={(e) => change(i, { nullsFirst: e.target.value === "first" })}
+                  >
+                    <option value="last">Empty last</option>
+                    <option value="first">Empty first</option>
+                  </select>
+                  {!p.readOnly && i > 0 && (
+                    <button
+                      type="button"
+                      className="cv-mini"
+                      aria-label={`Move ${t.column} up`}
+                      onClick={() => write(terms.map((x, j) => (j === i - 1 ? terms[i] : j === i ? terms[i - 1] : x)))}
+                    >
+                      Up
+                    </button>
+                  )}
+                  {!p.readOnly && (
+                    <button
+                      type="button"
+                      className="cv-mini"
+                      aria-label={`Remove ${t.column} from ${p.spec.label}`}
+                      onClick={() => write(terms.filter((_, j) => j !== i))}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="small muted" id={p.id}>
+              None chosen.
+            </p>
+          )}
         </>
       )}
     </Field>
@@ -641,6 +798,7 @@ function pairLabels(kind: PairKind, nodeType: string | null, key: string): [stri
     return ["Column", nodeType === "aggregate" ? "Summary" : "Expression", "Add a column"];
   }
   if (nodeType === "lookup") return ["Main column", "Lookup column", "Add a key"];
+  if (nodeType === "join") return ["Left column", "Right column", "Add a key"];
   if (key === "rename") return ["Column", "New name", "Add a rename"];
   return ["From", "To", "Add a pair"];
 }
@@ -662,7 +820,7 @@ function PairsControl(p: ControlProps & { kind: PairKind }) {
     }
   }, [key]);
   const [left, right, addLabel] = pairLabels(p.kind, p.context.nodeType, p.spec.key);
-  const valueIsColumn = p.kind === "column-map" && p.context.nodeType === "lookup";
+  const valueIsColumn = p.kind === "column-map" && (p.context.nodeType === "lookup" || p.context.nodeType === "join");
   const leftIsColumn = p.kind === "column-map" || (p.kind === "expressions" && p.spec.key === "cast");
   const dupes = new Set(rows.map((r) => r[0]).filter((n, i, all) => n !== "" && all.indexOf(n) !== i));
   const commit = (next: [string, string][]) => {
@@ -677,7 +835,7 @@ function PairsControl(p: ControlProps & { kind: PairKind }) {
   const exprRefs = useRef<(HTMLTextAreaElement | null)[]>([]);
   const lastFocused = useRef<number>(-1);
   return (
-    <Field spec={p.spec} id={p.id} problems={problems} group>
+    <Field spec={p.spec} id={p.id} problems={problems} group wide>
       {(describedBy, invalid) => (
         <>
           {rows.length === 0 && (
@@ -951,7 +1109,7 @@ function RulesControl(p: ControlProps) {
       }),
     );
   return (
-    <Field spec={p.spec} id={p.id} problems={p.problems} group>
+    <Field spec={p.spec} id={p.id} problems={p.problems} group wide>
       {(describedBy, invalid) => (
         <>
           {rows.length === 0 && (
@@ -1141,6 +1299,8 @@ export function SettingControl(p: ControlProps) {
       ) : (
         <ColumnsControl {...p} />
       );
+    case "order":
+      return <OrderControl {...p} />;
     case "rules":
       return <RulesControl {...p} />;
     default:

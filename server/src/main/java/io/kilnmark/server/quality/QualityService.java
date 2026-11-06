@@ -234,9 +234,24 @@ public class QualityService {
 
     // ---- the job ----
 
+    /**
+     * Marks failed the evaluations whose job ran out of attempts (a worker died running them each
+     * time); called by workers' recovery, on start and every 30 seconds, right after it fails such
+     * jobs. Never throws.
+     */
+    public void failOrphanedRuns() {
+        try {
+            int n = store.failOrphanedRuns();
+            if (n > 0) {
+                LOG.infof("%d quality runs were left by a stopped worker and are now marked failed", n);
+            }
+        } catch (RuntimeException e) {
+            LOG.debugf(e, "Could not check for quality runs left by a stopped worker");
+        }
+    }
+
     /** Runs the quality evaluation behind job {@code jobId}; called by a worker. */
     public ScanService.Result execute(long jobId, BooleanSupplier cancelled) {
-        store.failOrphanedRuns();
         Optional<Long> runId = store.runForJob(jobId);
         if (runId.isEmpty()) {
             return new ScanService.Result(ScanService.Outcome.SKIPPED, "Job " + jobId + " names no quality run");
