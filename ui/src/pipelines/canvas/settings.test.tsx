@@ -39,6 +39,28 @@ const html = (s: NodeTypeSetting, value: unknown, over: Partial<ControlContext> 
     <SettingControl spec={s} id="t" value={value as never} onChange={() => {}} readOnly={false} problems={problems} context={ctx(over)} />,
   );
 
+describe("each setting's box sits under its name, its help under the box", () => {
+  // So the boxes of a row line up whatever the length of each one's help (the node settings panel).
+  const order = (out: string, box: RegExp) => {
+    const at = out.search(box);
+    const help = out.indexOf('class="hint"');
+    expect(at).toBeGreaterThan(-1);
+    expect(help).toBeGreaterThan(at);
+  };
+
+  test("a text, a choice and a source", () => {
+    order(html(spec("label", "text"), "x"), /<input/);
+    order(html(spec("mode", "choice", { choices: ["create", "replace"] }), "replace"), /<select/);
+    order(html(spec("source", "source"), "crm-db"), /<select|<input/);
+  });
+
+  test("a list of columns: the box to add one first, then what is chosen", () => {
+    const out = html(spec("key", "columns"), []);
+    order(out, /<input|<select/);
+    expect(out.indexOf("None chosen")).toBeGreaterThan(out.search(/<input|<select/));
+  });
+});
+
 describe("each setting kind gets its control, with help and default", () => {
   test("BOOLEAN: a switch, showing the default when unset", () => {
     const out = html(spec("strict", "boolean", { defaultValue: false }), undefined);
@@ -203,7 +225,7 @@ describe("what the canvas says about nodes", () => {
     const write = {
       type: "write",
       kind: "sink",
-      settings: [spec("source", "source"), spec("target", "asset"), spec("table", "text"), spec("commit_every", "number"), spec("overwrite", "boolean")],
+      settings: [spec("source", "source"), spec("target", "asset"), spec("table", "text"), spec("path", "text"), spec("commit_every", "number"), spec("overwrite", "boolean")],
       writerSettings: { postgresql: ["commit_every"], s3: ["overwrite"] },
     } as unknown as NodeType;
     const keys = (kind: string | null, settings = {}) => shownSettings(write, node({ type: "write", settings }), kind).specs.map((s) => s.key);
@@ -211,8 +233,12 @@ describe("what the canvas says about nodes", () => {
     expect(keys("postgresql")).toEqual(["source", "target", "commit_every"]);
     expect(keys(null)).toEqual(["source", "target"]);
     expect(shownSettings(write, node({ type: "write" }), null).writerHidden).toBe(2);
-    // A setting the YAML has is always shown, so it can be seen and removed.
-    expect(keys("s3", { table: "a.b", commit_every: 5 })).toEqual(["source", "target", "table", "commit_every", "overwrite"]);
+    // A setting the YAML has is always shown, so it can be seen and removed; `table` (or `path`) in
+    // the YAML names where the write goes, so the empty `target` box beside it is not shown.
+    expect(keys("s3", { table: "a.b", commit_every: 5 })).toEqual(["source", "table", "commit_every", "overwrite"]);
+    expect(keys(null, { path: "out/a.csv" })).toEqual(["source", "path"]);
+    // A target the YAML has stays, with a table beside it, so both can be seen and one removed.
+    expect(keys(null, { target: "a.b", table: "a.c" })).toEqual(["source", "target", "table"]);
   });
 
   test("defaults in words", () => {
