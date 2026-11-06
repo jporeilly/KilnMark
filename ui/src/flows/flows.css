@@ -426,3 +426,12 @@
     background: Highlight;
   }
 }
+
+/* Each try of a node or item that was tried again (ADR 0041). */
+.run-tries {
+  margin: 0;
+  padding-left: 1.2em;
+}
+.run-tries li + li {
+  margin-top: 0.15rem;
+}

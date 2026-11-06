@@ -90,11 +90,21 @@ public final class FlowViews {
      * {@code pipelineRunTimes} are the times of the pipeline run it started, for a run-pipeline node
      * that has started one: with the node's own times they say how long it waited before asking for
      * the run (another run of the pipeline was going), how long the run was queued for a worker, and
-     * how long it ran.
+     * how long it ran. {@code tries} lists every pipeline run of a node that was tried again after a
+     * failure (ADR 0041), by item then try; null when it never was.
      */
     public record NodeRunView(String node, String type, int position, String status, Instant startedAt,
                               Instant finishedAt, Long pipelineRunId, String pipeline, String message,
-                              JsonNode reported, List<ItemRunView> items, PipelineRunTimes pipelineRunTimes) {
+                              JsonNode reported, List<ItemRunView> items, PipelineRunTimes pipelineRunTimes,
+                              List<TryView> tries) {
+
+        /** A node that was never tried again. */
+        public NodeRunView(String node, String type, int position, String status, Instant startedAt,
+                           Instant finishedAt, Long pipelineRunId, String pipeline, String message,
+                           JsonNode reported, List<ItemRunView> items, PipelineRunTimes pipelineRunTimes) {
+            this(node, type, position, status, startedAt, finishedAt, pipelineRunId, pipeline, message, reported, items,
+                pipelineRunTimes, null);
+        }
 
         /** A node that runs no items and started no pipeline run. */
         public NodeRunView(String node, String type, int position, String status, Instant startedAt,
@@ -103,6 +113,14 @@ public final class FlowViews {
             this(node, type, position, status, startedAt, finishedAt, pipelineRunId, pipeline, message, reported, null,
                 null);
         }
+    }
+
+    /**
+     * One try of a run-pipeline node, or of a for-each node's item ({@code item} from 0; null for a
+     * run-pipeline node): its number from 1, and its pipeline run with that run's status and times.
+     */
+    public record TryView(Integer item, int number, long pipelineRunId, String status, Instant startedAt,
+                          Instant finishedAt) {
     }
 
     /** When a pipeline run was asked for, started (taken by a worker) and finished; null until each happens. */

@@ -7,6 +7,13 @@ details.
 
 ### What's new
 
+- **Try a node again after a failure** (ADR 0041). A `run-pipeline`, `for-each` or `sql` node's
+  `retries` (0 to 5) tries it again when it fails or times out, waiting `retry_delay` (1 minute
+  unless set), doubled each time. A cancel is never tried again, and a pipeline is tried again only
+  if its writes replace or upsert, so nothing is written twice. Each try is a pipeline run of its
+  own, listed on the run page. Upgrading adds a column to `pipeline_run` (migration V35).
+  ([Trying a node again after a failure](docs/guide/flows.md#trying-a-node-again-after-a-failure))
+
 - **Wait until a file arrives or a query is true** (ADR 0041). A flow's new `wait-for` node looks
   every so often, holding no worker in between, until enough files matching a pattern are on a file
   source, or a read-only query on a PostgreSQL source with Allow SQL on returns true, then lets the
