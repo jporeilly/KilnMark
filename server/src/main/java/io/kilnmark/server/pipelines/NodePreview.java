@@ -57,7 +57,7 @@ final class NodePreview {
      * else (a write, or a node type added later) may write or change something, and is refused.
      */
     static final Set<String> PREVIEWABLE = Set.of(ReadNodeFactory.TYPE, "filter", "compute", "select", "lookup",
-        "aggregate", "union", "dedupe", "route", "limit", "sort", GateNodeFactory.TYPE);
+        "aggregate", "union", "dedupe", "route", "limit", "sort", "join", GateNodeFactory.TYPE);
 
     private NodePreview() {
     }
@@ -87,7 +87,7 @@ final class NodePreview {
     }
 
     /** Nodes that hold rows in state of their own, bounded by their {@code memory_limit_mb}. */
-    static final Set<String> STATEFUL = Set.of("aggregate", "dedupe", "lookup", "union", "sort");
+    static final Set<String> STATEFUL = Set.of("aggregate", "dedupe", "lookup", "union", "sort", "join");
 
     static Plan plan(String yaml, String node) {
         return plan(yaml, node, Caps.DEFAULT);
@@ -250,6 +250,9 @@ final class NodePreview {
             if ("aggregate".equals(s.type()) || "sort".equals(s.type())) {
                 out.add("Node " + s.id() + " (" + s.type() + ") reads every row it is given before it passes any on, "
                     + "so every row before it was read.");
+            } else if ("join".equals(s.type())) {
+                out.add("Node " + s.id() + " (join) reads every row of both its inputs before it passes any on, so every "
+                    + "row before it was read.");
             } else if ("lookup".equals(s.type())) {
                 List<String> from = c.edges().stream().filter(e -> e.toNode().equals(s.id())
                     && e.toPort().equals("lookup")).map(PipelineCompilerPort.EdgeOutline::fromNode).distinct().toList();
@@ -361,6 +364,15 @@ final class NodePreview {
                 unionTypes(id, c.edges(), nodes, any);
             }
             Set<String> gate = gateFields.containsKey(id) ? gateFields.get(id) : null;
+            if ("join".equals(s.type())) {
+                Hidden l = in.getOrDefault("left", Hidden.NONE);
+                Hidden r = in.getOrDefault("right", Hidden.NONE);
+                Map<String, String> on = texts(config.get("on"));
+                uses(id, "join", l, new ArrayList<>(on.keySet()), "matches rows by");
+                uses(id, "join", r, new ArrayList<>(on.values()), "matches rows by");
+                out.put(id, l.plus(joinRight(r, config, inputColumns(c, nodes, id, "left"))));
+                continue;
+            }
             out.put(id, through(s.id(), s.type(), config, in, any, readHidden.getOrDefault(id, Set.of()), gate));
         }
         return out.getOrDefault(node, Hidden.NONE);
@@ -388,6 +400,11 @@ final class NodePreview {
                     in.merge(e.toPort(), h, Hidden::plus);
                     any = any.plus(h);
                 }
+            }
+            if ("join".equals(nodes.get(id).type())) {
+                out.put(id, in.getOrDefault("left", Hidden.NONE).plus(joinRight(in.getOrDefault("right", Hidden.NONE),
+                    c.configs().getOrDefault(id, Map.of()), inputColumns(c, nodes, id, "left"))));
+                continue;
             }
             out.put(id, marking(nodes.get(id).type(), c.configs().getOrDefault(id, Map.of()), in, any,
                 readMarks.getOrDefault(id, Set.of())));
@@ -609,6 +626,51 @@ final class NodePreview {
         Map<String, String> out = new LinkedHashMap<>();
         if (value instanceof Map<?, ?> m) {
             m.forEach((k, v) -> out.put(String.valueOf(k), v == null ? null : String.valueOf(v)));
+        }
+        return out;
+    }
+
+    /**
+     * A join's right columns as they leave it: a right column whose name a left column has (ignoring
+     * case) leaves as {@code right_prefix} and its name, as the join node names it. When the left's
+     * columns are not known, a hidden right column is hidden under both names.
+     */
+    static Hidden joinRight(Hidden right, Map<String, Object> config, List<String> leftColumns) {
+        if (right.all()) {
+            return Hidden.ALL;
+        }
+        Object p = config.get("right_prefix");
+        String prefix = p == null || String.valueOf(p).isBlank() ? "right_" : String.valueOf(p);
+        Set<String> left = leftColumns == null ? null : new HashSet<>(leftColumns.stream().map(NodePreview::key).toList());
+        Set<String> out = new HashSet<>();
+        for (String n : right.names()) {
+            if (left == null || left.contains(n)) {
+                out.add(prefix + n);
+            }
+            if (left == null || !left.contains(n)) {
+                out.add(n);
+            }
+        }
+        return new Hidden(out, false);
+    }
+
+    /** The columns arriving at a node's input port, as the check worked them out; null when not known. */
+    private static List<String> inputColumns(PipelineCompilerPort.Compilation c,
+                                             Map<String, PipelineCompilerPort.NodeOutline> nodes, String id, String port) {
+        List<String> out = null;
+        for (PipelineCompilerPort.EdgeOutline e : c.edges()) {
+            if (e.toNode().equals(id) && e.toPort().equals(port)) {
+                PipelineCompilerPort.NodeOutline from = nodes.get(e.fromNode());
+                List<PipelineCompilerPort.Column> cols = from == null || from.columns() == null ? null
+                    : from.columns().get(e.fromPort());
+                if (cols == null) {
+                    return null;
+                }
+                out = out == null ? new ArrayList<>() : out;
+                for (PipelineCompilerPort.Column col : cols) {
+                    out.add(col.name());
+                }
+            }
         }
         return out;
     }
