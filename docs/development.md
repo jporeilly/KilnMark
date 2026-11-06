@@ -464,6 +464,7 @@ worker is running, scans stay `queued`.
 | --- | --- | --- |
 | `kilnmark.worker.concurrency` (`KILNMARK_WORKER_CONCURRENCY`) | `2` | Jobs (scans, quality checks and pipeline runs) one worker runs at the same time: its slots |
 | `kilnmark.worker.flows` (`KILNMARK_WORKER_FLOWS`) | `8` | Flows one worker watches at the same time; they hold no slot, but a database connection each |
+| `quarkus.datasource.jdbc.max-size` (`QUARKUS_DATASOURCE_JDBC_MAX_SIZE`) | `30` | Connections to Kilnmark's database this process may open. At least `concurrency × 3 + flows + 1` with the worker role, plus 5 with the api or scheduler role (20 with the defaults); the server refuses to start with fewer (`PoolSizeCheck`) and names the settings to change |
 | `kilnmark.worker.poll-interval` | `5s` | How often to look for jobs when no notification arrives |
 | `kilnmark.worker.heartbeat-interval` | `10s` | How often a running job reports that it is alive |
 | `kilnmark.worker.stale-after` | `2m` | A running job silent this long, whose worker is gone, is recovered |
@@ -507,7 +508,12 @@ Workers wake at once on a PostgreSQL notification and poll as a fallback. A sour
 one scan waiting or running: asking for another returns the one in progress. While a worker scans
 a source it holds a lock on that source, so two scans of one source never overlap. If a worker
 dies, the next worker to check (on start, then every 30 seconds) puts its jobs back in the queue,
-or marks them failed once they have been tried `max-attempts` times.
+or marks them failed once they have been tried `max-attempts` times. In the same pass it marks
+failed the flow, pipeline and quality runs whose jobs have failed. A pipeline or flow run is
+tried once, so when its worker dies it is failed within `stale-after` plus about 40 seconds of its
+last heartbeat (a pass runs every 30 seconds, checked at each heartbeat); a quality evaluation is
+tried `max-attempts` times first. Reading a run never does this:
+`GET /api/v1/quality/runs/{id}`, which the UI asks every second while rules run, only reads.
 
 **Stopping a worker.** On shutdown a worker stops taking jobs and lets running scans finish for
 up to `shutdown-timeout` (30 s). Scans still running are then asked to stop, which takes up to

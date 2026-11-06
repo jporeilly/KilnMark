@@ -144,18 +144,35 @@ export function QualityPanel({ asset }: { asset: Asset }) {
     }
   };
 
+  // Bumped when the panel unmounts or shows another asset: a rules run being followed stops asking.
+  const following = useRef(0);
+  useEffect(
+    () => () => {
+      following.current++;
+    },
+    [urn],
+  );
+
   const runRules = async () => {
+    const mine = following.current;
+    const wanted = () => following.current === mine;
     try {
       let run = await qualityApi.runAsset(urn);
+      if (!wanted()) return;
       setNotice("Rules queued. Results appear here when a worker has run them.");
-      for (let i = 0; i < 60 && (run.status === "queued" || run.status === "running"); i++) {
+      // Ask once a second, up to 60 times, until the run ends; not while the tab is hidden.
+      for (let asked = 0; asked < 60 && (run.status === "queued" || run.status === "running"); ) {
         await new Promise((r) => window.setTimeout(r, 1000));
+        if (!wanted()) return;
+        if (document.hidden) continue;
         run = await qualityApi.run(run.id);
+        asked++;
       }
+      if (!wanted()) return;
       setNotice(run.status === "succeeded" ? `Rules run: ${run.detail ?? "done"}.` : `Rules did not finish: ${run.detail ?? run.status}.`);
       load();
     } catch (e) {
-      setError((e as Error).message);
+      if (wanted()) setError((e as Error).message);
     }
   };
 

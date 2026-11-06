@@ -384,7 +384,7 @@ public class QualityResource {
     @GET
     @Path("runs/{id}")
     public QualityStore.Run run(@PathParam("id") long id) {
-        store.failOrphanedRuns();
+        // Only reads: runs whose worker stopped are marked failed by the workers' recovery (JobWorker).
         return store.run(id).orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND, "No quality run " + id));
     }
 

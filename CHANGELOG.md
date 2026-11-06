@@ -51,6 +51,35 @@ details.
   provider's name is shorter, with the servers it suits said under it. Predicted quality's row
   count starts its sentence with a capital.
 
+- **Efficiency fixes** from a review of what the server and the UI do over and over:
+  - **The database pool is checked at start** (`PoolSizeCheck`, docs/design/parallel-runs.md P1).
+    A process needs `kilnmark.worker.concurrency × 3 + kilnmark.worker.flows + 1` connections with
+    the worker role and 5 more with the api or scheduler role; with fewer in
+    `quarkus.datasource.jdbc.max-size` the server refuses to start and says which settings to
+    raise or lower, rather than answer 500 and fail jobs under load. The default pool is now 30
+    (it was Agroal's 20, exactly what the default settings need).
+  - **Migration V38 adds indexes** on five foreign keys set to null when their run is deleted
+    (`asset.last_seen_run`, `sample.run_id`, `document.run_id`, `quality_run.scan_run_id`,
+    `quality_result.quality_run_id`), which deleting a source with many runs read whole once per
+    run; and on the job table by pipeline run and by quality run, as scans and flows already had,
+    for the workers' sweeps (every 30 seconds) for runs whose worker stopped.
+  - **Reading a quality run only reads.** `GET /api/v1/quality/runs/{id}`, which the UI asks every
+    second while rules run, and the start of every quality job no longer mark failed the
+    evaluations whose worker stopped: the workers' recovery does, on start and every 30 seconds,
+    in the same pass that fails such jobs, as it already did for pipeline and flow runs, which is
+    no later than before for a worker that died (recovery is what fails its job). An evaluation is
+    still tried `kilnmark.worker.max-attempts` times, and marked failed in the pass that gives up
+    its last attempt: within `kilnmark.worker.stale-after` (2 minutes) plus about 40 seconds of that
+    attempt's last heartbeat.
+  - **Running rules from an asset's Quality tab** stops asking about the run when the tab is left
+    or another asset is shown, and does not ask while the browser tab is hidden.
+  - Upgrading: V38 builds its indexes in one transaction (not `CONCURRENTLY`, as V36), so writes
+    to the job queue and to `asset`, `sample`, `document`, `quality_run` and `quality_result` wait
+    until all seven are built; reads go on. The job table keeps every job ever queued, so on a
+    long-used install its two take longest. The migrations run at start, before the worker takes
+    jobs; other processes sharing the database wait meanwhile. A process whose pool is smaller than it needs no longer starts: one that raised
+    `KILNMARK_WORKER_CONCURRENCY` above 5 (with 8 flows) without raising `QUARKUS_DATASOURCE_JDBC_MAX_SIZE` must
+    raise it (INSTALL.md, "Sizing the workers").
 - **A provider sign-in renews with the refresh token** (ADR 0036, decision 4, amended). Quarkus's
   OIDC client was set up without `quarkus.oidc.token.refresh-expired`, so a session lasted only as
   long as the provider's first ID token: 5 minutes with Keycloak's default, about an hour with
