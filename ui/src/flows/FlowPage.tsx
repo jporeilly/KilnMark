@@ -28,6 +28,8 @@ import { connect, setPositions, type Change } from "./edit";
 import { readFlowGraph, type FlowGraph } from "./graph";
 import { FlowRunStatus, RunFlowButton } from "./RunFlow";
 import { starterFlow } from "./template";
+import { SchedulesSection } from "../schedules/SchedulesSection";
+import { ScheduledNext, useSchedules } from "../schedules/SchedulesTable";
 import "../pipelines/pipelines.css";
 
 const FlowDiagram = lazy(() => import("./FlowDiagram"));
@@ -109,6 +111,8 @@ export function FlowPage({
     }
   }, []);
   const dock = useDock(dockId, FLOW_DOCK_KEY);
+  // Its schedules: for the Schedules tab, and its next scheduled run beside its last run.
+  const schedules = useSchedules(name == null ? null : { flow: name }, name != null);
   const pipelines = usePipelineNames(designer);
   // The node or connection chosen on the diagram or in the Nodes tab; choosing one shows its settings.
   const [selected, setSelected] = useState<FlowSelection | null>(null);
@@ -129,7 +133,7 @@ export function FlowPage({
   const dockTabs: DockTab[] = [
     "nodes",
     ...(editable && selected != null ? (["settings"] as const) : []),
-    ...(isNew ? [] : (["run", "runs", "versions"] as const)),
+    ...(isNew ? [] : (["run", "runs", "schedules", "versions"] as const)),
   ];
   // When the tab shown goes (nothing is chosen any more): the flow's tab shown last; at first, Run,
   // or Nodes for a new flow.
@@ -488,6 +492,7 @@ export function FlowPage({
               <a href={href.flowRun(detail.lastRun.id)}>run {detail.lastRun.id}</a>.
             </>
           )}
+          <ScheduledNext schedules={schedules.schedules} onShow={() => dock.show("schedules")} />
         </p>
       )}
       {viewing && shown && (
@@ -735,6 +740,9 @@ export function FlowPage({
                 </div>
               )}
             </>
+          )}
+          {dockTab === "schedules" && name && (
+            <SchedulesSection target={{ flow: name }} role={role} data={schedules} canAdd={!!detail?.latest} />
           )}
           {dockTab === "versions" && (
             <>

@@ -30,6 +30,7 @@ const PipelinePage = page(() => import("./pipelines/PipelinePage"), "PipelinePag
 const PipelineRunPage = page(() => import("./pipelines/PipelineRunPage"), "PipelineRunPage");
 const FlowsPage = page(() => import("./flows/FlowsPage"), "FlowsPage");
 const FlowPage = page(() => import("./flows/FlowPage"), "FlowPage");
+const SchedulesPage = page(() => import("./schedules/SchedulesPage"), "SchedulesPage");
 const LibraryPage = page(() => import("./library/LibraryPage"), "LibraryPage");
 const FlowRunPage = page(() => import("./flows/FlowRunPage"), "FlowRunPage");
 const RulesPage = page(() => import("./pages/RulesPage"), "RulesPage");
@@ -376,6 +377,7 @@ function Shell({ me }: { me: Me }) {
           )}
           {route.page === "pipeline-run" && <PipelineRunPage id={route.id} role={me.role} />}
           {route.page === "flows" && <FlowsPage role={me.role} />}
+          {route.page === "schedules" && <SchedulesPage role={me.role} show={route.show} />}
           {route.page === "library" && <LibraryPage role={me.role} tab={route.tab} />}
           {route.page === "flow" && (
             <FlowPage

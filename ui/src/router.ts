@@ -40,9 +40,15 @@ export type Route =
   // Flows: the list, one flow (a new one when name is null), and one run
   | { page: "flows" }
   | { page: "flow"; name: string | null; version: number | null; template?: string | null }
+  /** Every schedule on the server (ADR 0046), shown all, on, paused, or failed last time. */
+  | { page: "schedules"; show: ScheduleFilter }
   /** The library of samples and templates (ADR 0043), on one of its two tabs. */
   | { page: "library"; tab: "samples" | "templates" }
   | { page: "flow-run"; id: number };
+
+/** Which schedules the Schedules page shows. */
+export type ScheduleFilter = "all" | "on" | "paused" | "failed";
+const SCHEDULE_FILTERS: ScheduleFilter[] = ["all", "on", "paused", "failed"];
 
 /** A path part decoded, or as it is when it is not valid percent-encoding. */
 function decode(part: string): string {
@@ -107,6 +113,10 @@ export function parse(hash: string): Route {
   }
   if (path === "/flows") return { page: "flows" };
   if (path === "/flows/new") return { page: "flow", name: null, version: null, template: params.get("template") };
+  if (path === "/schedules") {
+    const show = params.get("show") as ScheduleFilter | null;
+    return { page: "schedules", show: show && SCHEDULE_FILTERS.includes(show) ? show : "all" };
+  }
   if (path === "/library") return { page: "library", tab: params.get("tab") === "templates" ? "templates" : "samples" };
   if (path.startsWith("/flows/")) {
     const v = Number(params.get("version"));
@@ -174,6 +184,8 @@ export const href = {
   /** A flow; with a version, that saved version is shown read-only. */
   flow: (name: string, version?: number) => `#/flows/${encodeURIComponent(name)}${version ? `?version=${version}` : ""}`,
   flowRun: (id: number) => `#/flow-runs/${id}`,
+  /** Every schedule; with a filter, only those on, paused or failed last time. */
+  schedules: (show?: ScheduleFilter) => (show && show !== "all" ? `#/schedules?show=${show}` : "#/schedules"),
   relationships: (status = "proposed") => `#/relationships?status=${encodeURIComponent(status)}`,
 };
 
