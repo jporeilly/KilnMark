@@ -128,7 +128,12 @@ public class JobWorker {
         LOG.infof("Worker %s started: up to %d jobs and %d flows at a time", workerId, concurrency, flowCount);
     }
 
-    private void recover() {
+    /**
+     * Requeues or fails jobs left by a stopped worker, then marks failed the flow, pipeline and
+     * quality runs whose jobs have failed: on start and every {@link #RECOVER_EVERY}, never on a
+     * request.
+     */
+    void recover() {
         try {
             JobQueue.Recovery r = queue.recoverStale(config.worker().staleAfter());
             if (r.requeued() + r.failed() > 0) {
@@ -140,6 +145,9 @@ public class JobWorker {
             }
             if (pipelines != null) {
                 pipelines.failOrphanedRuns();
+            }
+            if (quality != null) {
+                quality.failOrphanedRuns();
             }
         } catch (RuntimeException e) {
             LOG.warnf("Could not check for jobs left by a stopped worker: %s. Will try again shortly.", e.getMessage());

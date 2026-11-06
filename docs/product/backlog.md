@@ -86,7 +86,14 @@ dependency verification (ADR 0042, #99) and signed images with an offline instal
 15. **Generic JDBC drivers in a process of their own** (ADR 0030, decision 5); new table names
     checked against the driver's longest table name, not its longest column name (ADR 0042).
 16. **Small items**: a JDBC `socketTimeout`, masking on the run quality view, a metric for preview
-    slots, `KILNMARK_DB_PASSWORD` in the dev compose.
+    slots, `KILNMARK_DB_PASSWORD` in the dev compose. **Job retention**: the job table keeps every
+    job ever queued (done and failed too), so it only grows; deleting old finished jobs, and how
+    long to keep them, needs the owner's decision first, as it deletes records (efficiency review,
+    6 November 2026; V38 indexed its lookups by run meanwhile). **Indexes on the other foreign
+    keys** that V38 left out (it took the five the review named): `profile.run_id` (ON DELETE
+    CASCADE, not led by any index, so deleting a source still reads `profile` once per scan run),
+    and the ON DELETE SET NULL keys `ai_usage.profile_id` and `source_id`,
+    `accepted_pattern.rule_id`, `drift_event.compared_with` and `quality_issue.drift_event_id`.
 17. **Audit events** for data read with the unmask grant, and for MCP refusals (ADR 0029).
 18. **A full export in open formats** (for exit), and a FIPS mode when a federal customer needs it.
 
@@ -103,7 +110,10 @@ dependency verification (ADR 0042, #99) and signed images with an offline instal
        and deleting are written twice today, in `PipelineService` (about 2,000 lines) and
        `FlowService` (about 2,400), and every change to one had to be made to the other
        (#124, #128 and the scheduler). First, before the `sort` and `join` nodes (item 9), which
-       touch the same code.
+       touch the same code. It also takes the efficiency review's findings in that code (6
+       November 2026), not fixed on their own: the flow watcher (each watched flow holds a database
+       connection and asks after its runs on a timer), runs asking the database whether they are
+       cancelled while they work, and the lock a schedule's fire holds while it queues its run.
     2. **`ui/src/api.ts` split by area** (about 2,100 lines of every API type and call), so UI
        changes stop meeting in one file.
     3. **One form-field building block and form styles for the whole UI**: the node panel's

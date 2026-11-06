@@ -212,15 +212,21 @@ and the database connections below.
 More running at once needs more connections to Kilnmark's own database. Each running job holds one
 for its lease and uses one or two more while it works; each watched flow holds one; and each worker
 keeps one open to hear of new jobs. So each Kilnmark process needs a pool
-(`QUARKUS_DATASOURCE_JDBC_MAX_SIZE`, 20 by default) of at least
+(`QUARKUS_DATASOURCE_JDBC_MAX_SIZE`, 30 by default) of at least
 
 ```
 concurrency × 3 + flows + 6
 ```
 
 where the 6 is one for the worker's listening and five for the API and the scheduler. With the
-defaults that is 2 × 3 + 8 + 6 = 20, the default pool. With 8 slots and 8 flows it is 38: set
-`QUARKUS_DATASOURCE_JDBC_MAX_SIZE=40`. PostgreSQL's
+defaults that is 2 × 3 + 8 + 6 = 20, so the default pool leaves room to raise the slots to 5. With
+8 slots and 8 flows it is 38: set `QUARKUS_DATASOURCE_JDBC_MAX_SIZE=40`. A process with the worker
+role only needs five fewer (`concurrency × 3 + flows + 1`), and one without it needs five.
+
+Kilnmark checks this at start and refuses to start with a smaller pool, saying how many
+connections it needs and which settings to raise or lower: a pool too small works while little
+runs, then fails requests and runs under load. Raise the pool, or lower
+`KILNMARK_WORKER_CONCURRENCY` or `KILNMARK_WORKER_FLOWS`, and start it again. PostgreSQL's
 `max_connections` (100 in the bundled database) must be at least the sum of the pools of every
 Kilnmark process, plus what backups and your own tools use.
 
