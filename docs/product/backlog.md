@@ -63,7 +63,7 @@ run timelines).
 10. **Connectors** (brief of 28 October): SFTP/FTP, SMB, Azure Blob, REST; Snowflake, Vertica and
    Exasol as connectors of their own, with the SQL that moves files refused (ADR 0030).
 11. **Templates of a team's own** ("save as template", after the Library's, ADR 0043), and
-    comparing a pipeline's or flow's versions; then v0.1.0.
+    comparing a pipeline's or flow's versions; then the Foundation milestone.
 12. **Business calendars for schedules (holidays, working days, last working day of the month)**,
     for the built-in scheduler (ADR 0046). External schedulers bring their own calendars (ADR 0047).
 
@@ -100,4 +100,4 @@ dependency verification (ADR 0042, #99) and signed images with an offline instal
 
 ## Owner's items
 
-- The demo deck and the partnership status slide, last made for 0.0.8: refresh for 0.1.0.
+- The demo deck and the partnership status slide, last made for 0.0.8: refresh for the Foundation milestone.

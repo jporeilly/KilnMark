@@ -2,7 +2,7 @@
 
 Oct 22, 2026 · @James O'Reilly
 
-A standalone product, independent of any other vendor's product. First milestone: **v0.1.0 Foundation** — ingest, profile and search metadata from databases, files and object storage on a streaming Java engine, in about 12 weeks.
+A standalone product, independent of any other vendor's product. First milestone: **Foundation** — ingest, profile and search metadata from databases, files and object storage on a streaming Java engine, in about 12 weeks.
 
 > **Direction, 24 October:** pipeline-first, not a catalogue ([ADR 0021](../adr/0021-pipeline-first.md)). Phases after v0.1 are re-planned around trusted pipelines; see docs/design/data-quality.md.
 
@@ -43,7 +43,7 @@ v0.1 proves the core loop: point the engine at a source, and it ingests metadata
 - [ ] Ingests and profiles the reference lab end to end with no manual steps
 - [ ] Re-run of an unchanged source skips all assets (incremental works)
 - [ ] Profiling a 10 million-row table completes without exhausting a 4 GB heap
-- [ ] Full regression suite green before the v0.1.0 package
+- [ ] Full regression suite green before the Foundation release
 
 * [ ] Every UI page passes automated WCAG 2.2 AA checks and a manual keyboard-only pass
 
@@ -82,7 +82,7 @@ Each sprint builds on the last: graph before engine, engine before connectors, c
 | 21 | PostgreSQL full-text and trigram search API behind a SearchIndex interface | S5 | Search and UI | Not started |
 | 22 | Modern web UI v1: command palette search, sources and scans, asset page with profile charts, light and dark themes | S5 | Search and UI | Not started |
 | 23 | Regression suite on the reference lab, including automated WCAG 2.2 AA checks (axe-core) on every page | S5 | Platform | Not started |
-| 24 | Offline install bundle, backup and restore scripts, package and release v0.1.0 | S5 | Platform | Not started |
+| 24 | Offline install bundle, backup and restore scripts, package and release Foundation | S5 | Platform | Not started |
 
 ## Beyond v0.1
 
@@ -151,7 +151,8 @@ kilnmark/
 
 - Gradle multi-module build; Java 21; Testcontainers for integration tests
 - CI on every push: build, unit tests, integration tests, container images
-- Versioning: 0.0.1 per release; a phase bump (0.1 to 0.2) only at an exit gate
+- Versioning: each release adds one to the last part, and each part counts from 0 to 9 like a digit, carrying into the part before it (0.0.9, 0.1.0, ... 0.1.9, 0.2.0). Milestones and phases are named, not
+  numbered: a version says how many releases there have been, not which phase they belong to
 - Full regression on the reference lab before every package, no exceptions
 - Decision records for anything hard to reverse (schema, plugin interface, licence)
 
