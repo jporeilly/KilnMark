@@ -760,6 +760,10 @@ To run a pipeline at set times, such as 02:00 every weekday, give it a schedule 
 when it next runs on a schedule. A run a schedule started shows `schedule <id> (set by <name>)` as
 who asked for it. Deleting a pipeline deletes its schedules.
 
+To run a pipeline from your organisation's scheduler (Control-M, AutoSys, cron, Windows Task
+Scheduler), so that the job waits for the run and ends with its outcome, see
+[Running from an external scheduler](external-schedulers.md).
+
 ### Sources that take a few runs at a time
 
 A source can say how many runs may use it at once, so a busy production database has a cap its
