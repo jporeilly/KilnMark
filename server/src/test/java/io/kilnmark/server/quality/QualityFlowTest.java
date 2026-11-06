@@ -11,9 +11,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
@@ -22,11 +19,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
@@ -40,10 +34,10 @@ import com.networknt.schema.JsonSchemaFactory;
 import com.networknt.schema.SchemaLocation;
 import com.networknt.schema.SpecVersion;
 import com.networknt.schema.ValidationMessage;
-import com.sun.net.httpserver.HttpServer;
 
 import io.agroal.api.AgroalDataSource;
 import io.kilnmark.server.Tokens;
+import io.quarkus.test.common.QuarkusTestResource;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import io.restassured.path.json.JsonPath;
@@ -56,6 +50,7 @@ import jakarta.inject.Inject;
  * between scans, exports validated against the published schemas, keep_samples off, and roles.
  */
 @QuarkusTest
+@QuarkusTestResource(value = WebhookServerResource.class, restrictToAnnotatedClass = true)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class QualityFlowTest {
 
@@ -79,28 +74,11 @@ class QualityFlowTest {
     static String viewer;
     static String steward;
     static boolean loaded;
-    static HttpServer hooks;
-    static final List<String> received = new CopyOnWriteArrayList<>();
+    /** What the webhook receiver was sent ({@link WebhookServerResource}, on a port of its own). */
+    static final List<String> received = WebhookServerResource.RECEIVED;
     static final Map<String, Long> rules = new HashMap<>();
     static List<String> firstSampleIds;
     static final ObjectMapper JSON = new ObjectMapper();
-
-    @SuppressWarnings("AddressSelection") // the loopback address written out, not a host name to look up
-    @BeforeAll
-    static void startWebhookServer() throws IOException {
-        hooks = HttpServer.create(new InetSocketAddress("127.0.0.1", 47391), 0);
-        hooks.createContext("/hooks/", exchange -> {
-            received.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-            exchange.sendResponseHeaders(204, -1);
-            exchange.close();
-        });
-        hooks.start();
-    }
-
-    @AfterAll
-    static void stopWebhookServer() {
-        hooks.stop(0);
-    }
 
     private static RequestSpecification as(String token) {
         return Tokens.as(token);
@@ -314,7 +292,7 @@ class QualityFlowTest {
     void rulesRunAsSqlInThePostgresSourceWithAwkwardNamesQuoted() throws Exception {
         rules.put("email", rule(Map.of("assetUrn", CUSTOMERS, "field", "e-mail", "type", "not_null",
             "params", Map.of("blankIsMissing", true), "thresholdUnit", "share", "failAbove", 0.01,
-            "actions", Map.of("webhook", "http://127.0.0.1:47391/hooks/quality", "task", true))));
+            "actions", Map.of("webhook", WebhookServerResource.url("quality"), "task", true))));
         rules.put("postcode", rule(Map.of("assetUrn", CUSTOMERS, "field", "postcode", "type", "matches_pattern",
             "params", Map.of("regex", "^[A-Z]{1,2}[0-9][A-Z0-9]? [0-9][A-Z]{2}$"), "thresholdUnit", "count",
             "warnAbove", 0, "failAbove", 100)));
@@ -841,7 +819,7 @@ class QualityFlowTest {
         email.put("actions", Map.of("webhook", "(set)", "task", true));
         as(steward).contentType(ContentType.JSON).body(email).put("/api/v1/quality/rules/" + rules.get("email")).then()
             .statusCode(200);
-        assertEquals("http://127.0.0.1:47391/hooks/quality", admin().get("/api/v1/quality/rules/" + rules.get("email"))
+        assertEquals(WebhookServerResource.url("quality"), admin().get("/api/v1/quality/rules/" + rules.get("email"))
             .then().statusCode(200).extract().jsonPath().getString("rule.actions.webhook"), "the stored webhook is kept");
 
         // Source forms are for designers, who see sensitive values and so may preview other reading

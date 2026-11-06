@@ -542,8 +542,10 @@ main:has(.pl-wide) {
 /*
  * A node's settings use the panel's width in three areas: the node itself (what it is, its id, what
  * it reads, its actions) on the left; its settings across the middle, in as many columns as fit,
- * with wide controls (rules, expressions, SQL, lists) across all of them; what leaves it and its last
- * run on the right. A grid, not text columns, so a long setting never splits over two columns.
+ * with wide controls (rules, expressions, SQL, pairs, a read's column checklist: `cv-field-wide`) across
+ * all of them, chosen by the kind of control and never by what it holds, so a setting does not jump to
+ * the full width when its first column is added; what leaves it and its last run on the right. A
+ * grid, not text columns, so a long setting never splits over two columns.
  */
 .pl-dock .cv-dock-settings .cv-panel-body {
   grid-template-columns: minmax(190px, 240px) minmax(0, 1fr) minmax(220px, 300px);
@@ -554,6 +556,8 @@ main:has(.pl-wide) {
 .pl-dock .cv-dock-settings .cv-set-side,
 .pl-dock .cv-dock-settings .cv-set-run {
   display: grid;
+  /* One track as wide as the column, never wider: a long node id wraps rather than pushing past it. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   min-width: 0;
 }
@@ -569,7 +573,7 @@ main:has(.pl-wide) {
 .pl-dock .cv-dock-settings .cv-set-main > h4,
 .pl-dock .cv-dock-settings .cv-set-main > p,
 .pl-dock .cv-dock-settings .cv-set-main > ul,
-.pl-dock .cv-dock-settings .cv-set-main > .cv-field:has(textarea, .cv-pairs, .cv-checklist, .cv-chip-row, .cv-order) {
+.pl-dock .cv-dock-settings .cv-set-main > .cv-field-wide {
   grid-column: 1 / -1;
 }
 

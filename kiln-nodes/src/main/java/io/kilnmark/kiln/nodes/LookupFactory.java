@@ -86,9 +86,10 @@ public final class LookupFactory implements NodeFactory {
             SettingSpec.optional("keep", "Columns to add", SettingSpec.Kind.COLUMNS, null,
                 "Lookup columns to add to main rows. Leave empty to add every lookup column except the keys."),
             SettingSpec.choice("join", "Join", false, "left",
-                "left keeps main rows with no match; inner drops them.", JOINS),
+                "What happens to main rows with no match: left keeps them, inner drops them.", JOINS),
             SettingSpec.choice("unmatched", "Rows with no match", false, null,
-                "keep, drop, or send to the rejected port. Overrides join when set.", UNMATCHED),
+                "What to do with a main row that has no match: keep it, drop it, or send it to the rejected port. "
+                    + "Overrides join when set.", UNMATCHED),
             SettingSpec.choice("duplicates", "Duplicate keys", false, "first",
                 "When the lookup side has a key more than once: use the first row, or stop with an error.", DUPLICATES),
             SettingSpec.optional("memory_limit_mb", "Memory limit (MB)", SettingSpec.Kind.NUMBER, 256,

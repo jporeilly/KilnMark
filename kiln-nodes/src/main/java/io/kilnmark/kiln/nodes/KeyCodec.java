@@ -8,6 +8,10 @@ import java.util.List;
 
 import org.apache.arrow.memory.ArrowBuf;
 import org.apache.arrow.vector.BaseVariableWidthVector;
+import org.apache.arrow.vector.DateDayVector;
+import org.apache.arrow.vector.DateMilliVector;
+import org.apache.arrow.vector.TimeStampVector;
+import org.apache.arrow.vector.UInt8Vector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VariableWidthFieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -25,7 +29,8 @@ import io.kilnmark.kiln.nodes.expr.Type;
  * types give equal bytes exactly for equal values.
  *
  * <ul>
- *   <li>Whole numbers, dates (days) and timestamps (microseconds, UTC): eight bytes, sign bit flipped.</li>
+ *   <li>Whole numbers: eight bytes, sign bit flipped (unsigned 64-bit numbers as they are).</li>
+ *   <li>Dates and timestamps: the instant, to the nanosecond, whatever the column's unit.</li>
  *   <li>Floating point: eight bytes ordered as {@link Double#compare}, with -0.0 equal to 0.0 and every
  *       NaN equal and after +infinity.</li>
  *   <li>Decimals: by value, at the part's scale: a sign byte, the length of the digits' bytes and the
@@ -286,6 +291,24 @@ final class KeyCodec {
                 return true;
             };
         }
+        if (as.kind() == own.kind() && (own.kind() == Type.Kind.TIMESTAMP || own.kind() == Type.Kind.DATE)) {
+            return temporal(v);
+        }
+        if (as.kind() == Type.Kind.INT64 && v instanceof UInt8Vector u) {
+            // unsigned 64-bit: its bits in order as they are, so 2^63 and above sort after the rest
+            return (row, part, out) -> {
+                if (u.isNull(row)) {
+                    return false;
+                }
+                out.put(VALUE);
+                int at = out.length;
+                out.putLong(u.get(row));
+                if (part.descending()) {
+                    out.invert(at);
+                }
+                return true;
+            };
+        }
         Col c = ArrowIO.read(v);
         return (row, part, out) -> {
             Object value = c.key(row, as.kind() == Type.Kind.NULL ? own : as);
@@ -313,6 +336,63 @@ final class KeyCodec {
             }
             return true;
         };
+    }
+
+    /**
+     * A date or timestamp as the instant it stands for, to the nanosecond, whatever its unit: whole
+     * seconds since 1970 (eight bytes, sign flipped), then nanoseconds into that second (four bytes).
+     * A date is its midnight. Exact for every unit, so timestamps a nanosecond apart sort apart, and
+     * every date Arrow can hold fits.
+     */
+    private static Reader temporal(FieldVector v) {
+        Instants at = instants(v);
+        return (row, part, out) -> {
+            if (v.isNull(row)) {
+                return false;
+            }
+            out.put(VALUE);
+            int start = out.length;
+            at.write(row, out);
+            if (part.descending()) {
+                out.invert(start);
+            }
+            return true;
+        };
+    }
+
+    /** Writes the instant of a row of a date or timestamp vector. */
+    interface Instants {
+        void write(int row, Sink out);
+    }
+
+    static Instants instants(FieldVector v) {
+        if (v instanceof DateDayVector d) {
+            return (row, out) -> instant(d.get(row) * 86_400L, 0, out);
+        }
+        if (v instanceof DateMilliVector d) {
+            return (row, out) -> {
+                long ms = d.get(row);
+                instant(Math.floorDiv(ms, 1_000L), (int) Math.floorMod(ms, 1_000L) * 1_000_000, out);
+            };
+        }
+        TimeStampVector t = (TimeStampVector) v;
+        org.apache.arrow.vector.types.TimeUnit unit = ((ArrowType.Timestamp) v.getField().getType()).getUnit();
+        long perSecond = switch (unit) {
+            case SECOND -> 1L;
+            case MILLISECOND -> 1_000L;
+            case MICROSECOND -> 1_000_000L;
+            case NANOSECOND -> 1_000_000_000L;
+        };
+        int nanosPer = (int) (1_000_000_000L / perSecond);
+        return (row, out) -> {
+            long raw = t.get(row);
+            instant(Math.floorDiv(raw, perSecond), (int) Math.floorMod(raw, perSecond) * nanosPer, out);
+        };
+    }
+
+    private static void instant(long seconds, int nanos, Sink out) {
+        out.putLong(seconds ^ Long.MIN_VALUE);
+        out.putInt(nanos);
     }
 
     private static void text(byte[] bytes, Sink out) {

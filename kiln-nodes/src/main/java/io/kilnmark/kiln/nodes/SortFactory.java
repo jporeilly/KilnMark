@@ -189,7 +189,7 @@ public final class SortFactory implements NodeFactory {
                 put(ctx, "out", c.rows());
                 return true;
             } catch (IOException e) {
-                throw fail("could not use the temporary folder for rows that do not fit in memory: " + e.getMessage());
+                throw spillFailed(e);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new NodeException("Interrupted", e);
@@ -220,6 +220,20 @@ public final class SortFactory implements NodeFactory {
                 sorter.close();
             }
         }
+    }
+
+    /**
+     * What a failure of the temporary folder becomes: a stop when the node was being stopped (an
+     * interrupt closes the file it was using), otherwise a failure that says what went wrong.
+     */
+    static NodeException spillFailed(IOException e) {
+        if (e instanceof java.nio.channels.ClosedByInterruptException || e instanceof java.io.InterruptedIOException
+            || Thread.currentThread().isInterrupted()) {
+            Thread.currentThread().interrupt();
+            return new NodeException("Interrupted", e);
+        }
+        String why = e.getMessage() == null || e.getMessage().isBlank() ? e.getClass().getSimpleName() : e.getMessage();
+        return new NodeException("could not use the temporary folder for rows that do not fit in memory: " + why, e);
     }
 
     /** Bytes in words: "12.3 MB". */

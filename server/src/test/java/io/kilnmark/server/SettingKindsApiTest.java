@@ -56,7 +56,7 @@ class SettingKindsApiTest {
             .body("find { it.kind == 's3' }.settings.find { it.key == 'path_style' }.kind", equalTo("boolean"))
             .body("find { it.kind == 's3' }.settings.find { it.key == 'endpoint' }.kind", equalTo("url"))
             // still there for older clients
-            .body("find { it.kind == 's3' }.settings.find { it.key == 'path_style' }.hint", containsString("false"));
+            .body("find { it.kind == 's3' }.settings.find { it.key == 'path_style' }.hint", containsString("off for AWS"));
         admin().get("/api/v1/common-settings").then().statusCode(200)
             .body("find { it.key == 'allow_writing' }.kind", equalTo("boolean"))
             .body("find { it.key == 'keep_samples' }.kind", equalTo("boolean"))

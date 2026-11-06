@@ -677,7 +677,27 @@
 .cv-section fieldset.cv-field > legend.cv-label {
   margin: 0;
   padding: 0;
-  font-size: inherit;
+  /* Not the app's legend (a section title in the display face): the same name as a label's. */
+  font-family: inherit;
+}
+
+/*
+ * Every setting's name is the same size and line height, whether a label, a legend or an on/off
+ * setting's name, so the names of a row sit on one line and the boxes under them line up.
+ */
+.cv-field .cv-label,
+.cv-field > .km-switch-row .km-switch-label {
+  font-size: var(--km-text-sm);
+  line-height: 1.5;
+}
+
+/*
+ * An on/off setting is a switch row, which in a list of switches has a rule under it and space
+ * above and below. As one setting among others it starts where their names start, with no rule.
+ */
+.cv-field > .km-switch-row {
+  padding: 0;
+  border-bottom: 0;
 }
 
 .cv-required {
@@ -685,6 +705,8 @@
   color: var(--km-muted);
 }
 
+/* The field's own grid gap spaces its lines; a paragraph's page margin ("None chosen.") would add to it. */
+.cv-field > p,
 .cv-field .hint {
   margin: 0;
 }
@@ -808,6 +830,14 @@ p.cv-field-problems {
   padding: 2px 4px 2px 10px;
   border: 1px solid var(--km-border-control);
   border-radius: var(--km-radius-pill);
+  /* Never wider than the setting: a long column name breaks inside its chip. */
+  max-width: 100%;
+  min-width: 0;
+}
+
+.cv-chip-row > .mono {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .cv-order {
@@ -852,6 +882,7 @@ p.cv-field-problems {
   padding: 0;
   display: grid;
   gap: 10px;
+  container: cv-pairs / inline-size;
 }
 
 .cv-pair {
@@ -860,6 +891,22 @@ p.cv-field-problems {
   gap: 6px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--km-divider);
+}
+
+/*
+ * Where the list has room, a pair's two boxes sit side by side (a name beside its expression, a
+ * column beside the one it matches) rather than one above the other across the whole panel; an
+ * expression gets the wider half. Remove stays under them, at the right.
+ */
+@container cv-pairs (min-width: 520px) {
+  .cv-pair:not(.cv-rule) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 16px;
+  }
+
+  .cv-pair:not(.cv-rule):has(textarea) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  }
 }
 
 .cv-rule-pair {
@@ -913,6 +960,12 @@ p.cv-field-problems {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+/* A long node id breaks inside the side column rather than widening it. */
+.cv-link-row > .mono {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .cv-panel-actions {

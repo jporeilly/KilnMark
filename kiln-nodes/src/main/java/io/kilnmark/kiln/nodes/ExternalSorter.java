@@ -1,8 +1,6 @@
 package io.kilnmark.kiln.nodes;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.channels.Channels;
 import java.nio.channels.WritableByteChannel;
 import java.nio.file.Files;
@@ -64,11 +62,13 @@ final class ExternalSorter implements AutoCloseable {
     private long rows;
     private long keyBytes;
     private long totalRows;
-    private final List<Path> runs = new ArrayList<>();
+    private final List<Run> runs = new ArrayList<>();
     private SpillFolder spill;
     private long spilledBytes;
     private int runsWritten;
     private int runRows = OUT_ROWS;
+    /** The widest rows have been, in bytes on average at a spill: sizes what is read back at once. */
+    private long rowBytes = 1;
     private Sorted output;
     private final List<AutoCloseable> open = new ArrayList<>();
 
@@ -164,9 +164,11 @@ final class ExternalSorter implements AutoCloseable {
         }
         if (spill == null) {
             spill = SpillFolder.create();
-            long rowBytes = Math.max(1, held() / rows);
-            runRows = Math.clamp(limitBytes / (4L * fanIn) / rowBytes, 16, OUT_ROWS);
         }
+        // Each run is written in batches small enough that a merge holding one batch of each of
+        // fanIn runs keeps to a quarter of the limit, however wide the rows are.
+        rowBytes = Math.max(rowBytes, Math.max(1, held() / rows));
+        runRows = Math.clamp(limitBytes / (4L * fanIn) / rowBytes, 1, OUT_ROWS);
         long[] order = sortHeld();
         try (Sorted held = new InMemory(order, memory, runRows, true)) {
             runs.add(write(held));
@@ -180,22 +182,39 @@ final class ExternalSorter implements AutoCloseable {
      */
     Sorted finish(BufferAllocator out, boolean withKeys) throws IOException, InterruptedException {
         if (runs.isEmpty()) {
-            output = new InMemory(sortHeld(), out, OUT_ROWS, withKeys);
+            if (rows > 0) {
+                rowBytes = Math.max(rowBytes, held() / rows);
+            }
+            output = new InMemory(sortHeld(), out, outRows(), withKeys);
             return output;
         }
         spill();
+        // Each pass merges neighbouring runs, fanIn at a time (0-63, 64-127, ...), so every row is
+        // written once a pass and ties still go to the earlier run.
         while (runs.size() > fanIn) {
-            List<Path> group = new ArrayList<>(runs.subList(0, fanIn));
-            Path merged;
-            try (Merge m = new Merge(group, memory, runRows, true)) {
-                merged = write(m);
+            List<Run> next = new ArrayList<>();
+            for (int from = 0; from < runs.size(); from += fanIn) {
+                List<Run> group = new ArrayList<>(runs.subList(from, Math.min(runs.size(), from + fanIn)));
+                if (group.size() == 1) {
+                    next.add(group.getFirst());
+                    continue;
+                }
+                try (Merge m = new Merge(group, memory, runRows, true)) {
+                    next.add(write(m));
+                }
+                checkInterrupt();
             }
-            runs.subList(0, fanIn).clear();
-            runs.addFirst(merged); // still before the later runs, so ties keep their order
+            runs.clear();
+            runs.addAll(next);
         }
-        output = new Merge(new ArrayList<>(runs), out, OUT_ROWS, withKeys);
+        output = new Merge(new ArrayList<>(runs), out, outRows(), withKeys);
         runs.clear();
         return output;
+    }
+
+    /** Rows in each batch given back: at most {@value #OUT_ROWS}, and about an eighth of the limit in bytes. */
+    private int outRows() {
+        return Math.clamp(limitBytes / 8 / Math.max(1, rowBytes), 1, OUT_ROWS);
     }
 
     // ---- sorting in memory ----
@@ -312,11 +331,21 @@ final class ExternalSorter implements AutoCloseable {
         return runSchema;
     }
 
-    /** Writes every batch of {@code from}, with its keys, as one run; returns its file. */
-    private Path write(Sorted from) throws IOException, InterruptedException {
+    /**
+     * One run on disk: its file, and what was written to it (rows, bytes, and a digest of the rows
+     * as written), so a file cut short or changed is noticed when it is read back rather than
+     * dropping or changing rows.
+     */
+    record Run(Path file, long rows, long bytes, byte[] digest) {
+    }
+
+    /** Writes every batch of {@code from}, with its keys, as one run. */
+    private Run write(Sorted from) throws IOException, InterruptedException {
         Path file = spill.newFile("run");
         int columns = schema.getFields().size();
-        try (OutputStream os = spill.write(file);
+        long written = 0;
+        SpillFolder.Out os = spill.write(file);
+        try (os;
              WritableByteChannel channel = Channels.newChannel(os);
              VectorSchemaRoot root = VectorSchemaRoot.create(runSchema(), memory);
              ArrowStreamWriter writer = new ArrowStreamWriter(root, new DictionaryProvider.MapDictionaryProvider(),
@@ -337,6 +366,7 @@ final class ExternalSorter implements AutoCloseable {
                     kv.setValueCount(n);
                     root.setRowCount(n);
                     writer.writeBatch();
+                    written += n;
                 }
                 checkInterrupt();
             }
@@ -349,7 +379,7 @@ final class ExternalSorter implements AutoCloseable {
         spilledBytes += size;
         runsWritten++;
         spilledSink.accept(size);
-        return file;
+        return new Run(file, written, size, os.digest());
     }
 
     private static void deleteQuietly(Path file) {
@@ -457,18 +487,22 @@ final class ExternalSorter implements AutoCloseable {
     /** One run on disk, read a batch at a time. */
     private final class RunReader implements AutoCloseable {
         final int order;
-        final Path file;
-        private final InputStream in;
+        final Run run;
+        private final SpillFolder.In in;
+        private long read;
         private final ArrowStreamReader reader;
         VectorSchemaRoot root;
         KeyBlock keys;
         int pos;
         int count;
 
-        RunReader(Path file, int order, BufferAllocator allocator) throws IOException {
+        RunReader(Run run, int order, BufferAllocator allocator) throws IOException {
             this.order = order;
-            this.file = file;
-            this.in = spill.read(file);
+            this.run = run;
+            if (Files.size(run.file()) != run.bytes()) {
+                throw damaged();
+            }
+            this.in = spill.read(run.file());
             ArrowStreamReader r = null;
             try {
                 r = new ArrowStreamReader(in, allocator);
@@ -499,10 +533,19 @@ final class ExternalSorter implements AutoCloseable {
                     kv.getDataBuffer().getBytes(base, data, 0, data.length);
                     keys = new KeyBlock(data, offsets);
                     pos = 0;
+                    read += count;
                     return true;
                 }
             }
+            // the end: every row written, and the same bytes
+            if (read != run.rows() || !in.matches(run.digest())) {
+                throw damaged();
+            }
             return false;
+        }
+
+        private IOException damaged() {
+            return new IOException("A temporary file of sorted rows was cut short or changed while it was on disk");
         }
 
         @Override
@@ -512,13 +555,13 @@ final class ExternalSorter implements AutoCloseable {
             } catch (IOException | RuntimeException e) {
                 // the file is deleted next; nothing more to free
             }
-            deleteQuietly(file);
+            deleteQuietly(run.file());
         }
     }
 
     /** Runs merged into one order. */
     private final class Merge implements Sorted {
-        private final List<Path> files;
+        private final List<Run> files;
         private final BufferAllocator out;
         private final int chunkRows;
         private final boolean withKeys;
@@ -531,7 +574,7 @@ final class ExternalSorter implements AutoCloseable {
         /** A run whose batch the last chunk used up. */
         private RunReader used;
 
-        Merge(List<Path> files, BufferAllocator out, int chunkRows, boolean withKeys) {
+        Merge(List<Run> files, BufferAllocator out, int chunkRows, boolean withKeys) {
             this.files = files;
             this.out = out;
             this.chunkRows = chunkRows;
@@ -617,7 +660,7 @@ final class ExternalSorter implements AutoCloseable {
             readers.forEach(RunReader::close);
             readers.clear();
             if (!started) {
-                files.forEach(ExternalSorter::deleteQuietly);
+                files.forEach(r -> deleteQuietly(r.file()));
             }
             open.remove(this);
         }
@@ -637,7 +680,7 @@ final class ExternalSorter implements AutoCloseable {
             }
         }
         release();
-        runs.forEach(ExternalSorter::deleteQuietly);
+        runs.forEach(r -> deleteQuietly(r.file()));
         runs.clear();
         if (spill != null) {
             spill.close();

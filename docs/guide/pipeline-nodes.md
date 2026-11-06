@@ -331,7 +331,7 @@ Good to know:
 
 - Empty (null) values go last, ascending or descending, unless the column says `nulls first`.
 - Values order as conditions compare them (`<`, `>`): numbers by value, dates and timestamps in
-  time, `false` before `true`. Text is ordered by Unicode code point, not by any language's rules:
+  time (to the nanosecond, for columns that hold nanoseconds), `false` before `true`. Text is ordered by Unicode code point, not by any language's rules:
   capital letters come before small ones (`B` before `a`), and accented letters after `z`. To sort
   ignoring case, add a column with `lower(name)` in a `compute` node and sort by that.
 - Rows with equal values keep the order they arrived in (the sort is stable), so sorting by
@@ -339,8 +339,9 @@ Good to know:
 - A sort passes nothing on until all its rows have arrived.
 - Any number of rows can be sorted. Up to `memory_limit_mb` the sort works in memory; past it, it
   writes sorted parts to a temporary folder on the server and merges them at the end. The files
-  are encrypted with a key only the running node holds, and deleted when the node ends, fails or
-  is stopped. The run's log says how much was written.
+  are encrypted with a key only the running node holds, readable only by the server's user, and
+  deleted when the node ends, fails or is stopped; if a file is damaged while it is there, the
+  run fails rather than losing rows. The run's log says how much was written.
 
   ![How a sort carries on on disk: rows arrive and are held in memory up to memory_limit_mb; past the limit they are sorted and written as a run; when the input ends the runs are merged, 64 at a time, into rows in order for the next node](images/sort-spill.svg)
 - A table read in a fixed order is not guaranteed to arrive in that order. Sort just before a
