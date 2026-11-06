@@ -24,6 +24,7 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 - [Pipeline nodes and expressions](guide/pipeline-nodes.md): filter, compute, select, lookup, aggregate, union, dedupe, route and limit, and the expression language for conditions and computed columns
 - [The Library: samples and templates](guide/library.md): the samples, kept apart from your own pipelines and flows; the starter pack; templates to start your own from
 - [Building and running a flow](guide/flows.md): flows that run pipelines in an order, connections and conditions, the diagram, running a flow and reading a run
+- [Running from an external scheduler](guide/external-schedulers.md): Control-M, AutoSys, cron, systemd timers and Windows Task Scheduler; the run script, its exit codes, request keys, and waiting for a run through the API
 - [Installing database drivers](guide/drivers.md): the drivers Kilnmark ships, and registering one whose licence keeps it out of the release
 - [Backing up and restoring Kilnmark](guide/backup-and-restore.md): what to back up, the backup and restore scripts, what to check after a restore, and testing a restore
 - [The audit log](guide/audit-log.md): what is recorded, why it cannot be changed, sending it to a SIEM, and reading it

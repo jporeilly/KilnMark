@@ -578,3 +578,56 @@ function svg(name, height, title, sub, body) {
     foot(y3 + 52, "shield", "Its messages name only what the flow wrote: never the source's settings or its driver's words.");
   svg("flow-check-source", y3 + 104, "What a check-source node does", "Before the work starts: can the source be reached, and is everything it needs there?", b);
 }
+
+// ---- An external scheduler runs a pipeline and waits for it ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 200, y3 = 324;
+  const mid = (i) => X[i] + W / 2;
+  const b =
+    lane(y1, 96, "Your scheduler", C.orange) +
+    card(X[0], y1 + 30, W, { icon: "clock", color: C.orange, title: "The job starts", sub: "Control-M, AutoSys, cron…" }) +
+    card(X[2], y1 + 30, W, { icon: "check", color: C.orange, strong: true, title: "Acts on the exit code", sub: "go on, alert, or retry" }) +
+    arrow([[mid(0), y1 + 86], [mid(0), y2 + 28]], C.orange) +
+    label(mid(0) + 8, y1 + 106, "kilnmark-run pipeline daily-load", C.orange, "start") +
+    lane(y2, 96, "kilnmark-run", C.violet) +
+    card(X[0], y2 + 30, W, { n: "1", color: C.violet, title: "Start, with a request key", sub: "and wait up to 15 minutes" }) +
+    card(X[1], y2 + 30, W, { n: "2", color: C.violet, title: "Wait again", sub: "as often as it takes" }) +
+    card(X[2], y2 + 30, W, { n: "3", color: C.violet, title: "Exit with a code", sub: "0 succeeded … 5 unreachable" }) +
+    arrow([[X[0] + W, y2 + 58], [X[1] - 2, y2 + 58]], C.violet) +
+    label((X[0] + W + X[1]) / 2, y2 + 50, "202", C.violet) +
+    arrow([[X[1] + W, y2 + 58], [X[2] - 2, y2 + 58]], C.violet) +
+    label((X[1] + W + X[2]) / 2, y2 + 50, "200", C.violet) +
+    arrow([[mid(2), y2 + 28], [mid(2), y1 + 88]], C.violet) +
+    arrow([[mid(0), y2 + 86], [mid(0), y3 + 28]], C.blue) +
+    label(mid(0) + 8, y2 + 106, "POST …/runs?wait=900", C.blue, "start") +
+    arrow([[mid(1), y2 + 86], [mid(1), y3 + 28]], C.blue) +
+    label(mid(1) + 8, y2 + 106, "GET …/pipeline-runs/42?wait=900", C.blue, "start") +
+    lane(y3, 96, "Kilnmark", C.blue) +
+    card(X[0], y3 + 30, W + 236, { icon: "play", color: C.blue, strong: true, title: "Queues the run once per key, then answers", sub: "when the run ends (200), or when the wait is up and it is still going (202)" }) +
+    card(X[2], y3 + 30, W, { icon: "eye", color: C.blue, title: "The run's page", sub: "#/pipeline-runs/42" }) +
+    foot(y3 + 112, "lock", "The API token is read from a file: never on the command line, in the environment or in the job's log.");
+  svg("external-scheduler-flow", y3 + 162, "A scheduler job that waits for the run to end", "kilnmark-run starts the run, waits in steps the server allows, and exits with what happened", b);
+}
+
+// ---- A retry with the same request key ----
+{
+  const rows = [108, 200, 292];
+  const A = [24, 236], B = [286, 220], Cc = [532, 204];
+  const b =
+    card(A[0], rows[0] - 28, A[1], { icon: "terminal", color: C.orange, title: "First try", sub: "key: daily-load-2026-11-06" }) +
+    arrow([[A[0] + A[1], rows[0]], [B[0] - 2, rows[0]]], C.blue) +
+    card(B[0], rows[0] - 28, B[1], { icon: "play", color: C.blue, title: "Run 42 starts", sub: "the key is kept with it" }) +
+    arrow([[B[0] + B[1], rows[0]], [Cc[0] - 2, rows[0]]], C.bad, { dash: "4 3" }) +
+    card(Cc[0], rows[0] - 28, Cc[1], { icon: "cross", color: C.bad, dash: "4 3", title: "The answer is lost", sub: "the network dropped it" }) +
+    card(A[0], rows[1] - 28, A[1], { icon: "terminal", color: C.orange, title: "Retry, the same key", sub: "same token, same pipeline" }) +
+    arrow([[A[0] + A[1], rows[1]], [B[0] - 2, rows[1]]], C.blue) +
+    card(B[0], rows[1] - 28, B[1], { icon: "key", color: C.blue, title: "Key found", sub: "no second run starts" }) +
+    arrow([[B[0] + B[1], rows[1]], [Cc[0] - 2, rows[1]]], C.good) +
+    card(Cc[0], rows[1] - 28, Cc[1], { icon: "check", color: C.good, strong: true, title: "Run 42, answer 200", sub: "Idempotent-Replayed: true" }) +
+    card(A[0], rows[2] - 28, A[1], { icon: "terminal", color: C.orange, title: "The same key, elsewhere", sub: "for another pipeline or flow" }) +
+    arrow([[A[0] + A[1], rows[2]], [Cc[0] - 2, rows[2]]], C.bad, { dash: "4 3" }) +
+    card(Cc[0], rows[2] - 28, Cc[1], { icon: "cross", color: C.bad, title: "Refused, 422", sub: "use a new key for it" }) +
+    foot(rows[2] + 50, "shield", "A key lasts 24 hours, for one token or person. A request that could not start a run keeps no key.");
+  svg("request-key-retry", rows[2] + 100, "A retry with the same request key gets the same run", "The work never runs twice because a scheduler asked twice", b);
+}

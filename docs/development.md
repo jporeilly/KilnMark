@@ -477,6 +477,17 @@ a flow holding one could fill every slot while waiting for runs that never start
 what orchestrates pipelines is called a flow. How to size the slots and flows against the database's
 connections is in [INSTALL.md](../INSTALL.md#sizing-the-workers).
 
+**Waiting for runs** (ADR 0047, docs/guide/external-schedulers.md). Requests that start or read a
+run with `?wait=` wait on the api role, on virtual threads, until the run ends or the wait is up:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `kilnmark.api.max-wait` (`KILNMARK_API_MAX_WAIT`) | `15m` | The longest one request waits; a longer `wait` is cut to it |
+| `kilnmark.api.max-waiting` (`KILNMARK_API_MAX_WAITING`) | `100` | Requests that may wait at once on one process; one more gets 503 with `Retry-After: 5` |
+
+Request keys (`Idempotency-Key`) are kept 24 hours in `run_request_key` and deleted every hour by
+processes with the scheduler role.
+
 **Source limits** (ADR 0040, docs/design/parallel-runs.md). A source's `max_runs` caps the pipeline
 runs and flow `sql` nodes using it at once. Before a pipeline run starts, its worker takes one place
 on each limited source the version reads or writes: an advisory lock keyed from

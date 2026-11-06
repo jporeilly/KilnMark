@@ -56,7 +56,9 @@ admin.
 - **Making one:** an admin goes to **API tokens**, gives it a name (like `nightly-ci`), the least
   role that will do, and an expiry.
 - **Using one:** the program sends it in a header with every request. The web UI can use one too:
-  paste it on the sign-in page.
+  paste it on the sign-in page. A scheduler that runs pipelines and flows needs a **Steward**
+  token, kept in a file only its jobs can read: see
+  [Running from an external scheduler](external-schedulers.md#before-you-start).
 - **Revoking one:** **API tokens**, revoke. It stops working at once, on every server.
 - **Last used:** Kilnmark records when each token was last used, so you can spot and remove ones
   nobody uses.

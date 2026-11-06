@@ -752,6 +752,10 @@ waits. A pipeline with parameters runs with their defaults; see
 To stop a run, open it and choose **Cancel run**. A queued run is cancelled at once; a running one
 stops within a few seconds. Rows already written stay written.
 
+To run a pipeline from your organisation's scheduler (Control-M, AutoSys, cron, Windows Task
+Scheduler), so that the job waits for the run and ends with its outcome, see
+[Running from an external scheduler](external-schedulers.md).
+
 ### Sources that take a few runs at a time
 
 A source can say how many runs may use it at once, so a busy production database has a cap its

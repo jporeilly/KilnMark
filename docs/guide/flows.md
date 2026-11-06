@@ -391,6 +391,10 @@ Kilnmark checks the latest saved version again first, since a pipeline may have 
 queues the run. Unsaved changes on the page are not part of it. Only one run of a flow is queued or
 running at a time.
 
+To run a flow from your organisation's scheduler (Control-M, AutoSys, cron, Windows Task
+Scheduler), so that the job waits for the run and ends with its outcome, see
+[Running from an external scheduler](external-schedulers.md).
+
 ## Reading a run
 
 Open a run from the **History** tab on the flow's page, or the last run from the line under its name.
@@ -469,4 +473,5 @@ runs it started that are still going are cancelled. What they had already writte
 
 - Changing a node's settings on the diagram: for now, change them in the YAML.
 - Deleting a flow.
-- Running flows on a schedule.
+- Running flows on a schedule inside Kilnmark. Your own scheduler can run them now: see
+  [Running from an external scheduler](external-schedulers.md).

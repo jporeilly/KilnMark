@@ -1,6 +1,7 @@
 # 0026 Flows orchestrate pipelines; the scheduler comes later and is built in
 
-Status: Accepted (29 October 2026)
+Status: Accepted (29 October 2026). Amended by [ADR 0047](0047-external-schedulers.md): external
+schedulers may start runs too, and wait for them.
 
 ## Context
 

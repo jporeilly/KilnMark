@@ -866,6 +866,38 @@ asset's previous profile.
   validates as you type and shows problems by line, a read-only graph of the nodes (the existing
   diagram library), versions, and runs with a per-node breakdown.
 
+### Waiting for a run, and request keys (decisions, ADR 0047)
+
+For schedulers outside Kilnmark (docs/guide/external-schedulers.md), which need a job to end when
+its run ends, and a retried start never to run the work twice.
+
+![A scheduler job that waits for the run to end: kilnmark-run starts the run with a request key, Kilnmark answers 202 while the run is still going and 200 once it has ended, and kilnmark-run exits with a code the scheduler acts on](../guide/images/external-scheduler-flow.svg)
+
+- **`wait`** (whole seconds) on `POST .../pipelines/{name}/runs`, `POST .../flows/{name}/runs`,
+  `GET /api/v1/pipeline-runs/{id}` and `GET /api/v1/flow-runs/{id}`. The request answers when the
+  run's status is final or the wait is up: a start with 200 (ended) or 202 (still going), a read
+  with 200 and the run as it is. `RunWaits` looks at the run's row (`runStatus`, one row) once a
+  second, on a virtual thread (`@RunOnVirtualThread`), so a waiting request holds no worker
+  thread. `kilnmark.api.max-wait` (15 minutes) cuts every wait; `kilnmark.api.max-waiting` (100)
+  places are taken before anything starts, and one request more gets 503 with `Retry-After: 5`. A
+  read with no wait, or of a run that has ended, takes no place. A waiting request whose caller
+  has gone (its connection closed) stops waiting.
+- **`Idempotency-Key`** on the two starts (`RunRequestKeys`, table `run_request_key`, V37): keyed
+  by caller (`token:<id>`, or `user:<name>` for a provider sign-in) and key, holding the kind
+  (pipeline or flow), the name and the run (a foreign key to `pipeline_run` or `flow_run`, deleted
+  with it). In one transaction: delete this caller's key if older than 24 hours; insert it with
+  `ON CONFLICT DO NOTHING`; if inserted, queue the run (its own transaction) and set its id on the
+  row; else read the row: the same kind and name give its run back (200,
+  `Idempotent-Replayed: true`), another give 422. A second request with the same key waits on the
+  first's uncommitted row, so two at once start one run. A start that throws rolls the key back.
+  Four keyed starts at most at once per process, each holding two connections for a moment. The
+  scheduler role deletes keys older than 24 hours every hour.
+- **`Accept: text/plain`** on the four answers with `id`, `kind`, `name`, `status`, `ended`,
+  `page` and `message` lines, the message on one line and as the caller may see it (Sights, as the
+  JSON's `error`). Errors stay JSON.
+
+![A retry with the same request key gets the same run: a first try starts run 42 and its answer is lost; a retry with the same key starts no second run and answers 200 with run 42; the same key for another pipeline or flow is refused with 422](../guide/images/request-key-retry.svg)
+
 ### Node catalogue and seams (decisions)
 
 - `GET /api/v1/node-types` lists every `NodeFactory`: those on the class path (`ServiceLoader`:
