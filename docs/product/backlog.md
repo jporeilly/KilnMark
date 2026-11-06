@@ -55,7 +55,10 @@ run timelines).
    node and an `http` flow node, behind the allowed hosts an admin sets), JSON and XML, `pivot`
    and `unpivot`, change detection and dimension history, `sequence`, `mask`, generated rows, and
    file actions in flows. Nodes stay coarse: one per shape of work, single-value operations as
-   functions.
+   functions. With them, **AI in pipelines** ([ADR 0050](../adr/0050-ai-in-pipelines.md)): an `ai`
+   node (classify, extract, summarise, translate, find personal data) and an `embed` node, after
+   `mask` so sensitive columns can be masked first; then explaining failed runs, drafting a
+   pipeline from a description, suggesting quality rules, and run tools on the MCP server.
 10. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
    pre-run checks, flags on slow pipelines. Run tools on the MCP server fold in here (parked item
    in Plan & Scope).

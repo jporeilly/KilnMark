@@ -58,6 +58,12 @@ details.
 
 ### Details
 
+- **AI in pipelines is decided** ([ADR 0050](docs/adr/0050-ai-in-pipelines.md)): an `ai` node
+  with the tasks classify, extract, summarise, translate and find personal data, and an `embed`
+  node, under the model rules of ADR 0012 (local by default, a model per feature, JSON answers,
+  scored before release); a model never sees a sensitive value unmasked, so such a column is
+  masked first or refused; each answer carries its model, prompt version and confidence; rows,
+  tokens and time are limited per run and answers cached. Nothing is built yet.
 - **More nodes are decided** ([ADR 0049](docs/adr/0049-more-nodes-and-how-coarse-they-are.md)):
   nodes stay coarse, one per shape of work, with operations on single values as expression
   functions; a node is added only for work that changes the number of rows, needs order or state
