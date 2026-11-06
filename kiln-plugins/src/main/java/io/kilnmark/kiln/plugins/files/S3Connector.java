@@ -102,7 +102,7 @@ public final class S3Connector extends FileSourceConnector {
                     + (allowDefaultCredentials ? ". On AWS, leave empty to use the server's own AWS credentials" : ""),
                 false),
             Setting.bool("path_style", "Path-style addressing", false,
-                "true for most S3-compatible storage (VersityGW, MinIO); false (the default) for AWS"),
+                "On for most S3-compatible storage (VersityGW, MinIO); off for AWS"),
             ENCODING, DELIMITER, HEADER, KEEP_TEXT, READ_TEXT_ON_DEMAND);
     }
 

@@ -31,12 +31,12 @@ Every source has these besides its connector's own:
 | Setting | Type | Default | What it does |
 | --- | --- | --- | --- |
 | `description` | text |  | What this source holds and who looks after it. |
-| `ai_egress` | choice | `local_only` | local_only: only models on servers marked local may see this source's metadata and data. allowed: any configured model. none: no model at all. One of `local_only`, `allowed`, `none`. |
+| `ai_egress` | choice | `local_only` | Which models may see this source's metadata and data: local_only, only models on servers marked local; allowed, any configured model; none, no model at all. One of `local_only`, `allowed`, `none`. |
 | `include` | text, several |  | Only tables or files matching these patterns, ignoring case. cust* or *.csv match names; crm.* (a schema's tables) or raw/** (a folder's files) match paths. Leave empty for all. |
 | `exclude` | text, several |  | Leave out tables or files matching these patterns, for example tmp_*, *_backup or archive/**. |
-| `allow_writing` | true or false | `false` | true lets pipelines write tables or files to this source, with an account that has write rights; false keeps it read-only. Only designers and admins can change it. |
+| `allow_writing` | true or false | `false` | Lets pipelines write tables or files to this source, with an account that has write rights; off keeps it read-only. Only designers and admins can change it. |
 | `allow_sql` | true or false | `false` | PostgreSQL only: true lets designers whose token sees unmasked values write SQL that runs on this source (custom quality rules). Give the source a login that can read only what that SQL needs. false (the default) runs only the SQL Kilnmark builds. |
-| `keep_samples` | true or false | `true` | true (the default) keeps sample rows, example values and failing rows for stewards to see; false keeps only shapes and statistics. |
+| `keep_samples` | true or false | `true` | Keeps sample rows, example values and failing rows for stewards to see; off keeps only shapes and statistics. |
 | `sample_rows` | number |  | Rows sampled from each table or file for profiling, up to 10000. Leave empty for the server's setting. |
 | `table_sample_above_rows` | number |  | Databases only: tables with more rows than this, at least 1000, are profiled from a sample of about that many rows. Leave empty to read every row. |
 | `max_runs` | number |  | How many pipeline runs and flow sql nodes may use this source at the same time, from 1 to 100. Others wait their turn, without failing. Leave empty for no limit. |
@@ -105,7 +105,7 @@ A write node writing to this kind of source also takes:
 | `allow_dropping_row_security` | true or false | `false` | For replace: replace a table with row-level security, whose policies the new table will not have. |
 | `lock_timeout` | number | `30` | For replace: how long the swap waits for others using the old table. |
 | `profile_output` | true or false | `true` | Profile the rows in the same pass and record the profile with the written table or file. |
-| `keep_values` | true or false | `true` | false keeps statistics without example values or sample rows; the source's own rule still applies. |
+| `keep_values` | true or false | `true` | Whether the profile keeps example values and sample rows; off keeps the statistics only. The source's own rule still applies. |
 
 [end: connector postgresql]: #
 
@@ -161,7 +161,7 @@ Kind `sqlserver`, listed under databases (relational).
 | `username` | text | no |  | A read-only account is enough for scanning; pipelines that write to this source need a login with write rights. |
 | `schemas` | text, several | no |  | Leave empty to scan every schema, or choose them from a list. |
 | `trust_server_certificate` | true or false | no | `false` | Only for test servers with a self-signed certificate. Off by default. With it off, the certificate must be valid. |
-| `isolation` | choice | no | `read-uncommitted` | read-uncommitted (the default) takes no shared locks, so reading never blocks the application's writes, but may see changes not yet committed; snapshot reads a consistent view without locks if the database allows snapshot isolation; read-committed takes shared locks and can block writers. One of `read-uncommitted`, `snapshot`, `read-committed`. |
+| `isolation` | choice | no | `read-uncommitted` | How reads lock: read-uncommitted takes no shared locks, so reading never blocks the application's writes, but may see changes not yet committed; snapshot reads a consistent view without locks if the database allows snapshot isolation; read-committed takes shared locks and can block writers. One of `read-uncommitted`, `snapshot`, `read-committed`. |
 
 A write node writing to this kind of source also takes:
 
@@ -175,7 +175,7 @@ A write node writing to this kind of source also takes:
 | `lock_timeout` | number | `30` | For replace: how long the swap waits for others using the old table. |
 | `bulk_copy` | true or false | `true` | Load tables this node creates through the driver's bulk copy. |
 | `profile_output` | true or false | `true` | Profile the rows in the same pass and record the profile with the written table or file. |
-| `keep_values` | true or false | `true` | false keeps statistics without example values or sample rows; the source's own rule still applies. |
+| `keep_values` | true or false | `true` | Whether the profile keeps example values and sample rows; off keeps the statistics only. The source's own rule still applies. |
 
 [end: connector sqlserver]: #
 
@@ -227,9 +227,9 @@ Kind `mysql`, listed under databases (relational).
 | `port` | number | no | `3306` | Leave empty for 3306, MySQL's usual port. |
 | `database` | text | no |  | Leave empty to see every database as a schema, or give one database to keep the source to it. |
 | `username` | text | yes |  | A login with SELECT is enough for scanning; pipelines that write to this source need a login with write rights. |
-| `tls_mode` | choice | no | `preferred` | preferred (the default) encrypts when the server offers TLS, without checking its certificate; required always encrypts; verify-ca also checks the certificate against the server CA certificate; verify-full also checks the host name; disabled never encrypts. One of `preferred`, `disabled`, `required`, `verify-ca`, `verify-full`. |
+| `tls_mode` | choice | no | `preferred` | How the connection is encrypted: preferred encrypts when the server offers TLS, without checking its certificate; required always encrypts; verify-ca also checks the certificate against the server CA certificate; verify-full also checks the host name; disabled never encrypts. One of `preferred`, `disabled`, `required`, `verify-ca`, `verify-full`. |
 | `server_ca` | text | no |  | For verify-ca and verify-full: the PEM certificate (-----BEGIN CERTIFICATE----- ...) of the authority that signed the server's certificate. Leave empty to use the certificates this server trusts. |
-| `tinyint1_as_boolean` | true or false | no | `true` | true (the default) reads TINYINT(1) columns, which is how MySQL stores BOOLEAN, as true or false; false reads them as numbers. |
+| `tinyint1_as_boolean` | true or false | no | `true` | Reads TINYINT(1) columns, which is how MySQL stores BOOLEAN, as true or false; off reads them as numbers. |
 | `schemas` | text, several | no |  | Leave empty to scan every database, or choose them from a list. |
 
 A write node writing to this kind of source also takes:
@@ -243,7 +243,7 @@ A write node writing to this kind of source also takes:
 | `bulk_load` | true or false | `true` | Load tables this node creates with LOAD DATA LOCAL INFILE, sent from memory, when the server allows it (local_infile); otherwise, or when false, with batched inserts. |
 | `allow_other_unique_keys` | true or false | `false` | For upsert: a row matching any unique index is updated, not only one matching the key, so a table with a unique index lacking a key column is refused. true allows it, accepting that such rows are updated. |
 | `profile_output` | true or false | `true` | Profile the rows in the same pass and record the profile with the written table or file. |
-| `keep_values` | true or false | `true` | false keeps statistics without example values or sample rows; the source's own rule still applies. |
+| `keep_values` | true or false | `true` | Whether the profile keeps example values and sample rows; off keeps the statistics only. The source's own rule still applies. |
 
 [end: connector mysql]: #
 
@@ -296,9 +296,9 @@ Kind `mariadb`, listed under databases (relational).
 | `port` | number | no | `3306` | Leave empty for 3306, MariaDB's usual port. |
 | `database` | text | no |  | Leave empty to see every database as a schema, or give one database to keep the source to it. |
 | `username` | text | yes |  | A login with SELECT is enough for scanning; pipelines that write to this source need a login with write rights. |
-| `tls_mode` | choice | no | `preferred` | preferred (the default) encrypts when the server offers TLS, without checking its certificate; required always encrypts; verify-ca also checks the certificate against the server CA certificate; verify-full also checks the host name; disabled never encrypts. One of `preferred`, `disabled`, `required`, `verify-ca`, `verify-full`. |
+| `tls_mode` | choice | no | `preferred` | How the connection is encrypted: preferred encrypts when the server offers TLS, without checking its certificate; required always encrypts; verify-ca also checks the certificate against the server CA certificate; verify-full also checks the host name; disabled never encrypts. One of `preferred`, `disabled`, `required`, `verify-ca`, `verify-full`. |
 | `server_ca` | text | no |  | For verify-ca and verify-full: the PEM certificate (-----BEGIN CERTIFICATE----- ...) of the authority that signed the server's certificate. Leave empty to use the certificates this server trusts. |
-| `tinyint1_as_boolean` | true or false | no | `true` | true (the default) reads TINYINT(1) columns, which is how MariaDB stores BOOLEAN, as true or false; false reads them as numbers. |
+| `tinyint1_as_boolean` | true or false | no | `true` | Reads TINYINT(1) columns, which is how MariaDB stores BOOLEAN, as true or false; off reads them as numbers. |
 | `schemas` | text, several | no |  | Leave empty to scan every database, or choose them from a list. |
 
 A write node writing to this kind of source also takes:
@@ -312,7 +312,7 @@ A write node writing to this kind of source also takes:
 | `bulk_load` | true or false | `true` | Load tables this node creates with LOAD DATA LOCAL INFILE, sent from memory, when the server allows it (local_infile); otherwise, or when false, with batched inserts. |
 | `allow_other_unique_keys` | true or false | `false` | For upsert: a row matching any unique index is updated, not only one matching the key, so a table with a unique index lacking a key column is refused. true allows it, accepting that such rows are updated. |
 | `profile_output` | true or false | `true` | Profile the rows in the same pass and record the profile with the written table or file. |
-| `keep_values` | true or false | `true` | false keeps statistics without example values or sample rows; the source's own rule still applies. |
+| `keep_values` | true or false | `true` | Whether the profile keeps example values and sample rows; off keeps the statistics only. The source's own rule still applies. |
 
 [end: connector mariadb]: #
 
@@ -361,7 +361,7 @@ Kind `oracle`, listed under databases (relational).
 | `port` | number | no | `1521` | Leave empty for 1521, Oracle's usual port. |
 | `service_name` | text | yes |  | The database service to connect to, for example FREEPDB1 or sales.example.com (ask the database's administrator; not a SID). |
 | `username` | text | yes |  | A login with CREATE SESSION and SELECT on the tables is enough for scanning; pipelines that write to this source need a login with write rights. |
-| `encryption` | choice | no | `accepted` | accepted (the default) encrypts when the server asks for Oracle's native encryption; required always uses it; tls connects over TCPS, checking the server's certificate against this server's trusted certificates and its name against the host. One of `accepted`, `required`, `tls`. |
+| `encryption` | choice | no | `accepted` | How the connection is encrypted: accepted encrypts when the server asks for Oracle's native encryption; required always uses it; tls connects over TCPS, checking the server's certificate against this server's trusted certificates and its name against the host. One of `accepted`, `required`, `tls`. |
 | `schemas` | text, several | no |  | Leave empty to scan every schema, or choose them from a list. |
 
 A write node writing to this kind of source also takes:
@@ -376,7 +376,7 @@ A write node writing to this kind of source also takes:
 | `lock_timeout` | number | `30` | For replace: how long the swap waits for others using the old table. |
 | `empty_text_as_null` | true or false | `false` | Oracle stores empty text as null. false (the default) refuses empty text, so nothing changes silently; true writes it as null. |
 | `profile_output` | true or false | `true` | Profile the rows in the same pass and record the profile with the written table or file. |
-| `keep_values` | true or false | `true` | false keeps statistics without example values or sample rows; the source's own rule still applies. |
+| `keep_values` | true or false | `true` | Whether the profile keeps example values and sample rows; off keeps the statistics only. The source's own rule still applies. |
 
 [end: connector oracle]: #
 
@@ -443,7 +443,7 @@ A write node writing to this kind of source also takes:
 | `batch_size` | number | `1000` | Rows sent to the database at a time. |
 | `text_length` | number | `0` | For create: text columns of this many characters; 0 (the default) for the longest text type the driver lists. |
 | `profile_output` | true or false | `true` | Profile the rows in the same pass and record the profile with the written table or file. |
-| `keep_values` | true or false | `true` | false keeps statistics without example values or sample rows; the source's own rule still applies. |
+| `keep_values` | true or false | `true` | Whether the profile keeps example values and sample rows; off keeps the statistics only. The source's own rule still applies. |
 
 [end: connector jdbc]: #
 
@@ -499,11 +499,11 @@ Kind `files`, listed under files (local or network folder).
 | Setting | Type | Required | Default | What it does |
 | --- | --- | --- | --- | --- |
 | `path` | text | yes |  | The full path of a folder this server can read, inside one of the folders its administrator allows. |
-| `recursive` | true or false | no | `true` | true (the default) or false. |
+| `recursive` | true or false | no | `true` | Also reads the files in sub-folders. |
 | `encoding` | text | no |  | Leave empty to detect (UTF-8, or windows-1252 when a file is not valid UTF-8); for example ISO-8859-15. |
 | `delimiter` | text | no |  | Leave empty to detect it (comma, semicolon, tab or \|). Write tab as \t. |
-| `header` | true or false | no | `true` | true (the default): the first row names the columns. false: it is data, and columns are named column_1, column_2 and so on. |
-| `keep_text` | true or false | no | `true` | true (the default) stores documents' text in Kilnmark for search and reading. false stores only their properties (title, author, pages, language, words) and deletes text stored before at the next scan. |
+| `header` | true or false | no | `true` | The first row names the columns. Off: the first row is data, and the columns are named column_1, column_2 and so on. |
+| `keep_text` | true or false | no | `true` | Stores documents' text in Kilnmark for search and reading. Off stores only their properties (title, author, pages, language, words) and deletes text stored before at the next scan. |
 | `read_text_on_demand` | true or false | no | `false` | Only when keep_text is false. true lets stewards view a document's text, read from the source when they open it and never stored; false (the default) shows only its properties. |
 
 A write node writing to this kind of source also takes:
@@ -515,7 +515,7 @@ A write node writing to this kind of source also takes:
 | `compression` | choice | `snappy` | Parquet only: how pages are compressed. One of `snappy`, `zstd`, `gzip`, `none`. |
 | `allow_unscanned` | true or false | `false` | Write even where scans of this source would not find the file. |
 | `profile_output` | true or false | `true` | Profile the rows in the same pass and record the profile with the written table or file. |
-| `keep_values` | true or false | `true` | false keeps statistics without example values or sample rows; the source's own rule still applies. |
+| `keep_values` | true or false | `true` | Whether the profile keeps example values and sample rows; off keeps the statistics only. The source's own rule still applies. |
 
 [end: connector files]: #
 
@@ -569,11 +569,11 @@ Kind `s3`, listed under files (object storage).
 | `bucket` | text | yes |  | The bucket to scan, for example landing-bucket. |
 | `prefix` | text | no |  | Only objects whose keys start with this, for example raw/. |
 | `access_key_id` | text | yes |  | The secret access key goes in the source's secret. |
-| `path_style` | true or false | no | `false` | true for most S3-compatible storage (VersityGW, MinIO); false (the default) for AWS. |
+| `path_style` | true or false | no | `false` | On for most S3-compatible storage (VersityGW, MinIO); off for AWS. |
 | `encoding` | text | no |  | Leave empty to detect (UTF-8, or windows-1252 when a file is not valid UTF-8); for example ISO-8859-15. |
 | `delimiter` | text | no |  | Leave empty to detect it (comma, semicolon, tab or \|). Write tab as \t. |
-| `header` | true or false | no | `true` | true (the default): the first row names the columns. false: it is data, and columns are named column_1, column_2 and so on. |
-| `keep_text` | true or false | no | `true` | true (the default) stores documents' text in Kilnmark for search and reading. false stores only their properties (title, author, pages, language, words) and deletes text stored before at the next scan. |
+| `header` | true or false | no | `true` | The first row names the columns. Off: the first row is data, and the columns are named column_1, column_2 and so on. |
+| `keep_text` | true or false | no | `true` | Stores documents' text in Kilnmark for search and reading. Off stores only their properties (title, author, pages, language, words) and deletes text stored before at the next scan. |
 | `read_text_on_demand` | true or false | no | `false` | Only when keep_text is false. true lets stewards view a document's text, read from the source when they open it and never stored; false (the default) shows only its properties. |
 
 A write node writing to this kind of source also takes:
@@ -585,7 +585,7 @@ A write node writing to this kind of source also takes:
 | `compression` | choice | `snappy` | Parquet only: how pages are compressed. One of `snappy`, `zstd`, `gzip`, `none`. |
 | `allow_unscanned` | true or false | `false` | Write even where scans of this source would not find the file. |
 | `profile_output` | true or false | `true` | Profile the rows in the same pass and record the profile with the written table or file. |
-| `keep_values` | true or false | `true` | false keeps statistics without example values or sample rows; the source's own rule still applies. |
+| `keep_values` | true or false | `true` | Whether the profile keeps example values and sample rows; off keeps the statistics only. The source's own rule still applies. |
 
 [end: connector s3]: #
 

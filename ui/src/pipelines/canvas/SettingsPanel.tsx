@@ -182,9 +182,6 @@ export function SettingsPanel({
         <label className="cv-label" htmlFor={`${base}-id`}>
           Node id
         </label>
-        <p className="hint" id={`${base}-id-help`}>
-          Small letters, digits, - and _. Changing it updates the nodes reading from it.
-        </p>
         <input
           id={`${base}-id`}
           className="mono"
@@ -206,6 +203,10 @@ export function SettingsPanel({
             {idProblem}
           </p>
         )}
+        {/* Under the box, as in every setting: label, box, problems, help. */}
+        <p className="hint" id={`${base}-id-help`}>
+          Small letters, digits, - and _. Changing it updates the nodes reading from it.
+        </p>
       </div>
 
       {ports.inputs.length > 0 && (

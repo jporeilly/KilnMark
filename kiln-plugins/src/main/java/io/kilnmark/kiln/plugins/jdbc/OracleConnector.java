@@ -151,8 +151,8 @@ public class OracleConnector extends JdbcConnector {
                 + "FREEPDB1 or sales.example.com (ask the database's administrator; not a SID)"),
             Setting.text("username", "User name", true, "A login with CREATE SESSION and SELECT on the tables is "
                 + "enough for scanning; pipelines that write to this source need a login with write rights"),
-            Setting.choice("encryption", "Encryption", ENCRYPTION, "accepted", "accepted (the default) encrypts when "
-                + "the server asks for Oracle's native encryption; required always uses it; tls connects over TCPS, "
+            Setting.choice("encryption", "Encryption", ENCRYPTION, "accepted", "How the connection is encrypted: "
+                + "accepted encrypts when the server asks for Oracle's native encryption; required always uses it; tls connects over TCPS, "
                 + "checking the server's certificate against this server's trusted certificates and its name "
                 + "against the host"),
             new Setting("schemas", "Schemas", false, "Leave empty to scan every schema, or choose them from a list",

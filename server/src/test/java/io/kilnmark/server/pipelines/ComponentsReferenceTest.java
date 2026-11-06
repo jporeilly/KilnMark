@@ -94,6 +94,28 @@ class ComponentsReferenceTest {
         assertEquals(List.of(), problems);
     }
 
+    /**
+     * Every setting's help, as the panel and the reference show it, reads as a sentence: it starts
+     * with a capital, not with a value such as "create fails if ..." or "false keeps ...".
+     */
+    @Test
+    void everySettingsHelpStartsAsASentence() {
+        List<String> lower = new ArrayList<>();
+        for (Map.Entry<String, ComponentsReference.Part> e : REF.parts().entrySet()) {
+            for (String row : e.getValue().text().split("\n")) {
+                if (!row.startsWith("| `")) {
+                    continue;
+                }
+                String[] cells = row.split("(?<!\\\\)\\|");
+                String help = cells[cells.length - 1].trim();
+                if (!help.isEmpty() && Character.isLowerCase(help.charAt(0))) {
+                    lower.add(e.getKey() + ": " + help);
+                }
+            }
+        }
+        assertEquals(List.of(), lower);
+    }
+
     /** The text of the section (from its ## heading to the next) holding the named generated part. */
     private static String section(String page, String part) {
         int at = page.indexOf("[generated: " + part + "]: #");
