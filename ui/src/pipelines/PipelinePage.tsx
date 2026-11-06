@@ -29,6 +29,8 @@ import { CANVAS_TABS, NODE_TABS, PipelineDock, useDock, type DockControl, type D
 import { RunFacts, RunNodes, rowsRead, useRunDetail } from "./RunSummary";
 import type { CanvasRun } from "./canvas/CanvasView";
 import type { Graph } from "./canvas/model";
+import { SchedulesSection } from "../schedules/SchedulesSection";
+import { ScheduledNext, useSchedules } from "../schedules/SchedulesTable";
 import "./pipelines.css";
 
 // The graph library is large, so the graph and the canvas load when the page first shows one.
@@ -110,6 +112,8 @@ export function PipelinePage({
   const tabsId = useTabsId();
   const dockId = useTabsId();
   const dock = useDock(dockId);
+  // Its schedules: for the Schedules tab, and its next scheduled run beside its last run.
+  const schedules = useSchedules(name == null ? null : { pipeline: name }, name != null);
   const [dockHost, setDockHost] = useState<HTMLDivElement | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [focusRequest, setFocusRequest] = useState<{ node: string; key: string | null; n: number } | null>(null);
@@ -295,7 +299,7 @@ export function PipelinePage({
     ...(selected != null ? (["settings", "preview"] as const) : []),
     ...(isNew ? [] : (["run"] as const)),
     "suggestions",
-    ...(isNew ? [] : (["runs", "versions"] as const)),
+    ...(isNew ? [] : (["runs", "schedules", "versions"] as const)),
   ];
   // When the tab shown goes (the node was deselected or removed): the Run tab if a run is going or
   // it was the last of the pipeline's tabs shown, else Nodes.
@@ -598,6 +602,7 @@ export function PipelinePage({
               <a href={href.pipelineRun(detail.lastRun.id)}>run {detail.lastRun.id}</a>.
             </>
           )}
+          <ScheduledNext schedules={schedules.schedules} onShow={() => dock.show("schedules")} />
         </p>
       )}
       {viewing && shown && (
@@ -938,6 +943,9 @@ export function PipelinePage({
                 </div>
               )}
             </>
+          )}
+          {dockTab === "schedules" && name && (
+            <SchedulesSection target={{ pipeline: name }} role={role} data={schedules} canAdd={!!detail?.latest} />
           )}
           {dockTab === "versions" && (
             <>

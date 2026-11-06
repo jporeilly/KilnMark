@@ -6,7 +6,7 @@ import { Tabs, type TabItem } from "../components/ui";
  * The tabs of the panel under the canvas, in their order: the selected node's (only while one is
  * selected), then the pipeline's.
  */
-export type DockTab = "settings" | "preview" | "run" | "suggestions" | "nodes" | "runs" | "versions";
+export type DockTab = "settings" | "preview" | "run" | "suggestions" | "nodes" | "runs" | "schedules" | "versions";
 /** The selected node's tabs: shown only while a node is selected. */
 export const NODE_TABS: ReadonlySet<DockTab> = new Set(["settings", "preview"]);
 /** The tabs the canvas fills: they need the canvas shown, not the YAML. */
@@ -18,6 +18,7 @@ const LABELS: Record<DockTab, string> = {
   suggestions: "Suggestions",
   nodes: "Nodes",
   runs: "History",
+  schedules: "Schedules",
   versions: "Versions",
 };
 

@@ -19,7 +19,10 @@ details.
   it loses the role. Each run is of the latest version,
   checked as Run now checks it, and is recorded as asked for by the schedule. A schedule fires at
   most once per time; a time missed while Kilnmark was stopped, or one that finds the last run still
-  going, is not made up. Set through the API for now; the pages follow.
+  going, is not made up. Each pipeline and flow has a **Schedules** tab under its canvas, with a form
+  whose presets (every day, weekdays, every hour, every few minutes, a day of the month) fill in the
+  cron and show the next five runs as you choose; the **Schedules** page in the sidebar lists every
+  schedule with who set it, for access reviews.
   ([Running pipelines and flows on a schedule](docs/guide/schedules.md))
 
 - **Try a node again after a failure** (ADR 0041). A `run-pipeline`, `for-each` or `sql` node's
@@ -58,6 +61,13 @@ details.
   behind a per-source Allow changes switch, previewed, confirmed and audited, with a second
   person's approval on production sources. ADR 0045 amends ADR 0028. Explore and the SQL
   generator are built (above); settings on tabs and operations follow.
+- **Run pipelines and flows from your scheduler** (ADR 0047). Control-M, AutoSys, IBM Workload
+  Automation, cron and Windows Task Scheduler can start a run and wait for it to end, so the job
+  ends when the work does. The new `kilnmark-run` script, in the release folder for Linux and
+  Windows, exits 0 when the run succeeded, 1 when it failed, 2 when it could not start, 3 when it
+  timed out, 4 when it was cancelled and 5 when Kilnmark could not be reached. A retry with the
+  same request key never runs the work twice.
+  ([Running from an external scheduler](docs/guide/external-schedulers.md))
 
 ### Details
 
@@ -127,6 +137,25 @@ details.
   sign-in runs off the sign-in's thread, locks only what will pause and waits at most two seconds.
   Upgrading builds the two indexes over the whole audit log, holding its writes back meanwhile
   (requests do not wait: the audit log is written by a thread of its own).
+- **The scheduler's pages** (ui/src/schedules, docs/design/schedules.md section 12). The panel under
+  a pipeline or flow has a Schedules tab (`SchedulesSection`), and the line under its name gives
+  the next scheduled run. Each schedule shows its cron in words where it is a common shape
+  (`cronWords`), with the expression and zone; who set it and its role; On or Paused; the next run
+  in the viewer's zone, and in the schedule's when that differs; the last outcome as a word with a
+  tone, its reason and a link to the run; and, for stewards and above, its values. Designers and
+  admins add and edit in `ScheduleForm`: presets fill the cron (`presetCron`, read back by
+  `readPreset`), a zone picker from `Intl.supportedValuesOf`, runs as steward or designer, the
+  latest version's parameters (a pipeline's read from its YAML), a description and Paused; the
+  next five times come from `POST /schedules/preview` a moment after each change, and only the
+  answer for the current expression and zone is shown. The form will not save while the
+  parameters are unread, so stored values are never replaced with none. Pause, Resume and Edit read
+  the schedule again before a PUT, so another person's change is kept. Delete asks first. The
+  Run now dialog's parameter fields are now `ParameterFields`, shared with the form. `#/schedules`
+  (`SchedulesPage`, in the sidebar after Flows) lists every schedule with what it runs, filters
+  for on, paused, paused by Kilnmark (its setter lost the role, or has not signed in within
+  `kilnmark.schedules.signed-in-within`), and failed last time, and a note for admins' access
+  reviews. A schedule Kilnmark paused reads **Paused: setter lost the role** or **Paused: setter
+  not signed in for 30 days** as its last outcome, in amber, apart from the grey Paused state.
 - **The `wait-for` flow node** (ADR 0041, docs/design/flow-controls.md, C2). It takes `source` and
   either `file` (a pattern with `*` and `?` in its last part; `at_least`, 1 by default) or `query`,
   plus `every` (30s to 1h, 5m) and `timeout` (up to 24h, 1h). It looks at once, then every `every`,
@@ -156,6 +185,32 @@ details.
   names, or with "Could not reach <source>"; it reports `missing`. Messages never quote the source's
   settings or its driver. Saving checks that the source exists and holds tables (databases) or files
   (file and object stores). The diagram, Settings tab and run timeline show it.
+- **Waiting for a run, and request keys** (ADR 0047, docs/design/pipelines.md). `wait` (whole
+  seconds) on `POST /api/v1/pipelines/{name}/runs`, `POST /api/v1/flows/{name}/runs`,
+  `GET /api/v1/pipeline-runs/{id}` and `GET /api/v1/flow-runs/{id}` answers when the run has ended
+  (a start 200, a read 200) or the wait is up (a start 202, a read 200 with the run still going).
+  Waits run on virtual threads, look at the run once a second, and end when the caller goes;
+  `kilnmark.api.max-wait` (15 minutes) cuts each one, `kilnmark.api.max-waiting` (100) limits how
+  many wait at once and `kilnmark.api.max-waiting-per-caller` (10) how many one token or person
+  holds. A read beyond them gets 503 with `Retry-After`; a start is never refused, and answers at
+  once (202). The `Idempotency-Key` header on the two starts (1 to 200 printable characters) gives
+  back the run the same key started, from the same token or person, for the same request (pipeline
+  or flow, version and parameter values), within 24 hours (200, `Idempotent-Replayed: true`); the
+  same key for a different request is 422. Keys are in `run_request_key` (migration V37, after the
+  built-in scheduler's V36), written in one transaction with their run after the run is checked, so
+  many starts at once never use up the database pool; two requests with one key at once start one
+  run, a start never deadlocks with a delete of its pipeline, and the scheduler role deletes keys
+  after 24 hours. With `Accept: text/plain` the four endpoints
+  answer with the run as `name: value` lines. The two reads now say so in the API docs.
+- **`kilnmark-run.sh`, `kilnmark-run.ps1` and `kilnmark-run.cmd`** in the release's root, beside
+  `kilnmark.sh` (ADR 0044). The shell edition needs only POSIX `sh` and `curl`; the PowerShell one
+  Windows PowerShell 5.1. Both read the token from the file `KILNMARK_TOKEN_FILE` names, never
+  from the command line or the environment, accept a private CA in `KILNMARK_CA_FILE`, never turn
+  certificate checks off, and refuse plain `http://` except to the same machine. They wait 50
+  seconds at a time (under common proxy timeouts), retry a lost connection with the same key, give
+  up on a server that stays busy after about five minutes, never pause past `--timeout` or for more
+  than a minute, and send each parameter exactly as typed (`007` as text, long numbers unrounded). Tests run both editions against a test server and a stub,
+  and check the Windows files are ASCII.
 - **Dev mode starts again**: `./gradlew :server:quarkusDev` needs two POMs the build itself does
   not (`org.jboss:jboss-parent:37`, `org.jboss.slf4j:slf4j-jboss-logmanager:1.1.0.Final`); their
   checksums, matched against Maven Central, are now in `gradle/verification-metadata.xml`

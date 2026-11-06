@@ -1804,6 +1804,86 @@ export const flowsApi = {
   remove: (name: string) => call<null>(flowPath(name), { method: "DELETE" }),
 };
 
+// ---- Schedules (docs/design/schedules.md, ADR 0046) ----
+
+/**
+ * A schedule: a pipeline or a flow (one is set) run at the times a cron expression gives, in a
+ * zone. parameters is null for viewers, who never see the values a run starts with. nextAt is
+ * null while it is paused, or when it never fires again. lastOutcome says what happened the last
+ * time it was due ("started", "starting", "skipped: …", "missed: …", "failed: …"; viewers see a
+ * failure only as "failed"), with the run it started.
+ */
+export type Schedule = {
+  id: number;
+  pipeline: string | null;
+  flow: string | null;
+  cron: string;
+  zone: string;
+  parameters: Record<string, unknown> | null;
+  runAs: "steward" | "designer";
+  enabled: boolean;
+  description: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedBy: string;
+  updatedAt: string;
+  nextAt: string | null;
+  lastAt: string | null;
+  lastOutcome: string | null;
+  lastPipelineRun: number | null;
+  lastFlowRun: number | null;
+};
+/** A schedule to add, or everything to replace one with. */
+export type ScheduleChange = {
+  pipeline?: string | null;
+  flow?: string | null;
+  cron: string;
+  zone: string;
+  parameters: Record<string, unknown>;
+  runAs: "steward" | "designer";
+  enabled: boolean;
+  description: string | null;
+};
+/** When an expression would fire next (up to five times), or why it cannot be used. */
+export type SchedulePreview = { valid: boolean; problem: string | null; cron: string; zone: string; next: string[] };
+
+/** What a schedule runs, as the list filters take it. */
+export type ScheduleTarget = { pipeline: string } | { flow: string };
+
+/** The schedule's change as it is now, for a PUT that changes only `enabled`. */
+export const scheduleChange = (s: Schedule): ScheduleChange => ({
+  pipeline: s.pipeline,
+  flow: s.flow,
+  cron: s.cron,
+  zone: s.zone,
+  parameters: s.parameters ?? {},
+  runAs: s.runAs,
+  enabled: s.enabled,
+  description: s.description,
+});
+
+const schedulePath = (id: number) => `/api/v1/schedules/${id}`;
+
+export const schedulesApi = {
+  /** Every schedule, or one pipeline's or flow's. */
+  list: (target?: ScheduleTarget) =>
+    call<Schedule[]>(
+      target == null
+        ? "/api/v1/schedules"
+        : "pipeline" in target
+          ? `/api/v1/schedules?pipeline=${encodeURIComponent(target.pipeline)}`
+          : `/api/v1/schedules?flow=${encodeURIComponent(target.flow)}`,
+    ),
+  get: (id: number) => call<Schedule>(schedulePath(id)),
+  create: (s: ScheduleChange) => call<Schedule>("/api/v1/schedules", { method: "POST", body: JSON.stringify(s) }),
+  /** Replaces everything a schedule is set to: send enabled false to pause it, true to resume it. */
+  replace: (id: number, s: ScheduleChange) => call<Schedule>(schedulePath(id), { method: "PUT", body: JSON.stringify(s) }),
+  remove: (id: number) => call<null>(schedulePath(id), { method: "DELETE" }),
+  /** The next five times an expression fires in a zone, or its problem. Nothing is saved. */
+  preview: (cron: string, zone: string, signal?: AbortSignal) =>
+    call<SchedulePreview>("/api/v1/schedules/preview", { method: "POST", body: JSON.stringify({ cron, zone }), signal }),
+};
+
 /**
  * A preview at a node: shaped as a source's preview (asset is "node.port"), plus whether these are
  * all the node's rows, how long it took, the columns whose values are hidden (made from columns

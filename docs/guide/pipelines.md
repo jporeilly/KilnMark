@@ -79,10 +79,12 @@ you chose):
   took, the rows read and written, and each node's rows in and out, time, peak memory, quality and
   error. While it runs it updates every two seconds. **Open run** goes to the run's own page, with
   its timeline and log.
-- **Suggestions**, **Nodes** (the nodes as a table), **History** (every run) and **Versions**.
+- **Suggestions**, **Nodes** (the nodes as a table), **History** (every run), **Schedules** (the
+  times it runs on its own; see [Running pipelines and flows on a schedule](schedules.md)) and
+  **Versions**.
 
-**Settings**, **Preview** and **Suggestions** need the canvas; **Run**, **Nodes**, **History** and
-**Versions** also work beside the YAML. A node you add shows its settings at once.
+**Settings**, **Preview** and **Suggestions** need the canvas; **Run**, **Nodes**, **History**,
+**Schedules** and **Versions** also work beside the YAML. A node you add shows its settings at once.
 
 ### Adding and connecting nodes
 
@@ -752,9 +754,15 @@ waits. A pipeline with parameters runs with their defaults; see
 To stop a run, open it and choose **Cancel run**. A queued run is cancelled at once; a running one
 stops within a few seconds. Rows already written stay written.
 
-To run a pipeline at set times, such as 02:00 every weekday, give it a schedule: see
-[Running pipelines and flows on a schedule](schedules.md). A run a schedule started shows
-`schedule <id> (set by <name>)` as who asked for it. Deleting a pipeline deletes its schedules.
+To run a pipeline at set times, such as 02:00 every weekday, give it a schedule in the
+**Schedules** tab under the canvas (designers and admins): see
+[Running pipelines and flows on a schedule](schedules.md). The line under the pipeline's name says
+when it next runs on a schedule. A run a schedule started shows `schedule <id> (set by <name>)` as
+who asked for it. Deleting a pipeline deletes its schedules.
+
+To run a pipeline from your organisation's scheduler (Control-M, AutoSys, cron, Windows Task
+Scheduler), so that the job waits for the run and ends with its outcome, see
+[Running from an external scheduler](external-schedulers.md).
 
 ### Sources that take a few runs at a time
 
