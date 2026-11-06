@@ -54,6 +54,24 @@ class RunScriptFilesTest {
     }
 
     @Test
+    void theShellEditionNeverGivesTheTokenToACommand() throws IOException {
+        // printf is not built into every sh (ksh88 on AIX, HP-UX): a command shows its arguments to ps.
+        // The token is used in the shell's own words only, and written out by a here-document.
+        List<String> lines = Files.readAllLines(LAUNCH.resolve("kilnmark-run.sh"));
+        for (String line : lines) {
+            if (java.util.regex.Pattern.compile("\\$\\{?token(?![A-Za-z0-9_])").matcher(line).find()) {
+                String code = line.strip();
+                boolean shellOnly = code.startsWith("token=") || code.startsWith("case $token")
+                    || code.startsWith("km_*) case ${token#km_}") || code.startsWith("[ -n \"$token\" ]")
+                    || code.equals("header = \"Authorization: Bearer $token\"");
+                assertTrue(shellOnly, "the token reaches a command: " + code);
+            }
+        }
+        int at = lines.indexOf("header = \"Authorization: Bearer $token\"");
+        assertTrue(at > 0 && lines.get(at - 1).strip().equals("cat <<EOF"), "written by a here-document");
+    }
+
+    @Test
     void neitherEditionTakesTheTokenFromTheCommandLineOrAnEnvironmentValue() throws IOException {
         for (String f : List.of("kilnmark-run.sh", "kilnmark-run.ps1")) {
             String text = Files.readString(LAUNCH.resolve(f));

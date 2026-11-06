@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -83,9 +82,8 @@ class RunScriptTest {
     }
 
     private static Ran finish(Process p) throws IOException, InterruptedException {
-        byte[] out = p.getInputStream().readAllBytes();
-        assertTrue(p.waitFor(120, TimeUnit.SECONDS), "the script ended");
-        return new Ran(p.exitValue(), new String(out, StandardCharsets.UTF_8));
+        String out = ScriptOutput.of(p, 120);
+        return new Ran(p.exitValue(), out);
     }
 
     private Ran run(String... args) throws IOException, InterruptedException {

@@ -123,7 +123,8 @@ while ($i -lt $args.Count) {
         }
         '--version' {
             if (-not $hasValue) { Show-Usage }
-            if ([string]$args[$i + 1] -notmatch '^[0-9]{1,9}$') { Stop-Usage '--version takes a whole number' }
+            # 1 to 9 digits, no leading 0: sent as a JSON number, as kilnmark-run.sh sends it
+            if ([string]$args[$i + 1] -cnotmatch '\A[1-9][0-9]{0,8}\z') { Stop-Usage '--version takes a whole number from 1, such as 3' }
             $Version = [int]$args[$i + 1]
             $i += 2
         }
@@ -248,7 +249,8 @@ function Invoke-Kilnmark([string]$Method, [string]$Path, [int]$MaxSeconds, $Body
         if (-not $r.Error) { $r.Error = "HTTP $($r.Code)" }
         try {
             $after = $resp.Headers['Retry-After']
-            if ($after -match '^[0-9]+$') { $r.RetryAfter = [int]$after }
+            if ($after -match '\A[0-9]{1,2}\z') { $r.RetryAfter = [Math]::Min([int]$after, 60) }
+            elseif ($after -match '\A[0-9]+\z') { $r.RetryAfter = 60 }
         } catch { }
     }
     return $r
@@ -261,6 +263,17 @@ function Get-NextWait {
     $left = [int][Math]::Floor($Timeout - ((Get-Date) - $Start).TotalSeconds)
     if ($left -le 0) { return 0 }
     return [Math]::Min($left, $Chunk)
+}
+
+# Sleeps $Seconds, at most 60, and never past --timeout.
+function Wait-Pause([int]$Seconds) {
+    $p = [Math]::Min($Seconds, 60)
+    if ($null -ne $Timeout) {
+        $left = [int][Math]::Floor($Timeout - ((Get-Date) - $Start).TotalSeconds)
+        if ($left -le 0) { return }
+        $p = [Math]::Min($p, $left)
+    }
+    if ($p -gt 0) { Start-Sleep -Seconds $p }
 }
 
 function Complete-Run($Run) {
@@ -329,7 +342,7 @@ while ($true) {
     $pause = 10
     if ($r.Code -eq 503) { $pause = $r.RetryAfter }
     Err "no answer from Kilnmark ($($r.Error)); trying again in $pause seconds with the same key"
-    Start-Sleep -Seconds $pause
+    Wait-Pause $pause
 }
 
 $Run = $r.Run
@@ -364,7 +377,7 @@ while ($true) {
     if ($g.Code -eq 503) {
         $busy++
         if ($busy -ge $BusyMax) { Err "Kilnmark stayed busy for about five minutes; run $Id may still be going"; exit $ExUnreachable }
-        Start-Sleep -Seconds $g.RetryAfter
+        Wait-Pause $g.RetryAfter
         $waiting = $false
         continue
     }
@@ -374,5 +387,5 @@ while ($true) {
         Err "lost Kilnmark at $Base while waiting ($($g.Error)); run $Id may still be going"
         exit $ExUnreachable
     }
-    Start-Sleep -Seconds 10
+    Wait-Pause 10
 }

@@ -14,7 +14,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterEach;
@@ -50,6 +49,10 @@ class RunScriptStubTest {
     volatile String body;
     final AtomicInteger reads = new AtomicInteger();
     final AtomicInteger readsWithoutWait = new AtomicInteger();
+    /** The wait each request asked for, in order. */
+    final List<String> waits = java.util.Collections.synchronizedList(new ArrayList<>());
+    /** What a busy answer's Retry-After says. */
+    volatile String retryAfter = "0";
 
     record Ran(int code, String out) {
     }
@@ -78,6 +81,8 @@ class RunScriptStubTest {
     }
 
     private void answer(HttpExchange x) throws IOException {
+        String query = x.getRequestURI().getQuery();
+        waits.add(x.getRequestMethod() + " " + (query == null ? "" : query));
         boolean text = String.valueOf(x.getRequestHeaders().getFirst("Accept")).startsWith("text/plain");
         String run = text ? "id: 7\nkind: flow\nname: rs\nstatus: %s\nended: %s\npage: /#/flow-runs/7\nmessage: \n"
             : "{\"id\":7,\"flow\":\"rs\",\"status\":\"%s\",\"error\":null}";
@@ -105,7 +110,7 @@ class RunScriptStubTest {
             status = 503;
             out = "{\"error\":\"busy\"}";
             type = "application/json";
-            x.getResponseHeaders().add("Retry-After", "0");
+            x.getResponseHeaders().add("Retry-After", retryAfter);
         }
         if (!text && "GET".equals(x.getRequestMethod()) && status == 200) {
             out = "{\"run\":" + out + "}";
@@ -126,9 +131,8 @@ class RunScriptStubTest {
         pb.environment().remove("KILNMARK_CA_FILE");
         pb.environment().putAll(env);
         Process p = pb.start();
-        byte[] out = p.getInputStream().readAllBytes();
-        assertTrue(p.waitFor(120, TimeUnit.SECONDS), "the script ended");
-        return new Ran(p.exitValue(), new String(out, StandardCharsets.UTF_8));
+        String out = ScriptOutput.of(p, 120);
+        return new Ran(p.exitValue(), out);
     }
 
     private Ran sh(Map<String, String> env, String... args) throws IOException, InterruptedException {
@@ -157,6 +161,7 @@ class RunScriptStubTest {
         Ran r = sh(Map.of(), VALUES);
         assertEquals(0, r.code(), r.out());
         assertEquals(SENT, body);
+        assertEquals(List.of("POST wait=50"), waits, "50 seconds a request, under a proxy's 60");
     }
 
     @Test
@@ -165,6 +170,72 @@ class RunScriptStubTest {
         Ran r = ps(Map.of(), VALUES);
         assertEquals(0, r.code(), r.out());
         assertEquals(SENT, body);
+        assertEquals(List.of("POST wait=50"), waits, "50 seconds a request, under a proxy's 60");
+    }
+
+    /** Runs whichever editions are here with {@code args}, giving each one's result. */
+    private List<Ran> both(Map<String, String> env, String... args) throws IOException, InterruptedException {
+        List<Ran> out = new ArrayList<>();
+        if (sh() != null) {
+            out.add(sh(env, args));
+        }
+        if (powershell() != null) {
+            out.add(ps(env, args));
+        }
+        return out;
+    }
+
+    private static void assumeAnEdition() {
+        Assumptions.assumeTrue(sh() != null || powershell() != null, "neither sh nor PowerShell here");
+    }
+
+    @Test
+    void aVersionWithALeadingZeroOrNoneIsBadUsage() throws Exception {
+        assumeAnEdition();
+        for (String version : List.of("007", "0", "1234567890", "3a", "")) {
+            for (Ran r : both(Map.of(), "flow", "rs", "--version", version)) {
+                assertEquals(5, r.code(), version + ": " + r.out());
+            }
+        }
+        assertEquals(null, body, "nothing was sent");
+    }
+
+    @Test
+    void aBlankKeyIsBadUsageInBothEditions() throws Exception {
+        assumeAnEdition();
+        for (String key : List.of("   ", " ")) {
+            for (Ran r : both(Map.of(), "flow", "rs", "--key", key)) {
+                assertEquals(5, r.code(), r.out());
+            }
+        }
+        assertEquals(null, body, "nothing was sent");
+    }
+
+    @Test
+    void aLongRetryAfterNeverOutlastsTheTimeout() throws Exception {
+        assumeAnEdition();
+        mode = "busy";
+        retryAfter = "999999";
+        for (Ran r : both(Map.of(), "flow", "rs", "--timeout", "4")) {
+            assertEquals(3, r.code(), r.out());
+        }
+    }
+
+    @Test
+    void withoutUrandomTheMadeUpKeyIsStillThisProcesssOwn() throws Exception {
+        Assumptions.assumeTrue(sh() != null, "no sh here");
+        Path bin = Files.createDirectories(dir.resolve("no-od"));
+        Files.writeString(bin.resolve("od"), "#!/bin/sh\nexit 1\n");
+        try {
+            Files.setPosixFilePermissions(bin.resolve("od"), PosixFilePermissions.fromString("rwxr-xr-x"));
+        } catch (UnsupportedOperationException e) {
+            // Windows: Git Bash runs a file with a #! line
+        }
+        String sep = System.getProperty("path.separator");
+        Ran r = sh(Map.of("PATH", bin + sep + System.getenv("PATH")), "flow", "rs");
+        assertEquals(0, r.code(), r.out());
+        assertTrue(r.out().matches("(?s).*Request key: kilnmark-run-[0-9]{8}T[0-9]{6}Z-[A-Za-z0-9.-]+-[0-9]+-[0-9]+\n.*"),
+            r.out());
     }
 
     @Test
@@ -181,6 +252,7 @@ class RunScriptStubTest {
 
     @Test
     void anAnswerThatIsNotKilnmarksIs5() throws Exception {
+        assumeAnEdition();
         mode = "html";
         if (sh() != null) {
             Ran r = sh(Map.of(), "flow", "rs");
@@ -196,6 +268,7 @@ class RunScriptStubTest {
 
     @Test
     void aServerThatStaysBusyIsGivenUp() throws Exception {
+        assumeAnEdition();
         mode = "busy";
         if (sh() != null) {
             Ran r = sh(Map.of(), "flow", "rs");
@@ -203,9 +276,11 @@ class RunScriptStubTest {
             assertTrue(r.out().contains("stayed busy"), r.out());
             assertEquals(60, reads.get(), "60 busy answers in a row");
             assertTrue(readsWithoutWait.get() >= 30, "after each busy answer, a read without waiting");
+            assertEquals("GET wait=50", waits.get(1), "the first read waits 50 seconds");
         }
         reads.set(0);
         readsWithoutWait.set(0);
+        waits.clear();
         if (powershell() != null) {
             Ran r = ps(Map.of(), "flow", "rs");
             assertEquals(5, r.code(), r.out());

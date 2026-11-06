@@ -6,13 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -65,9 +63,8 @@ class RunScriptPowerShellTest {
         pb.environment().put("KILNMARK_TOKEN_FILE", tokenFile.toString());
         pb.environment().remove("KILNMARK_CA_FILE");
         Process p = pb.start();
-        byte[] out = p.getInputStream().readAllBytes();
-        assertTrue(p.waitFor(120, TimeUnit.SECONDS), "the script ended");
-        return new Ran(p.exitValue(), new String(out, StandardCharsets.UTF_8));
+        String out = ScriptOutput.of(p, 120);
+        return new Ran(p.exitValue(), out);
     }
 
     private static void flow(String designer, String yaml) {

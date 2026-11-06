@@ -131,7 +131,9 @@ while [ $# -gt 0 ]; do
       shift 2 ;;
     --version)
       [ $# -ge 2 ] || usage
-      case $2 in ''|*[!0-9]*) err "--version takes a whole number"; exit "$EX_UNREACHABLE" ;; esac
+      # 1 to 9 digits, no leading 0: sent as a JSON number, as kilnmark-run.ps1 sends it
+      case $2 in ''|0*|*[!0-9]*) err "--version takes a whole number from 1, such as 3"; exit "$EX_UNREACHABLE" ;; esac
+      [ ${#2} -le 9 ] || { err "--version takes a whole number from 1, such as 3"; exit "$EX_UNREACHABLE"; }
       version=$2; shift 2 ;;
     --timeout)
       [ $# -ge 2 ] || usage
@@ -147,12 +149,23 @@ while [ $# -gt 0 ]; do
 done
 
 if [ "$keyed" = yes ]; then
-  # the whole key: a line break would let grep pass each line on its own
-  if [ -z "$key" ] || [ ${#key} -gt 200 ] || has_control "$key" || printf '%s' "$key" | LC_ALL=C grep -q '[^ -~]'; then
-    err "--key takes 1 to 200 printable characters"; exit "$EX_UNREACHABLE"
+  # the whole key: a line break would let grep pass each line on its own; spaces alone are no key
+  case $key in *[!\ ]*) blank=no ;; *) blank=yes ;; esac
+  if [ "$blank" = yes ] || [ ${#key} -gt 200 ] || has_control "$key" || printf '%s' "$key" | LC_ALL=C grep -q '[^ -~]'; then
+    err "--key takes 1 to 200 printable characters, not only spaces"; exit "$EX_UNREACHABLE"
   fi
 else
-  key="$me-$(date -u +%Y%m%dT%H%M%SZ)-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+  # random where /dev/urandom can be read; else this machine, this process and this second
+  rand=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
+  case $rand in
+    ????????????????) case $rand in *[!0-9a-f]*) rand="" ;; esac ;;
+    *) rand="" ;;
+  esac
+  if [ -z "$rand" ]; then
+    host=$(hostname 2>/dev/null | tr -cd 'A-Za-z0-9.-' | cut -c1-60)
+    rand="${host:-host}-$$-$(date +%s)"
+  fi
+  key="$me-$(date -u +%Y%m%dT%H%M%SZ)-$rand"
 fi
 
 # ---- settings ----
@@ -198,9 +211,13 @@ if [ -z "$work" ]; then
   work="${TMPDIR:-/tmp}/$me.$rand"
 fi
 
-# The token goes to curl in a file of its own (umask 077), never on curl's command line.
+# The token goes to curl in a file of its own (umask 077), never on curl's command line, nor on any
+# other command's: a here-document, since printf is not built into every sh (ksh88 on AIX, HP-UX),
+# and a command that is not built in shows its arguments to ps.
 {
-  printf 'header = "Authorization: Bearer %s"\n' "$token"
+  cat <<EOF
+header = "Authorization: Bearer $token"
+EOF
   printf 'silent\nshow-error\nconnect-timeout = 20\n'
   if [ -n "${KILNMARK_CA_FILE:-}" ]; then
     [ -r "$KILNMARK_CA_FILE" ] || { err "KILNMARK_CA_FILE names a file this account cannot read"; exit "$EX_UNREACHABLE"; }
@@ -238,13 +255,28 @@ refusal() {
   printf '%s' "${m:-HTTP $code}"
 }
 
+# The seconds Retry-After asks for: 5 when it says nothing, at most 60.
 retry_after() {
   r=$(sed -n 's/^[Rr]etry-[Aa]fter: *\([0-9][0-9]*\).*/\1/p' "$work/head" | head -n 1)
-  echo "${r:-5}"
+  [ -n "$r" ] || r=5
+  if [ ${#r} -gt 2 ] || [ "$r" -gt 60 ]; then r=60; fi
+  echo "$r"
 }
 
 now() { date +%s; }
 start=$(now)
+
+# Sleeps $1 seconds, at most 60, and never past --timeout.
+pause() {
+  p=$1
+  [ "$p" -le 60 ] || p=60
+  if [ -n "$timeout" ]; then
+    left=$((start + timeout - $(now)))
+    [ "$left" -gt 0 ] || return 0
+    [ "$p" -le "$left" ] || p=$left
+  fi
+  sleep "$p"
+}
 
 # How long the next wait may be: the chunk, or what is left before the timeout (0 when it is up).
 next_wait() {
@@ -304,7 +336,7 @@ while :; do
       fi
       a=10; [ "$code" != 503 ] || a=$(retry_after)
       err "no answer from Kilnmark ($(refusal)); trying again in $a seconds with the same key"
-      sleep "$a" ;;
+      pause "$a" ;;
   esac
 done
 
@@ -345,7 +377,7 @@ while :; do
         err "Kilnmark stayed busy for about five minutes; run $id may still be going"
         exit "$EX_UNREACHABLE"
       fi
-      a=$(retry_after); sleep "$a"; waiting=no; code=0 ;;
+      a=$(retry_after); pause "$a"; waiting=no; code=0 ;;
     401|403|404)
       err "could not read run $id: $(refusal)"; exit "$EX_UNREACHABLE" ;;
     *)
@@ -354,6 +386,6 @@ while :; do
         err "lost Kilnmark at $base while waiting ($(refusal)); run $id may still be going"
         exit "$EX_UNREACHABLE"
       fi
-      sleep 10; code=0 ;;
+      pause 10; code=0 ;;
   esac
 done
