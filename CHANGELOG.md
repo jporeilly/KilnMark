@@ -25,6 +25,46 @@ details.
   fails at once, naming what is missing, if not. Its `missing` value can go in a notice.
   ([Checking a source before the work starts](docs/guide/flows.md#checking-a-source-before-the-work-starts))
 
+### Details
+
+- **The `wait-for` flow node** (ADR 0041, docs/design/flow-controls.md, C2). It takes `source` and
+  either `file` (a pattern with `*` and `?` in its last part; `at_least`, 1 by default) or `query`,
+  plus `every` (30s to 1h, 5m) and `timeout` (up to 24h, 1h). It looks at once, then every `every`,
+  on a thread beside the flow's watcher: a file by listing its folder and matching whole paths, a
+  query as custom SQL rules run (ADR 0028): PostgreSQL with Allow SQL on, checked by
+  `checkCustomSql`, read-only, 30 seconds at most, never as a superuser, true when its first value
+  is, nothing kept. A flow with a query wait counts as having SQL: saved only with the unmask grant,
+  and each run that waits on one records `flow.sql`. It reports `found` and `waited_s`; a look that
+  cannot be made is tried again, one that never can fails it. A file look lists one folder within
+  the check timeout, keeping to the source's include and exclude patterns and below an object
+  store's prefix. The diagram, Settings tab and run timeline show it.
+
+- **A flow version records whether its author may write SQL.** `sql_checked` is now whether whoever
+  saved the version held the unmask grant (it was always true), and a `query:` in a wait-for node
+  counts as SQL even when it does not read as one. Migration V34 adds `query_checked`, false for
+  every version saved before it: before this release a wait-for node was an unknown type, which
+  anyone who could save a flow could write, so an older version's query runs only once a designer
+  who may see unmasked values saves it again.
+
+- **The `check-source` flow node** (ADR 0041, docs/design/flow-controls.md, C1). It takes `source`,
+  `tables` and `files` (lists, at most 50 names together, no ${...}) and `timeout`. It connects with
+  `Connector.test` within `kilnmark.sources.check-timeout`, after the allowed hosts, then looks each
+  name up with `Connector.asset` (a table's columns from metadata; a file's from its start, as a
+  scan reads it), keeping nothing; a file path as the catalogue writes it (`%23`) is tried on disk
+  too. With no `timeout`, a hung check ends after 10 minutes; either way the node ends at once. It
+  runs on a thread beside the flow's watcher, holding no worker slot. It succeeds when all are there and fails with the missing
+  names, or with "Could not reach <source>"; it reports `missing`. Messages never quote the source's
+  settings or its driver. Saving checks that the source exists and holds tables (databases) or files
+  (file and object stores). The diagram, Settings tab and run timeline show it.
+
+- **Release images signed on the local runner**: `release.yml` signs the digest the registry
+  stores for each image, read back by tag after the push. On a Podman engine the digest recorded
+  locally is not the registry's, and signing it failed, which stopped the 0.0.10 release.
+
+## 0.0.10 (5 November 2026)
+
+### What's new
+
 - **Install, start, upgrade and back up Kilnmark with one script**: `kilnmark.sh` on Linux,
   `kilnmark.cmd` on Windows. On Linux, `sudo kilnmark.sh prepare` first makes the `kilnmark`
   service account that runs it, and `/opt/kilnmark` its own. `install` checks the machine, makes an install root (`/opt/kilnmark`
@@ -200,34 +240,14 @@ details.
 
 ### Details
 
-- **The `wait-for` flow node** (ADR 0041, docs/design/flow-controls.md, C2). It takes `source` and
-  either `file` (a pattern with `*` and `?` in its last part; `at_least`, 1 by default) or `query`,
-  plus `every` (30s to 1h, 5m) and `timeout` (up to 24h, 1h). It looks at once, then every `every`,
-  on a thread beside the flow's watcher: a file by listing its folder and matching whole paths, a
-  query as custom SQL rules run (ADR 0028): PostgreSQL with Allow SQL on, checked by
-  `checkCustomSql`, read-only, 30 seconds at most, never as a superuser, true when its first value
-  is, nothing kept. A flow with a query wait counts as having SQL: saved only with the unmask grant,
-  and each run that waits on one records `flow.sql`. It reports `found` and `waited_s`; a look that
-  cannot be made is tried again, one that never can fails it. A file look lists one folder within
-  the check timeout, keeping to the source's include and exclude patterns and below an object
-  store's prefix. The diagram, Settings tab and run timeline show it.
-- **A flow version records whether its author may write SQL.** `sql_checked` is now whether whoever
-  saved the version held the unmask grant (it was always true), and a `query:` in a wait-for node
-  counts as SQL even when it does not read as one. Migration V34 adds `query_checked`, false for
-  every version saved before it: before this release a wait-for node was an unknown type, which
-  anyone who could save a flow could write, so an older version's query runs only once a designer
-  who may see unmasked values saves it again.
+- **Releases on the local runner**: on a tag, `release.yml` runs where `KILNMARK_RUNNER` says, as CI
+  does; on a self-hosted runner it builds, signs, pushes the images and drafts the release, and
+  leaves the install rehearsal to GitHub's runners. The runner image adds `gh`.
 
-- **The `check-source` flow node** (ADR 0041, docs/design/flow-controls.md, C1). It takes `source`,
-  `tables` and `files` (lists, at most 50 names together, no ${...}) and `timeout`. It connects with
-  `Connector.test` within `kilnmark.sources.check-timeout`, after the allowed hosts, then looks each
-  name up with `Connector.asset` (a table's columns from metadata; a file's from its start, as a
-  scan reads it), keeping nothing; a file path as the catalogue writes it (`%23`) is tried on disk
-  too. With no `timeout`, a hung check ends after 10 minutes; either way the node ends at once. It
-  runs on a thread beside the flow's watcher, holding no worker slot. It succeeds when all are there and fails with the missing
-  names, or with "Could not reach <source>"; it reports `missing`. Messages never quote the source's
-  settings or its driver. Saving checks that the source exists and holds tables (databases) or files
-  (file and object stores). The diagram, Settings tab and run timeline show it.
+- **CI on a local runner**: the `build`, `heavy-databases` and `scan` jobs run where the repository
+  variable `KILNMARK_RUNNER` says, GitHub's runners when it is empty. `ci/local-runner` builds a Linux
+  runner for Podman, with its image pinned by digest and the runner download checked
+  (docs/development.md, "CI on a local runner").
 
 - **The control script** (ADR 0044). One install root per site holds `versions/<version>/`,
   `config/.env` (written by `install` with a new database password and admin token, `600`, never
