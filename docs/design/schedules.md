@@ -19,6 +19,7 @@ One row of `schedule` per schedule; a pipeline or flow may have several.
 | `enabled` | Off while paused |
 | `description` | A short line, at most 200 characters |
 | `created_by`, `created_at`, `updated_by`, `updated_at` | Who added it and who last set it, and when |
+| `set_by_token`, `set_by_person` | Who last set it, as an identity: the API token they used, or an opaque key for a person signed in through the identity provider (`OidcIdentityAugmentor.personRef`, a hash of issuer and subject). Both null only for a schedule saved while sign-in was off |
 | `next_at` | When it fires next; null while paused, or when it never fires again |
 | `last_at`, `last_outcome` | When it was last due, and what happened, in words (`starting` while its run is being queued) |
 | `last_pipeline_run`, `last_flow_run` | The run the last fire started. Foreign keys set to null when the run is deleted, so the link never leads to a run that is gone |
@@ -122,7 +123,7 @@ out from the run's values, only at DEBUG.
 
 ## 6. Outcomes
 
-![What happens when a schedule is due: a fire due more than an hour ago is missed; a pipeline or flow with a run still going is skipped; a latest version that cannot run fails with the server's reason; otherwise the run starts. Either way the next fire is worked out from now](../guide/images/schedule-outcomes.svg)
+![What happens when a schedule is due: a fire due more than an hour ago is missed; if whoever set it no longer has the role, the schedule is paused; a pipeline or flow with a run still going is skipped; a latest version that cannot run fails with the server's reason; otherwise the run starts. Either way the next fire is worked out from now](../guide/images/schedule-outcomes.svg)
 
 | Outcome | When |
 | --- | --- |
@@ -132,6 +133,7 @@ out from the run's values, only at DEBUG.
 | `missed: the server was not running` | The fire was due longer ago than `kilnmark.schedules.catch-up` (1 hour) when it was claimed. It does not run late |
 | `failed: <message>` | The run could not be queued: the server's message, as Run now would show it (a version with problems, a missing value, a pipeline deleted since). Messages never hold secrets; a version's problems can be worked out from the run's values, so viewers see only `failed` |
 | `missed: changed while it was due` | Its times, zone or pausing were changed while a fire was due and not yet claimed. That fire does not run |
+| `paused: the person who set it no longer has the role` | Whoever set it no longer holds its role (section 10). The schedule is off until a designer or admin saves it. Viewers see `paused` |
 | `failed: the server stopped before the run was queued` | How `starting` reads once it is older than three poll intervals (at least five minutes): the process stopped before it queued the run. That fire is lost |
 
 Within the catch-up a schedule runs once, however many fires it covers: the next fire is always
@@ -151,7 +153,8 @@ last run. Mistakes are 400 with `{"error": "..."}` naming the field: `cron:`, `z
 
 `schedule.set` when a schedule is added or changed, and `schedule.deleted`, each on
 `schedule <id>` with the pipeline or flow, cron, zone, `runAs` and `enabled`: never the parameter
-values (ADR 0029). Deleting a pipeline records `schedule.deleted`, with `via: pipeline deleted`,
+values (ADR 0029). `schedule.paused` when a schedule stops because its setter lost the role, with
+the reason (section 10). Deleting a pipeline records `schedule.deleted`, with `via: pipeline deleted`,
 for exactly the schedules its own transaction deleted, so one added while it was being deleted is
 never removed unrecorded. The runs themselves are recorded as runs, requested by the
 schedule.
@@ -163,16 +166,47 @@ schedule.
 | `kilnmark.schedules.poll-interval` | `30s` | How often a process with the scheduler role looks for schedules that are due |
 | `kilnmark.schedules.catch-up` | `1h` | A fire due longer ago than this when it is found is missed, not run late |
 
-## 10. Not yet
+## 10. When the setter loses the role
+
+![What happens when a schedule is due, with the check of whoever set it: after the missed check, a setter who no longer has the role pauses the schedule and records it in the audit log](../guide/images/schedule-outcomes.svg)
+
+`Setters.problem` runs before every fire, after the claim: whoever set the schedule must still
+hold at least its `run_as`.
+
+- **A token** (`set_by_token`): `ApiTokens.workingRole`, the token's role if it still works by the
+  database's clock (`worksSql`: not revoked, not expired, within the longest lifetime).
+- **A person** (`set_by_person`): `AuditLog.providerRole`, as the access review reads sign-ins:
+  their latest `auth.sign_in`'s role, unless a later `auth.sign_in_refused` says none of their
+  groups has a role (`OidcAccess.NO_GROUP`); other refusals take nothing away. Sign-in events now
+  record the person's key (`person` in their detail); events from before that are matched by
+  the person's name.
+- **Neither**: only while sign-in is off.
+
+If the check fails, nothing is queued: `ScheduleStore.pauseClaimed` sets `enabled` false, clears
+`next_at` and writes `paused: the person who set it no longer has the role`, only while the row is
+as claimed (same target and setter, still `starting`), and `schedule.paused` is recorded by the
+server with the reason. If the check itself cannot be made (the database is unreachable), the fire
+fails and the schedule stays on.
+
+**At once, too.** `TokenResource.revoke` pauses every schedule the token set
+(`ScheduleService.tokenRevoked`). `SignInEvents` pauses every schedule the person set whose role is
+above what their sign-in just gave them, or all of them when the sign-in was refused for want of a
+group (`ScheduleService.personSignedIn`). Each is recorded as `schedule.paused`, by the admin who
+revoked the token or by the person signing in. Saving a paused schedule (a designer or admin, with
+`enabled` true) makes them its setter, checked against their own role; nothing resumes by itself
+when a person's role comes back.
+
+**The environment admin token.** `KILNMARK_ADMIN_TOKEN` is stored as a token. When its value
+changes, start-up sets the old token aside, so the schedules it set are paused at their next fire.
+
+**What Kilnmark cannot know.** A person removed from their groups at the provider is seen only when
+they next sign in. Until then their latest sign-in stands, as in the access review.
+
+## 11. Not yet
 
 - Event triggers: a run when a file lands, or when another flow ends.
-- **The role is checked when the schedule is saved, not at each fire.** A person whose token is
-  revoked, or who loses a role, leaves their schedules running as `set by` them until a designer
-  or admin changes or deletes them. Changing a schedule makes the person changing it its new
-  `set by`. The Schedules page shows every schedule's `set by`, with a note for admins' access
-  reviews; the access review page and its download do not list schedules yet.
 
-## 11. Pages
+## 12. Pages
 
 In `ui/src/schedules`; the guide walks through them.
 
@@ -180,11 +214,14 @@ In `ui/src/schedules`; the guide walks through them.
   diagram, reads `GET /schedules?pipeline=` or `?flow=` when the page opens (the line under its
   name gives the next scheduled run) and again every 30 seconds while the tab shows.
 - **The Schedules page** (`#/schedules`, `SchedulesPage`) reads `GET /schedules`, with filters for
-  on, paused and failed last time; display names come from the pipeline and flow lists.
+  on, paused, paused because the setter lost the role, and failed last time; display names come from the pipeline and flow lists.
 - **One table** (`SchedulesTable`) for both: the cron in words for the shapes the presets make and
   the `@` shorthands (`cronWords`), else the expression; `updatedBy`, the name runs carry, in bold;
   On or Paused with the next run in the viewer's zone, and in the schedule's when that differs;
-  the last outcome as a word, a tone and its reason, linked to the run. The values are a line
+  the last outcome as a word, a tone and its reason, linked to the run. A schedule the server
+  paused because its setter lost the role reads **Paused: setter lost the role** in amber, apart
+  from the grey Paused state (viewers, who get just `paused`, read **Paused by Kilnmark**), and
+  the page has a filter for them (`pausedBySetter`: off, with an outcome starting `paused`). The values are a line
   under the schedule for stewards and above; viewers get null from the API and no line. Six
   columns at most, so the page fits 1200 pixels.
 - **The form** (`ScheduleForm`, designers and admins) has presets that fill the cron (`presetCron`;

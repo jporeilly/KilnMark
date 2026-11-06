@@ -12,6 +12,7 @@ import io.kilnmark.server.KilnmarkConfig;
 import io.kilnmark.server.Role;
 import io.kilnmark.server.api.AlreadyRunning;
 import io.kilnmark.server.api.ApiError;
+import io.kilnmark.server.audit.AuditLog;
 import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.flows.FlowService;
 import io.kilnmark.server.pipelines.PipelineService;
@@ -57,6 +58,10 @@ public class Scheduler {
     private volatile Thread thread;
     /** When the loop last looked for due schedules, whether or not that worked; null before it starts. */
     private volatile Instant lastTick;
+
+    /** Whether whoever set a schedule still holds its role. */
+    @jakarta.inject.Inject
+    Setters setters;
 
     public Scheduler(ScheduleStore store, ScheduleService schedules, PipelineService pipelines, FlowService flows,
                      KilnmarkConfig config) {
@@ -173,8 +178,28 @@ public class Scheduler {
         return new ScheduleStore.Claim(next, missed ? MISSED : null);
     }
 
-    /** Queues one claimed schedule's run, as Run now would, and records what happened. */
+    /**
+     * Queues one claimed schedule's run, as Run now would, and records what happened. First, whoever
+     * set it must still hold its role: if not, nothing runs and the schedule is paused, recorded in
+     * the audit log (ADR 0046).
+     */
     private void run(ScheduleStore.Schedule s) {
+        String problem;
+        try {
+            problem = setters.problem(s);
+        } catch (RuntimeException e) {
+            // cannot tell (the database is unreachable): nothing runs, and the fire is lost, not paused
+            LOG.warnf("Schedule %d of %s: could not check who set it (%s)", s.id(), ScheduleService.target(s),
+                e.getClass().getSimpleName());
+            record(s, FAILED + "Kilnmark could not check the role of whoever set it", null, null);
+            return;
+        }
+        if (problem != null) {
+            if (store.pauseClaimed(s)) {
+                schedules.paused(s, problem, AuditLog.Actor.server("scheduler"));
+            }
+            return;
+        }
         String by = ScheduleService.requestedBy(s);
         String outcome;
         Long pipelineRun = null;
@@ -204,6 +229,10 @@ public class Scheduler {
         // the outcome's reason can be worked out from the run's values: INFO says only what happened
         LOG.infof("Schedule %d of %s: %s", s.id(), ScheduleService.target(s), kind(outcome));
         LOG.debugf("Schedule %d: %s", s.id(), outcome);
+        record(s, outcome, pipelineRun, flowRun);
+    }
+
+    private void record(ScheduleStore.Schedule s, String outcome, Long pipelineRun, Long flowRun) {
         try {
             store.recordOutcome(s, outcome, pipelineRun, flowRun);
         } catch (RuntimeException e) {

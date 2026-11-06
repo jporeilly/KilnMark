@@ -171,6 +171,11 @@ unless set, and must be between 1 and 3650 days, so a typing mistake cannot quie
 **Download CSV** gives your auditors a copy to keep. Each view and download is recorded in the audit
 log.
 
+Schedules follow what the access review shows: a schedule runs only while the token or person that
+set it still has its role, and is paused when they lose it
+([Running pipelines and flows on a schedule](schedules.md#when-the-person-who-set-it-loses-the-role)).
+Revoking a token pauses the schedules it set at once.
+
 ## Two people for sensitive values
 
 Without it, an admin could make a designer token that sees sensitive values and use it themselves:

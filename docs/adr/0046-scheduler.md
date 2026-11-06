@@ -78,10 +78,32 @@ Three things make a schedule different from what a pipeline or flow says:
 8. **The scheduler keeps going.** Anything a tick throws, an `Error` too, is logged at ERROR and
    the next poll looks again. The readiness check `scheduler` is down when a process with the
    scheduler role has not looked for due schedules within three poll intervals and a minute.
-9. **Audited** (ADR 0029): `schedule.set` when one is added or changed, `schedule.deleted` when
+9. **A schedule stops when whoever set it no longer holds its role** (owner, 6 November 2026).
+   Who set a schedule is kept as an identity, not only a name: the API token they used, or, for a
+   person signed in through the identity provider, an opaque key for them (a hash of the
+   provider's issuer and their subject, so it names no address). Before every fire the setter must
+   still hold at least the schedule's role:
+   - a token must still work (not revoked, not expired, within the longest lifetime) and have the
+     role;
+   - a person must have it as the access review reads their sign-ins: their latest sign-in's role,
+     unless a later sign-in was refused because none of their groups has a role any more. Other
+     refusals (no second factor, say) take nothing away, as in the access review, so one sign-in
+     on the wrong device does not stop a team's nightly work.
+
+   If not, nothing runs: the schedule is paused (off, no next fire), its outcome is
+   `paused: the person who set it no longer has the role` (viewers see `paused`), and the audit
+   log records `schedule.paused` with the reason. It is also paused at once, without waiting for a
+   fire, when the token is revoked, or when a sign-in gives the person less of a role than a
+   schedule of theirs (or none). A designer or admin resumes it by saving it, which makes them its
+   setter, checked against their own role. The server's environment admin token
+   (`KILNMARK_ADMIN_TOKEN`) is a token like any other: when its value changes, Kilnmark sets the old
+   token aside, and the schedules it set are paused at their next fire. A schedule saved while
+   sign-in is off (a lab) runs only while sign-in is still off.
+10. **Audited** (ADR 0029): `schedule.set` when one is added or changed, `schedule.deleted` when
    one is deleted, with what it runs, its cron, zone, role and whether it is on, and never its
    parameter values. A pipeline deleted with schedules records `schedule.deleted` for exactly the
-   schedules its own transaction deleted. The runs themselves are recorded as runs requested by
+   schedules its own transaction deleted. A schedule paused because its setter lost the role
+   records `schedule.paused`, with the reason. The runs themselves are recorded as runs requested by
    the schedule.
 
 ## Choices made without the owner, to change if wished
@@ -105,8 +127,7 @@ Three things make a schedule different from what a pipeline or flow says:
 - A fire can be lost (a crash at the wrong moment, a server down for longer than the catch-up). The
   outcome, the run history and the server's log say so; nothing runs twice to make up for it.
 - Event triggers (a run when a file lands, when another flow ends) are not part of this decision.
-- **Known gap:** the role is checked when a schedule is saved, not at each fire. Someone whose
-  token is revoked or whose role is lowered leaves their schedules running, still `set by` them,
-  until a designer or admin changes or deletes them; the access review does not list schedules
-  yet. Checking the person's current role at each fire needs a person's identity that outlives one
-  token, which tokens do not have today.
+- A person who leaves the organisation's groups is known to Kilnmark only when they next sign in
+  (Kilnmark is not told otherwise). Until then their latest sign-in stands, as it does in the
+  access review. Revoking their tokens, or removing them at the provider and having them sign in,
+  stops their schedules.

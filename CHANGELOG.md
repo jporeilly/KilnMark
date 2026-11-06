@@ -9,7 +9,8 @@ details.
 
 - **Pipelines and flows run on a schedule** (ADR 0046). Designers and admins give a pipeline or flow
   one or more schedules: a five-field cron time in a time zone, the values its runs start with, and
-  the role they act as (steward or designer, never admin). Each run is of the latest version,
+  the role they act as (steward or designer, never admin). A schedule pauses itself when whoever set
+  it loses the role. Each run is of the latest version,
   checked as Run now checks it, and is recorded as asked for by the schedule. A schedule fires at
   most once per time; a time missed while Kilnmark was stopped, or one that finds the last run still
   going, is not made up. Each pipeline and flow has a **Schedules** tab under its canvas, with a form
@@ -57,6 +58,11 @@ details.
 
 ### Details
 
+- **Error Prone checks the flow files too** (ADR 0042, decision 5). `FlowDefinition`, its test,
+  `FlowService` and `JobQueue` are no longer left out. What it found is fixed: case changes now
+  name `Locale.ROOT`, so a server in a Turkish locale reads `PRIORITY: HIGH` and the like as
+  written; a nested class is static; unused parameters and a field are gone.
+
 - **The scheduler** (ADR 0046, docs/design/schedules.md). Migration V36 adds `schedule`: one
   pipeline or flow (each a foreign key that cascades, so deleting a pipeline deletes its
   schedules), `cron`, `zone`, `parameters`, `run_as` (steward or designer), `enabled`,
@@ -80,7 +86,14 @@ details.
   apart by its own exception (`AlreadyRunning`, still a 409). The audit log records
   `schedule.set` and `schedule.deleted` (for a deleted pipeline's schedules, exactly those its
   transaction deleted), never the values, and the audit page lists them.
-- **The scheduler's pages** (ui/src/schedules, docs/design/schedules.md section 11). The panel under
+- **A schedule stops when whoever set it loses the role** (ADR 0046). A schedule keeps who set it
+  as an identity (`set_by_token`, or `set_by_person`, an opaque key for a provider sign-in, which
+  sign-in events now record as `person`). Before every fire the token must still work and have the
+  role, or the person must have it as the access review reads their sign-ins; if not, nothing runs,
+  the schedule is paused with `paused: the person who set it no longer has the role` and
+  `schedule.paused` is recorded. Revoking a token, or a sign-in with less of a role, pauses that
+  identity's schedules at once. Saving a paused schedule makes the person saving it its setter.
+- **The scheduler's pages** (ui/src/schedules, docs/design/schedules.md section 12). The panel under
   a pipeline or flow has a Schedules tab (`SchedulesSection`), and the line under its name gives
   the next scheduled run. Each schedule shows its cron in words where it is a common shape
   (`cronWords`), with the expression and zone; who set it and its role; On or Paused; the next run
@@ -95,7 +108,9 @@ details.
   the schedule again before a PUT, so another person's change is kept. Delete asks first. The
   Run now dialog's parameter fields are now `ParameterFields`, shared with the form. `#/schedules`
   (`SchedulesPage`, in the sidebar after Flows) lists every schedule with what it runs, filters
-  for on, paused and failed last time, and a note for admins' access reviews.
+  for on, paused, paused because the setter lost the role, and failed last time, and a note for
+  admins' access reviews. A schedule the server paused reads **Paused: setter lost the role**
+  as its last outcome, apart from the Paused state.
 - **The `wait-for` flow node** (ADR 0041, docs/design/flow-controls.md, C2). It takes `source` and
   either `file` (a pattern with `*` and `?` in its last part; `at_least`, 1 by default) or `query`,
   plus `every` (30s to 1h, 5m) and `timeout` (up to 24h, 1h). It looks at once, then every `every`,

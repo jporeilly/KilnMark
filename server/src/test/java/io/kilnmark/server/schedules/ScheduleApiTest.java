@@ -541,4 +541,160 @@ class ScheduleApiTest {
         assertFalse(set.prettify().contains(SECRET_LABEL), "parameter values are never recorded");
         assertFalse(deleted.prettify().contains(SECRET_LABEL), "parameter values are never recorded");
     }
+
+    // ---- the setter must keep the role (ADR 0046) ----
+
+    /** A new token: its id and secret. */
+    private record Made(long id, String token) {
+    }
+
+    private static Made token(String name, String role) {
+        JsonPath t = admin().contentType(ContentType.JSON).body(Map.of("name", name, "role", role))
+            .post("/api/v1/tokens").then().statusCode(201).extract().jsonPath();
+        return new Made(t.getLong("id"), t.getString("token"));
+    }
+
+    private void sql(String statement, Object... values) throws SQLException {
+        try (Connection c = db.getConnection(); PreparedStatement ps = c.prepareStatement(statement)) {
+            for (int i = 0; i < values.length; i++) {
+                ps.setObject(i + 1, values[i]);
+            }
+            ps.executeUpdate();
+        }
+    }
+
+    /** A JSON object of name, value pairs. */
+    private static String json(Object... pairs) throws Exception {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < pairs.length; i += 2) {
+            m.put((String) pairs[i], pairs[i + 1]);
+        }
+        return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(m);
+    }
+
+    private JsonPath pausedEvents() {
+        audit.awaitStored(5000);
+        return admin().queryParam("action", AuditLog.SCHEDULE_PAUSED).queryParam("limit", 200).get("/api/v1/audit")
+            .then().statusCode(200).extract().jsonPath();
+    }
+
+    static long revokedSchedule;
+    static String revokedName;
+
+    @Test
+    @Order(20)
+    void revokingATokenPausesWhatItSetAtOnce() throws Exception {
+        Made d = token("sc leaver", "designer");
+        revokedName = "sc leaver";
+        long id = create(d.token(), body("pipeline", "sc-copy", "cron", "@hourly", "runAs", "designer"));
+        long other = create(designer, body("pipeline", "sc-copy", "cron", "@daily"));
+        admin().delete("/api/v1/tokens/" + d.id()).then().statusCode(204);
+
+        JsonPath s = schedule(id);
+        assertFalse(s.getBoolean("enabled"));
+        assertNull(s.get("nextAt"));
+        assertEquals(ScheduleStore.PAUSED, s.getString("lastOutcome"));
+        as(viewer).get("/api/v1/schedules/" + id).then().statusCode(200).body("lastOutcome", equalTo("paused"));
+        // another designer's schedule goes on
+        assertTrue(schedule(other).getBoolean("enabled"));
+
+        JsonPath events = pausedEvents();
+        Map<String, Object> e = events.getMap("events.find { it.target == 'schedule " + id + "' }");
+        assertNotNull(e, events.prettify());
+        assertEquals("the token that set it was revoked", events.getString("events.find { it.target == 'schedule "
+            + id + "' }.detail.reason"));
+        assertEquals("sc-copy", events.getString("events.find { it.target == 'schedule " + id + "' }.detail.pipeline"));
+        assertNull(events.getMap("events.find { it.target == 'schedule " + other + "' }"));
+        as(designer).delete("/api/v1/schedules/" + other).then().statusCode(204);
+        revokedSchedule = id;
+    }
+
+    @Test
+    @Order(21)
+    void anExpiredTokensScheduleIsPausedAtItsNextFireAndNothingRuns() throws Exception {
+        Made d = token("sc expiring", "designer");
+        long id = create(d.token(), body("pipeline", "sc-copy", "cron", "@hourly"));
+        sql("UPDATE kilnmark.api_token SET expires_at = now() - interval '1 minute' WHERE id = ?", d.id());
+        dueAgo(id, Duration.ofSeconds(5));
+        assertEquals(1, scheduler.tick());
+
+        JsonPath s = schedule(id);
+        assertFalse(s.getBoolean("enabled"));
+        assertEquals(ScheduleStore.PAUSED, s.getString("lastOutcome"));
+        assertNull(s.get("lastPipelineRun"));
+        assertEquals(0, runsBy("schedule " + id + " (set by sc expiring)"));
+        JsonPath events = pausedEvents();
+        assertEquals("the token that set it is revoked or expired", events.getString(
+            "events.find { it.target == 'schedule " + id + "' }.detail.reason"), events.prettify());
+        assertTrue(events.getString("events.find { it.target == 'schedule " + id + "' }.actor").startsWith("server"));
+        as(designer).delete("/api/v1/schedules/" + id).then().statusCode(204);
+    }
+
+    @Inject
+    Setters setters;
+
+    @Inject
+    ScheduleService service;
+
+    @Test
+    @Order(22)
+    void aPersonWhoLosesTheRoleHasTheirSchedulesPaused() throws Exception {
+        String person = "p:test-person-0001";
+        String name = "sso:Pat Test (pat-0001)";
+        long asDesigner = create(designer, body("pipeline", "sc-copy", "cron", "@hourly", "runAs", "designer"));
+        long asSteward = create(designer, body("pipeline", "sc-copy", "cron", "@daily"));
+        for (long id : new long[] {asDesigner, asSteward}) {
+            sql("UPDATE kilnmark.schedule SET set_by_token = NULL, set_by_person = ?, updated_by = ? WHERE id = ?",
+                person, name, id);
+        }
+        String signIn = "INSERT INTO kilnmark.audit_event (actor, action, target, detail) VALUES (?, ?, 'session', "
+            + "?::jsonb)";
+        sql(signIn, name, AuditLog.SIGN_IN, json("role", "designer", "unmask", false, "person", person));
+        assertNull(setters.problem(store.find(asDesigner).orElseThrow()));
+        // a sign-in refused for want of a second factor takes no role away, as the access review reads it
+        sql(signIn, name, AuditLog.SIGN_IN_REFUSED, json("reason", "No second factor.", "person", person));
+        assertNull(setters.problem(store.find(asDesigner).orElseThrow()));
+        // signed in again as a steward: at the next fire, the designer schedule may not run
+        sql(signIn, name, AuditLog.SIGN_IN, json("role", "steward", "unmask", false, "person", person));
+        assertEquals("the person who set it signed in with a lower role",
+            setters.problem(store.find(asDesigner).orElseThrow()));
+        assertNull(setters.problem(store.find(asSteward).orElseThrow()));
+
+        // and at once, when the sign-in happens: only the schedule above their new role
+        service.personSignedIn(person, io.kilnmark.server.auth.AccessRole.STEWARD, new AuditLog.Actor(name, null));
+        assertFalse(schedule(asDesigner).getBoolean("enabled"));
+        assertEquals(ScheduleStore.PAUSED, schedule(asDesigner).getString("lastOutcome"));
+        assertTrue(schedule(asSteward).getBoolean("enabled"));
+
+        // a sign-in given no role at all, because none of their groups has one: everything stops
+        sql(signIn, name, AuditLog.SIGN_IN_REFUSED, json("reason", io.kilnmark.server.auth.OidcAccess.NO_GROUP,
+            "person", person));
+        assertEquals("the person who set it has no role at their latest sign-in",
+            setters.problem(store.find(asSteward).orElseThrow()));
+        service.personSignedIn(person, null, new AuditLog.Actor(name, null));
+        assertFalse(schedule(asSteward).getBoolean("enabled"));
+        JsonPath events = pausedEvents();
+        assertEquals("the person who set it signed in and was given no role", events.getString(
+            "events.find { it.target == 'schedule " + asSteward + "' }.detail.reason"), events.prettify());
+        as(designer).delete("/api/v1/schedules/" + asDesigner).then().statusCode(204);
+        as(designer).delete("/api/v1/schedules/" + asSteward).then().statusCode(204);
+    }
+
+    @Test
+    @Order(23)
+    void resumingByAnotherDesignerRunsAsThem() throws Exception {
+        Made d = token("sc successor", "designer");
+        long id = revokedSchedule;
+        as(d.token()).body(body("pipeline", "sc-copy", "cron", "@hourly", "runAs", "designer"))
+            .put("/api/v1/schedules/" + id).then().statusCode(200).body("enabled", equalTo(true))
+            .body("updatedBy", equalTo("sc successor"));
+        dueAgo(id, Duration.ofSeconds(5));
+        assertEquals(1, scheduler.tick());
+        JsonPath s = schedule(id);
+        assertEquals(Scheduler.STARTED, s.getString("lastOutcome"), s.prettify());
+        long run = s.getLong("lastPipelineRun");
+        assertEquals(List.of("schedule " + id + " (set by sc successor)", "designer"), requested("pipeline_run", run));
+        awaitPipelineRunDone(run);
+        as(designer).delete("/api/v1/schedules/" + id).then().statusCode(204);
+    }
 }

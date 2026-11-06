@@ -46,7 +46,9 @@ rests on them (OMB M-26-05).
      hashed or used as keys.
 5. **Four files are left out until the flow-controls change merges**: `FlowDefinition`, its test,
    `FlowService` and `JobQueue` (`excludedPaths` in `build.gradle.kts`). That change rewrites them,
-   so they are checked and fixed after it, not under it; the exclusion then goes.
+   so they are checked and fixed after it, not under it; the exclusion then goes. (Done once C4,
+   the last flow control, was in: the exclusion is gone, and what Error Prone found in them is
+   fixed: locales on case changes, a nested class made static, unused parameters and a field.)
 
 Not chosen:
 

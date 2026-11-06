@@ -12,9 +12,9 @@ run timelines).
 
 1. **Flow controls, the rest** ([ADR 0041](../adr/0041-flow-nodes-for-resources-and-control.md),
    docs/design/flow-controls.md; owner, 5 November 2026): `timeout` (C3), `priority` (C5), the
-   `check-source` node (C1), the `wait-for` node (C2) and a node's `retries` (C4) are built. When it is
-   finished, take `FlowDefinition`, its test, `FlowService` and `JobQueue` out of Error Prone's
-   `excludedPaths` in `build.gradle.kts` and fix what it finds there (ADR 0042, decision 5).
+   `check-source` node (C1), the `wait-for` node (C2) and a node's `retries` (C4) are built, and
+   `FlowDefinition`, its test, `FlowService` and `JobQueue` came out of Error Prone's
+   `excludedPaths` with what it found fixed (ADR 0042, decision 5). Done.
 2. **Dependency updates**: Dependabot's Gradle group (#76) less the MariaDB driver 3.x, which sets
    `session_track_system_variables` to NULL on connect and fails against the MariaDB the tests
    use; hold it until that is understood. Each update also updates

@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.kilnmark.server.api.ApiError;
+import io.kilnmark.server.audit.AuditLog;
 import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.flows.FlowService;
 import io.kilnmark.server.pipelines.PipelineService;
@@ -44,6 +45,14 @@ public class ScheduleService {
     private final FlowService flows;
     private final ObjectMapper json;
     private final Clock clock;
+
+    /** Records schedules paused when their setter loses the role; null in tests that build this by hand. */
+    @jakarta.inject.Inject
+    AuditLog audit;
+
+    /** Whether sign-in is off, when a setter may have no identity; null in tests that build this by hand. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.KilnmarkConfig config;
 
     @jakarta.inject.Inject
     public ScheduleService(ScheduleStore store, PipelineService pipelines, FlowService flows, ObjectMapper json) {
@@ -93,12 +102,26 @@ public class ScheduleService {
         }
     }
 
+    /**
+     * Refuses a setter Kilnmark could not check again at each fire: one with neither a token nor a
+     * person's key, unless sign-in is off (a lab).
+     */
+    void requireIdentity(ScheduleStore.Setter by) {
+        if (by.token() == null && by.person() == null
+            && (config == null || config.auth().mode() != io.kilnmark.server.auth.AuthMode.OFF)) {
+            throw fail(Response.Status.FORBIDDEN, "Kilnmark cannot tell who you are, so it could not check your "
+                + "role before each run. Sign in with an API token or your organisation's login.");
+        }
+    }
+
     /** Adds a schedule, set by {@code by} with role {@code caller}. */
-    public ScheduleStore.Schedule create(ScheduleViews.ScheduleChange body, String by, AccessRole caller) {
+    public ScheduleStore.Schedule create(ScheduleViews.ScheduleChange body, ScheduleStore.Setter by,
+                                         AccessRole caller) {
         requireSetter(caller);
+        requireIdentity(by);
         ScheduleStore.Setting setting = setting(body, caller);
         ScheduleStore.Schedule s = store.insert(setting, next(setting), by);
-        LOG.infof("Schedule %d of %s set by %s: %s (%s)", s.id(), target(s), by, s.cron(), s.zone());
+        LOG.infof("Schedule %d of %s set by %s: %s (%s)", s.id(), target(s), by.name(), s.cron(), s.zone());
         return s;
     }
 
@@ -107,13 +130,15 @@ public class ScheduleService {
      * pausing do; otherwise it is worked out again from the database's clock once the row is locked
      * (ScheduleStore.update), so it is never a fire a scheduler has just claimed.
      */
-    public ScheduleStore.Schedule replace(long id, ScheduleViews.ScheduleChange body, String by, AccessRole caller) {
+    public ScheduleStore.Schedule replace(long id, ScheduleViews.ScheduleChange body, ScheduleStore.Setter by,
+                                          AccessRole caller) {
         requireSetter(caller);
+        requireIdentity(by);
         find(id);
         ScheduleStore.Setting setting = setting(body, caller);
         ScheduleStore.Schedule s = store.update(id, setting, next(setting), by)
             .orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No schedule " + id));
-        LOG.infof("Schedule %d of %s changed by %s: %s (%s), %s", s.id(), target(s), by, s.cron(), s.zone(),
+        LOG.infof("Schedule %d of %s changed by %s: %s (%s), %s", s.id(), target(s), by.name(), s.cron(), s.zone(),
             s.enabled() ? "on" : "paused");
         return s;
     }
@@ -132,6 +157,37 @@ public class ScheduleService {
             "No schedule " + id));
         LOG.infof("Schedule %d of %s deleted by %s", id, target(s), by);
         return s;
+    }
+
+    // ---- pausing when the setter loses the role (ADR 0046) ----
+
+    /** Pauses, at once, every schedule token {@code tokenId} set: it was revoked. Each is recorded. */
+    public void tokenRevoked(long tokenId, AuditLog.Actor actor) {
+        for (ScheduleStore.Schedule s : store.pauseSetBy(tokenId, null, null)) {
+            paused(s, "the token that set it was revoked", actor);
+        }
+    }
+
+    /**
+     * Pauses, at once, every schedule {@code person} set whose role is above {@code role}, which
+     * their sign-in has just given them (null: none). Each is recorded.
+     */
+    public void personSignedIn(String person, AccessRole role, AuditLog.Actor actor) {
+        for (ScheduleStore.Schedule s : store.pauseSetBy(null, person, role)) {
+            paused(s, role == null ? "the person who set it signed in and was given no role"
+                : "the person who set it signed in as " + role.id(), actor);
+        }
+    }
+
+    /** Records a schedule paused because its setter no longer holds its role. */
+    void paused(ScheduleStore.Schedule s, String reason, AuditLog.Actor actor) {
+        LOG.infof("Schedule %d of %s paused: %s", s.id(), target(s), reason);
+        if (audit != null) {
+            Map<String, Object> detail = auditDetail(s);
+            detail.put("enabled", false);
+            detail.put("reason", reason);
+            audit.record(actor, AuditLog.SCHEDULE_PAUSED, "schedule " + s.id(), detail);
+        }
     }
 
     /** When {@code cron} would fire next in {@code zone}, or why it cannot be used. */
@@ -252,9 +308,12 @@ public class ScheduleService {
             values ? s.lastOutcome() : outcomeWithoutReason(s.lastOutcome()), s.lastPipelineRun(), s.lastFlowRun());
     }
 
-    /** A failed fire's outcome as just {@code failed}; any other outcome as it is. */
+    /** A failed or paused fire's outcome as just {@code failed} or {@code paused}; any other as it is. */
     static String outcomeWithoutReason(String outcome) {
-        return outcome != null && outcome.startsWith(Scheduler.FAILED) ? "failed" : outcome;
+        if (outcome != null && outcome.startsWith(Scheduler.FAILED)) {
+            return "failed";
+        }
+        return outcome != null && outcome.startsWith("paused:") ? "paused" : outcome;
     }
 
     /** What the audit log records of a schedule (ADR 0029): never its parameter values. */

@@ -16,6 +16,7 @@ import java.util.function.Function;
 
 import io.kilnmark.server.Db;
 import io.kilnmark.server.KilnmarkConfig;
+import io.kilnmark.server.auth.AccessRole;
 import jakarta.enterprise.context.ApplicationScoped;
 
 /**
@@ -53,7 +54,7 @@ public class ScheduleStore {
         this.columns = "id, pipeline, flow, cron, zone, parameters::text, run_as, enabled, description, created_by, "
             + "created_at, updated_by, updated_at, next_at, last_at, last_outcome, last_pipeline_run, last_flow_run, "
             + "(last_outcome = '" + STARTING + "' AND last_at < clock_timestamp() - make_interval(secs => "
-            + staleAfter.toSeconds() + "))";
+            + staleAfter.toSeconds() + ")), set_by_token, set_by_person";
     }
 
     /** Three poll intervals, and at least five minutes: longer than any healthy claim takes to queue. */
@@ -62,12 +63,27 @@ public class ScheduleStore {
         return three.compareTo(Duration.ofMinutes(5)) < 0 ? Duration.ofMinutes(5) : three;
     }
 
-    /** A schedule as stored; {@code parameters} is its JSON object as text. */
+    /**
+     * A schedule as stored; {@code parameters} is its JSON object as text. {@code setByToken} and
+     * {@code setByPerson} say who last set it, as {@link Setter} does.
+     */
     public record Schedule(long id, String pipeline, String flow, String cron, String zone, String parameters,
                            String runAs, boolean enabled, String description, String createdBy, Instant createdAt,
                            String updatedBy, Instant updatedAt, Instant nextAt, Instant lastAt, String lastOutcome,
-                           Long lastPipelineRun, Long lastFlowRun) {
+                           Long lastPipelineRun, Long lastFlowRun, Long setByToken, String setByPerson) {
     }
+
+    /**
+     * Who sets a schedule: the name runs are requested by, and the identity whose role each fire
+     * checks (ADR 0046): the API token they used, or, for a person signed in through the identity
+     * provider, an opaque key for them ({@code OidcIdentityAugmentor.personRef}). Both null only
+     * while sign-in is off.
+     */
+    public record Setter(String name, Long token, String person) {
+    }
+
+    /** The outcome when a fire finds that whoever set the schedule no longer holds its role. */
+    public static final String PAUSED = "paused: the person who set it no longer has the role";
 
     /** What a schedule is set to: everything a person chooses. */
     public record Setting(String pipeline, String flow, String cron, String zone, String parameters, String runAs,
@@ -118,17 +134,19 @@ public class ScheduleStore {
      * Adds a schedule set by {@code by}. {@code next} gives its first fire after a time, which is
      * the database's clock now; it is not asked while the schedule is paused.
      */
-    public Schedule insert(Setting s, Function<Instant, Instant> next, String by) {
+    public Schedule insert(Setting s, Function<Instant, Instant> next, Setter by) {
         return db.tx(c -> {
             long id;
             Instant nextAt = s.enabled() ? next.apply(clock(c)) : null;
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.schedule (pipeline, flow, cron, zone, "
-                + "parameters, run_as, enabled, description, created_by, updated_by, next_at) "
-                + "VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?) RETURNING id")) {
+                + "parameters, run_as, enabled, description, created_by, updated_by, next_at, set_by_token, "
+                + "set_by_person) VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id")) {
                 int i = set(ps, s, 1);
-                ps.setString(i++, by);
-                ps.setString(i++, by);
-                ps.setTimestamp(i, Db.timestamp(nextAt));
+                ps.setString(i++, by.name());
+                ps.setString(i++, by.name());
+                ps.setTimestamp(i++, Db.timestamp(nextAt));
+                ps.setObject(i++, by.token(), Types.BIGINT);
+                ps.setString(i, by.person());
                 try (ResultSet rs = ps.executeQuery()) {
                     rs.next();
                     id = rs.getLong(1);
@@ -151,7 +169,7 @@ public class ScheduleStore {
      *   <li>When it runs something else now, its last outcome and run are cleared.</li>
      * </ul>
      */
-    public Optional<Schedule> update(long id, Setting s, Function<Instant, Instant> next, String by) {
+    public Optional<Schedule> update(long id, Setting s, Function<Instant, Instant> next, Setter by) {
         return db.tx(c -> {
             Optional<Schedule> found = find(c, id, true);
             if (found.isEmpty()) {
@@ -180,10 +198,12 @@ public class ScheduleStore {
             }
             try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.schedule SET pipeline = ?, flow = ?, "
                 + "cron = ?, zone = ?, parameters = ?::jsonb, run_as = ?, enabled = ?, description = ?, updated_by = ?, "
-                + "updated_at = now(), next_at = ?, last_at = ?, last_outcome = ?, last_pipeline_run = ?, "
-                + "last_flow_run = ? WHERE id = ?")) {
+                + "set_by_token = ?, set_by_person = ?, updated_at = now(), next_at = ?, last_at = ?, "
+                + "last_outcome = ?, last_pipeline_run = ?, last_flow_run = ? WHERE id = ?")) {
                 int i = set(ps, s, 1);
-                ps.setString(i++, by);
+                ps.setString(i++, by.name());
+                ps.setObject(i++, by.token(), Types.BIGINT);
+                ps.setString(i++, by.person());
                 ps.setTimestamp(i++, Db.timestamp(nextAt));
                 ps.setTimestamp(i++, Db.timestamp(lastAt));
                 ps.setString(i++, outcome);
@@ -271,6 +291,66 @@ public class ScheduleStore {
         });
     }
 
+    /**
+     * Pauses a claimed fire's schedule because whoever set it no longer holds its role: off, no next
+     * fire, outcome {@link #PAUSED}. Only while it is as claimed (same target and setter, still
+     * {@link #STARTING}); returns whether it was paused.
+     */
+    public boolean pauseClaimed(Schedule s) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.schedule SET enabled = false, "
+                + "next_at = NULL, last_outcome = ?, last_pipeline_run = NULL, last_flow_run = NULL WHERE id = ? "
+                + "AND pipeline IS NOT DISTINCT FROM ? AND flow IS NOT DISTINCT FROM ? "
+                + "AND set_by_token IS NOT DISTINCT FROM ? AND set_by_person IS NOT DISTINCT FROM ? "
+                + "AND last_outcome = ?")) {
+                ps.setString(1, PAUSED);
+                ps.setLong(2, s.id());
+                ps.setString(3, s.pipeline());
+                ps.setString(4, s.flow());
+                ps.setObject(5, s.setByToken(), Types.BIGINT);
+                ps.setString(6, s.setByPerson());
+                ps.setString(7, STARTING);
+                return ps.executeUpdate() == 1;
+            }
+        });
+    }
+
+    /**
+     * Pauses every schedule on that {@code token} or {@code person} set (give one) whose role is
+     * above {@code role} (null: every one), at once: off, no next fire, outcome {@link #PAUSED}.
+     * Returns those paused, as they were.
+     */
+    public List<Schedule> pauseSetBy(Long token, String person, AccessRole role) {
+        return db.tx(c -> {
+            List<Schedule> found;
+            try (PreparedStatement ps = c.prepareStatement("SELECT " + columns + " FROM kilnmark.schedule WHERE "
+                + "enabled AND " + (token != null ? "set_by_token = ?" : "set_by_person = ?")
+                + " ORDER BY id FOR UPDATE")) {
+                if (token != null) {
+                    ps.setLong(1, token);
+                } else {
+                    ps.setString(1, person);
+                }
+                found = read(ps);
+            }
+            List<Schedule> paused = new ArrayList<>();
+            for (Schedule s : found) {
+                if (role != null && role.atLeast(AccessRole.parse(s.runAs()))) {
+                    continue;
+                }
+                try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.schedule SET enabled = false, "
+                    + "next_at = NULL, last_at = clock_timestamp(), last_outcome = ?, last_pipeline_run = NULL, "
+                    + "last_flow_run = NULL WHERE id = ?")) {
+                    ps.setString(1, PAUSED);
+                    ps.setLong(2, s.id());
+                    ps.executeUpdate();
+                }
+                paused.add(s);
+            }
+            return paused;
+        });
+    }
+
     static String clip(String outcome) {
         return outcome.length() <= MAX_OUTCOME ? outcome : outcome.substring(0, MAX_OUTCOME - 3) + "...";
     }
@@ -321,7 +401,8 @@ public class ScheduleStore {
                     rs.getString(6), rs.getString(7), rs.getBoolean(8), rs.getString(9), rs.getString(10),
                     Db.instant(rs.getTimestamp(11)), rs.getString(12), Db.instant(rs.getTimestamp(13)),
                     Db.instant(rs.getTimestamp(14)), Db.instant(rs.getTimestamp(15)), outcome,
-                    rs.getObject(17, Long.class), rs.getObject(18, Long.class)));
+                    rs.getObject(17, Long.class), rs.getObject(18, Long.class), rs.getObject(20, Long.class),
+                    rs.getString(21)));
             }
         }
         return out;

@@ -29,16 +29,53 @@ schedule, with the role the schedule gives them:
 A scheduled run never acts as an admin, and you cannot choose a role above your own. Whoever
 changes a schedule becomes the name its later runs carry, so they are answerable for them.
 
-The role is checked when the schedule is saved. If someone leaves, or their token is revoked,
-their schedules keep running in their name: change each one, so it carries a current person's
-name, or delete it. The **Schedules** page lists every schedule with who set it (see
-[Finding schedules](#finding-schedules)).
-
 A scheduled flow's pipeline runs carry the same name and role. Like any run, it can only write to
 sources that allow writing.
 
 Today a run as designer can do no more than a run as steward: Kilnmark checks only that a run's
 role is steward or above. The role is recorded with each run, for when that changes.
+
+The **Schedules** page lists every schedule with who set it (see
+[Finding schedules](#finding-schedules)).
+
+## When the person who set it loses the role
+
+A schedule runs only while whoever last set it could still run it themselves. Before every run,
+Kilnmark checks:
+
+- **for an API token:** it has not been revoked or expired, and still has the role;
+- **for someone who signs in with your organisation's login:** their latest sign-in gave them the
+  role. A sign-in refused because none of their groups has a role any more takes it away; one
+  refused for another reason, such as no second factor, does not, as in the access review.
+
+If not, nothing runs. The schedule is **paused**: it is off, has no next time, and says
+`paused: the person who set it no longer has the role`; the pages show **Paused: setter lost the
+role** as its last outcome, in amber, apart from the grey **Paused** state (viewers see **Paused
+by Kilnmark**, without why). The audit log
+records **Schedule paused**, with why. Kilnmark also pauses at once, without waiting for the next
+time, when an admin revokes the token, or when the person signs in with less of a role (or none).
+
+**What you do** (designers and admins):
+
+1. Open the **Schedules** page and choose **Paused: setter lost the role**. It lists only the
+   schedules Kilnmark paused this way; their last outcome reads **Paused: setter lost the role**.
+2. For each, decide whether the work should go on.
+3. To keep it, choose **Resume** (or **Edit**, then **Save changes**, with **Paused** cleared). You
+   become its setter, so its runs carry your name and are checked against your role from then on.
+4. Otherwise choose **Delete**.
+
+Nothing resumes by itself, even if the person's role comes back. Scripts find them with
+`GET /api/v1/schedules`: `"enabled": false` and a `lastOutcome` starting `paused`, and resume one
+by saving it with `"enabled": true`.
+
+Two things to know:
+
+- **The server's own admin token** (`KILNMARK_ADMIN_TOKEN`): if its value changes, the old token is
+  set aside and the schedules it set are paused at their next time. Set schedules with your own
+  token or login, not that one.
+- **Someone removed from their groups at your provider** is seen by Kilnmark only when they next
+  sign in. To stop their schedules at once, revoke their tokens, or pause or reassign their
+  schedules yourself.
 
 ## A pipeline's or flow's schedules
 
@@ -53,7 +90,8 @@ shows:
 - **State and next run**: **On** or **Paused**, and the next run in your own time, with your zone
   named; when the schedule's zone is another, the same time in that zone too;
 - **Last time it was due**: what happened, in a word with a colour (**Started**, **Starting**,
-  **Skipped**, **Missed** or **Failed**), when, why, and a link to the run it started.
+  **Skipped**, **Missed**, **Failed**, or **Paused: setter lost the role**), when, why, and a link
+  to the run it started.
 
 The line under the pipeline's or flow's name says when it next runs on a schedule; choosing it
 shows the tab.
@@ -145,7 +183,7 @@ Each schedule shows, under **Last time it was due**, when that was and what happ
 with a colour, the reason, and a link to the run it started (in the API, `lastAt` and
 `lastOutcome`):
 
-![What happens when a schedule is due: a time due more than an hour ago is missed and not run late; if a run of the pipeline or flow is still going, the time is skipped; if the latest version cannot run, it fails with the server's reason; otherwise the run starts. Either way the next time is worked out from now](images/schedule-outcomes.svg)
+![What happens when a schedule is due: a time due more than an hour ago is missed and not run late; if whoever set the schedule no longer has its role, the schedule is paused and the audit log says so; if a run of the pipeline or flow is still going, the time is skipped; if the latest version cannot run, it fails with the server's reason; otherwise the run starts. Either way the next time is worked out from now](images/schedule-outcomes.svg)
 
 | Outcome | What it means | What to do |
 | --- | --- | --- |
@@ -154,6 +192,7 @@ with a colour, the reason, and a link to the run it started (in the API, `lastAt
 | **Skipped** (`skipped: a run was still going`) | The last run had not finished, and only one runs at a time | If it happens often, the runs take longer than the gap between them: space the times out |
 | **Missed** (`missed: the server was not running`) | Kilnmark was stopped when it was due, for longer than an hour. It does not run late | Run it now by hand if the work is still needed |
 | **Failed** (`failed: …`) | The run could not start, for the reason given: the latest version has problems, a value no longer suits it, a source no longer allows writing. Viewers see only `failed` | Fix what it says; the next time runs as usual |
+| **Paused: setter lost the role** (`paused: the person who set it no longer has the role`) | Whoever last set it no longer has the role: their token was revoked or expired, or they signed in with less of a role. The schedule is off. Viewers see **Paused by Kilnmark** (`paused`) | Resume it (you become its setter), or delete it |
 | **Missed** (`missed: changed while it was due`) | Someone changed its times, zone or pausing just as it was due, so that time did not run | Run it now by hand if the work is still needed |
 | **Failed** (`failed: the server stopped before the run was queued`) | Kilnmark stopped at the moment it was starting the run, so that time was lost. It shows once it has said `starting` for a few minutes | Run it now by hand if the work is still needed |
 
@@ -193,14 +232,18 @@ its runs start with are never recorded there.
 
 The **Schedules** page, in the sidebar after **Flows**, lists every schedule on the server: when it
 runs, what it runs (linked to the pipeline or flow), who set it and as which role, whether it is
-on, its next run and what happened last time. Choose **On**, **Paused** or **Failed last time** to
-see only those; each says how many there are.
+on, its next run and what happened last time. Choose **On**, **Paused**, **Paused: setter lost
+the role** or **Failed last time** to see only those; each says how many there are. **Paused**
+holds every schedule that is off, whoever paused it; **Paused: setter lost the role** only those
+Kilnmark paused because whoever set them lost the role.
 
 ![The Schedules page: filters for All 6, On 5, Paused 1 and Failed last time 1; a note for access reviews saying the 6 schedules run in the name of 2 people; and a table of every schedule with when it runs, the pipeline or flow it runs, linked, who set it and its role, its state and next run, and the last time it was due: Started with a link to the run, Skipped because a run was still going, Not run yet for the paused one, and Failed with the reason, a server variable that was not set](images/schedules-page.png)
 
 **For access reviews**, admins see a note saying how many people the schedules run in the name of.
-Read the **Set by** column: a schedule set by someone who has left, or lost their role, still
-runs in their name until it is changed or deleted.
+Read the **Set by** column. When someone's token is revoked or expires, or they lose their role,
+Kilnmark pauses the schedules they set: an admin resumes each one, becoming its setter, or
+deletes it (see [When the person who set it loses the role](#when-the-person-who-set-it-loses-the-role)).
+Someone who leaves but still has a working token or role is not caught: revoke their tokens.
 
 A run started by a schedule shows `schedule <id> (set by <name>)` as who asked for it, on its run
 page and in the History tab.
