@@ -10,7 +10,10 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # GitHub's runner, or the one KILNMARK_RUNNER names (docs/development.md, "CI on a local runner"),
+    # but only for the owner's own work: started by the owner, and a pull request the owner opened
+    # from a branch that is not Dependabot's. Anything else stays on GitHub's runners.
+    runs-on: ${{ vars.KILNMARK_RUNNER && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && (github.event_name != 'pull_request' || (github.event.pull_request.user.login == github.repository_owner && !startsWith(github.head_ref, 'dependabot/'))) && fromJSON(vars.KILNMARK_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -52,7 +55,10 @@ jobs:
 
   # Integration tests against heavy databases, apart so the main build stays quick.
   heavy-databases:
-    runs-on: ubuntu-latest
+    # GitHub's runner, or the one KILNMARK_RUNNER names (docs/development.md, "CI on a local runner"),
+    # but only for the owner's own work: started by the owner, and a pull request the owner opened
+    # from a branch that is not Dependabot's. Anything else stays on GitHub's runners.
+    runs-on: ${{ vars.KILNMARK_RUNNER && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && (github.event_name != 'pull_request' || (github.event.pull_request.user.login == github.repository_owner && !startsWith(github.head_ref, 'dependabot/'))) && fromJSON(vars.KILNMARK_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

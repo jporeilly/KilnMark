@@ -107,9 +107,14 @@ class AiSearchTest {
         throw new AssertionError("run " + id + " did not finish with an embedding note");
     }
 
+    /**
+     * Waits for the background re-embedding to finish, at most three minutes. It goes through every
+     * source in the database, and the server tests share one: run after many other test classes
+     * (Gradle's class order differs between machines), it has far more to do than on its own.
+     */
     private void waitForBackground() throws InterruptedException {
         Thread.sleep(300);
-        for (int i = 0; i < 120; i++) {
+        for (int i = 0; i < 720; i++) {
             if (!admin().get("/api/v1/ai/status").then().extract().jsonPath().getBoolean("embeddings.running")) {
                 return;
             }
