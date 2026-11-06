@@ -49,12 +49,17 @@ run timelines).
    sources. Decided in [ADR 0045](../adr/0045-database-tools.md) (amends ADR 0028); the design and
    its order (Explore, the SQL generator, settings on tabs, operations) are in
    [docs/design/database-tools.md](../design/database-tools.md).
-9. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
+9. **More nodes** (owner, 6 November 2026; [ADR 0049](../adr/0049-more-nodes-and-how-coarse-they-are.md)),
+   starting after release 0.1.1: `sort` and `join` (two inputs of any size, spilling to disk),
+   `window`, and more expression functions first; then `pivot` and `unpivot`, JSON and XML,
+   change detection and dimension history, `sequence`, `mask`, generated rows, and file actions
+   in flows. Nodes stay coarse: one per shape of work, single-value operations as functions.
+10. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
    pre-run checks, flags on slow pipelines. Run tools on the MCP server fold in here (parked item
    in Plan & Scope).
-10. **Connectors** (brief of 28 October): SFTP/FTP, SMB, Azure Blob, REST; Snowflake, Vertica and
+11. **Connectors** (brief of 28 October): SFTP/FTP, SMB, Azure Blob, REST; Snowflake, Vertica and
    Exasol as connectors of their own, with the SQL that moves files refused (ADR 0030).
-11. **Templates of a team's own** ("save as template", after the Library's, ADR 0043), and
+12. **Templates of a team's own** ("save as template", after the Library's, ADR 0043), and
     comparing a pipeline's or flow's versions; then v0.1.0.
 
 ## 4. Hardening, as customers ask
@@ -68,24 +73,24 @@ sources (ADR 0034), OIDC sign-in with MFA (ADR 0036, #78), access reviews and to
 #83), the SSDF self-assessment (#84), the bundled Keycloak (ADR 0014, #93), static analysis with
 dependency verification (ADR 0042, #99) and signed images with an offline install (ADR 0044, #102).
 
-12. **The SSDF gaps**: build provenance, a threat model, a security analyser; the rest of the
+13. **The SSDF gaps**: build provenance, a threat model, a security analyser; the rest of the
     evidence pack when a customer's due diligence asks.
-13. **Change approval and environments**, which also gives database tools their second person.
+14. **Change approval and environments**, which also gives database tools their second person.
     With it, marks keyed by the database's identity rather than the source record, and password references
     (`env:`, `secret:`) for admins only (ADR 0045, "Related gap").
-14. **Generic JDBC drivers in a process of their own** (ADR 0030, decision 5); new table names
+15. **Generic JDBC drivers in a process of their own** (ADR 0030, decision 5); new table names
     checked against the driver's longest table name, not its longest column name (ADR 0042).
-15. **Small items**: a JDBC `socketTimeout`, masking on the run quality view, a metric for preview
+16. **Small items**: a JDBC `socketTimeout`, masking on the run quality view, a metric for preview
     slots, `KILNMARK_DB_PASSWORD` in the dev compose.
-16. **Audit events** for data read with the unmask grant, and for MCP refusals (ADR 0029).
-17. **A full export in open formats** (for exit), and a FIPS mode when a federal customer needs it.
+17. **Audit events** for data read with the unmask grant, and for MCP refusals (ADR 0029).
+18. **A full export in open formats** (for exit), and a FIPS mode when a federal customer needs it.
 
 ## 5. Housekeeping
 
-18. **The local CI runner on a Podman machine of its own**, without the Windows drives mounted,
+19. **The local CI runner on a Podman machine of its own**, without the Windows drives mounted,
     starting afresh for each job (ephemeral), and its PostgreSQL image under a CI-only tag
     (docs/development.md, "CI on a local runner"; review of #111).
-19. **The server tests on Windows**: Testcontainers cannot reach Podman from the tool shell, so
+20. **The server tests on Windows**: Testcontainers cannot reach Podman from the tool shell, so
     server tests run only in CI there.
 
 ## Owner's items
