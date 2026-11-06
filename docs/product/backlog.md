@@ -51,9 +51,11 @@ run timelines).
    [docs/design/database-tools.md](../design/database-tools.md).
 9. **More nodes** (owner, 6 November 2026; [ADR 0049](../adr/0049-more-nodes-and-how-coarse-they-are.md)),
    starting after release 0.1.1: `sort` and `join` (two inputs of any size, spilling to disk),
-   `window`, and more expression functions first; then `pivot` and `unpivot`, JSON and XML,
-   change detection and dimension history, `sequence`, `mask`, generated rows, and file actions
-   in flows. Nodes stay coarse: one per shape of work, single-value operations as functions.
+   `window`, and more expression functions first; then web calls (a REST connector, an `http`
+   node and an `http` flow node, behind the allowed hosts an admin sets), JSON and XML, `pivot`
+   and `unpivot`, change detection and dimension history, `sequence`, `mask`, generated rows, and
+   file actions in flows. Nodes stay coarse: one per shape of work, single-value operations as
+   functions.
 10. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
    pre-run checks, flags on slow pipelines. Run tools on the MCP server fold in here (parked item
    in Plan & Scope).

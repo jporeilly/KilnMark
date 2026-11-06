@@ -61,10 +61,12 @@ details.
 - **More nodes are decided** ([ADR 0049](docs/adr/0049-more-nodes-and-how-coarse-they-are.md)):
   nodes stay coarse, one per shape of work, with operations on single values as expression
   functions; a node is added only for work that changes the number of rows, needs order or state
-  across rows, combines inputs or matters for governance; no script node and no web calls from a
-  pipeline without network controls. The order, after 0.1.1: `sort` and `join`, `window`, more
-  functions, then `pivot`, JSON and XML, change detection and dimension history, `sequence`,
-  `mask`, generated rows and file actions in flows. Backlog item 9.
+  across rows, combines inputs, reaches a web service or matters for governance. Web calls come
+  as a REST connector, an `http` node and an `http` flow node, behind the allowed hosts an admin
+  sets, with TLS, stored credentials, and time, size and rate limits; no script node. The order,
+  after 0.1.1: `sort` and `join`, `window`, more functions, web calls, JSON and XML, `pivot`,
+  change detection and dimension history, `sequence`, `mask`, generated rows and file actions in
+  flows. Backlog item 9.
 - **Error Prone checks the flow files too** (ADR 0042, decision 5). `FlowDefinition`, its test,
   `FlowService` and `JobQueue` are no longer left out. What it found is fixed: case changes now
   name `Locale.ROOT`, so a server in a Turkish locale reads `PRIORITY: HIGH` and the like as
