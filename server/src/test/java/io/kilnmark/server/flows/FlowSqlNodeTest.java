@@ -490,8 +490,162 @@ class FlowSqlNodeTest {
         assertEquals(0, count("SELECT count(*) FROM fsql.target WHERE id IN (400, 401)"));
     }
 
+    // ---- wait-for with a query (ADR 0041, C2) ----
+
     @Test
     @Order(14)
+    void aWaitForQueryRunsReadOnlyAndSucceedsOnceItIsTrue() throws Exception {
+        superuser("TRUNCATE fsql.target", "INSERT INTO fsql.target VALUES (900)");
+        // A query only reads: it waits on a source with Allow SQL on, writing or not.
+        save("""
+            kilnmark: flow/v1
+            name: fsql-wait
+            nodes:
+              - id: loaded
+                type: wait-for
+                source: fsql-no-writing
+                query: "select count(*) > 0 from fsql.target where id = 900"
+                every: 30s
+                timeout: 5m
+            """);
+        long run = start("fsql-wait");
+        FlowStore.Run done = finished(run);
+        assertEquals("succeeded", done.status(), done.error());
+        FlowStore.NodeRun loaded = node(run, "loaded");
+        assertTrue(loaded.message().startsWith("The query on fsql-no-writing is true after waiting"), loaded.message());
+        assertFalse(loaded.message().contains("select"), "never the query: " + loaded.message());
+        assertTrue(loaded.reported().replace(" ", "").contains("\"found\":1.0"), loaded.reported());
+        assertTrue(loaded.reported().contains("waited_s"), loaded.reported());
+        io.kilnmark.server.audit.AuditLog audit = io.quarkus.arc.Arc.container()
+            .instance(io.kilnmark.server.audit.AuditLog.class).get();
+        audit.awaitStored(5_000);
+        assertEquals(1, count("SELECT count(*) FROM kilnmark.audit_event WHERE action = 'flow.sql' AND target = "
+            + "'fsql-wait/" + run + "/loaded'"));
+    }
+
+    @Test
+    @Order(15)
+    void aWaitForQueryThatStaysFalseGivesUpAfterItsTimeout() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fsql-wait-false
+            nodes:
+              - id: loaded
+                type: wait-for
+                source: fsql-db
+                query: "select false"
+                every: 30s
+                timeout: 2s
+              - { id: tell, type: notify, title: "Gave up after ${loaded.waited_s} seconds" }
+            connections:
+              - { from: loaded, to: tell, when: failure }
+            """);
+        long run = start("fsql-wait-false");
+        FlowStore.Run done = finished(run);
+        assertEquals("succeeded", done.status(), done.error());
+        FlowStore.NodeRun loaded = node(run, "loaded");
+        assertEquals("failed", loaded.status());
+        assertEquals("Waited 2 seconds for a query on fsql-db to be true, and gave up", loaded.message());
+        assertTrue(loaded.reported().replace(" ", "").contains("\"found\":0.0"), loaded.reported());
+        assertEquals("succeeded", node(run, "tell").status());
+    }
+
+    @Test
+    @Order(16)
+    void aWaitForQueryIsCheckedAsACustomSqlRuleIsWhenSaved() {
+        String yaml = """
+            kilnmark: flow/v1
+            name: fsql-wait-saved
+            nodes:
+              - { id: loaded, type: wait-for, source: fsql-db, query: "select true" }
+            """;
+        assertTrue(flows.validate(yaml).valid(), flows.validate(yaml).problems().toString());
+        List<String> writes = flows.validate(yaml.replace("select true", "delete from fsql.target")).problems().stream()
+            .map(io.kilnmark.kiln.yaml.Problem::message).toList();
+        assertTrue(writes.stream().anyMatch(m -> m.startsWith("Node loaded's query must start with SELECT or WITH")),
+            writes.toString());
+        List<String> super_ = flows.validate(yaml.replace("source: fsql-db", "source: fsql-super")).problems().stream()
+            .map(io.kilnmark.kiln.yaml.Problem::message).toList();
+        assertTrue(super_.isEmpty(), "a superuser login is refused when it runs, not when saved: " + super_);
+        // Someone who may not see unmasked values cannot save a person's SQL.
+        WebApplicationException refused = assertThrows(WebApplicationException.class,
+            () -> flows.save(yaml, "test", "tester", AccessRole.DESIGNER, false, null));
+        assertEquals(403, refused.getResponse().getStatus());
+    }
+
+    @Test
+    @Order(17)
+    void aWaitForQueryOnASuperuserLoginIsRefusedWhenItRuns() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fsql-wait-super
+            nodes:
+              - { id: loaded, type: wait-for, source: fsql-super, query: "select true" }
+            """);
+        long run = start("fsql-wait-super");
+        FlowStore.Run done = finished(run);
+        assertEquals("failed", done.status());
+        FlowStore.NodeRun loaded = node(run, "loaded");
+        assertEquals("failed", loaded.status());
+        assertTrue(loaded.message().startsWith("Node loaded: "), loaded.message());
+        assertTrue(loaded.message().toLowerCase(java.util.Locale.ROOT).contains("superuser"), loaded.message());
+    }
+
+    @Test
+    @Order(18)
+    void cancellingTheFlowEndsAWaitAtOnce() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fsql-wait-cancel
+            nodes:
+              - { id: loaded, type: wait-for, source: fsql-db, query: "select false", every: 30s, timeout: 1h }
+            """);
+        long run = start("fsql-wait-cancel");
+        // Until the flow's worker starts the node it has no row yet: that is "not yet", not a failure.
+        await("the first look", () -> flows.nodeRuns(run).stream().filter(n -> n.nodeId().equals("loaded"))
+            .findFirst().map(FlowStore.NodeRun::message).orElse(null), m -> m != null && m.contains("Not yet true"));
+        long asked = System.nanoTime();
+        flows.cancel(run, "tester", AccessRole.STEWARD);
+        FlowStore.Run done = finished(run);
+        assertEquals("cancelled", done.status());
+        assertEquals("Stopped waiting: the flow was stopped", node(run, "loaded").message());
+        assertTrue(Duration.ofNanos(System.nanoTime() - asked).toSeconds() < 20, "it did not wait for its next look");
+    }
+
+    @Test
+    @Order(19)
+    void aQueryWrittenWithoutTheUnmaskGrantNeverRuns() throws Exception {
+        // A query the parser refuses is still SQL a person wrote: saving it needs the grant, as a draft too.
+        String draft = """
+            kilnmark: flow/v1
+            name: fsql-wait-draft
+            nodes:
+              - { id: loaded, type: wait-for, source: fsql-db, query: "select ${x}" }
+            """;
+        WebApplicationException refused = assertThrows(WebApplicationException.class,
+            () -> flows.save(draft, "test", "tester", AccessRole.DESIGNER, false, null));
+        assertEquals(403, refused.getResponse().getStatus());
+        // sql_checked records the saver's grant: a version saved without it is never checked.
+        flows.save("""
+            kilnmark: flow/v1
+            name: fsql-plain
+            nodes:
+              - { id: pause, type: wait, for: 1s }
+            """, "test", "tester", AccessRole.DESIGNER, false, null);
+        assertEquals(0, count("SELECT count(*) FROM kilnmark.flow_version WHERE flow = 'fsql-plain' AND sql_checked"));
+        assertEquals(1, count("SELECT count(*) FROM kilnmark.flow_version WHERE flow = 'fsql-wait' AND sql_checked "
+            + "AND query_checked"));
+        // A version from before V34 (query_checked false, as V34 leaves every older one) never runs its query,
+        // even with sql_checked true as V29 wrote it: nobody can tell from its YAML who wrote the query.
+        superuser("UPDATE kilnmark.flow_version SET query_checked = false WHERE flow = 'fsql-wait'");
+        WebApplicationException old = assertThrows(WebApplicationException.class, () -> start("fsql-wait"));
+        assertEquals(409, old.getResponse().getStatus());
+        String why = ((io.kilnmark.server.api.ApiError) old.getResponse().getEntity()).error();
+        assertTrue(why.contains("a wait-for node's query"), why);
+    }
+
+    @Test
+    @Order(20)
     void cleanUp() throws Exception {
         superuser("DROP SCHEMA fsql CASCADE", "DROP OWNED BY " + WRITER, "DROP OWNED BY fsql_maker",
             "DROP OWNED BY fsql_replica", "DROP ROLE fsql_maker", "DROP ROLE fsql_replica");

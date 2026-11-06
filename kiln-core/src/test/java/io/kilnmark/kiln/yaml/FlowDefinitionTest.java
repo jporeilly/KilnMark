@@ -503,4 +503,121 @@ class FlowDefinitionTest {
         assertTrue(firstProblem(SQL.replace("    title: \"Emptied", "    priority: high\n    title: \"Emptied"))
             .contains("has no setting 'priority'"));
     }
+
+    // ---- check-source (ADR 0041) ----
+
+    static final String CHECK = """
+        kilnmark: flow/v1
+        name: check-first
+        nodes:
+          - id: ready
+            type: check-source
+            source: warehouse
+            tables: [sales.orders, sales.customers]
+            files: [incoming/today.csv]
+            timeout: 2m
+          - id: load
+            type: run-pipeline
+            pipeline: orders-load
+          - id: tell
+            type: notify
+            title: "${ready.missing} missing"
+        connections:
+          - { from: ready, to: load, when: "ready.missing = 0" }
+          - { from: ready, to: tell, when: failure }
+        """;
+
+    @Test
+    void readsACheckSourceNode() {
+        FlowDefinition.Parsed p = FlowDefinition.parse(CHECK);
+        assertTrue(p.valid(), p.problems().toString());
+        FlowDefinition.Node ready = p.definition().node("ready");
+        assertEquals("warehouse", ready.source());
+        assertEquals(List.of("sales.orders", "sales.customers"), ready.check().tables());
+        assertEquals(List.of("incoming/today.csv"), ready.check().files());
+        assertEquals(Duration.ofMinutes(2), ready.timeout());
+        assertEquals(FlowCondition.Type.NUMBER, FlowDefinition.nodeValueType(p.definition(), "ready.missing"));
+        // Neither list: it checks only that the source can be reached.
+        FlowDefinition.Parsed bare = FlowDefinition.parse(CHECK.replace("    tables: [sales.orders, sales.customers]\n",
+            "").replace("    files: [incoming/today.csv]\n", ""));
+        assertTrue(bare.valid(), bare.problems().toString());
+        assertTrue(bare.definition().node("ready").check().tables().isEmpty());
+    }
+
+    @Test
+    void checksACheckSourceNode() {
+        assertTrue(firstProblem(CHECK.replace("    source: warehouse\n", "")).contains("needs a source"));
+        assertTrue(firstProblem(CHECK.replace("[sales.orders, sales.customers]", "sales.orders"))
+            .contains("tables is a list"));
+        assertTrue(firstProblem(CHECK.replace("[sales.orders, sales.customers]", "[\"sales.${x}\"]"))
+            .contains("${...} cannot be used"));
+        assertTrue(firstProblem(CHECK.replace("[sales.orders, sales.customers]", "[sales.orders, sales.orders]"))
+            .contains("names sales.orders twice"));
+        assertTrue(firstProblem(CHECK.replace("[sales.orders, sales.customers]", "[\"\"]"))
+            .contains("Each of tables is a table as the catalogue names it"));
+        String many = "[" + String.join(", ", java.util.stream.IntStream.range(0, 50).mapToObj(i -> "s.t" + i).toList())
+            + "]";
+        assertTrue(firstProblem(CHECK.replace("[sales.orders, sales.customers]", many))
+            .contains("names 51 tables and files: at most 50"));
+        assertTrue(firstProblem(CHECK.replace("    timeout: 2m\n", "    priority: high\n"))
+            .contains("has no setting 'priority'"));
+        assertTrue(firstProblem(CHECK.replace("ready.missing = 0", "ready.rows_written = 0"))
+            .contains("rows_written"));
+    }
+
+    // ---- wait-for (ADR 0041) ----
+
+    static final String WAITS = """
+        kilnmark: flow/v1
+        name: wait-then-load
+        nodes:
+          - id: arrived
+            type: wait-for
+            source: landing
+            file: "incoming/orders-*.csv"
+            at_least: 2
+            every: 2m
+            timeout: 3h
+          - id: loaded
+            type: wait-for
+            source: warehouse
+            query: "select max(loaded_at) > now() - interval '1 hour' from etl.batches"
+          - id: tell
+            type: notify
+            title: "Found ${arrived.found} after ${arrived.waited_s}s"
+        connections:
+          - { from: arrived, to: loaded }
+          - { from: loaded, to: tell, when: "loaded.found = 1" }
+        """;
+
+    @Test
+    void readsAWaitForNode() {
+        FlowDefinition.Parsed p = FlowDefinition.parse(WAITS);
+        assertTrue(p.valid(), p.problems().toString());
+        FlowDefinition.Node arrived = p.definition().node("arrived");
+        assertEquals(new FlowDefinition.Until("incoming/orders-*.csv", 2, null, Duration.ofMinutes(2)), arrived.until());
+        assertEquals(Duration.ofHours(3), arrived.timeout());
+        FlowDefinition.Node loaded = p.definition().node("loaded");
+        assertEquals(Duration.ofMinutes(5), loaded.until().every(), "every 5 minutes by default");
+        assertEquals(Duration.ofHours(1), loaded.timeout(), "an hour by default");
+        assertTrue(loaded.until().query().startsWith("select max(loaded_at)"));
+        assertEquals(FlowCondition.Type.NUMBER, FlowDefinition.nodeValueType(p.definition(), "arrived.waited_s"));
+    }
+
+    @Test
+    void checksAWaitForNode() {
+        String file = "    file: \"incoming/orders-*.csv\"\n";
+        assertTrue(firstProblem(WAITS.replace(file, "")).contains("waits for one thing"));
+        assertTrue(firstProblem(WAITS.replace(file, file + "    query: \"select true\"\n")).contains("waits for one thing"));
+        assertTrue(firstProblem(WAITS.replace("incoming/orders-*.csv", "in*/orders.csv")).contains("only in the file's name"));
+        assertTrue(firstProblem(WAITS.replace("incoming/orders-*.csv", "../orders.csv")).contains("no empty, . or .. parts"));
+        assertTrue(firstProblem(WAITS.replace("incoming/orders-*.csv", "/etc/orders.csv")).contains("a path below"));
+        assertTrue(firstProblem(WAITS.replace("every: 2m", "every: 10s")).contains("every is how often it looks: 30s to 1h"));
+        assertTrue(firstProblem(WAITS.replace("timeout: 3h", "timeout: 25h")).contains("up to 24h"));
+        assertTrue(firstProblem(WAITS.replace("at_least: 2", "at_least: 0")).contains("a whole number from 1"));
+        assertTrue(firstProblem(WAITS.replace("from etl.batches", "from ${t}")).contains("${...} cannot be used"));
+        assertTrue(firstProblem(WAITS.replace("    query: \"select max(", "    at_least: 1\n    query: \"select max("))
+            .contains("at_least is for a file"));
+        assertTrue(firstProblem(WAITS.replace("    every: 2m\n", "    priority: high\n")).contains("has no setting 'priority'"));
+    }
 }

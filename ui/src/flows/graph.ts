@@ -8,6 +8,8 @@ export const TYPE_WORDS: Record<string, string> = {
   wait: "Waits",
   stop: "Ends the flow",
   sql: "Runs SQL",
+  "check-source": "Checks a source",
+  "wait-for": "Waits for a file or a query",
 };
 
 /**
@@ -66,6 +68,24 @@ function summaryOf(type: string, node: { get: (k: string) => unknown }): string 
       return get("for") ? `Waits ${get("for")}` : "Waits";
     case "stop":
       return get("status") === "succeeded" ? "The run counts as succeeded" : "The run counts as failed";
+    case "wait-for": {
+      const on = get("source") ?? "a source";
+      const every = get("every") ?? "5m";
+      if (get("file")) return `${get("file")} on ${on}, every ${every}`;
+      return get("query") ? `A query on ${on}, every ${every}` : `Something on ${on}`;
+    }
+    case "check-source": {
+      const on = get("source") ?? "a source";
+      const count = (k: string) => {
+        const list = node.get(k);
+        return isSeq(list) ? list.items.length : 0;
+      };
+      const [t, f] = [count("tables"), count("files")];
+      const what = [t ? `${t} ${t === 1 ? "table" : "tables"}` : "", f ? `${f} ${f === 1 ? "file" : "files"}` : ""]
+        .filter(Boolean)
+        .join(" and ");
+      return what ? `${what} on ${on}` : `That ${on} can be reached`;
+    }
     case "sql": {
       const statements = node.get("statements");
       const n = isSeq(statements) ? statements.items.length : 0;

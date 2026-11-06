@@ -17,7 +17,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import { Graph, layout } from "@dagrejs/dagre";
-import { IconBell, IconHandStop, IconHourglass, IconPlayerPlay, IconRepeat, IconSql, IconBox } from "@tabler/icons-react";
+import { IconClockSearch, IconPlugConnected, IconBell, IconHandStop, IconHourglass, IconPlayerPlay, IconRepeat, IconSql, IconBox } from "@tabler/icons-react";
 import "@xyflow/react/dist/style.css";
 import type { FlowNodeStatus } from "../api";
 import { useColourScheme } from "../theme/appearance";
@@ -46,6 +46,8 @@ const ICONS: Record<string, typeof IconBox> = {
   wait: IconHourglass,
   stop: IconHandStop,
   sql: IconSql,
+  "check-source": IconPlugConnected,
+  "wait-for": IconClockSearch,
 };
 
 /** About how wide a connection's label is drawn (11px semibold, with its padding). */

@@ -320,6 +320,17 @@ const FIELDS: Record<string, Field[]> = {
     { key: "source", label: "Source", kind: "text", hint: "A PostgreSQL source with Allow SQL on." },
     { ...TIMEOUT, hint: "Rolled back past it: 30m, 2h, 1d. Blank for none." },
   ],
+  "wait-for": [
+    { key: "source", label: "Source", kind: "text", hint: "A file source, or PostgreSQL for a query." },
+    { key: "file", label: "File", kind: "text", hint: "A pattern: incoming/orders-*.csv." },
+    { key: "at_least", label: "At least", kind: "number", hint: "Files that must match: 1 when blank." },
+    { key: "every", label: "Look every", kind: "text", hint: "30s to 1h: 5m when blank." },
+    { key: "timeout", label: "Give up after", kind: "text", hint: "Up to 24h: 1h when blank." },
+  ],
+  "check-source": [
+    { key: "source", label: "Source", kind: "text", hint: "The saved source to check." },
+    { ...TIMEOUT, hint: "Fails past it: 30s, 2m. Blank for none." },
+  ],
 };
 
 /** What each type keeps in the YAML only. */
@@ -327,6 +338,8 @@ const IN_THE_YAML: Record<string, string> = {
   "run-pipeline": "The pipeline's parameters (with) are in the YAML.",
   "for-each": "The items and the pipeline's other parameters (with) are in the YAML.",
   sql: "The statements are in the YAML.",
+  "check-source": "The tables and files it looks for are in the YAML.",
+  "wait-for": "A query is in the YAML.",
 };
 
 /** A field's value as the form starts it: as written, or the server's default for a word. */

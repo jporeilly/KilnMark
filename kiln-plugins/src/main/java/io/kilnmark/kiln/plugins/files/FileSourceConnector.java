@@ -248,6 +248,33 @@ public abstract class FileSourceConnector implements Connector {
         }
     }
 
+    /**
+     * The paths of the files below {@code folder} (written as below the source's own prefix; empty for
+     * the top), relative to that prefix, that the source's include and exclude patterns keep: names
+     * only, listed within {@code timeout} (a flow's wait-for node, ADR 0041).
+     *
+     * @throws ConnectorException when the source cannot be listed in time
+     */
+    public List<String> filesBelow(SourceConfig source, String folder, java.time.Duration timeout)
+        throws ConnectorException {
+        checkSettings(source);
+        AssetFilter patterns = AssetFilter.of(this, source).allContainers();
+        String prefix = prefix(source);
+        String start = prefix + (folder.isEmpty() || folder.endsWith("/") ? folder : folder + "/");
+        java.time.Instant deadline = java.time.Instant.now().plus(timeout);
+        try (FileStore store = open(source, timeout)) {
+            List<String> out = new ArrayList<>();
+            for (FileStore.Entry e : store.list(deadline)) {
+                if (e.path().startsWith(start) && patterns.patterns(e.path(), fileName(e.path()))) {
+                    out.add(e.path().substring(prefix.length()));
+                }
+            }
+            return out;
+        } catch (IOException e) {
+            throw new ConnectorException(source.name() + ": cannot list its files", e);
+        }
+    }
+
     /** One file, inspected as the catalogue would. */
     @Override
     public AssetInfo asset(SourceConfig source, String path) throws ConnectorException {

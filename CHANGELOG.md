@@ -7,6 +7,16 @@ details.
 
 ### What's new
 
+- **Wait until a file arrives or a query is true** (ADR 0041). A flow's new `wait-for` node looks
+  every so often, holding no worker in between, until enough files matching a pattern are on a file
+  source, or a read-only query on a PostgreSQL source with Allow SQL on returns true, then lets the
+  flow go on; after its timeout it gives up and fails.
+  ([Waiting until a file arrives or a query is true](docs/guide/flows.md#waiting-until-a-file-arrives-or-a-query-is-true))
+
+- **Check a source before the work starts** (ADR 0041). A flow's new `check-source` node checks
+  that a source can be reached and holds the tables or files the flow needs, keeping no data, and
+  fails at once, naming what is missing, if not. Its `missing` value can go in a notice.
+  ([Checking a source before the work starts](docs/guide/flows.md#checking-a-source-before-the-work-starts))
 - **Generate SQL for a table** ([Database tools](docs/guide/database-tools.md#generate-sql-for-a-table),
   ADR 0045). Explore's new **SQL** tab writes `CREATE TABLE`, `ALTER TABLE … ADD`, `CREATE INDEX`,
   `DROP INDEX`, `DROP TABLE` or `TRUNCATE` for a table, in its database's dialect or another's, to
@@ -29,9 +39,46 @@ details.
 
 ### Details
 
-- **Release images signed on the local runner**: `release.yml` signs the digest the registry
-  stores for each image, read back by tag after the push. On a Podman engine the digest recorded
-  locally is not the registry's, and signing it failed, which stopped the 0.0.10 release.
+- **The `wait-for` flow node** (ADR 0041, docs/design/flow-controls.md, C2). It takes `source` and
+  either `file` (a pattern with `*` and `?` in its last part; `at_least`, 1 by default) or `query`,
+  plus `every` (30s to 1h, 5m) and `timeout` (up to 24h, 1h). It looks at once, then every `every`,
+  on a thread beside the flow's watcher: a file by listing its folder and matching whole paths, a
+  query as custom SQL rules run (ADR 0028): PostgreSQL with Allow SQL on, checked by
+  `checkCustomSql`, read-only, 30 seconds at most, never as a superuser, true when its first value
+  is, nothing kept. A flow with a query wait counts as having SQL: saved only with the unmask grant,
+  and each run that waits on one records `flow.sql`. It reports `found` and `waited_s`; a look that
+  cannot be made is tried again, one that never can fails it. A file look lists one folder within
+  the check timeout, keeping to the source's include and exclude patterns and below an object
+  store's prefix. The diagram, Settings tab and run timeline show it.
+
+- **A flow version records whether its author may write SQL.** `sql_checked` is now whether whoever
+  saved the version held the unmask grant (it was always true), and a `query:` in a wait-for node
+  counts as SQL even when it does not read as one. Migration V34 adds `query_checked`, false for
+  every version saved before it: before this release a wait-for node was an unknown type, which
+  anyone who could save a flow could write, so an older version's query runs only once a designer
+  who may see unmasked values saves it again.
+
+- **The `check-source` flow node** (ADR 0041, docs/design/flow-controls.md, C1). It takes `source`,
+  `tables` and `files` (lists, at most 50 names together, no ${...}) and `timeout`. It connects with
+  `Connector.test` within `kilnmark.sources.check-timeout`, after the allowed hosts, then looks each
+  name up with `Connector.asset` (a table's columns from metadata; a file's from its start, as a
+  scan reads it), keeping nothing; a file path as the catalogue writes it (`%23`) is tried on disk
+  too. With no `timeout`, a hung check ends after 10 minutes; either way the node ends at once. It
+  runs on a thread beside the flow's watcher, holding no worker slot. It succeeds when all are there and fails with the missing
+  names, or with "Could not reach <source>"; it reports `missing`. Messages never quote the source's
+  settings or its driver. Saving checks that the source exists and holds tables (databases) or files
+  (file and object stores). The diagram, Settings tab and run timeline show it.
+- **Dev mode starts again**: `./gradlew :server:quarkusDev` needs two POMs the build itself does
+  not (`org.jboss:jboss-parent:37`, `org.jboss.slf4j:slf4j-jboss-logmanager:1.1.0.Final`); their
+  checksums, matched against Maven Central, are now in `gradle/verification-metadata.xml`
+  (ADR 0042).
+- **Dependencies updated** (Dependabot's Gradle group): Jackson 2.22, the AWS SDK 2.57, LangChain4j
+  1.23, Error Prone 2.52, the SQL Server driver's patch release, lz4, GreenMail
+  and the licence report plug-in, with their checksums and signing keys in
+  `gradle/verification-metadata.xml` (ADR 0042). `mime4j` stays at 0.8.12, the version the Quarkus
+  platform pins: 0.8.15 cannot be resolved against it. The MariaDB driver stays at 3.5.10: 3.5.11
+  fails every connection to MariaDB, and Dependabot is told to skip it. Oracle's driver stays at
+  23.26.3.0.0, the version Kilnmark pins with its checksum; Dependabot no longer proposes it.
 
 ## 0.0.10 (5 November 2026)
 
@@ -212,6 +259,9 @@ details.
 
 ### Details
 
+- **Release images signed on the local runner**: `release.yml` signs the digest the registry
+  stores for each image, read back by tag after the push. On a Podman engine the digest recorded
+  locally is not the registry's, and signing it failed.
 - **Releases on the local runner**: on a tag, `release.yml` runs where `KILNMARK_RUNNER` says, as CI
   does; on a self-hosted runner it builds, signs, pushes the images and drafts the release, and
   leaves the install rehearsal to GitHub's runners. The runner image adds `gh`.
