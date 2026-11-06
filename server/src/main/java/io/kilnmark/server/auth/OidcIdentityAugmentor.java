@@ -7,6 +7,7 @@ import org.eclipse.microprofile.jwt.JsonWebToken;
 
 import io.kilnmark.server.KilnmarkConfig;
 import io.quarkus.oidc.IdTokenCredential;
+import io.quarkus.security.AuthenticationFailedException;
 import io.quarkus.security.identity.AuthenticationRequestContext;
 import io.quarkus.security.identity.SecurityIdentity;
 import io.quarkus.security.identity.SecurityIdentityAugmentor;
@@ -36,10 +37,31 @@ public class OidcIdentityAugmentor implements SecurityIdentityAugmentor {
     /** How a provider sign-in's name starts, everywhere Kilnmark names a caller. */
     public static final String PREFIX = "sso:";
 
+    /**
+     * The mark the OIDC client puts on a request while it renews an expired session with the refresh
+     * token ({@code OidcIdentityProvider.REFRESH_TOKEN_GRANT_RESPONSE}, Quarkus 3.40; not public API,
+     * so {@code OidcRenewalTest} fails if it changes). Read through {@link #renewal}.
+     */
+    static final String RENEWAL_MARK = "refresh_token_grant_response";
+
     private final KilnmarkConfig config;
 
-    public OidcIdentityAugmentor(KilnmarkConfig config) {
+    /** Told of each renewal, which is no new sign-in: it pauses what a lowered role no longer covers. */
+    private final jakarta.enterprise.inject.Instance<SignInEvents> signIns;
+
+    public OidcIdentityAugmentor(KilnmarkConfig config, jakarta.enterprise.inject.Instance<SignInEvents> signIns) {
         this.config = config;
+        this.signIns = signIns;
+    }
+
+    /**
+     * Whether this provider identity comes from renewing a session (the ID token had expired, and the
+     * OIDC client fetched a fresh one with the refresh token), not from the person signing in. A
+     * renewal is not recorded as a sign-in. Unknown counts as a sign-in, which only records one more.
+     */
+    public static boolean renewal(SecurityIdentity identity) {
+        Object rc = identity == null ? null : identity.getAttribute(io.vertx.ext.web.RoutingContext.class.getName());
+        return rc instanceof io.vertx.ext.web.RoutingContext r && Boolean.TRUE.equals(r.get(RENEWAL_MARK));
     }
 
     /** Whether this identity came from the identity provider: its principal is the ID token. */
@@ -138,6 +160,18 @@ public class OidcIdentityAugmentor implements SecurityIdentityAugmentor {
         }
         JsonWebToken token = (JsonWebToken) identity.getPrincipal();
         OidcAccess.Decision d = OidcAccess.decide(config.auth().oidc(), token::getClaim, Instant.now());
+        if (renewal(identity)) {
+            // The same checks as a sign-in, on the provider's fresh ID token: auth_time is still when
+            // the person signed in (OpenID Connect Core 12.2), so the longest session still ends it.
+            if (signIns.isResolvable()) {
+                signIns.get().renewed(identity, token, d);
+            }
+            if (!d.allowed()) {
+                // A renewal given no role ends the session (AuthErrors answers 401 and clears the cookie):
+                // the page says the sign-in has ended, and signing in again shows why and records it.
+                return Uni.createFrom().failure(new AuthenticationFailedException("The renewed sign-in was refused"));
+            }
+        }
         String name = actorName(token);
         QuarkusSecurityIdentity.Builder b = QuarkusSecurityIdentity.builder()
             .setPrincipal(new Named(token, name))

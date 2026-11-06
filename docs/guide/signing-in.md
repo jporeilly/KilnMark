@@ -96,9 +96,23 @@ none signs in but gets **no role**, and the page tells them why.
 code, a key, a phone), something you are (a fingerprint). One factor alone, even a strong one, or two
 of the same kind, is not enough. Without it: no role, and the reason shown.
 
-**Sessions end.** A sign-in lasts at most **8 hours** from when the person last signed in at the
-provider. Kilnmark asks the provider to make them sign in again after that, and refuses an older
-sign-in if the provider does not.
+**How long a sign-in lasts.** While the person works, their sign-in renews itself every few
+minutes, without asking them anything: Kilnmark gets a fresh token from the provider (with Keycloak,
+every 5 minutes) and checks it as it checked the sign-in, MFA, groups and all. It ends, and the page
+says "Your sign-in has ended. Sign in again.", when:
+
+- it is **8 hours** since the person last signed in at the provider. Renewing never moves this on.
+  Kilnmark asks the provider to make them sign in again after that, and refuses an older sign-in if
+  the provider does not;
+- the provider's own session ends: with the Keycloak that comes with Kilnmark, after 2 hours
+  without using it, or 8 hours at most; or the person is disabled at the provider;
+- a renewal no longer passes: they left every group that gives a role, or the provider stopped
+  showing a second factor. Signing in again says why;
+- they sign out.
+
+If their role changes at the provider (moved to a group with a lower role), the next renewal gives
+them the new role, and pauses any schedule they set that the new role no longer covers. A renewal is
+not a new sign-in: the audit log records the sign-in once.
 
 **On screen**, Kilnmark greets a person by their name at the provider, for example "Alex
 Morgan", with their initials in the top bar. **In the records** (the audit log, usage, "created
@@ -106,8 +120,9 @@ by"), they show as `sso:` plus their user name and the provider's fixed ID for t
 `sso:alex.morgan@kilnmark.com (3f2a…)`, so a chosen display name cannot pass for anyone else. The
 menu under their name shows both.
 
-**Taking access away** is done at the provider: remove them from the group, and their next sign-in
-gives them no role.
+**Taking access away** is done at the provider: remove them from the group, or disable them, and
+their sign-in ends at its next renewal (within 5 minutes with Keycloak, within the hour with most
+other providers).
 
 ## Keycloak, if you have no identity provider
 
@@ -234,9 +249,11 @@ of that group.
 
 ## Still open
 
-- **A copied session cookie** keeps working until the provider's token in it expires (usually about
-  an hour), because sessions are not stored on the server. Storing them would let signing out end
-  every copy.
-- **Keycloak's own session**: signing out of Kilnmark ends Kilnmark's session, not Keycloak's, so
-  choosing **Sign in with Keycloak** again within its session goes straight back in. Signing out of
-  Keycloak too is a later step.
+- **A copied session cookie** keeps working, and renewing, as long as the session it was copied
+  from would, because sessions are not stored on the server. Signing out asks the provider to stop
+  the copy renewing (where the provider allows it, as Keycloak does), so a copy then lasts until
+  its token expires. Storing sessions would let signing out end every copy at once.
+- **The provider's own session**: signing out of Kilnmark ends Kilnmark's session. With the Keycloak
+  that comes with Kilnmark it ends Keycloak's too (Kilnmark revokes its refresh token, and Keycloak
+  then ends a session no other application uses), so signing in again asks for the password and
+  code. Other providers' sessions are theirs: sign out there too on a shared computer.

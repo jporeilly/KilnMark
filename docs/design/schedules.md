@@ -232,7 +232,10 @@ that started never reads as a lost fire.
 **At once, too.** `TokenResource.revoke` pauses every schedule the token set
 (`ScheduleService.tokenRevoked`). `SignInEvents` pauses every schedule the person set whose role is
 above what their sign-in just gave them, or all of them when the sign-in was refused for want of a
-group (`ScheduleService.personSignedIn`). That runs on a virtual thread of its own, never on the
+group (`ScheduleService.personSignedIn`); so does each renewal of a provider session with its
+refresh token (`SignInEvents.renewed`, called by `OidcIdentityAugmentor`, ADR 0036), which records
+no sign-in: with the role unchanged nothing is above it and nothing pauses, and the fire-time check
+still reads the latest recorded sign-in. That runs on a virtual thread of its own, never on the
 thread that delivered the sign-in (which can be an event loop), locks only the schedules that will
 pause (their role is in the query), and waits at most two seconds (`lock_timeout`) for one a fire
 holds; a failure is logged at ERROR and never fails the sign-in, since each schedule is checked
