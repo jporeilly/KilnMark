@@ -523,11 +523,16 @@ public class PipelineService {
     }
 
     public void delete(String name, String by) {
+        deleteWithSchedules(name, by);
+    }
+
+    /** Deletes the pipeline as {@link #delete} does; returns the schedules deleted with it, to record. */
+    public List<PipelineStore.GoneSchedule> deleteWithSchedules(String name, String by) {
         try {
-            if (!store.delete(name)) {
-                throw fail(Response.Status.NOT_FOUND, "No pipeline called " + name);
-            }
-            LOG.infof("Pipeline %s deleted by %s", name, by);
+            List<PipelineStore.GoneSchedule> gone = store.deleteWithSchedules(name).orElseThrow(() ->
+                fail(Response.Status.NOT_FOUND, "No pipeline called " + name));
+            LOG.infof("Pipeline %s deleted by %s, with %d schedules", name, by, gone.size());
+            return gone;
         } catch (PipelineStore.Busy e) {
             throw fail(Response.Status.CONFLICT, "A run of " + name + " is queued or running. Wait for it to finish, "
                 + "or cancel it, then delete the pipeline.");

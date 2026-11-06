@@ -53,12 +53,17 @@ details.
   (`FOR UPDATE SKIP LOCKED`), moves their next fire past now and commits, then queues each run
   through `queueRun` as `schedule <id> (set by <name>)` with the schedule's role, and records
   `started`, `skipped: a run was still going`, `missed: the server was not running` (due longer
-  ago than `kilnmark.schedules.catch-up`, 1 h) or `failed: <message>`. `/api/v1/schedules` lists
+  ago than `kilnmark.schedules.catch-up`, 1 h), `missed: changed while it was due` or
+  `failed: <message>`; `starting` meanwhile, read as a lost fire once it is old. Every next fire
+  is worked out from the database's clock, never earlier than the last fire, and a save that keeps
+  the times keeps the next fire, so a fire is never repeated or silently dropped. The loop
+  survives any failure (logged at ERROR) and a `scheduler` readiness check says whether it runs. `/api/v1/schedules` lists
   (by pipeline or flow), reads, adds, replaces and deletes them (designers and admins write;
   viewers read without parameter values) and previews an expression's next five times. Parameter
   values are checked against the latest version when saved. A busy pipeline or flow is now told
   apart by its own exception (`AlreadyRunning`, still a 409). The audit log records
-  `schedule.set` and `schedule.deleted`, never the values, and the audit page lists them.
+  `schedule.set` and `schedule.deleted` (for a deleted pipeline's schedules, exactly those its
+  transaction deleted), never the values, and the audit page lists them.
 - **The `wait-for` flow node** (ADR 0041, docs/design/flow-controls.md, C2). It takes `source` and
   either `file` (a pattern with `*` and `?` in its last part; `at_least`, 1 by default) or `query`,
   plus `every` (30s to 1h, 5m) and `timeout` (up to 24h, 1h). It looks at once, then every `every`,

@@ -12,7 +12,7 @@ One row of `schedule` per schedule; a pipeline or flow may have several.
 | Column | What it holds |
 | --- | --- |
 | `id` | A number of its own, shown in who a run was requested by |
-| `pipeline`, `flow` | What it runs: exactly one is set. Each is a foreign key that cascades, so deleting a pipeline or flow deletes its schedules |
+| `pipeline`, `flow` | What it runs: exactly one is set. Each is a foreign key that cascades. Deleting a pipeline deletes its schedules in its own transaction (`PipelineStore.deleteWithSchedules`, `DELETE … RETURNING`) and records each. Flows cannot be deleted yet; when they can, the cascade takes their schedules |
 | `cron`, `zone` | When: five-field cron, read in an IANA zone (`UTC` by default) |
 | `parameters` | The values each run starts with, as given; defaults are filled in at each run, from the version then latest |
 | `run_as` | The role the runs have: `steward` (the default) or `designer`, never `admin` |
@@ -20,7 +20,7 @@ One row of `schedule` per schedule; a pipeline or flow may have several.
 | `description` | A short line, at most 200 characters |
 | `created_by`, `created_at`, `updated_by`, `updated_at` | Who added it and who last set it, and when |
 | `next_at` | When it fires next; null while paused, or when it never fires again |
-| `last_at`, `last_outcome` | When it was last due, and what happened, in words |
+| `last_at`, `last_outcome` | When it was last due, and what happened, in words (`starting` while its run is being queued) |
 | `last_pipeline_run`, `last_flow_run` | The run the last fire started. Foreign keys set to null when the run is deleted, so the link never leads to a run that is gone |
 
 `schedule_due_idx` on `next_at WHERE enabled` is what the scheduler reads. A schedule is not part
@@ -30,7 +30,7 @@ YAML's author, and changing a time does not make a new version.
 ## 2. Who may do what
 
 - **Designers and admins** add, change, pause, resume and delete schedules
-  (`ScheduleResource`, `@RolesAllowed(designer)`).
+  (`ScheduleResource`, `@RolesAllowed(designer)`, and again in `ScheduleService.requireSetter`).
 - **Stewards** read them with their parameter values.
 - **Viewers** read them without the values (`parameters` is null), as they never see the values a
   run starts with ([flows.md](flows.md) section 5), and see a failed fire's outcome only as
@@ -46,6 +46,9 @@ role of the person saving it. It runs the **latest version** with the schedule's
 `PipelineService.queueRun` or `FlowService.queueRun` exactly as Run now does, so every check Run
 now makes applies: a version with problems, a missing value, a source that no longer allows
 writing. The pipeline runs a scheduled flow starts carry the same name and role.
+
+Today a designer-role and a steward-role scheduled run behave the same: a run's role is only
+checked as "steward or above". The role is recorded with each run for when that changes.
 
 When a schedule is saved, its values are checked against the latest version
 (`PipelineService.checkParameters`, `FlowService.checkParameters`), so a typo is refused at once
@@ -79,23 +82,43 @@ after `after`.
 ![How a schedule fires: on the scheduler role, one short transaction finds the due schedules, locks each one, moves its next fire past now and commits; then the run is queued as Run now would queue it, acting as the schedule, and the outcome is recorded](../guide/images/schedule-fire.svg)
 
 `Scheduler` runs on processes with the scheduler role, on a virtual thread, every
-`kilnmark.schedules.poll-interval` (30 seconds). Each `tick(now)`:
+`kilnmark.schedules.poll-interval` (30 seconds). Each `tick()`:
 
-1. **Claims**, in one short transaction (`ScheduleStore.claimDue`): `SELECT … WHERE enabled AND
-   next_at <= now ORDER BY next_at LIMIT 100 FOR UPDATE SKIP LOCKED`; for each row, works out the
-   next fire after now, and writes it with `last_at = now`, the last run cleared, and
-   `failed: the server stopped before the run was queued` as the outcome until step 3 replaces it;
-   then commits.
+1. **Claims**, in one short transaction (`ScheduleStore.claimDue`), with now read from the
+   database's clock: `SELECT … WHERE enabled AND next_at <= now ORDER BY next_at LIMIT 100 FOR
+   UPDATE SKIP LOCKED`; for each row, works out the next fire after now, or after its last fire if
+   that is later, and writes it with `last_at = now`, the last run cleared, and `starting` as the
+   outcome; then commits.
 2. **Queues** each claimed run, outside that transaction.
-3. **Records** the outcome and the run it started (`ScheduleStore.recordOutcome`).
+3. **Records** the outcome and the run it started (`ScheduleStore.recordOutcome`), only while the
+   row still runs the same pipeline or flow and still says `starting`.
 
-A tick that claims a full batch of 100 is followed at once by another.
+A tick that claims a full batch of 100 is followed at once by another. Tests call
+`tick(Instant)` to fix the clock.
 
-**At most once.** Two schedulers never fire one schedule twice: one holds the row's lock, and the
-other skips it, or, once the first has committed, finds `next_at` past now. Saving a schedule
-locks its row before working out `next_at`, so a change saved while a fire is claimed never puts
-that fire back. A crash between the commit and the queue loses that fire, which is the safer
-failure for loads of data: the outcome left by the claim says so, and nothing is written twice.
+**At most once, and why it holds.**
+
+- **Between schedulers:** one holds the row's lock and the other skips it; once the first has
+  committed, `next_at` is past now.
+- **Between a scheduler and a save:** saving (`ScheduleStore.update`) locks the row first. If
+  the times, zone and pausing are unchanged, `next_at` stays as it is, due or not. If they
+  changed, `next_at` is worked out from the database's clock read after the lock, or from
+  `last_at` if that is later, so it is never a fire already claimed. A fire that was due and not
+  yet claimed is recorded as `missed: changed while it was due`.
+- **Across clocks:** no process's own clock is used for `next_at`: the claim, a save and a new
+  schedule all read the database's (`clock_timestamp()`). The preview alone uses the API's, since
+  it only shows times.
+- **A crash** between the commit and the queue loses that fire, which is the safer failure for
+  loads of data. Its outcome stays `starting`; once `last_at` is older than three poll intervals
+  (at least five minutes; `ScheduleStore.staleAfter`), every read shows it as
+  `failed: the server stopped before the run was queued`. Nothing is written twice.
+
+**Keeping going.** `fire()` catches anything a tick throws, an `Error` too, logs it at ERROR by
+its kind (the detail at DEBUG) and looks again at the next poll; it records when it last looked.
+The readiness check `scheduler` (`ReadinessChecks`) is down when a process with the scheduler
+role has not looked within three poll intervals and a minute. The log says what each fire did by
+its first word at INFO (`started`, `skipped`, `missed`, `failed`); the reason, which can be worked
+out from the run's values, only at DEBUG.
 
 ## 6. Outcomes
 
@@ -103,11 +126,13 @@ failure for loads of data: the outcome left by the claim says so, and nothing is
 
 | Outcome | When |
 | --- | --- |
+| `starting` | Claimed; its run is being queued. Seconds at most |
 | `started` | The run was queued; `last_pipeline_run` or `last_flow_run` names it |
 | `skipped: a run was still going` | One run at a time: the pipeline or flow already had a run queued or running (`AlreadyRunning`, a 409 for Run now). The fire is not queued for later |
 | `missed: the server was not running` | The fire was due longer ago than `kilnmark.schedules.catch-up` (1 hour) when it was claimed. It does not run late |
 | `failed: <message>` | The run could not be queued: the server's message, as Run now would show it (a version with problems, a missing value, a pipeline deleted since). Messages never hold secrets; a version's problems can be worked out from the run's values, so viewers see only `failed` |
-| `failed: the server stopped before the run was queued` | Left by the claim: the process stopped before it queued the run. That fire is lost |
+| `missed: changed while it was due` | Its times, zone or pausing were changed while a fire was due and not yet claimed. That fire does not run |
+| `failed: the server stopped before the run was queued` | How `starting` reads once it is older than three poll intervals (at least five minutes): the process stopped before it queued the run. That fire is lost |
 
 Within the catch-up a schedule runs once, however many fires it covers: the next fire is always
 worked out from now. A schedule whose expression or zone cannot be read any more stops (its next
@@ -116,7 +141,8 @@ fire is cleared) and its outcome says why.
 ## 7. The API
 
 `/api/v1/schedules`: `GET` (filters `pipeline=` and `flow=`), `GET {id}`, `POST`, `PUT {id}`
-(replaces everything; `enabled` false pauses, true resumes and works the next fire out from now),
+(replaces everything; `enabled` false pauses, true resumes and works the next fire out from then;
+a change that keeps the times, zone and pausing keeps the next fire),
 `DELETE {id}`, and `POST preview`. Each schedule shows `nextAt`, `lastAt`, `lastOutcome` and the
 last run. Mistakes are 400 with `{"error": "..."}` naming the field: `cron:`, `zone:`, `runAs:`,
 `parameters:`, `pipeline:` or `flow:`.
@@ -125,8 +151,9 @@ last run. Mistakes are 400 with `{"error": "..."}` naming the field: `cron:`, `z
 
 `schedule.set` when a schedule is added or changed, and `schedule.deleted`, each on
 `schedule <id>` with the pipeline or flow, cron, zone, `runAs` and `enabled`: never the parameter
-values (ADR 0029). Deleting a pipeline records `schedule.deleted` for each schedule it took with
-it, with `via: pipeline deleted`. The runs themselves are recorded as runs, requested by the
+values (ADR 0029). Deleting a pipeline records `schedule.deleted`, with `via: pipeline deleted`,
+for exactly the schedules its own transaction deleted, so one added while it was being deleted is
+never removed unrecorded. The runs themselves are recorded as runs, requested by the
 schedule.
 
 ## 9. Settings

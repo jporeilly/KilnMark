@@ -76,11 +76,6 @@ public class ScheduleService {
         return store.list(blank(pipeline), blank(flow)).stream().map(s -> view(s, values)).toList();
     }
 
-    /** The schedules of one pipeline or flow, as stored: for recording them when it is deleted. */
-    public List<ScheduleStore.Schedule> of(String pipeline, String flow) {
-        return store.list(blank(pipeline), blank(flow));
-    }
-
     public ScheduleViews.Schedule get(long id, boolean values) {
         return view(find(id), values);
     }
@@ -91,30 +86,48 @@ public class ScheduleService {
 
     // ---- changing ----
 
+    /** Only designers and admins set schedules (ADR 0046), whatever the API's roles say. */
+    static void requireSetter(AccessRole caller) {
+        if (caller == null || !caller.atLeast(AccessRole.DESIGNER)) {
+            throw fail(Response.Status.FORBIDDEN, "Setting a schedule takes the designer role");
+        }
+    }
+
     /** Adds a schedule, set by {@code by} with role {@code caller}. */
     public ScheduleStore.Schedule create(ScheduleViews.ScheduleChange body, String by, AccessRole caller) {
-        ScheduleStore.Schedule s = store.insert(setting(body, caller), by);
+        requireSetter(caller);
+        ScheduleStore.Setting setting = setting(body, caller);
+        ScheduleStore.Schedule s = store.insert(setting, next(setting), by);
         LOG.infof("Schedule %d of %s set by %s: %s (%s)", s.id(), target(s), by, s.cron(), s.zone());
         return s;
     }
 
-    /** Replaces what schedule {@code id} is set to; its next fire is worked out again from now. */
+    /**
+     * Replaces what schedule {@code id} is set to. Its next fire stays when its times, zone and
+     * pausing do; otherwise it is worked out again from the database's clock once the row is locked
+     * (ScheduleStore.update), so it is never a fire a scheduler has just claimed.
+     */
     public ScheduleStore.Schedule replace(long id, ScheduleViews.ScheduleChange body, String by, AccessRole caller) {
+        requireSetter(caller);
         find(id);
         ScheduleStore.Setting setting = setting(body, caller);
-        Cron cron = Cron.parse(setting.cron());
-        ZoneId zone = ZoneId.of(setting.zone());
-        // worked out again once the row is locked: never a fire a scheduler has just claimed
-        ScheduleStore.Schedule s = store.update(id, setting,
-            () -> setting.enabled() ? cron.next(clock.instant(), zone) : null, by)
+        ScheduleStore.Schedule s = store.update(id, setting, next(setting), by)
             .orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No schedule " + id));
         LOG.infof("Schedule %d of %s changed by %s: %s (%s), %s", s.id(), target(s), by, s.cron(), s.zone(),
             s.enabled() ? "on" : "paused");
         return s;
     }
 
+    /** The first fire after a time, for a setting already checked. */
+    private static java.util.function.Function<Instant, Instant> next(ScheduleStore.Setting setting) {
+        Cron cron = Cron.parse(setting.cron());
+        ZoneId zone = ZoneId.of(setting.zone());
+        return at -> cron.next(at, zone);
+    }
+
     /** Deletes schedule {@code id}; returns it as it was. */
-    public ScheduleStore.Schedule delete(long id, String by) {
+    public ScheduleStore.Schedule delete(long id, String by, AccessRole caller) {
+        requireSetter(caller);
         ScheduleStore.Schedule s = store.delete(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND,
             "No schedule " + id));
         LOG.infof("Schedule %d of %s deleted by %s", id, target(s), by);
@@ -184,12 +197,11 @@ public class ScheduleService {
             throw new IllegalArgumentException("description: one line, without control characters");
         }
         boolean enabled = !Boolean.FALSE.equals(body.enabled());
-        Instant next = cron.next(clock.instant(), zone);
-        if (next == null) {
+        if (cron.next(clock.instant(), zone) == null) {
             throw new IllegalArgumentException(never(cron));
         }
         return new ScheduleStore.Setting(pipeline, flow, cron.text(), zone.getId(), write(parameters),
-            runAs.id(), enabled, description, enabled ? next : null);
+            runAs.id(), enabled, description);
     }
 
     /** The zone named, an IANA name such as Europe/London; UTC when none is given. */
@@ -247,16 +259,22 @@ public class ScheduleService {
 
     /** What the audit log records of a schedule (ADR 0029): never its parameter values. */
     public static Map<String, Object> auditDetail(ScheduleStore.Schedule s) {
+        return auditDetail(s.pipeline(), s.flow(), s.cron(), s.zone(), s.runAs(), s.enabled());
+    }
+
+    /** As {@link #auditDetail(ScheduleStore.Schedule)}, from its parts. */
+    public static Map<String, Object> auditDetail(String pipeline, String flow, String cron, String zone,
+                                                  String runAs, boolean enabled) {
         Map<String, Object> d = new LinkedHashMap<>();
-        if (s.pipeline() != null) {
-            d.put("pipeline", s.pipeline());
+        if (pipeline != null) {
+            d.put("pipeline", pipeline);
         } else {
-            d.put("flow", s.flow());
+            d.put("flow", flow);
         }
-        d.put("cron", s.cron());
-        d.put("zone", s.zone());
-        d.put("runAs", s.runAs());
-        d.put("enabled", s.enabled());
+        d.put("cron", cron);
+        d.put("zone", zone);
+        d.put("runAs", runAs);
+        d.put("enabled", enabled);
         return d;
     }
 

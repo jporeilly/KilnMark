@@ -39,6 +39,37 @@ class ScheduleRulesTest {
     }
 
     @Test
+    void onlyDesignersAndAdminsSetSchedules() {
+        ScheduleService.requireSetter(AccessRole.DESIGNER);
+        ScheduleService.requireSetter(AccessRole.ADMIN);
+        for (AccessRole r : new AccessRole[] {AccessRole.VIEWER, AccessRole.STEWARD, null}) {
+            WebApplicationException refused = assertThrows(WebApplicationException.class,
+                () -> ScheduleService.requireSetter(r));
+            assertEquals(403, refused.getResponse().getStatus());
+        }
+    }
+
+    @Test
+    void theNextFireIsNeverBeforeTheLastOne() {
+        // claimed by a process whose clock was ahead: the next fire comes after that claim, not now
+        Instant claimedAt = NOW.plus(Duration.ofMinutes(12));
+        ScheduleStore.Schedule s = new ScheduleStore.Schedule(7, "p", null, "*/5 * * * *", "UTC", "{}", "steward",
+            true, null, "jo", NOW, "jo", NOW, NOW, claimedAt, null, null, null);
+        assertEquals(Instant.parse("2026-11-06T10:15:00Z"), Scheduler.plan(s, NOW, HOUR).nextAt());
+        assertEquals(claimedAt, ScheduleStore.later(NOW, claimedAt));
+        assertEquals(NOW, ScheduleStore.later(NOW, null));
+    }
+
+    @Test
+    void aStartingFireCountsAsLostOnlyWhenOld() {
+        assertEquals(Duration.ofMinutes(5), ScheduleStore.staleAfter(Duration.ofSeconds(30)));
+        assertEquals(Duration.ofMinutes(6), ScheduleStore.staleAfter(Duration.ofMinutes(2)));
+        assertEquals(Scheduler.STARTED, Scheduler.kind(Scheduler.STARTED));
+        assertEquals("failed", Scheduler.kind("failed: Version 3 of p cannot run: region must be text"));
+        assertEquals("missed", Scheduler.kind(ScheduleStore.CHANGED_WHILE_DUE));
+    }
+
+    @Test
     void zonesAreIanaNames() {
         assertEquals("UTC", ScheduleService.zone(null).getId());
         assertEquals("Europe/London", ScheduleService.zone(" Europe/London ").getId());

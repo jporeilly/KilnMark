@@ -44,10 +44,6 @@ public class PipelineResource {
     @jakarta.inject.Inject
     io.kilnmark.server.pipelines.PipelinePreviews previews;
 
-    /** A deleted pipeline's schedules, recorded in the audit log as deleted with it. */
-    @jakarta.inject.Inject
-    io.kilnmark.server.schedules.ScheduleService schedules;
-
     /** The audit log, for a deleted pipeline's schedules. */
     @jakarta.inject.Inject
     io.kilnmark.server.audit.AuditLog audit;
@@ -256,11 +252,10 @@ public class PipelineResource {
         @APIResponse(responseCode = "404", description = "No such pipeline"),
         @APIResponse(responseCode = "409", description = "A run is queued or running")})
     public Response delete(@PathParam("name") String name) {
-        List<io.kilnmark.server.schedules.ScheduleStore.Schedule> scheduled = schedules.of(name, null);
-        pipelines.delete(name, who());
-        // its schedules went with it (a foreign key): each is recorded as deleted (ADR 0029, ADR 0046)
-        for (io.kilnmark.server.schedules.ScheduleStore.Schedule s : scheduled) {
-            Map<String, Object> detail = io.kilnmark.server.schedules.ScheduleService.auditDetail(s);
+        // its schedules are deleted with it, in the same transaction: each is recorded (ADR 0029, ADR 0046)
+        for (io.kilnmark.server.pipelines.PipelineStore.GoneSchedule s : pipelines.deleteWithSchedules(name, who())) {
+            Map<String, Object> detail = io.kilnmark.server.schedules.ScheduleService.auditDetail(name, null, s.cron(),
+                s.zone(), s.runAs(), s.enabled());
             detail.put("via", "pipeline deleted");
             audit.record(io.kilnmark.server.audit.AuditLog.actor(identity),
                 io.kilnmark.server.audit.AuditLog.SCHEDULE_DELETED, "schedule " + s.id(), detail);

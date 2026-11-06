@@ -55,6 +55,8 @@ public class Scheduler {
     private final FlowService flows;
     private final KilnmarkConfig config;
     private volatile Thread thread;
+    /** When the loop last looked for due schedules, whether or not that worked; null before it starts. */
+    private volatile Instant lastTick;
 
     public Scheduler(ScheduleStore store, ScheduleService schedules, PipelineService pipelines, FlowService flows,
                      KilnmarkConfig config) {
@@ -74,19 +76,36 @@ public class Scheduler {
             LOG.warnf("kilnmark.schedules.catch-up (%s) is shorter than kilnmark.schedules.poll-interval (%s): "
                 + "most fires will be found too late and recorded as missed", config.schedules().catchUp(), every);
         }
+        lastTick = Instant.now();
         thread = Thread.ofVirtual().name("kilnmark-scheduler").start(() -> {
             try {
                 while (!Thread.currentThread().isInterrupted()) {
                     Thread.sleep(every);
                     int claimed;
                     do {
-                        claimed = fire(Instant.now()); // a full batch: more may be due
+                        claimed = fire(); // a full batch: more may be due
                     } while (claimed == BATCH);
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
         });
+    }
+
+    /**
+     * Whether schedules are being looked at: true on a process without the scheduler role;
+     * otherwise its loop is running and has looked within three poll intervals and a minute. The
+     * readiness check reports it.
+     */
+    public boolean running() {
+        if (!config.roles().contains(Role.SCHEDULER)) {
+            return true;
+        }
+        Thread t = thread;
+        Instant last = lastTick;
+        Duration every = config.schedules().pollInterval();
+        return t != null && t.isAlive() && last != null
+            && last.isAfter(Instant.now().minus(every.multipliedBy(3)).minus(Duration.ofMinutes(1)));
     }
 
     void onStop(@Observes ShutdownEvent event) {
@@ -96,26 +115,40 @@ public class Scheduler {
         }
     }
 
-    /** As {@link #tick}, never throwing: a database that cannot be reached is logged and tried next time. */
-    private int fire(Instant now) {
+    /**
+     * As {@link #tick()}, never throwing, whatever goes wrong: anything, an {@link Error} too, is
+     * logged at ERROR and the loop looks again at the next poll, so one bad tick never stops the
+     * scheduler for good.
+     */
+    private int fire() {
         try {
-            return tick(now);
-        } catch (RuntimeException e) {
-            LOG.warnf("Could not look for schedules that are due: %s", e.getMessage());
+            return tick();
+        } catch (Throwable e) {
+            LOG.errorf("Could not look for schedules that are due (%s); looking again at the next poll",
+                e.getClass().getSimpleName());
+            LOG.debug("The scheduler's tick failed", e);
             return 0;
+        } finally {
+            lastTick = Instant.now();
         }
+    }
+
+    /** Fires every schedule due now by the database's clock; see {@link #tick(Instant)}. */
+    int tick() {
+        return tick(null);
     }
 
     /**
      * Fires every schedule due at {@code now} (up to {@value #BATCH}): claims them, then queues each
-     * run and records its outcome. Returns how many were claimed, missed ones included.
+     * run and records its outcome. Returns how many were claimed, missed ones included. Now is the
+     * database's clock when {@code now} is null, as it always is outside tests.
      */
     int tick(Instant now) {
         Duration catchUp = config.schedules().catchUp();
         int[] claimed = {0};
-        List<ScheduleStore.Due> due = store.claimDue(now, BATCH, s -> {
+        List<ScheduleStore.Due> due = store.claimDue(now, BATCH, (s, at) -> {
             claimed[0]++;
-            return plan(s, now, catchUp);
+            return plan(s, at, catchUp);
         });
         for (ScheduleStore.Due d : due) {
             run(d.schedule());
@@ -123,11 +156,15 @@ public class Scheduler {
         return claimed[0];
     }
 
-    /** When a due schedule fires next, from now, and whether this fire was missed. */
+    /**
+     * When a due schedule fires next and whether this fire was missed. The next fire is worked out
+     * from now, or from its last fire if that is later, so it can never come before one already
+     * claimed.
+     */
     static ScheduleStore.Claim plan(ScheduleStore.Schedule s, Instant now, Duration catchUp) {
         Instant next;
         try {
-            next = Cron.parse(s.cron()).next(now, ZoneId.of(s.zone()));
+            next = Cron.parse(s.cron()).next(ScheduleStore.later(now, s.lastAt()), ZoneId.of(s.zone()));
         } catch (RuntimeException e) {
             // saved before a rule it breaks, or a zone this Java no longer knows: it stops, saying why
             return new ScheduleStore.Claim(null, FAILED + e.getMessage());
@@ -158,14 +195,25 @@ public class Scheduler {
         } catch (IllegalArgumentException e) {
             outcome = FAILED + e.getMessage();
         } catch (RuntimeException e) {
-            LOG.warnf(e, "Schedule %d of %s could not queue its run", s.id(), ScheduleService.target(s));
+            // its message may quote the run's values: only its kind here, the rest at DEBUG
+            LOG.warnf("Schedule %d of %s could not queue its run (%s)", s.id(), ScheduleService.target(s),
+                e.getClass().getSimpleName());
+            LOG.debug("Why the scheduled run could not be queued", e);
             outcome = FAILED + "the run could not be queued; the server's log says why";
         }
-        LOG.infof("Schedule %d of %s: %s", s.id(), ScheduleService.target(s), outcome);
+        // the outcome's reason can be worked out from the run's values: INFO says only what happened
+        LOG.infof("Schedule %d of %s: %s", s.id(), ScheduleService.target(s), kind(outcome));
+        LOG.debugf("Schedule %d: %s", s.id(), outcome);
         try {
-            store.recordOutcome(s.id(), outcome, pipelineRun, flowRun);
+            store.recordOutcome(s, outcome, pipelineRun, flowRun);
         } catch (RuntimeException e) {
-            LOG.warnf("Could not record what schedule %d did (%s): %s", s.id(), outcome, e.getMessage());
+            LOG.warnf("Could not record what schedule %d did (%s)", s.id(), kind(outcome));
         }
+    }
+
+    /** An outcome's first word: started, skipped, missed or failed. */
+    static String kind(String outcome) {
+        int colon = outcome.indexOf(':');
+        return colon < 0 ? outcome : outcome.substring(0, colon);
     }
 }

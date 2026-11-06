@@ -536,7 +536,7 @@ class SourceManagementTest {
     void readinessIsPublicAndSaysNoMoreThanUpOrDown() {
         String body = given().get("/q/health/ready").then().statusCode(200)
             .body("status", equalTo("UP"))
-            .body("checks.name", hasItems("database", "migrations", "worker"))
+            .body("checks.name", hasItems("database", "migrations", "worker", "scheduler"))
             .extract().asString();
         assertFalse(body.contains("\"data\""), body);
         assertFalse(body.contains("jdbc"), body);

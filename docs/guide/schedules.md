@@ -38,6 +38,9 @@ name, or delete it. List them with `GET /api/v1/schedules` and look at `updatedB
 A scheduled flow's pipeline runs carry the same name and role. Like any run, it can only write to
 sources that allow writing.
 
+Today a run as designer can do no more than a run as steward: Kilnmark checks only that a run's
+role is steward or above. The role is recorded with each run, for when that changes.
+
 ## Adding a schedule
 
 Send what to run, when, and in which time zone:
@@ -132,11 +135,13 @@ Each schedule shows `lastAt`, when it was last due, and `lastOutcome`, what happ
 
 | Outcome | What it means | What to do |
 | --- | --- | --- |
+| `starting` | Kilnmark is starting the run, which takes a moment | Look again shortly |
 | `started` | The run was queued; `lastPipelineRun` or `lastFlowRun` is its number | Open the run to follow it |
 | `skipped: a run was still going` | The last run had not finished, and only one runs at a time | If it happens often, the runs take longer than the gap between them: space the times out |
 | `missed: the server was not running` | Kilnmark was stopped when it was due, for longer than an hour. It does not run late | Run it now by hand if the work is still needed |
 | `failed: …` | The run could not start, for the reason given: the latest version has problems, a value no longer suits it, a source no longer allows writing. Viewers see only `failed` | Fix what it says; the next time runs as usual |
-| `failed: the server stopped before the run was queued` | Kilnmark stopped at the moment it was starting the run, so that time was lost | Run it now by hand if the work is still needed |
+| `missed: changed while it was due` | Someone changed its times, zone or pausing just as it was due, so that time did not run | Run it now by hand if the work is still needed |
+| `failed: the server stopped before the run was queued` | Kilnmark stopped at the moment it was starting the run, so that time was lost. It shows once it has said `starting` for a few minutes | Run it now by hand if the work is still needed |
 
 A missed or skipped time is never made up later, and a schedule that was due several times while
 Kilnmark was stopped for less than an hour runs once, not once for each. How late a time may still
@@ -145,13 +150,18 @@ run is `kilnmark.schedules.catch-up` (1 hour), set by whoever runs Kilnmark.
 ## Changing, pausing and deleting
 
 `PUT /api/v1/schedules/<id>` replaces everything a schedule is set to, so send all of it. If it
-now runs a different pipeline or flow, its last outcome is cleared. To pause
+now runs a different pipeline or flow, its last outcome is cleared.
+
+A change that keeps the times, the zone and whether it is paused keeps its next time, so editing
+the description or the values never moves or drops a run. A change to the times, the zone or
+pausing works the next time out again; if a time was due at that moment and had not started, it
+is recorded as `missed: changed while it was due` rather than lost without a word. To pause
 one, send it with `"enabled": false`; it has no next time while paused. To resume, send `true`: the
 next time is worked out from then, and the times it was paused are not made up.
 
 `DELETE /api/v1/schedules/<id>` deletes a schedule. Its runs stay, in the pipeline's or flow's
 history. Deleting a pipeline deletes its schedules too, and each is recorded in the audit log as
-deleted with it.
+deleted with it. Flows cannot be deleted yet; when they can, their schedules will go with them.
 
 Every change to a schedule is in the [audit log](audit-log.md), as **Schedule set** or **Schedule
 deleted**, with what it runs, when, in which zone, as which role, and whether it is on. The values

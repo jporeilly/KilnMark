@@ -23,15 +23,20 @@ Three things make a schedule different from what a pipeline or flow says:
 
 1. **One scheduler, for pipelines and flows.** A schedule is a row of its own (`schedule`, V36),
    not part of the YAML. It names one pipeline or one flow; each may have several schedules.
-   Deleting the pipeline or flow deletes its schedules (a foreign key that cascades).
+   Deleting a pipeline deletes its schedules, in the same transaction, and records each one.
+   Flows cannot be deleted yet; when deleting a flow arrives (the next change), the same foreign
+   key, which cascades, takes its schedules.
 2. **Designers and admins set schedules**: add, change, pause, resume and delete them (owner,
-   6 November 2026). Stewards read them with the values their runs start with; viewers read them
-   without those values, as they never see the values a run starts with (flows.md section 5).
+   6 November 2026), checked by the API's roles and again inside `ScheduleService`. Stewards read
+   them with the values their runs start with; viewers read them without those values, as they
+   never see the values a run starts with (flows.md section 5).
 3. **A scheduled run acts as the schedule.** It is requested by `schedule <id> (set by <name>)`,
    where the name is whoever last set the schedule, with the role chosen for it: steward (the
    default) or designer. Never admin, and never above the role of the person saving it. The run
    is of the **latest version**, with the schedule's parameter values, through the same
-   `queueRun` as Run now, so every check Run now makes applies. The values are also checked when
+   `queueRun` as Run now, so every check Run now makes applies. Today a designer-role and a
+   steward-role scheduled run behave the same: a run's role is only checked as "steward or
+   above". The role is recorded with each run for when that changes. The values are also checked when
    the schedule is saved, so a mistake is refused then, not at the first fire.
 4. **Five-field Unix cron**, written in Kilnmark (no new dependency): minute, hour, day of the
    month, month, day of the week; `*`, lists, ranges, steps, month and day names, 0 and 7 for
@@ -43,26 +48,41 @@ Three things make a schedule different from what a pipeline or flow says:
    in the next ten years (`0 0 30 2 *`) is refused when saved.
 5. **At most once.** On processes with the scheduler role, every
    `kilnmark.schedules.poll-interval` (30 seconds), one short transaction selects the enabled
-   schedules that are due `FOR UPDATE SKIP LOCKED`, moves each one's next fire past now and
-   commits. Only then is each run queued, and its outcome recorded. Two schedulers never fire one
-   schedule twice, and saving a schedule locks its row before working out its next fire, so a
-   change never puts back a fire just claimed. A crash between the commit and the queue loses that
-   fire, and the outcome the claim left says so: for loads of data, a fire lost and seen is safer
-   than one run twice.
+   schedules that are due `FOR UPDATE SKIP LOCKED`, moves each one's next fire past now, marks it
+   `starting` and commits. Only then is each run queued, and its outcome recorded. To hold:
+   - **One clock.** Every next fire is worked out from the database's clock, never a process's own,
+     and never from earlier than the schedule's last fire. Processes whose clocks differ cannot
+     put back a fire already claimed.
+   - **Saving locks the row first.** A change that keeps the times, zone and pausing keeps the
+     next fire as it is, due or not, so editing a description never moves or drops a fire. A change
+     to them works the next fire out again; if a fire was due and not yet claimed, it is recorded
+     as `missed: changed while it was due`, never dropped silently.
+   - **An outcome is written only onto the fire it belongs to**: not when the schedule was changed
+     meanwhile to run something else, or changed while the fire was starting.
+
+   Two schedulers never fire one schedule twice. A crash between the commit and the queue loses
+   that fire: the outcome stays `starting`, and once it has been so for three poll intervals (at
+   least five minutes) it reads `failed: the server stopped before the run was queued`. For loads
+   of data, a fire lost and seen is safer than one run twice.
 6. **Missed fires are not run late.** A fire due longer ago than `kilnmark.schedules.catch-up`
    (1 hour) when it is found, because the server was not running, is recorded as missed, and the
    next fire is worked out from now. A fire within the catch-up runs once, however many it
    covers.
 7. **A busy pipeline or flow skips the fire.** If a run is already queued or running (one run at a
    time), the fire is skipped and the outcome says so; it is not queued for later. Outcomes are
-   words a person reads: `started`, `skipped: a run was still going`,
-   `missed: the server was not running` and `failed: <the server's message>`, which never holds
-   secrets. Viewers see a failed fire only as `failed`, since a version's problems can be worked
-   out from the run's values.
-8. **Audited** (ADR 0029): `schedule.set` when one is added or changed, `schedule.deleted` when
+   words a person reads: `starting` (for a moment), `started`, `skipped: a run was still going`,
+   `missed: the server was not running`, `missed: changed while it was due` and
+   `failed: <the server's message>`, which never holds secrets. Viewers see a failed fire only as
+   `failed`, since a version's problems can be worked out from the run's values, and the log
+   records only an outcome's first word at INFO, the reason at DEBUG.
+8. **The scheduler keeps going.** Anything a tick throws, an `Error` too, is logged at ERROR and
+   the next poll looks again. The readiness check `scheduler` is down when a process with the
+   scheduler role has not looked for due schedules within three poll intervals and a minute.
+9. **Audited** (ADR 0029): `schedule.set` when one is added or changed, `schedule.deleted` when
    one is deleted, with what it runs, its cron, zone, role and whether it is on, and never its
-   parameter values. A pipeline deleted with schedules records `schedule.deleted` for each. The
-   runs themselves are recorded as runs requested by the schedule.
+   parameter values. A pipeline deleted with schedules records `schedule.deleted` for exactly the
+   schedules its own transaction deleted. The runs themselves are recorded as runs requested by
+   the schedule.
 
 ## Choices made without the owner, to change if wished
 

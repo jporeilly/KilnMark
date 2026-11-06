@@ -147,13 +147,29 @@ class ScheduleApiTest {
             .getString("error");
     }
 
-    /** Makes schedule {@code id} due {@code ago}. */
+    /** Makes schedule {@code id} due {@code ago}, by the database's clock. */
     private void dueAgo(long id, Duration ago) throws SQLException {
+        set(id, "next_at", ago.negated());
+    }
+
+    /** Sets a time column of schedule {@code id} to the database's clock plus {@code from}. */
+    private void set(long id, String column, Duration from) throws SQLException {
         try (Connection c = db.getConnection();
-             PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.schedule SET next_at = ? WHERE id = ?")) {
-            ps.setTimestamp(1, java.sql.Timestamp.from(Instant.now().minus(ago)));
+             PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.schedule SET " + column
+                 + " = clock_timestamp() + make_interval(secs => ?) WHERE id = ?")) {
+            ps.setLong(1, from.toSeconds());
             ps.setLong(2, id);
             assertEquals(1, ps.executeUpdate());
+        }
+    }
+
+    /** The database's clock. */
+    private Instant dbNow() throws SQLException {
+        try (Connection c = db.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT clock_timestamp()");
+             ResultSet rs = ps.executeQuery()) {
+            rs.next();
+            return rs.getTimestamp(1).toInstant();
         }
     }
 
@@ -296,8 +312,8 @@ class ScheduleApiTest {
         long id = create(designer, body("pipeline", "sc-copy", "cron", "*/5 * * * *",
             "parameters", Map.of("max_id", 10)));
         dueAgo(id, Duration.ofMinutes(1));
-        Instant before = Instant.now();
-        assertEquals(1, scheduler.tick(Instant.now()));
+        Instant before = dbNow();
+        assertEquals(1, scheduler.tick());
         JsonPath s = schedule(id);
         assertEquals(Scheduler.STARTED, s.getString("lastOutcome"));
         long run = s.getLong("lastPipelineRun");
@@ -310,7 +326,7 @@ class ScheduleApiTest {
         as(viewer).get("/api/v1/pipeline-runs/" + run).then().statusCode(200).body("run.status", equalTo("succeeded"))
             .body("run.requestedBy", equalTo(by));
         // nothing more is due
-        assertEquals(0, scheduler.tick(Instant.now()));
+        assertEquals(0, scheduler.tick());
         // the same pipeline keeps its last run; another target drops it
         as(designer).body(body("pipeline", "sc-copy", "cron", "0 3 * * *", "parameters", Map.of("max_id", 10)))
             .put("/api/v1/schedules/" + id).then().statusCode(200).body("lastOutcome", equalTo(Scheduler.STARTED))
@@ -327,14 +343,18 @@ class ScheduleApiTest {
         long id = create(designer, body("pipeline", "sc-twice", "cron", "@hourly"));
         dueAgo(id, Duration.ofSeconds(5));
         // the server stops between the claim and the queue: the claim alone
-        Instant now = Instant.now();
-        List<ScheduleStore.Due> due = store.claimDue(now, Scheduler.BATCH,
-            s -> Scheduler.plan(s, now, Duration.ofHours(1)));
+        Instant now = dbNow();
+        List<ScheduleStore.Due> due = store.claimDue(null, Scheduler.BATCH,
+            (s, at) -> Scheduler.plan(s, at, Duration.ofHours(1)));
         assertEquals(1, due.stream().filter(d -> d.schedule().id() == id).count());
         JsonPath s = schedule(id);
-        assertEquals(ScheduleStore.UNQUEUED, s.getString("lastOutcome"));
+        // while it is fresh it is only starting, as every healthy fire is for a moment
+        assertEquals(ScheduleStore.STARTING, s.getString("lastOutcome"));
         assertNull(s.get("lastPipelineRun"));
         assertTrue(Instant.parse(s.getString("nextAt")).isAfter(now));
+        // once it has been starting for longer than three polls (72 hours in tests), it was lost
+        set(id, "last_at", Duration.ofDays(-4));
+        assertEquals(ScheduleStore.UNQUEUED, schedule(id).getString("lastOutcome"));
         // viewers see that it failed, not why
         as(viewer).get("/api/v1/schedules/" + id).then().statusCode(200).body("lastOutcome", equalTo("failed"));
         assertEquals(0, runsBy("schedule " + id + " (set by " + s.getString("updatedBy") + ")"));
@@ -343,11 +363,69 @@ class ScheduleApiTest {
 
     @Test
     @Order(7)
+    void aChangeNeverDropsOrRepeatsAFire() throws Exception {
+        Map<String, Object> b = body("pipeline", "sc-twice", "cron", "*/10 * * * *", "description", "first");
+        long id = create(designer, b);
+
+        // due and not yet claimed: changing only the description keeps it due, so the next tick fires it
+        dueAgo(id, Duration.ofSeconds(5));
+        Instant due = Instant.parse(schedule(id).getString("nextAt"));
+        Map<String, Object> described = new HashMap<>(b);
+        described.put("description", "second");
+        as(designer).body(described).put("/api/v1/schedules/" + id).then().statusCode(200)
+            .body("nextAt", equalTo(schedule(id).getString("nextAt")));
+        assertEquals(due, Instant.parse(schedule(id).getString("nextAt")));
+
+        // due and not yet claimed: changing its times records the fire as missed, never silently
+        Map<String, Object> retimed = new HashMap<>(described);
+        retimed.put("cron", "*/15 * * * *");
+        as(designer).body(retimed).put("/api/v1/schedules/" + id).then().statusCode(200)
+            .body("lastOutcome", equalTo(ScheduleStore.CHANGED_WHILE_DUE));
+        assertTrue(Instant.parse(schedule(id).getString("nextAt")).isAfter(dbNow()));
+
+        // a fire claimed later than this clock says (another process's): the next is never before it
+        set(id, "last_at", Duration.ofHours(2));
+        Instant claimed = Instant.parse(schedule(id).getString("lastAt"));
+        Map<String, Object> again = new HashMap<>(retimed);
+        again.put("cron", "*/20 * * * *");
+        as(designer).body(again).put("/api/v1/schedules/" + id).then().statusCode(200);
+        assertTrue(Instant.parse(schedule(id).getString("nextAt")).isAfter(claimed), schedule(id).prettify());
+        as(designer).delete("/api/v1/schedules/" + id).then().statusCode(204);
+    }
+
+    @Test
+    @Order(8)
+    void anOutcomeIsNotWrittenOntoAScheduleThatNowRunsSomethingElse() throws Exception {
+        long id = create(designer, body("pipeline", "sc-twice", "cron", "@hourly"));
+        dueAgo(id, Duration.ofSeconds(5));
+        List<ScheduleStore.Due> due = store.claimDue(null, Scheduler.BATCH,
+            (s, at) -> Scheduler.plan(s, at, Duration.ofHours(1)));
+        ScheduleStore.Schedule claimed = due.stream().filter(d -> d.schedule().id() == id).findFirst().orElseThrow()
+            .schedule();
+        // while the run is being queued, it is changed to run a flow
+        as(designer).body(body("flow", "sc-flow", "cron", "@hourly", "parameters", Map.of("label", "x")))
+            .put("/api/v1/schedules/" + id).then().statusCode(200).body("lastOutcome", nullValue());
+        store.recordOutcome(claimed, Scheduler.STARTED, null, null);
+        assertNull(schedule(id).get("lastOutcome"));
+        // with the same target, the outcome is written
+        long same = create(designer, body("pipeline", "sc-twice", "cron", "@hourly"));
+        dueAgo(same, Duration.ofSeconds(5));
+        ScheduleStore.Schedule mine = store.claimDue(null, Scheduler.BATCH,
+                (s, at) -> Scheduler.plan(s, at, Duration.ofHours(1))).stream()
+            .filter(d -> d.schedule().id() == same).findFirst().orElseThrow().schedule();
+        store.recordOutcome(mine, Scheduler.SKIPPED, null, null);
+        assertEquals(Scheduler.SKIPPED, schedule(same).getString("lastOutcome"));
+        as(designer).delete("/api/v1/schedules/" + id).then().statusCode(204);
+        as(designer).delete("/api/v1/schedules/" + same).then().statusCode(204);
+    }
+
+    @Test
+    @Order(9)
     void aFlowRunsAsDesignerAndABusyFireIsSkipped() throws Exception {
         long id = create(Tokens.ADMIN, body("flow", "sc-flow", "cron", "@daily", "runAs", "designer",
             "parameters", Map.of("label", SECRET_LABEL)));
         dueAgo(id, Duration.ofSeconds(30));
-        assertEquals(1, scheduler.tick(Instant.now()));
+        assertEquals(1, scheduler.tick());
         JsonPath s = schedule(id);
         assertEquals(Scheduler.STARTED, s.getString("lastOutcome"));
         long run = s.getLong("lastFlowRun");
@@ -358,7 +436,7 @@ class ScheduleApiTest {
 
         // the flow waits a minute: firing again finds it still going
         dueAgo(id, Duration.ofSeconds(10));
-        assertEquals(1, scheduler.tick(Instant.now()));
+        assertEquals(1, scheduler.tick());
         s = schedule(id);
         assertEquals(Scheduler.SKIPPED, s.getString("lastOutcome"));
         assertNull(s.get("lastFlowRun"));
@@ -370,12 +448,12 @@ class ScheduleApiTest {
     }
 
     @Test
-    @Order(8)
+    @Order(10)
     void aFireMissedWhileTheServerWasDownDoesNotRun() throws Exception {
         long id = create(designer, body("flow", "sc-flow", "cron", "@hourly", "parameters", Map.of("label", "x")));
         dueAgo(id, Duration.ofDays(3)); // the test profile's catch-up is 48 hours
-        Instant now = Instant.now();
-        assertEquals(1, scheduler.tick(now));
+        Instant now = dbNow();
+        assertEquals(1, scheduler.tick());
         JsonPath s = schedule(id);
         assertEquals(Scheduler.MISSED, s.getString("lastOutcome"));
         assertNull(s.get("lastFlowRun"));
@@ -387,7 +465,7 @@ class ScheduleApiTest {
     }
 
     @Test
-    @Order(9)
+    @Order(11)
     void twoSchedulersAtOnceFireOnce() throws Exception {
         long id = create(designer, body("pipeline", "sc-twice", "cron", "* * * * *"));
         dueAgo(id, Duration.ofSeconds(20));
@@ -396,11 +474,10 @@ class ScheduleApiTest {
         ExecutorService pool = Executors.newFixedThreadPool(ticks);
         try {
             List<Future<Integer>> claimed = new ArrayList<>();
-            Instant now = Instant.now();
             for (int i = 0; i < ticks; i++) {
                 claimed.add(pool.submit(() -> {
                     go.await();
-                    return scheduler.tick(now);
+                    return scheduler.tick();
                 }));
             }
             go.countDown();
@@ -420,7 +497,7 @@ class ScheduleApiTest {
     }
 
     @Test
-    @Order(10)
+    @Order(12)
     void deletingAPipelineDeletesItsSchedules() {
         long id = create(designer, body("pipeline", "sc-gone", "cron", "@daily"));
         as(designer).delete("/api/v1/pipelines/sc-gone").then().statusCode(204);
@@ -435,7 +512,7 @@ class ScheduleApiTest {
     }
 
     @Test
-    @Order(11)
+    @Order(13)
     void theAuditLogRecordsSchedulesWithoutTheirValues() {
         long id = create(designer, body("flow", "sc-flow", "cron", "0 6 * * *", "zone", "Europe/London",
             "parameters", Map.of("label", SECRET_LABEL)));

@@ -104,8 +104,9 @@ public class ScheduleResource {
     @Consumes(MediaType.APPLICATION_JSON)
     @RolesAllowed(AccessRole.DESIGNER_ROLE)
     @Operation(summary = "Change a schedule", description = "Replaces everything a schedule is set to, as POST takes "
-        + "it: send enabled false to pause it and true to resume it. Its next fire is worked out again from now; "
-        + "its last outcome stays. From now on its runs are requested by \"schedule <id> (set by <you>)\". "
+        + "it: send enabled false to pause it and true to resume it. A change that keeps the times, zone and "
+        + "pausing keeps the next fire; otherwise it is worked out again, and a fire that was due and not yet "
+        + "started is recorded as missed. Its last outcome stays, unless it now runs something else. From now on its runs are requested by \"schedule <id> (set by <you>)\". "
         + "Recorded in the audit log, without the values. Role: designer.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "Changed; the body is the schedule"),
@@ -124,7 +125,7 @@ public class ScheduleResource {
     @Path("{id}")
     @RolesAllowed(AccessRole.DESIGNER_ROLE)
     @Operation(summary = "Delete a schedule", description = "Deletes a schedule. Runs it started stay, as runs "
-        + "requested by it. Deleting a pipeline or flow deletes its schedules too. Recorded in the audit log. "
+        + "requested by it. Deleting a pipeline deletes its schedules too. Recorded in the audit log. "
         + "Role: designer.")
     @APIResponses({
         @APIResponse(responseCode = "204", description = "Deleted"),
@@ -132,7 +133,7 @@ public class ScheduleResource {
         @APIResponse(responseCode = "403", description = "Not a designer"),
         @APIResponse(responseCode = "404", description = "No such schedule")})
     public Response delete(@PathParam("id") long id) {
-        ScheduleStore.Schedule s = schedules.delete(id, who());
+        ScheduleStore.Schedule s = schedules.delete(id, who(), role());
         audit.record(AuditLog.actor(identity), AuditLog.SCHEDULE_DELETED, "schedule " + s.id(),
             ScheduleService.auditDetail(s));
         return Response.noContent().build();
