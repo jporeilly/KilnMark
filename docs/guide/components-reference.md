@@ -60,6 +60,7 @@ in [Building and running a pipeline](pipelines.md).
 | [`compute`](reference-pipeline-nodes.md#compute) | transform | Compute columns, in Transform | Adds or replaces columns, each worked out from an expression. |
 | [`dedupe`](reference-pipeline-nodes.md#dedupe) | transform | Remove duplicates, in Filter and route | Keeps the first row for each key. |
 | [`filter`](reference-pipeline-nodes.md#filter) | transform | Filter rows, in Filter and route | Keeps the rows where a condition is true. |
+| [`join`](reference-pipeline-nodes.md#join) | transform | Join, in Combine | Joins rows of the left and right inputs whose key columns are equal: inner, left, right or full. |
 | [`limit`](reference-pipeline-nodes.md#limit) | transform | Limit rows, in Filter and route | Passes on only the first rows, for trying a pipeline out on a little data. |
 | [`lookup`](reference-pipeline-nodes.md#lookup) | transform | Look up, in Combine | Adds columns from the lookup input to each main row with the same key, like a join. |
 | [`route`](reference-pipeline-nodes.md#route) | transform | Route rows, in Filter and route | Sends each row to the first route whose condition it meets, in order. |

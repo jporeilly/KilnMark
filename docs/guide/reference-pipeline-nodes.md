@@ -849,3 +849,67 @@ nodes:
 ```
 
 Related: [sort](pipeline-nodes.md#sort).
+
+## join
+
+Joins the rows of a `left` and a `right` input whose key columns are equal, as SQL joins them.
+
+[generated: node join]: #
+
+**Join**: a transform node, in the palette's Combine folder. Joins rows of the left and right inputs whose key columns are equal: inner, left, right or full. Either input may be larger than memory. To add a few columns from a small table, a lookup is quicker.
+
+- Reads from: `left`, `right`
+- Writes to: `out`
+
+| Setting | Type | Required | Default | Parameters | What it does |
+| --- | --- | --- | --- | --- | --- |
+| `on` | column to column | yes |  | no | Key columns: each left column and the right column it must equal. |
+| `how` | choice | no | `inner` | no | inner keeps the pairs of rows that match; left also keeps left rows with no match, right keeps right rows with none, and full keeps both, with the other side's columns empty. One of `inner`, `left`, `right`, `full`. |
+| `right_prefix` | text | no | `right_` | no | Put in front of the name of a right column that the left already has (ignoring case), so both are kept. |
+| `memory_limit_mb` | number | no | `256` | whole value | The most memory the two inputs may take while they are sorted. Past it, they are sorted on disk. |
+
+[end: node join]: #
+
+**What to know.** `inner` keeps the pairs of rows that match; `left` also keeps left rows with no
+match, `right` right rows with none, and `full` both, with the other side's columns empty. Every
+pair comes out: a key on three left rows and two right rows gives six. Keys match by value, as a
+lookup's do (`1`, `1.0` and `1.00` match; a date matches a timestamp at midnight); text never
+matches a number; an empty (null) key matches nothing, not even another empty key. Every column of
+both inputs comes out with its type, the left's first; a right column whose name a left column
+already has, ignoring case, is renamed with `right_prefix` (`right_customer_id`). Rows come out in
+order of their keys, rows with an empty key last. Both inputs are sorted by their keys within
+`memory_limit_mb` between them, and on disk past it, so either may be larger than memory; the run's
+log says when that happened. To add a few columns from a small table, a `lookup` is quicker.
+
+```yaml
+kilnmark: pipeline/v1
+name: orders-and-customers
+description: Every order with its customer, and the orders with none.
+
+nodes:
+  - id: orders
+    type: read
+    source: sales-db
+    asset: sales.orders
+
+  - id: customers
+    type: read
+    source: sales-db
+    asset: crm.customers
+    columns: [customer_id, first_name, last_name]
+
+  - id: joined
+    type: join
+    inputs: { left: orders, right: customers }
+    on: { customer_id: customer_id }
+    how: left
+
+  - id: out
+    type: write
+    input: joined
+    source: warehouse
+    table: sales.orders_with_customers
+    mode: replace
+```
+
+Related: [join](pipeline-nodes.md#join).
