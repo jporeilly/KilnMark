@@ -134,7 +134,11 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
     static final Set<String> TOP_LEVEL_KEYS = Set.of("kilnmark", "name", "description", "parameters", "queue_timeout",
         "max_parallel", "nodes", "connections", "layout");
     static final Set<String> NODE_KEYS = Set.of("id", "type");
-    static final Map<String, Set<String>> TYPE_KEYS = Map.of(
+    /**
+     * The settings each node type takes, besides {@code id} and {@code type}: what reading a flow
+     * accepts, and what the components reference (docs/guide/reference-flow-nodes.md) documents.
+     */
+    public static final Map<String, Set<String>> TYPE_KEYS = Map.of(
         RUN_PIPELINE, Set.of("pipeline", "version", "with", "timeout", "priority", "retries", "retry_delay"),
         FOR_EACH, Set.of("pipeline", "version", "items", "as", "with", "max_parallel", "timeout", "priority", "retries",
             "retry_delay"),

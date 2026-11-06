@@ -129,7 +129,8 @@ public final class CommonSettings {
         new Definition(AssetFilter.EXCLUDE, "Exclude", "Leave out tables or files matching these patterns, for "
             + "example tmp_*, *_backup or archive/**", true, List.of(), null),
         new Definition(ALLOW_WRITING, "Allow writing", "true lets pipelines write tables or files to this source, "
-            + "with an account that has write rights; false keeps it read-only. Only admins can change it", false,
+            + "with an account that has write rights; false keeps it read-only. Only designers and admins can change "
+            + "it", false,
             List.of("false", "true"), "false", SettingSpec.Kind.BOOLEAN),
         new Definition(ALLOW_SQL, "Allow SQL", "PostgreSQL only: true lets designers whose token sees unmasked "
             + "values write SQL that runs on this source (custom quality rules). Give the source a login that can read "

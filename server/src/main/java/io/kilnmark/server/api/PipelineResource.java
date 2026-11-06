@@ -29,8 +29,9 @@ import jakarta.ws.rs.core.Response;
 
 /**
  * Pipelines (docs/design/pipelines.md section 6): saved as YAML with every version, checked as
- * they are written, and run by workers. Viewers read; stewards add, change, delete and run. A
- * pipeline that writes also needs each target source to allow writing, which an admin sets.
+ * they are written, and run by workers. Viewers read; designers add, change and delete them;
+ * stewards run them. A pipeline that writes also needs each target source to allow writing, which a
+ * designer or an admin sets.
  */
 @Path("/api/v1/pipelines")
 @Produces(MediaType.APPLICATION_JSON)
