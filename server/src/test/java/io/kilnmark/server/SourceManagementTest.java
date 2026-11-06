@@ -306,6 +306,9 @@ class SourceManagementTest {
             s.execute("UPDATE kilnmark.run SET status = 'failed' WHERE source_id = " + sourceId
                 + " AND status = 'running'");
         }
+        // The scan queues work of its own afterwards (its quality checks), and a worker holds the
+        // source while that runs, so a delete then is rightly refused: wait until it has finished.
+        awaitNoJobsFor(sourceId);
         designer().delete("/api/v1/sources/mgmt-del").then().statusCode(200)
             .body("name", equalTo("mgmt-del")).body("assets", equalTo(2)).body("runs", equalTo(2));
         admin().get("/api/v1/sources/mgmt-del").then().statusCode(404);
@@ -368,6 +371,23 @@ class SourceManagementTest {
             }
         }
         return found;
+    }
+
+    /**
+     * Waits until no job of the source is queued or running, seen twice a second apart, so a job
+     * queued just after the first look is waited for too.
+     */
+    private void awaitNoJobsFor(long sourceId) throws Exception {
+        String busy = "SELECT count(*) FROM kilnmark.job WHERE (payload ->> 'sourceId')::bigint = " + sourceId
+            + " AND status IN ('queued', 'running')";
+        int quiet = 0;
+        for (int i = 0; i < 240 && quiet < 2; i++) {
+            try (Connection c = db.getConnection()) {
+                quiet = count(c, busy) == 0 ? quiet + 1 : 0;
+            }
+            Thread.sleep(500);
+        }
+        assertEquals(2, quiet, "the source's jobs did not finish within two minutes");
     }
 
     private static long count(Connection c, String sql) throws Exception {
