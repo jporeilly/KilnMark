@@ -72,48 +72,55 @@ class QueueLookupsTest {
     }
 
     /**
-     * The store's lookups of a pipeline run's job (PipelineStore.jobActive and requestCancel) and
-     * the quality sweep's join (QualityStore.failOrphanedRuns) go through the new indexes. With
-     * sequential scans off, as on a table too large to read whole, so the plan shows which index the
-     * query can use and that it is searched by the run; without the index it falls back to reading
-     * every job.
+     * The lookup by run that the new indexes are for: the finished job of one unfinished run, as the
+     * workers' sweeps for runs whose worker stopped (PipelineStore.failOrphanedRuns and
+     * QualityStore.failOrphanedRuns, every 30 seconds) join it for each such run; no other index fits
+     * finished jobs. (Lookups of queued or running jobs, as cancelling a run, may as well use the
+     * small job_ready_idx and job_running_idx, so they are not asserted.)
+     * With sequential scans off, as on a table too large to read whole, so the plan shows which index
+     * the query can use and that it is searched by the run; without the index it falls back to
+     * reading every job.
      */
     @Test
     void lookupsByRunUseTheirIndexes() throws Exception {
         Object[][] queries = {
-            {"SELECT 1 FROM kilnmark.job WHERE kind = 'pipeline' AND status IN ('queued', 'running') "
-                + "AND (payload ->> 'pipelineRunId')::bigint = ?", "job_pipeline_run_idx", "pipelineRunId"},
-            {"UPDATE kilnmark.job SET status = 'done', finished_at = now(), last_error = 'Cancelled before it started' "
-                + "WHERE kind = 'pipeline' AND status = 'queued' AND (payload ->> 'pipelineRunId')::bigint = ?",
-                "job_pipeline_run_idx", "pipelineRunId"},
-            {"""
-                UPDATE kilnmark.quality_run r SET status = 'failed', finished_at = now(), detail = 'x'
-                FROM kilnmark.job j
-                WHERE j.kind = 'quality' AND j.status = 'failed' AND (j.payload ->> 'qualityRunId')::bigint = r.id
-                  AND r.status IN ('queued', 'running')""", "job_quality_run_idx", "qualityRunId"},
+            {"SELECT j.id FROM kilnmark.job j WHERE j.kind = 'pipeline' AND j.status IN ('failed', 'done') "
+                + "AND (j.payload ->> 'pipelineRunId')::bigint = ?", "job_pipeline_run_idx", "pipelineRunId"},
+            {"SELECT j.id FROM kilnmark.job j WHERE j.kind = 'quality' AND j.status = 'failed' "
+                + "AND (j.payload ->> 'qualityRunId')::bigint = ?", "job_quality_run_idx", "qualityRunId"},
         };
-        for (Object[] q : queries) {
-            StringBuilder plan = new StringBuilder();
-            try (Connection c = db.getConnection(); Statement st = c.createStatement()) {
-                c.setAutoCommit(false);
+        try (Connection c = db.getConnection(); Statement st = c.createStatement()) {
+            c.setAutoCommit(false);
+            try {
+                // A job table as a long-used install has it, many finished jobs (all rolled back below),
+                // with the statistics the planner would have: on a test database's handful of rows it
+                // may read a small index whole instead, which says nothing of a real one.
+                st.execute("""
+                    INSERT INTO kilnmark.job (kind, payload, status)
+                    SELECT k.kind, jsonb_build_object(k.key, 1000000 + g), CASE WHEN g % 10 = 0 THEN 'failed' ELSE 'done' END
+                    FROM generate_series(1, 3000) g,
+                         (VALUES ('pipeline', 'pipelineRunId'), ('quality', 'qualityRunId')) AS k (kind, key)""");
+                st.execute("ANALYZE kilnmark.job");
                 st.execute("SET LOCAL enable_seqscan = off");
-                try (PreparedStatement ps = c.prepareStatement("EXPLAIN " + q[0])) {
-                    if (((String) q[0]).contains("?")) {
-                        ps.setLong(1, 42L);
-                    }
-                    try (ResultSet rs = ps.executeQuery()) {
-                        while (rs.next()) {
-                            plan.append(rs.getString(1)).append('\n');
+                for (Object[] q : queries) {
+                    StringBuilder plan = new StringBuilder();
+                    try (PreparedStatement ps = c.prepareStatement("EXPLAIN " + q[0])) {
+                        ps.setLong(1, 1000042L);
+                        try (ResultSet rs = ps.executeQuery()) {
+                            while (rs.next()) {
+                                plan.append(rs.getString(1)).append('\n');
+                            }
                         }
                     }
+                    // The index is searched by the run, not merely read whole for its WHERE kind = ...:
+                    // its expression must be the query's.
+                    assertTrue(plan.toString().lines().anyMatch(l -> l.contains("Index Cond") && l.contains((String) q[2])),
+                        q[0] + "\n" + plan);
+                    assertTrue(plan.toString().contains((String) q[1]), q[0] + "\n" + plan);
                 }
+            } finally {
                 c.rollback();
             }
-            // The index is searched by the run, not merely read whole for its WHERE kind = ...: its
-            // expression must be the query's.
-            assertTrue(plan.toString().lines().anyMatch(l -> l.contains("Index Cond") && l.contains((String) q[2])),
-                q[0] + "\n" + plan);
-            assertTrue(plan.toString().contains((String) q[1]), q[0] + "\n" + plan);
         }
     }
 

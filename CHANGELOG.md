@@ -26,7 +26,7 @@ details.
     (`asset.last_seen_run`, `sample.run_id`, `document.run_id`, `quality_run.scan_run_id`,
     `quality_result.quality_run_id`), which deleting a source with many runs read whole once per
     run; and on the job table by pipeline run and by quality run, as scans and flows already had,
-    for cancelling a run and the workers' sweeps.
+    for the workers' sweeps (every 30 seconds) for runs whose worker stopped.
   - **Reading a quality run only reads.** `GET /api/v1/quality/runs/{id}`, which the UI asks every
     second while rules run, and the start of every quality job no longer mark failed the
     evaluations whose worker stopped: the workers' recovery does, on start and every 30 seconds,

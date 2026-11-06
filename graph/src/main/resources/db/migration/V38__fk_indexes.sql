@@ -8,10 +8,9 @@
 -- quality_run and quality_result once per run. Partial (IS NOT NULL), since only rows that point somewhere are
 -- looked for.
 --
--- The job table's lookups by the run a job is for: a pipeline run's job (cancelling a run, whether
--- its job is still active, and the workers' sweep for runs whose worker stopped) and a quality
--- run's (the workers' sweep for evaluations whose worker stopped), as scans' (V4) and flows' (V20)
--- already have. Not unique: nothing has promised one job per pipeline or quality run, so a unique
+-- The job table's lookups by the run a job is for: a pipeline run's job (the workers' sweep, every
+-- 30 seconds, for runs whose worker stopped, and whether a run's job is still active) and a quality
+-- run's (the same sweep for evaluations), as scans' (V4) and flows' (V20) already have. Not unique: nothing has promised one job per pipeline or quality run, so a unique
 -- index could refuse an existing database. The job table keeps every job ever queued, so without
 -- them each lookup read all of it.
 --
