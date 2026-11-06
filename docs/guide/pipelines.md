@@ -387,7 +387,9 @@ source's writer does not take is a problem, with its line.
 The nodes between reading and writing (filter, compute, select, lookup, aggregate, union, dedupe,
 route and limit) are described in [Pipeline nodes and expressions](pipeline-nodes.md). The quality
 gate is described below. The node
-catalogue (`GET /api/v1/node-types`) lists every type this server has, with the settings each takes.
+catalogue (`GET /api/v1/node-types`) lists every type this server has, with the settings each takes,
+and the [Components reference](components-reference.md) describes each of them, with every
+setting, its type and default, and an example.
 
 ## Parameters and server variables
 

@@ -1141,6 +1141,33 @@ The UI's code is not kept by a formatter: most files would change under Prettier
 Keep a change in the file's own style (lines up to about 120 characters), and never run a formatter
 over a whole file you are only changing in part, since the diff then hides the change.
 
+### The components reference
+
+`docs/guide/components-reference.md` and the `reference-*.md` pages beside it describe every
+pipeline node, flow node, connector and quality rule. Each entry's facts and settings tables are
+made from the catalogue the server uses (`NodeFactory` and its `SettingSpec`s, `Connector` and its
+settings, writer settings and abilities, `CommonSettings`, `FlowDefinition`'s controls and values,
+`RuleType` and the keys a gate takes), between two lines that neither the app nor GitHub shows:
+
+```text
+[generated: node read]: #
+...
+[end: node read]: #
+```
+
+`ComponentsReferenceTest` (server) fails when a part differs from what the catalogue makes now, when
+a component has no entry or a page has one for a component the server lacks, when a flow node's or
+rule's hand-written settings table names other keys than the reader takes (the flow node and rule
+tables are hand-written: only their keys are checked, not their types or defaults), when the
+expression function tables in `pipeline-nodes.md` miss a function, when the images under Versions
+tested are not exactly those the integration tests use, and when an entry has no example. Every
+YAML example on the pages is a whole pipeline or flow, checked as saving checks it against stub
+sources; every JSON example is a rule, checked as `POST /api/v1/quality/rules` checks it. After
+changing a setting, a connector or a node, run `./gradlew :server:writeReference -PskipUi` and
+commit the pages; write the prose around a new entry by hand. The check runs as its own task,
+`:server:checkReference`, part of `check`, so a change to a guide reruns it without the rest of the
+server's tests.
+
 ### Pictures in the guides
 
 The guides' diagrams and screenshots are in `docs/guide/images`, shown in the app's documentation and

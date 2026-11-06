@@ -874,6 +874,11 @@ asset's previous profile.
   also has `writerSettings`: for each kind of source that can be written to, the keys of the writer
   settings a node writing to such a source takes, so the canvas offers only those of the chosen
   source (round 3, step 2).
+- The same catalogue writes the user guide's components reference (docs/guide/components-reference.md
+  and reference-*.md): each node type's and connector's ports, abilities and settings (types,
+  defaults and help), and each flow node's and rule type's facts, go into marked parts of the pages, and `ComponentsReferenceTest` fails
+  when a part differs from the catalogue or a component has no entry (docs/development.md, "The
+  components reference"). So a `SettingSpec`'s `help` is also the reference's description of it.
 - The write node calls the writers' contract directly: `Connector.writeOptions()` for its
   allow-list, `Connector.writtenAssetPath(...)` for the written asset's URN, `WriteOptions.profiling`
   for the source's profiling settings, and `WriteReport.PROFILED` and `PROFILE_ERROR` for a profile

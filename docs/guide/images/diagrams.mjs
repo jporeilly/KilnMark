@@ -657,3 +657,38 @@ function svg(name, height, title, sub, body) {
   svg("schedule-outcomes", 542, "What happens when a schedule is due", "Each fire ends in one of five outcomes, shown on the schedule", b);
 }
 
+
+// ---- The components reference: the families of components ----
+{
+  const W = 160, X = [40, 214, 388, 562];
+  const y1 = 76, y2 = 188, y3 = 300, y4 = 412;
+  const F = [40, 276, 512], FW = 208;
+  const b =
+    lane(y1, 96, "Connectors", C.navy) +
+    card(40, y1 + 30, 682, { icon: "db", color: C.navy, title: "One per kind of source", sub: "databases, folders, object storage and the sample data: what each can scan, read, write and explore" }) +
+    lane(y2, 96, "Pipeline nodes", C.blue) +
+    card(X[0], y2 + 30, W, { icon: "db", color: C.blue, title: "Source", sub: "read" }) +
+    card(X[1], y2 + 30, W, { icon: "gear", color: C.blue, title: "Transforms", sub: "filter, compute, ..." }) +
+    card(X[2], y2 + 30, W, { icon: "shield", color: C.blue, title: "Gate", sub: "checks rows" }) +
+    card(X[3], y2 + 30, W, { icon: "save", color: C.blue, title: "Sink", sub: "write" }) +
+    arrow([[X[0] + W, y2 + 58], [X[1] - 2, y2 + 58]], C.blue) +
+    arrow([[X[1] + W, y2 + 58], [X[2] - 2, y2 + 58]], C.blue) +
+    arrow([[X[2] + W, y2 + 58], [X[3] - 2, y2 + 58]], C.blue) +
+    arrow([[X[0] + W - 30, y1 + 86], [X[0] + W - 30, y2 + 28]], C.navy) +
+    label(X[0] + W - 22, y1 + 105, "reads", C.navy, "start") +
+    arrow([[X[3] + W / 2, y2 + 28], [X[3] + W / 2, y1 + 88]], C.navy) +
+    label(X[3] + W / 2 + 8, y1 + 105, "writes", C.navy, "start") +
+    lane(y3, 96, "What nodes check with", C.green) +
+    card(X[1], y3 + 30, W, { icon: "pencil", color: C.green, title: "Expressions", sub: "conditions, values" }) +
+    card(X[2], y3 + 30, W, { icon: "check", color: C.green, title: "Quality rules", sub: "what must hold" }) +
+    arrow([[X[1] + W / 2, y3 + 28], [X[1] + W / 2, y2 + 88]], C.green) +
+    arrow([[X[2] + W / 2, y3 + 28], [X[2] + W / 2, y2 + 88]], C.green) +
+    lane(y4, 96, "Flow nodes", C.violet) +
+    card(F[0], y4 + 30, FW, { icon: "play", color: C.violet, title: "Run the work", sub: "run-pipeline, for-each, sql" }) +
+    card(F[1], y4 + 30, FW, { icon: "clock", color: C.violet, title: "Check and wait", sub: "check-source, wait-for, wait" }) +
+    card(F[2], y4 + 30, FW, { icon: "bell", color: C.violet, title: "Tell and end", sub: "notify, stop" }) +
+    arrow([[F[0] + FW, y4 + 58], [F[1] - 2, y4 + 58]], C.violet) +
+    arrow([[F[1] + FW, y4 + 58], [F[2] - 2, y4 + 58]], C.violet) +
+    foot(y4 + 112, "book", "Every settings table in the reference is made from the catalogue the server uses, and the build checks it.");
+  svg("component-families", y4 + 162, "The components a pipeline or flow is built from", "Connectors reach the data, nodes do the work, expressions and rules check it, flow nodes order it", b);
+}

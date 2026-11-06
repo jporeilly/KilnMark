@@ -114,7 +114,9 @@ doubled: `\s` is written `\\s`. In the **Pattern** field you type it once, as `\
 
 ## Choosing a check
 
-Each check is tagged with a quality dimension, which decides which score it affects.
+Each check is tagged with a quality dimension, which decides which score it affects. Every check,
+with its settings as the API and a gate take them, is in
+[Reference: quality rules](reference-quality-rules.md).
 
 | Check | What fails | What you fill in | Dimension |
 | --- | --- | --- | --- |

@@ -2,7 +2,8 @@
 
 This guide describes the nodes that change rows in a pipeline (filter, compute, select, lookup,
 aggregate, union, dedupe, route and limit) and the expression language several of them share. Each
-node has a YAML example you can copy into a pipeline.
+node has a YAML example you can copy into a pipeline. Every node, with each setting's type and
+default, is also in [Reference: pipeline nodes](reference-pipeline-nodes.md).
 
 ## How nodes connect
 
