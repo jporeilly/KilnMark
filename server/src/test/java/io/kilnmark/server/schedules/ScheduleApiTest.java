@@ -51,7 +51,8 @@ import jakarta.inject.Inject;
  * Schedules (ADR 0046): who may read and set them, what is refused when saved, and firing them
  * through {@link Scheduler#tick}: a pipeline run and a flow run as the schedule, a busy fire
  * skipped, a missed fire not run, two schedulers firing once, schedules deleted with their
- * pipeline, and audit events without parameter values.
+ * pipeline or flow (a delete waiting for a fire, never deadlocking), and audit events without
+ * parameter values.
  */
 @QuarkusTest
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -928,6 +929,66 @@ class ScheduleApiTest {
         }
         awaitPipelineRunDone(run);
         as(designer).delete("/api/v1/pipelines/sc-race").then().statusCode(204);
+        as(steward).get("/api/v1/schedules/" + id).then().statusCode(404);
+    }
+
+    @Inject
+    io.kilnmark.server.flows.FlowService flowService;
+
+    @Test
+    @Order(29)
+    void deletingAFlowWhileItsScheduleFiresWaitsInsteadOfDeadlocking() throws Exception {
+        as(designer).body(Map.of("yaml", """
+            kilnmark: flow/v1
+            name: sc-flow-race
+            nodes:
+              - { id: pause, type: wait, for: 1s }
+            """)).post("/api/v1/flows").then().statusCode(201);
+        long id = create(designer, body("flow", "sc-flow-race", "cron", "@hourly"));
+        dueAgo(id, Duration.ofSeconds(5));
+        ScheduleStore.Schedule claimed = store.claimDue(null, Scheduler.BATCH,
+                (s, at) -> Scheduler.plan(s, at, Duration.ofHours(1))).stream()
+            .filter(x -> x.schedule().id() == id).findFirst().orElseThrow().schedule();
+        CountDownLatch holding = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        long run;
+        try {
+            // the fire holds the schedule's row, then queues a run, which locks the flow
+            Future<Optional<ScheduleStore.Fired>> fire = pool.submit(() -> store.fire(claimed, s -> {
+                holding.countDown();
+                try {
+                    release.await();
+                    long r = flowService.queueRun("sc-flow-race", null, Map.of(), "schedule " + id,
+                        io.kilnmark.server.auth.AccessRole.STEWARD).id();
+                    return new ScheduleStore.Fired(Scheduler.STARTED, null, r, null);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return new ScheduleStore.Fired(Scheduler.FAILED + "interrupted", null, null, null);
+                } catch (RuntimeException e) {
+                    return new ScheduleStore.Fired(Scheduler.FAILED + e.getClass().getSimpleName(), null, null, null);
+                }
+            }));
+            assertTrue(holding.await(60, java.util.concurrent.TimeUnit.SECONDS));
+            Future<Integer> delete = pool.submit(() -> as(designer).delete("/api/v1/flows/sc-flow-race").statusCode());
+            // the delete is waiting for the schedule's row, which the fire holds
+            awaitLockWait("kilnmark.schedule WHERE flow = $1");
+            release.countDown();
+            // with the locks taken in the other order these would wait for each other for ever:
+            // PostgreSQL cannot see that the fire's transaction waits on its own run's connection
+            ScheduleStore.Fired fired = fire.get(60, java.util.concurrent.TimeUnit.SECONDS).orElseThrow();
+            assertEquals(Scheduler.STARTED, fired.outcome());
+            // the delete waited for the fire, then found its run queued
+            assertEquals(409, delete.get(60, java.util.concurrent.TimeUnit.SECONDS));
+            run = fired.flowRun();
+        } finally {
+            release.countDown();
+            endLockWaits();
+            pool.shutdownNow();
+        }
+        await("flow run " + run, () -> as(viewer).get("/api/v1/flow-runs/" + run).then().extract().jsonPath()
+            .getString("run.status"), "succeeded"::equals);
+        as(designer).delete("/api/v1/flows/sc-flow-race").then().statusCode(204);
         as(steward).get("/api/v1/schedules/" + id).then().statusCode(404);
     }
 

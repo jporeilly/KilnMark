@@ -16,6 +16,7 @@ import io.kilnmark.server.pipelines.PipelineService;
 import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.POST;
@@ -30,8 +31,8 @@ import jakarta.ws.rs.core.Response;
 /**
  * Flows (docs/design/flows.md): saved as YAML with every version, checked as they are written, and
  * run by workers, node by node. Viewers read; designers save; stewards run and cancel. A flow with a
- * sql node is saved only by a designer whose token sees unmasked values (ADR 0028). There is no
- * delete yet.
+ * sql node is saved only by a designer whose token sees unmasked values (ADR 0028). Designers
+ * delete a flow, with its versions, runs and schedules, while no run of it is going (ADR 0048).
  */
 @Path("/api/v1/flows")
 @Produces(MediaType.APPLICATION_JSON)
@@ -40,6 +41,10 @@ public class FlowResource {
 
     private final FlowService flows;
     private final SecurityIdentity identity;
+
+    /** The audit log, for a deleted flow's schedules. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.audit.AuditLog audit;
 
     /** Who is saving: only a caller who may see unmasked values saves a flow with a sql node. */
     @jakarta.inject.Inject
@@ -135,6 +140,26 @@ public class FlowResource {
         flows.update(name, yaml(body), body.message(), who(), role(), sights.mayUnmask(), expected);
         FlowViews.FlowDetail d = flows.detail(name, sights.data());
         return Response.ok(d).tag(etag(d)).build();
+    }
+
+    @DELETE
+    @Path("{name}")
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
+    @Operation(summary = "Delete a flow", description = "Deletes the flow with its versions, its runs and their "
+        + "nodes, and its schedules. The pipeline runs it started stay, with what they wrote and the lineage they "
+        + "recorded; they no longer link to the flow run. Refused while a run is queued or running. Role: designer.")
+    @APIResponses({
+        @APIResponse(responseCode = "204", description = "Deleted"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "403", description = "Not a designer"),
+        @APIResponse(responseCode = "404", description = "No such flow"),
+        @APIResponse(responseCode = "409", description = "A run is queued or running")})
+    public Response delete(@PathParam("name") String name) {
+        // its schedules are deleted with it, in the same transaction: each is recorded (ADR 0029, ADR 0046)
+        io.kilnmark.server.schedules.ScheduleService.recordDeletedWith(audit,
+            io.kilnmark.server.audit.AuditLog.actor(identity), io.kilnmark.server.schedules.ScheduleStore.Target.FLOW,
+            name, flows.delete(name, who()));
+        return Response.noContent().build();
     }
 
     @GET

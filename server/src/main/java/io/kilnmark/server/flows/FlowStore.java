@@ -12,6 +12,7 @@ import java.util.Optional;
 
 import io.kilnmark.server.Db;
 import io.kilnmark.server.jobs.JobQueue;
+import io.kilnmark.server.schedules.ScheduleStore;
 import jakarta.enterprise.context.ApplicationScoped;
 
 /**
@@ -111,6 +112,46 @@ public class FlowStore {
                     return rs.next() && rs.getBoolean(1);
                 }
             }
+        });
+    }
+
+    /**
+     * Deletes the flow with its versions, its runs and their node runs (each table cascades from the
+     * one before, V20) and, in the same transaction, its schedules, returning exactly those, so each
+     * can be recorded (ADR 0048); empty when there is no such flow. The pipeline runs its runs
+     * started stay, as what they wrote and the lineage they recorded stay: their link to the flow run
+     * is set to null by its foreign key.
+     *
+     * @throws Busy when a run is queued or running
+     */
+    public Optional<List<ScheduleStore.Gone>> deleteWithSchedules(String name) {
+        return db.tx(c -> {
+            // the schedules' rows first, then the flow's: a schedule's fire holds its row while it
+            // queues a run, which locks the flow, so the other order could deadlock
+            ScheduleStore.lockFor(c, ScheduleStore.Target.FLOW, name);
+            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.flow WHERE name = ? FOR UPDATE")) {
+                ps.setString(1, name);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        return Optional.<List<ScheduleStore.Gone>>empty();
+                    }
+                }
+            }
+            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.flow_run WHERE flow = ? "
+                + "AND status IN ('queued', 'running') LIMIT 1")) {
+                ps.setString(1, name);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        throw new Busy();
+                    }
+                }
+            }
+            List<ScheduleStore.Gone> gone = ScheduleStore.deleteFor(c, ScheduleStore.Target.FLOW, name);
+            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.flow WHERE name = ?")) {
+                ps.setString(1, name);
+                ps.executeUpdate();
+            }
+            return Optional.of(gone);
         });
     }
 

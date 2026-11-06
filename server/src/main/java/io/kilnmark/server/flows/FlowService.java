@@ -525,6 +525,22 @@ public class FlowService {
         return store.find(name);
     }
 
+    /**
+     * Deletes the flow with its versions, runs and schedules (ADR 0048); the pipeline runs it started
+     * stay. Returns the schedules deleted with it, to record.
+     */
+    public List<io.kilnmark.server.schedules.ScheduleStore.Gone> delete(String name, String by) {
+        try {
+            List<io.kilnmark.server.schedules.ScheduleStore.Gone> gone = store.deleteWithSchedules(name)
+                .orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No flow called " + name));
+            LOG.infof("Flow %s deleted by %s, with %d schedules", name, by, gone.size());
+            return gone;
+        } catch (FlowStore.Busy e) {
+            throw fail(Response.Status.CONFLICT, "A run of " + name + " is queued or running. Wait for it to finish, "
+                + "or cancel it, then delete the flow.");
+        }
+    }
+
     public Optional<FlowStore.Version> version(String name, int n) {
         return store.version(name, n);
     }

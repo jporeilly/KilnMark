@@ -5,12 +5,17 @@ import static io.kilnmark.server.Tokens.newToken;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -22,17 +27,21 @@ import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 
+import io.agroal.api.AgroalDataSource;
 import io.kilnmark.server.Tokens;
+import io.kilnmark.server.audit.AuditLog;
 import io.kilnmark.server.pipelines.MemoryConnector;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import io.restassured.path.json.JsonPath;
 import io.restassured.specification.RequestSpecification;
+import jakarta.inject.Inject;
 
 /**
  * The flows API (docs/design/flows.md, F3): viewers read, designers save, stewards run and cancel;
  * a flow with a sql node is saved only by a designer whose token sees unmasked values (ADR 0028);
- * If-Match refuses a save over someone else's; a run is shown with each of its nodes.
+ * If-Match refuses a save over someone else's; a run is shown with each of its nodes; designers
+ * delete a flow with its runs and schedules, keeping the pipeline runs it started (ADR 0048).
  */
 @QuarkusTest
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -91,6 +100,12 @@ class FlowApiTest {
     static String designer;
     static String unmasking;
 
+    @Inject
+    AgroalDataSource db;
+
+    @Inject
+    AuditLog audit;
+
     private static RequestSpecification as(String token) {
         return Tokens.as(token).contentType(ContentType.JSON);
     }
@@ -106,6 +121,17 @@ class FlowApiTest {
             Thread.sleep(100);
         }
         throw new AssertionError("Timed out waiting for " + what + "; last seen: " + last);
+    }
+
+    /** The one number {@code sql} gives for {@code value}. */
+    private long count(String sql, Object value) throws SQLException {
+        try (Connection c = db.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setObject(1, value);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next());
+                return rs.getLong(1);
+            }
+        }
     }
 
     private static JsonPath run(long id) {
@@ -327,5 +353,76 @@ class FlowApiTest {
         assertEquals("cancelled", done.getString("nodes[0].status"));
         assertTrue(List.of("skipped", "cancelled").contains(done.getString("nodes[1].status")),
             done.getString("nodes[1].status"));
+    }
+
+    @Test
+    @Order(9)
+    void designersDeleteAFlowWithItsRunsAndSchedulesAndThePipelineRunsStay() throws Exception {
+        String holds = """
+            kilnmark: flow/v1
+            name: fa-gone
+            nodes:
+              - { id: copy, type: run-pipeline, pipeline: fa-copy }
+              - { id: hold, type: wait, for: 10m }
+            connections:
+              - { from: copy, to: hold }
+            """;
+        as(designer).body(Map.of("yaml", holds, "message", "first")).post("/api/v1/flows").then().statusCode(201);
+        as(designer).body(Map.of("yaml", holds, "message", "second")).put("/api/v1/flows/fa-gone").then()
+            .statusCode(200);
+        long schedule = as(designer).body(Map.of("flow", "fa-gone", "cron", "0 6 * * *", "zone", "Europe/London"))
+            .post("/api/v1/schedules").then().statusCode(201).extract().jsonPath().getLong("id");
+        long id = as(steward).body(Map.of()).post("/api/v1/flows/fa-gone/runs").then().statusCode(202).extract()
+            .jsonPath().getLong("id");
+        JsonPath holding = await("the copy to finish and the hold to start", () -> run(id),
+            j -> "running".equals(j.getString("nodes[1].status")));
+        long pipelineRun = holding.getLong("nodes[0].pipelineRunId");
+        assertEquals(1, count("SELECT count(*) FROM kilnmark.pipeline_run WHERE flow_run_id = ?", id));
+
+        // only designers and admins delete, and not while a run is queued or running
+        as(viewer).delete("/api/v1/flows/fa-gone").then().statusCode(403);
+        as(steward).delete("/api/v1/flows/fa-gone").then().statusCode(403);
+        as(designer).delete("/api/v1/flows/fa-gone").then().statusCode(409)
+            .body("error", containsString("queued or running"));
+        Tokens.as(viewer).get("/api/v1/flows/fa-gone").then().statusCode(200);
+        as(steward).get("/api/v1/schedules/" + schedule).then().statusCode(200);
+
+        as(steward).post("/api/v1/flow-runs/" + id + "/cancel").then().statusCode(200);
+        await("the run to be cancelled", () -> run(id), j -> "cancelled".equals(j.getString("run.status")));
+        admin().delete("/api/v1/flows/fa-gone").then().statusCode(204);
+
+        // the flow, its versions, runs and node runs are gone
+        Tokens.as(viewer).get("/api/v1/flows/fa-gone").then().statusCode(404);
+        Tokens.as(viewer).get("/api/v1/flows/fa-gone/runs").then().statusCode(404);
+        Tokens.as(viewer).get("/api/v1/flow-runs/" + id).then().statusCode(404);
+        Tokens.as(viewer).get("/api/v1/flows").then().statusCode(200).body("name", not(hasItem("fa-gone")));
+        assertEquals(0, count("SELECT count(*) FROM kilnmark.flow_version WHERE flow = ?", "fa-gone"));
+        assertEquals(0, count("SELECT count(*) FROM kilnmark.flow_run WHERE flow = ?", "fa-gone"));
+        assertEquals(0, count("SELECT count(*) FROM kilnmark.flow_node_run WHERE run_id = ?", id));
+
+        // the pipeline run it started stays, no longer linked to the flow run
+        Tokens.as(viewer).get("/api/v1/pipeline-runs/" + pipelineRun).then().statusCode(200)
+            .body("run.pipeline", equalTo("fa-copy")).body("run.status", equalTo("succeeded"));
+        assertEquals(1, count("SELECT count(*) FROM kilnmark.pipeline_run WHERE id = ? AND flow_run_id IS NULL",
+            pipelineRun));
+
+        // its schedule went with it, recorded as deleted with the flow
+        as(steward).get("/api/v1/schedules/" + schedule).then().statusCode(404);
+        audit.awaitStored(5000);
+        JsonPath deleted = admin().queryParam("action", AuditLog.SCHEDULE_DELETED).queryParam("limit", 200)
+            .get("/api/v1/audit").then().statusCode(200).extract().jsonPath();
+        String mine = "events.find { it.target == 'schedule " + schedule + "' }";
+        assertEquals("flow deleted", deleted.getString(mine + ".detail.via"), deleted.prettify());
+        assertEquals("fa-gone", deleted.getString(mine + ".detail.flow"));
+        assertEquals("0 6 * * *", deleted.getString(mine + ".detail.cron"));
+        assertNull(deleted.get(mine + ".detail.pipeline"));
+
+        admin().delete("/api/v1/flows/fa-gone").then().statusCode(404);
+        // a designer deletes one with no runs; its name can be used again
+        as(designer).delete("/api/v1/flows/fa-sql").then().statusCode(204);
+        Tokens.as(viewer).get("/api/v1/flows/fa-sql").then().statusCode(404);
+        as(designer).body(Map.of("yaml", holds)).post("/api/v1/flows").then().statusCode(201)
+            .body("latestVersion", equalTo(1));
+        as(designer).delete("/api/v1/flows/fa-gone").then().statusCode(204);
     }
 }
