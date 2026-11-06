@@ -285,7 +285,7 @@ scripts.
 
 1. In the provider, register Kilnmark as a web application. Its redirect URI is
    `https://<Kilnmark's address>/api/v1/auth/login`. Have the provider put the person's groups in
-   the ID token's `groups` claim, and require MFA for the application.
+   the ID token's `groups` claim, require MFA for the application, and let it issue refresh tokens.
 2. In `.env`, set `KILNMARK_OIDC_ENABLED=true`, `KILNMARK_OIDC_ISSUER` (the provider's issuer URL),
    `KILNMARK_OIDC_CLIENT_ID`, `KILNMARK_OIDC_CLIENT_SECRET` and, for the button,
    `KILNMARK_OIDC_PROVIDER_NAME`.
@@ -302,6 +302,19 @@ list in `KILNMARK_OIDC_MFA_ACR`. A sign-in that shows none gets no role. A sign-
 hours from the person's last sign-in at the provider (`KILNMARK_OIDC_MAX_SESSION`); the ID token
 must say when that was (`auth_time`), which every provider can send. Every sign-in, and every one
 given no role, is in **Settings**, **Audit log**, under `sso:` and the person's name.
+
+A sign-in renews itself while the provider's session lasts: when the provider's ID token expires,
+Kilnmark gets a fresh one with the refresh token and checks it again, MFA and groups included,
+without asking the person anything. For that the provider must issue a refresh token. Keycloak does;
+Microsoft Entra ID and Okta do only when asked for `offline_access`, so for them set
+`KILNMARK_OIDC_SCOPES=offline_access` (never for Keycloak, where it asks for a token that outlives
+the sign-in). Without a refresh token, a sign-in ends when its first ID token does, often within an
+hour. Signing out asks the provider to revoke the refresh token, where it offers that (Keycloak and
+Okta do; Entra ID does not).
+
+A page's requests can renew at the same moment with the same refresh token. If the provider rotates
+refresh tokens, let it accept a token used twice in quick succession (Okta's grace period; in
+Keycloak, leave **Revoke Refresh Token** off, as it is unless you change it), or the session ends.
 
 Kilnmark must be reached over HTTPS for this (see HTTPS above): its session cookies are sent over
 HTTPS only. Behind a proxy that ends TLS, also set `KILNMARK_OIDC_BEHIND_TLS_PROXY=true`.
@@ -344,6 +357,11 @@ first, then in `.env`.
 
 Each person sets up a one-time code (any authenticator app) on their first sign-in. Keycloak does
 not count setting it up as using it, so Kilnmark then asks them to sign in once more, with the code.
+
+Keycloak's tokens last 5 minutes (its default, kept so that disabling someone, or taking them out of
+a group, shows within 5 minutes); Kilnmark renews them while the person works. Keycloak's session
+for the realm ends after 2 hours unused or 8 hours at most, and the person then signs in again.
+Signing out of Kilnmark ends the Keycloak session too.
 
 For a demonstration, also set `KILNMARK_KEYCLOAK_DEMO_PASSWORD`: `keycloak-setup` then adds five
 example people, one per role, at `kilnmark.com` addresses (Documentation, "Signing in, roles and

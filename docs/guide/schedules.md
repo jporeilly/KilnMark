@@ -62,7 +62,7 @@ outcome, in amber, apart from the grey **Paused** state: **Paused: setter lost t
 **Paused: setter not signed in for 30 days** (viewers see just **Paused by Kilnmark**). The
 audit log records **Schedule paused**, with why. Kilnmark also pauses at once, without waiting for
 the next time, when an admin revokes the token, or when the person signs in with less of a role (or
-none). A run already queued or running is not cancelled by a pause: cancel it on its run page if
+none), or their sign-in renews with less of one ([Signing in](signing-in.md#signing-in-with-your-organisation)). A run already queued or running is not cancelled by a pause: cancel it on its run page if
 you need to.
 
 **What you do** (designers and admins):
@@ -208,7 +208,7 @@ with a colour, the reason, and a link to the run it started (in the API, `lastAt
 | **Failed** (`failed: …`) | The run could not start, for the reason given: the latest version has problems, a value no longer suits it, a source no longer allows writing. Viewers see only `failed` | Fix what it says; the next time runs as usual |
 | **Paused: setter not signed in for 30 days** (`paused: the person who set it has not signed in for 30 days`) | It was set by someone signing in with your organisation's login who has not signed in for 30 days. The schedule is off. Viewers see **Paused by Kilnmark** (`paused`) | Resume it (you become its setter), or delete it |
 | **Skipped** (`skipped: the schedule was changed while it was starting`) | It was paused, changed or deleted at the moment its run was being started, so nothing ran | Nothing, unless the change was a mistake |
-| **Paused: setter lost the role** (`paused: the person who set it no longer has the role`) | Whoever last set it no longer has the role: their token was revoked or expired, or they signed in with less of a role. The schedule is off. Viewers see **Paused by Kilnmark** (`paused`) | Resume it (you become its setter), or delete it |
+| **Paused: setter lost the role** (`paused: the person who set it no longer has the role`) | Whoever last set it no longer has the role: their token was revoked or expired, or they signed in (or their sign-in renewed) with less of a role. The schedule is off. Viewers see **Paused by Kilnmark** (`paused`) | Resume it (you become its setter), or delete it |
 | **Missed** (`missed: changed while it was due`) | Someone changed its times, zone or pausing just as it was due, so that time did not run | Run it now by hand if the work is still needed |
 | **Failed** (`failed: the server stopped before the run was queued`) | Kilnmark stopped at the moment it was starting the run, so that time was lost. It shows once it has said `starting` for a few minutes | Run it now by hand if the work is still needed |
 
