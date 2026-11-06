@@ -26,7 +26,9 @@ schedules, and the order the locks are taken in.
    (docs/design/flows.md, section 4).
 2. **What goes:** the flow, its versions, its runs and each run's node runs. The foreign keys of
    V20 already cascade (`flow_version` from `flow`, `flow_run` from `flow_version`, `flow_node_run`
-   from `flow_run`), so no migration is needed.
+   from `flow_run`), so no migration is needed. The request keys that started its runs (V37,
+   ADR 0047) go with the runs, by their own cascade: a retry with such a key starts a new run, as a
+   key whose run is gone does.
 3. **What stays: the pipeline runs the flow's runs started.** They wrote data and recorded lineage
    and quality results, which belong to the pipelines and the catalogue, not to the flow. They stay
    in their pipelines' histories. Their link to the flow run is set to null by V20's
@@ -60,7 +62,10 @@ schedules, and the order the locks are taken in.
    schedule changed to run the flow just after that, then fired, is not locked by the delete, so the
    two could still wait for each other across two connections. What is guaranteed is that a delete
    never hangs: if any lock is not granted in time, the delete is rolled back, nothing is deleted,
-   and the answer is 409 saying to try again. The fire it waited on then goes ahead.
+   and the answer is 409 saying to try again. The fire it waited on then goes ahead. A start with a
+   request key (ADR 0047) takes the flow's row, then its key's row; the delete takes the flow's row
+   before the keys its cascade deletes, the same order. A start checked before the delete and
+   queued after it finds the flow gone and is answered 404, and its key is not kept.
 8. **No audit event for the delete itself.** Deleting a pipeline records none either: only the
    schedules deleted with it are recorded. Kilnmark is consistent, and this is a gap for both: who
    deleted a pipeline or a flow, and when, is in the server's log only, not in the audit log. Adding

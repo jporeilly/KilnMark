@@ -213,7 +213,9 @@ one is still finishing, deletes the schedules with `DELETE … RETURNING` to rec
 (`notify_state` key `flow:<name>`, so a flow saved later under the name is told of afresh), then
 the flow. Each lock wait is limited to 5 seconds; past that nothing is deleted and the answer is 409
 "try again". A run queued or a version saved just as the flow goes finds its row missing and is
-answered 404. The runs' `job` rows stay, as a deleted pipeline's do. A failure is told after its run
+answered 404, also inside a start with a request key, which then keeps no key. The runs' request
+keys (V37) go with them by cascade, after the flow's row is taken, the order a keyed start takes
+them. The runs' `job` rows stay, as a deleted pipeline's do. A failure is told after its run
 is recorded as ended but before its job ends, which is why the delete waits for the job; a run
 failed because its worker stopped (`failOrphanedRuns`) is told outside any job, so a delete in that
 moment can still be followed by a failure told of the deleted flow, which leaves `flow:<name>`

@@ -530,5 +530,9 @@ class FlowApiTest {
             "{}"));
         assertThrows(FlowStore.Missing.class, () -> flowStore.save("fa-held", null, false, "fa-held", null,
             "kilnmark: flow/v1", null, "a designer", true, "[]"));
+        // and through the service, as a start that was checked before the delete queues it: 404
+        WebApplicationException gone = assertThrows(WebApplicationException.class, () -> flowService.queueChecked(
+            new FlowService.CheckedRun("fa-held", 1, "{}", "{}"), "a steward", AccessRole.STEWARD));
+        assertEquals(404, gone.getResponse().getStatus());
     }
 }

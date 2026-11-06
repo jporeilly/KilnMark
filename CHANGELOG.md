@@ -88,7 +88,8 @@ details.
   it and fired at that moment cannot hang the two. Deleting a pipeline or a flow clears its open
   problem for notifications, so one saved later under the name is mailed at its first failure. A
   run queued, or a version saved, just as its pipeline or flow is deleted is answered 404 instead of
-  failing with a server error. A flow's delete also waits for the job of a run that has just ended,
+  failing with a server error, a start with a request key included (it then keeps no key); the
+  request keys of deleted runs go with them (V37's cascade). A flow's delete also waits for the job of a run that has just ended,
   which tells of a failure before it ends.
 
 - **Error Prone checks the flow files too** (ADR 0042, decision 5). `FlowDefinition`, its test,

@@ -929,6 +929,12 @@ class ScheduleApiTest {
         // a run queued just as the pipeline is deleted finds it gone: not a server error
         org.junit.jupiter.api.Assertions.assertThrows(io.kilnmark.server.pipelines.PipelineStore.Missing.class,
             () -> pipelineStore.queueRun("sc-held", 1, "a steward", "steward"));
+        // and through the service, as a start that was checked before the delete queues it: 404
+        jakarta.ws.rs.WebApplicationException gone = org.junit.jupiter.api.Assertions.assertThrows(
+            jakarta.ws.rs.WebApplicationException.class, () -> pipelineService.queueChecked(
+                new io.kilnmark.server.pipelines.PipelineService.CheckedRun("sc-held", 1, "{}", "{}"), "a steward",
+                io.kilnmark.server.auth.AccessRole.STEWARD));
+        assertEquals(404, gone.getResponse().getStatus());
     }
 
     @Test
