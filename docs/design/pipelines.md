@@ -895,8 +895,9 @@ its run ends, and a retried start never to run the work twice.
   values resolved) outside any transaction, since the compile reads the catalogue on connections
   of its own. Then, in one transaction (`Db.together`, which `queueChecked`'s `Db.tx` joins), on
   the key's row and the run's tables only: lock the pipeline's or flow's row (the order a delete
-  takes); insert the key, or take over one older than 24 hours in place (`ON CONFLICT DO UPDATE
-  ... WHERE` expired, never a delete); if it is ours, queue the run and set its id on the row, all
+  takes, and after the schedule's row a fire takes: docs/design/schedules.md); insert the key, or
+  take over one older than 24 hours in place (`ON CONFLICT DO UPDATE ... WHERE` expired, never a
+  delete); if it is ours, queue the run and set its id on the row, all
   committing together; else read the row as above. A second request with the same key waits on the
   first's uncommitted row, so two at once start one run. A start that throws rolls back the key
   and the run. The scheduler role deletes keys older than 24 hours every hour.
@@ -1057,5 +1058,6 @@ or not (`POST /api/v1/pipelines/preview` {yaml, node, port?, rows?}; for a saved
   pipeline's `quality.min_score` and `pipeline_low_quality` (done; docs/guide/pipelines.md,
   "Quality gates"); predicted scores beside the measured ones and suggestions (done;
   docs/guide/pipelines.md, "Predicted quality"); then version diffs.
-- Flows, which run pipelines in an order joined by connections, are in [flows.md](flows.md). Later:
-  scheduling (which starts flows), parameters, the importer, push-down to SQL.
+- Flows, which run pipelines in an order joined by connections, are in [flows.md](flows.md). Schedules,
+  which start pipelines and flows at set times, are in [schedules.md](schedules.md). Later: the
+  importer, push-down to SQL.

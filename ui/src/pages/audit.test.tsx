@@ -36,6 +36,15 @@ group("the audit log page", () => {
     expect(describe(event("database.restored", { backup: "kilnmark-20261103T200000Z", takenAt: "2026-11-03T20:00:00Z" }))).toBe(
       `From kilnmark-20261103T200000Z, taken ${formatTime("2026-11-03T20:00:00Z")}`,
     );
+    expect(describe(event("schedule.set", { pipeline: "nightly", cron: "0 2 * * *", zone: "Europe/London", runAs: "steward", enabled: true }))).toBe(
+      "Pipeline nightly: 0 2 * * * (Europe/London), as steward",
+    );
+    expect(describe(event("schedule.paused", { pipeline: "nightly", cron: "@daily", reason: "the token that set it was revoked" }))).toBe(
+      "Pipeline nightly: paused, the token that set it was revoked",
+    );
+    expect(describe(event("schedule.deleted", { flow: "close", cron: "@daily", zone: "UTC", runAs: "designer", enabled: false }))).toBe(
+      "Flow close: @daily (UTC), as designer, paused",
+    );
     expect(describe(event("flow.sql", { source: "warehouse", statements: 2, version: 3 }))).toBe(
       "2 statements on warehouse, version 3",
     );
@@ -54,6 +63,9 @@ group("the audit log page", () => {
         "unmask.approved",
         "unmask.refused",
         "database.restored",
+        "schedule.set",
+        "schedule.deleted",
+        "schedule.paused",
         "flow.sql",
         "mark.cleared",
         "mark.set",

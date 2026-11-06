@@ -524,6 +524,27 @@ With a shorter grace period, lower `KILNMARK_WORKER_SHUTDOWN_TIMEOUT` to leave 1
 `kilnmark.scan.parallel-tables` tables at a time, so one worker reads up to
 `concurrency × parallel-tables` tables at once.
 
+## Schedules
+
+Pipelines and flows run at set times on processes with the scheduler role (ADR 0046,
+docs/design/schedules.md). Every poll, one short transaction claims the due schedules
+(`FOR UPDATE SKIP LOCKED`) and moves each one's next fire on; only after it commits is each run
+queued, as Run now queues it, so a schedule fires at most once however many schedulers run. Every
+next fire is worked out from the database's clock. A fire found later than the catch-up is
+recorded as missed and not run. A tick that fails, whatever the cause, is logged at ERROR and the
+next poll looks again; the readiness check `scheduler` is down if no tick has run for three poll
+intervals and a minute. The schedules are set through
+`/api/v1/schedules` by designers and admins.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `kilnmark.schedules.poll-interval` (`KILNMARK_SCHEDULES_POLL_INTERVAL`) | `30s` | How often a process with the scheduler role looks for schedules that are due |
+| `kilnmark.schedules.catch-up` (`KILNMARK_SCHEDULES_CATCH_UP`) | `1h` | A fire due longer ago than this when it is found (the server was not running) is missed, not run late |
+| `kilnmark.schedules.signed-in-within` (`KILNMARK_SCHEDULES_SIGNED_IN_WITHIN`) | `30d` | A schedule set by a person signed in through the identity provider pauses when their latest sign-in is older than this |
+
+Tests set the poll interval to a day (and the catch-up to two) and fire schedules themselves with
+`Scheduler.tick`.
+
 ## Data quality
 
 Each scan also samples rows, keeps value shapes and formats, and then queues a job of kind
@@ -845,10 +866,12 @@ forgery). To limit it:
 
 ## Health
 
-`GET /q/health/ready` (readiness) is up when the database answers, every migration is applied and,
-in a process with the worker role, the worker is taking jobs. `GET /q/health/live` (liveness) is up
-while the process runs. Both are public and say only UP or DOWN per check (`database`,
-`migrations`, `worker`, `server`): no host names, users or errors, which go to the log instead.
+`GET /q/health/ready` (readiness) is up when the database answers, every migration is applied, in
+a process with the worker role the worker is taking jobs, and in one with the scheduler role the
+scheduler has looked for due schedules within three poll intervals and a minute (ADR 0046).
+`GET /q/health/live` (liveness) is up while the process runs. Both are public and say only UP or
+DOWN per check (`database`, `migrations`, `worker`, `scheduler`, `server`): no host names, users or
+errors, which go to the log instead.
 `compose.yaml` uses readiness as the `kilnmark` service's health check; in Kubernetes, point the
 readiness probe at `/q/health/ready` and the liveness probe at `/q/health/live`.
 

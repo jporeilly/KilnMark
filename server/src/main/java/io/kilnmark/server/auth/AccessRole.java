@@ -21,8 +21,9 @@ public enum AccessRole {
      */
     STEWARD,
     /**
-     * Also builds: adds, edits, previews and deletes pipelines and flows; adds, imports, edits and
-     * deletes sources and turns on writing for them; writes custom SQL rules; sets server variables.
+     * Also builds: adds, edits, previews and deletes pipelines and flows, and sets their schedules
+     * (ADR 0046); adds, imports, edits and deletes sources and turns on writing for them; writes
+     * custom SQL rules; sets server variables.
      * The only role whose tokens may hold {@link #UNMASK_GRANT}.
      */
     DESIGNER,

@@ -3,8 +3,9 @@
 Most banks run their batch work from an enterprise scheduler: Control-M, AutoSys, IBM Workload
 Automation, cron or Windows Task Scheduler. This guide shows how to start Kilnmark's pipelines and
 flows from one, inside its dependency chains, so that the job ends when the run ends and says how
-it went. Kilnmark's own scheduler is being built too; use whichever fits, or both. Why it works
-this way is in [ADR 0047](../adr/0047-external-schedulers.md).
+it went. Kilnmark has a scheduler of its own too
+([Running pipelines and flows on a schedule](schedules.md)); use whichever fits, or both. Why it
+works this way is in [ADR 0047](../adr/0047-external-schedulers.md).
 
 ![A scheduler job that waits for the run to end: the scheduler starts kilnmark-run, which starts the run with a request key and waits 50 seconds at a time; Kilnmark answers 202 while the run is still going, and kilnmark-run waits again until Kilnmark answers 200 because the run has ended; kilnmark-run then exits with a code, and the scheduler acts on it. The API token is read from a file, never from the command line, the environment or the job's log](images/external-scheduler-flow.svg)
 

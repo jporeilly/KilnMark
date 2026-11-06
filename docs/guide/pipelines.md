@@ -752,6 +752,10 @@ waits. A pipeline with parameters runs with their defaults; see
 To stop a run, open it and choose **Cancel run**. A queued run is cancelled at once; a running one
 stops within a few seconds. Rows already written stay written.
 
+To run a pipeline at set times, such as 02:00 every weekday, give it a schedule: see
+[Running pipelines and flows on a schedule](schedules.md). A run a schedule started shows
+`schedule <id> (set by <name>)` as who asked for it. Deleting a pipeline deletes its schedules.
+
 To run a pipeline from your organisation's scheduler (Control-M, AutoSys, cron, Windows Task
 Scheduler), so that the job waits for the run and ends with its outcome, see
 [Running from an external scheduler](external-schedulers.md).

@@ -583,15 +583,35 @@ public class FlowService {
      * Queues a run checked by {@link #checkRun}: one transaction on the run's tables only, which a
      * caller's own transaction ({@code Db.together}) joins.
      *
-     * @throws WebApplicationException (409) while a run of the flow is queued or running
+     * @throws io.kilnmark.server.api.AlreadyRunning (409) while a run of the flow is queued or running
      */
     public FlowStore.Run queueChecked(CheckedRun checked, String by, AccessRole role) {
         try {
             return store.queueRun(checked.name(), checked.version(), by, role.id(), checked.parameters(),
                 checked.variables());
         } catch (FlowStore.Busy e) {
-            throw fail(Response.Status.CONFLICT, "A run of " + checked.name() + " is already queued or running. Wait "
-                + "for it to finish, or cancel it, then run the flow again.");
+            throw new io.kilnmark.server.api.AlreadyRunning("A run of " + checked.name() + " is already queued or "
+                + "running. Wait for it to finish, or cancel it, then run the flow again.");
+        }
+    }
+
+    /**
+     * Checks values for the parameters of the flow's latest version as a run of it would, without
+     * queueing anything: a schedule's values, when it is saved (ADR 0046). A parameter with no
+     * default must be given.
+     *
+     * @throws IllegalArgumentException saying what is wrong, starting {@code parameters:}
+     * @throws WebApplicationException (404) when there is no such flow
+     */
+    public void checkParameters(String name, Map<String, Object> parameters) {
+        FlowStore.Flow f = flow(name);
+        FlowStore.Version v = store.version(name, f.latestVersion()).orElseThrow(() -> fail(Response.Status.NOT_FOUND,
+            name + " has no version " + f.latestVersion()));
+        FlowDefinition def = FlowDefinition.parse(v.yaml()).definition();
+        try {
+            Parameters.resolve(name, def == null ? List.of() : def.parameters(), parameters, variables());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("parameters: " + e.getMessage(), e);
         }
     }
 

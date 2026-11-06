@@ -9,7 +9,8 @@ recorded node by node.
 
 - **Viewers** read flows and their runs.
 - **Stewards** run flows, give their parameters values, and cancel runs.
-- **Designers** add flows and save new versions. A flow with a `sql` node is saved only by a
+- **Designers** add flows and save new versions, and with **admins** give flows schedules
+  ([Running pipelines and flows on a schedule](schedules.md)). A flow with a `sql` node is saved only by a
   designer whose token sees unmasked values, since SQL can read and change any column its source's
   login can.
 
@@ -505,6 +506,10 @@ Kilnmark checks the latest saved version again first, since a pipeline may have 
 queues the run. Unsaved changes on the page are not part of it. Only one run of a flow is queued or
 running at a time.
 
+To run a flow at set times, such as every night, give it a schedule: see
+[Running pipelines and flows on a schedule](schedules.md). A run a schedule started shows
+`schedule <id> (set by <name>)` as who asked for it.
+
 To run a flow from your organisation's scheduler (Control-M, AutoSys, cron, Windows Task
 Scheduler), so that the job waits for the run and ends with its outcome, see
 [Running from an external scheduler](external-schedulers.md).
@@ -587,5 +592,5 @@ runs it started that are still going are cancelled. What they had already writte
 
 - Changing a node's settings on the diagram: for now, change them in the YAML.
 - Deleting a flow.
-- Running flows on a schedule inside Kilnmark. Your own scheduler can run them now: see
-  [Running from an external scheduler](external-schedulers.md).
+- Pages for schedules: flows run on a schedule now, set through the API for the moment
+  ([Running pipelines and flows on a schedule](schedules.md)).

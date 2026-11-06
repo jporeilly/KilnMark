@@ -7,6 +7,15 @@ details.
 
 ### What's new
 
+- **Pipelines and flows run on a schedule** (ADR 0046). Designers and admins give a pipeline or flow
+  one or more schedules: a five-field cron time in a time zone, the values its runs start with, and
+  the role they act as (steward or designer, never admin). A schedule pauses itself when whoever set
+  it loses the role. Each run is of the latest version,
+  checked as Run now checks it, and is recorded as asked for by the schedule. A schedule fires at
+  most once per time; a time missed while Kilnmark was stopped, or one that finds the last run still
+  going, is not made up. Set through the API for now; the pages follow.
+  ([Running pipelines and flows on a schedule](docs/guide/schedules.md))
+
 - **Try a node again after a failure** (ADR 0041). A `run-pipeline`, `for-each` or `sql` node's
   `retries` (0 to 5) tries it again when it fails or times out, waiting `retry_delay` (1 minute
   unless set), doubled each time. A cancel is never tried again, and a pipeline is tried again only
@@ -58,6 +67,47 @@ details.
   name `Locale.ROOT`, so a server in a Turkish locale reads `PRIORITY: HIGH` and the like as
   written; a nested class is static; unused parameters and a field are gone.
 
+- **The scheduler** (ADR 0046, docs/design/schedules.md). Migration V36 adds `schedule`: one
+  pipeline or flow (each a foreign key that cascades, so deleting a pipeline deletes its
+  schedules), `cron`, `zone`, `parameters`, `run_as` (steward or designer), `enabled`,
+  `description`, who set it, `next_at`, and the last fire's time, outcome and run. `Cron` reads
+  five-field Unix cron (lists, ranges, steps, month and day names, 0 and 7 for Sunday, the Vixie
+  rule for the two day fields, `@hourly` to `@yearly`; no seconds, no `@reboot`) in an IANA zone:
+  a time the clocks skip runs moved on by the gap, one they repeat runs once, and an expression
+  that never fires in ten years is refused. `Scheduler`, on the scheduler role every
+  `kilnmark.schedules.poll-interval` (30 s), claims the due schedules in one transaction
+  (`FOR UPDATE SKIP LOCKED`), moves their next fire past now and commits, then queues each run
+  through `queueRun` as `schedule <id> (set by <name>)` with the schedule's role, and records
+  `started`, `skipped: a run was still going`, `missed: the server was not running` (due longer
+  ago than `kilnmark.schedules.catch-up`, 1 h), `missed: changed while it was due` or
+  `failed: <message>`; `starting` meanwhile, read as a lost fire once it is old. Every next fire
+  is worked out from the database's clock, never earlier than the last fire, and a save that keeps
+  the times keeps the next fire, so a fire is never repeated or silently dropped. The loop
+  survives any failure (logged at ERROR) and a `scheduler` readiness check says whether it runs. `/api/v1/schedules` lists
+  (by pipeline or flow), reads, adds, replaces and deletes them (designers and admins write;
+  viewers read without parameter values) and previews an expression's next five times. Parameter
+  values are checked against the latest version when saved. A busy pipeline or flow is now told
+  apart by its own exception (`AlreadyRunning`, still a 409). The audit log records
+  `schedule.set` and `schedule.deleted` (for a deleted pipeline's schedules, exactly those its
+  transaction deleted), never the values, and the audit page lists them.
+- **A schedule stops when whoever set it loses the role** (ADR 0046). A schedule keeps who set it
+  as an identity (`set_by_token`, or `set_by_person`, an opaque key for a provider sign-in, which
+  sign-in events now record as `person`). Before every fire the token must still work and have the
+  role, or the person must have it as the access review reads their sign-ins; if not, nothing runs,
+  the schedule is paused with `paused: the person who set it no longer has the role` and
+  `schedule.paused` is recorded. Revoking a token, or a sign-in with less of a role, pauses that
+  identity's schedules at once (never failing the sign-in). Saving a paused schedule makes the
+  person saving it its setter. A person's role is lowered to what their groups give under today's
+  mapping (sign-in events now record, in `groups`, only the groups the settings map to a role, never
+  others), and their latest sign-in must be
+  within `kilnmark.schedules.signed-in-within` (30 days), else
+  `paused: the person who set it has not signed in for 30 days`. Sign-ins are read by the person's
+  key, in the order stored, through two partial indexes on `audit_event`; refusals other than for
+  want of a group are never read. The check and the queueing hold the schedule's row lock, so a
+  revoke or pause comes wholly before or after a run; a pause never cancels a run. The pause at
+  sign-in runs off the sign-in's thread, locks only what will pause and waits at most two seconds.
+  Upgrading builds the two indexes over the whole audit log, holding its writes back meanwhile
+  (requests do not wait: the audit log is written by a thread of its own).
 - **The `wait-for` flow node** (ADR 0041, docs/design/flow-controls.md, C2). It takes `source` and
   either `file` (a pattern with `*` and `?` in its last part; `at_least`, 1 by default) or `query`,
   plus `every` (30s to 1h, 5m) and `timeout` (up to 24h, 1h). It looks at once, then every `every`,

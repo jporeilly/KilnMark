@@ -215,8 +215,11 @@ moves the unique index to `(flow_run_id, flow_node, coalesce(flow_item, -1))`.
   (cancel it), and a node may start up to `queue_timeout` after the flow did.
 - Flows are checked again when they are run: pipelines may have been deleted or changed since the
   flow was saved.
-- **Planned (item 4, the scheduler):** a flow that nobody starts runs as an identity an admin
-  records when scheduling it, capped at a role.
+- **Scheduled runs, built** ([ADR 0046](../adr/0046-scheduler.md),
+  [schedules.md](schedules.md)): a flow that nobody starts runs as `schedule <id> (set by <name>)`,
+  the designer or admin who last set the schedule, with the role the schedule gives it: steward or
+  designer, never admin. Its pipeline runs carry the same name and role, and viewers never see the
+  values it starts with.
 
 ## 6. Planned
 

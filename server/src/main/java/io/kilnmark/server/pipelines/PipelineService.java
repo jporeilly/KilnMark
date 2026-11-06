@@ -523,11 +523,16 @@ public class PipelineService {
     }
 
     public void delete(String name, String by) {
+        deleteWithSchedules(name, by);
+    }
+
+    /** Deletes the pipeline as {@link #delete} does; returns the schedules deleted with it, to record. */
+    public List<PipelineStore.GoneSchedule> deleteWithSchedules(String name, String by) {
         try {
-            if (!store.delete(name)) {
-                throw fail(Response.Status.NOT_FOUND, "No pipeline called " + name);
-            }
-            LOG.infof("Pipeline %s deleted by %s", name, by);
+            List<PipelineStore.GoneSchedule> gone = store.deleteWithSchedules(name).orElseThrow(() ->
+                fail(Response.Status.NOT_FOUND, "No pipeline called " + name));
+            LOG.infof("Pipeline %s deleted by %s, with %d schedules", name, by, gone.size());
+            return gone;
         } catch (PipelineStore.Busy e) {
             throw fail(Response.Status.CONFLICT, "A run of " + name + " is queued or running. Wait for it to finish, "
                 + "or cancel it, then delete the pipeline.");
@@ -589,7 +594,7 @@ public class PipelineService {
      * Queues a run checked by {@link #checkRun}: one transaction on the run's tables only, which a
      * caller's own transaction ({@code Db.together}) joins.
      *
-     * @throws WebApplicationException (409) while a run of the pipeline is queued or running
+     * @throws io.kilnmark.server.api.AlreadyRunning (409) while a run of the pipeline is queued or running
      */
     public PipelineStore.Run queueChecked(CheckedRun checked, String by, AccessRole role) {
         PipelineStore.Run run;
@@ -597,8 +602,8 @@ public class PipelineService {
             run = store.queueRun(checked.name(), checked.version(), by, role.id(), null, null, checked.parameters(),
                 checked.variables());
         } catch (PipelineStore.Busy e) {
-            throw fail(Response.Status.CONFLICT, "A run of " + checked.name() + " is already queued or running. Wait "
-                + "for it to finish, or cancel it, then run the pipeline again.");
+            throw new io.kilnmark.server.api.AlreadyRunning("A run of " + checked.name() + " is already queued or "
+                + "running. Wait for it to finish, or cancel it, then run the pipeline again.");
         }
         LOG.infof("Run %d of pipeline %s (version %d) queued by %s", run.id(), checked.name(), checked.version(), by);
         return run;
@@ -656,6 +661,26 @@ public class PipelineService {
         LOG.infof("Run %d of pipeline %s (version %d) queued by %s for node %s%s of flow run %d", run.id(), name, n,
             by, flowNode, flowItem == null ? "" : ", item " + flowItem, flowRunId);
         return run;
+    }
+
+    /**
+     * Checks values for the parameters of the pipeline's latest version as a run of it would, without
+     * queueing anything: a schedule's values, when it is saved (ADR 0046), so a mistake is refused then
+     * rather than at the first fire.
+     *
+     * @throws IllegalArgumentException saying what is wrong, starting {@code parameters:}
+     * @throws WebApplicationException (404) when there is no such pipeline
+     */
+    public void checkParameters(String name, Map<String, Object> parameters) {
+        PipelineStore.Pipeline p = find(name);
+        PipelineStore.Version v = store.version(name, p.latestVersion()).orElseThrow(() -> fail(
+            Response.Status.NOT_FOUND, name + " has no version " + p.latestVersion()));
+        PipelineDefinition def = PipelineDefinition.parse(v.yaml()).definition();
+        try {
+            Parameters.resolve(name, def == null ? List.of() : def.parameters(), parameters, variables());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("parameters: " + e.getMessage(), e);
+        }
     }
 
     /** A version that can run, and its parameters' values for the run, defaults filled in. */

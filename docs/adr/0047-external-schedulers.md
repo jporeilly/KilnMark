@@ -9,7 +9,7 @@ Banks run their batch work from an enterprise scheduler: Control-M, AutoSys, IBM
 Automation, and cron or Windows Task Scheduler on smaller sites. The scheduler holds the
 dependency chains across every system, the business calendars, the on-call alerts and the audit of
 what ran when. Teams will not move those chains into Kilnmark; they want Kilnmark's pipelines and
-flows to be steps in them. Kilnmark's own scheduler (ADR 0046, being built) serves teams without
+flows to be steps in them. Kilnmark's own scheduler (ADR 0046) serves teams without
 one, and work that lives wholly inside Kilnmark. Both are needed.
 
 The API could already start a run and read it. Three things made it unfit for a scheduler:
@@ -64,7 +64,10 @@ The API could already start a run and read it. Three things made it unfit for a 
      without its key for a retry to miss. A start that is refused keeps no key.
    - Locks are taken in the order deleting a pipeline takes them: the pipeline's (or flow's) row,
      then the key's. A key older than 24 hours is taken over in place, never deleted by a start, so
-     a start and a delete of its pipeline cannot deadlock.
+     a start and a delete of its pipeline cannot deadlock. The order fits the built-in scheduler's
+     (docs/design/schedules.md): a fire locks its schedule's row, then the pipeline's; a delete
+     locks the schedules, then the pipeline, then its runs and their keys; a keyed start locks no
+     schedule, and the pipeline before the key, so no two of them wait on each other in a circle.
    - Race-safe: a second request with the same key waits on the first's uncommitted row, then finds
      the run. A test holds the first inside its transaction to show the second waits.
    - Keys are in `run_request_key` (migration V37), deleted with their run, and cleaned up after
