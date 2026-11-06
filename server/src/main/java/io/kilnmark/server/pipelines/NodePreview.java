@@ -57,7 +57,7 @@ final class NodePreview {
      * else (a write, or a node type added later) may write or change something, and is refused.
      */
     static final Set<String> PREVIEWABLE = Set.of(ReadNodeFactory.TYPE, "filter", "compute", "select", "lookup",
-        "aggregate", "union", "dedupe", "route", "limit", GateNodeFactory.TYPE);
+        "aggregate", "union", "dedupe", "route", "limit", "sort", GateNodeFactory.TYPE);
 
     private NodePreview() {
     }
@@ -87,7 +87,7 @@ final class NodePreview {
     }
 
     /** Nodes that hold rows in state of their own, bounded by their {@code memory_limit_mb}. */
-    static final Set<String> STATEFUL = Set.of("aggregate", "dedupe", "lookup", "union");
+    static final Set<String> STATEFUL = Set.of("aggregate", "dedupe", "lookup", "union", "sort");
 
     static Plan plan(String yaml, String node) {
         return plan(yaml, node, Caps.DEFAULT);
@@ -247,9 +247,9 @@ final class NodePreview {
     static List<String> waits(PipelineCompilerPort.Compilation c) {
         List<String> out = new ArrayList<>();
         for (PipelineCompilerPort.NodeOutline s : c.nodes()) {
-            if ("aggregate".equals(s.type())) {
-                out.add("Node " + s.id() + " (aggregate) reads every row it is given before it passes any on, so every "
-                    + "row before it was read.");
+            if ("aggregate".equals(s.type()) || "sort".equals(s.type())) {
+                out.add("Node " + s.id() + " (" + s.type() + ") reads every row it is given before it passes any on, "
+                    + "so every row before it was read.");
             } else if ("lookup".equals(s.type())) {
                 List<String> from = c.edges().stream().filter(e -> e.toNode().equals(s.id())
                     && e.toPort().equals("lookup")).map(PipelineCompilerPort.EdgeOutline::fromNode).distinct().toList();
@@ -440,7 +440,7 @@ final class NodePreview {
             case "lookup" -> {
                 return in.getOrDefault("main", Hidden.NONE).plus(in.getOrDefault("lookup", Hidden.NONE));
             }
-            case "filter", "route", "dedupe", "gate", "limit", "union", "write" -> {
+            case "filter", "route", "dedupe", "gate", "limit", "union", "sort", "write" -> {
                 return any;
             }
             default -> {
@@ -514,6 +514,11 @@ final class NodePreview {
             }
             case "gate" -> {
                 uses(id, t, main, gateFields == null ? null : gateFields, "checks rules on");
+                return main;
+            }
+            case "sort" -> {
+                // the order rows come out in shows how a column's values compare
+                uses(id, t, main, orderColumns(config.get("by")), "orders rows by");
                 return main;
             }
             case "limit", "union" -> {
@@ -604,6 +609,26 @@ final class NodePreview {
         Map<String, String> out = new LinkedHashMap<>();
         if (value instanceof Map<?, ?> m) {
             m.forEach((k, v) -> out.put(String.valueOf(k), v == null ? null : String.valueOf(v)));
+        }
+        return out;
+    }
+
+    private static final java.util.regex.Pattern ORDER_TERM = java.util.regex.Pattern.compile(
+        "(?i)^(.*?)(?:\\s+(?:asc|desc))?(?:\\s+nulls\\s+(?:first|last))?$", java.util.regex.Pattern.DOTALL);
+
+    /**
+     * The columns a sort's {@code by} names, each without its {@code asc}, {@code desc} or
+     * {@code nulls first|last}, as the sort node reads them; a single text may list them with commas.
+     */
+    static List<String> orderColumns(Object by) {
+        List<String> entries = by instanceof String text ? java.util.Arrays.asList(text.split(",")) : list(by);
+        List<String> out = new ArrayList<>();
+        for (String e : entries) {
+            java.util.regex.Matcher m = ORDER_TERM.matcher(e.strip());
+            String column = m.matches() ? m.group(1).strip() : e.strip();
+            if (!column.isEmpty()) {
+                out.add(column);
+            }
         }
         return out;
     }
