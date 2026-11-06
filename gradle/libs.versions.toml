@@ -30,7 +30,7 @@ langchain4j = "1.23.0"
 tika = "3.3.3"
 poi = "5.5.1"
 # The Quarkus platform pins mime4j for the server; the plug-ins and their tests use the same version.
-mime4j = "0.8.12"
+mime4j = "0.8.15"
 json-schema-validator = "1.5.9"
 # Pipeline YAML (docs/design/pipelines.md): YAML 1.2, safe by default, Apache-2.0
 snakeyaml-engine = "3.2"
