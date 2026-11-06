@@ -569,7 +569,7 @@ main:has(.pl-wide) {
 .pl-dock .cv-dock-settings .cv-set-main > h4,
 .pl-dock .cv-dock-settings .cv-set-main > p,
 .pl-dock .cv-dock-settings .cv-set-main > ul,
-.pl-dock .cv-dock-settings .cv-set-main > .cv-field:has(textarea, .cv-pairs, .cv-checklist, .cv-chip-row) {
+.pl-dock .cv-dock-settings .cv-set-main > .cv-field:has(textarea, .cv-pairs, .cv-checklist, .cv-chip-row, .cv-order) {
   grid-column: 1 / -1;
 }
 

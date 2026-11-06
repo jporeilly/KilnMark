@@ -83,6 +83,8 @@ export function nodeSummary(node: GraphNode): string {
       return keysOf(s.routes).join(", ");
     case "limit":
       return s.rows != null ? `first ${t("rows")} rows` : "";
+    case "sort":
+      return s.by != null ? `by ${text(s.by)}` : "";
     case "gate": {
       const n = Array.isArray(s.rules) ? s.rules.length : 0;
       const own = s.asset_rules === false || s.asset_rules === "false" ? "" : "asset's rules";

@@ -810,6 +810,31 @@ p.cv-field-problems {
   border-radius: var(--km-radius-pill);
 }
 
+.cv-order {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.cv-order-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.cv-order-column {
+  flex: 0 1 14em;
+  min-width: 6em;
+  overflow-wrap: anywhere;
+}
+
+.cv-field .cv-order-row select {
+  width: auto;
+}
+
 .cv-add-row {
   display: flex;
   gap: 6px;
