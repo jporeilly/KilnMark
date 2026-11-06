@@ -7,6 +7,10 @@ details.
 
 ### Details
 
+- **Dev mode starts again**: `./gradlew :server:quarkusDev` needs two POMs the build itself does
+  not (`org.jboss:jboss-parent:37`, `org.jboss.slf4j:slf4j-jboss-logmanager:1.1.0.Final`); their
+  checksums, matched against Maven Central, are now in `gradle/verification-metadata.xml`
+  (ADR 0042).
 - **Dependencies updated** (Dependabot's Gradle group): Jackson 2.22, the AWS SDK 2.57, LangChain4j
   1.23, Error Prone 2.52, the SQL Server driver's patch release, lz4, GreenMail
   and the licence report plug-in, with their checksums and signing keys in
