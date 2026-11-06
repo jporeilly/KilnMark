@@ -2,6 +2,7 @@ package io.kilnmark.server.api;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.function.BooleanSupplier;
 
@@ -15,8 +16,10 @@ import jakarta.ws.rs.core.Response;
 /**
  * Waiting for a run to end (ADR 0047): {@code ?wait=<seconds>} on the run-start and run-read
  * endpoints. A waiting request sleeps on a virtual thread and looks at the run's status about once a
- * second; at most {@code kilnmark.api.max-waiting} wait at once on this process, and no wait is
- * longer than {@code kilnmark.api.max-wait}.
+ * second; at most {@code kilnmark.api.max-waiting} wait at once on this process, at most
+ * {@code kilnmark.api.max-waiting-per-caller} of them for one token or person, and no wait is
+ * longer than {@code kilnmark.api.max-wait}. A start is never refused for want of a place: it
+ * starts the run and answers at once.
  */
 @ApplicationScoped
 public class RunWaits {
@@ -28,10 +31,14 @@ public class RunWaits {
 
     private final Duration cap;
     private final Semaphore waiting;
+    private final int perCaller;
+    /** Places each caller holds now. */
+    private final ConcurrentHashMap<String, Integer> byCaller = new ConcurrentHashMap<>();
 
     public RunWaits(KilnmarkConfig config) {
         this.cap = config.api().maxWait();
         this.waiting = new Semaphore(Math.max(1, config.api().maxWaiting()));
+        this.perCaller = Math.max(1, config.api().maxWaitingPerCaller());
     }
 
     /** A place among the waiting requests; closing it gives the place back. */
@@ -64,15 +71,44 @@ public class RunWaits {
     }
 
     /**
-     * Takes a place among the waiting requests for a wait of {@code wait}; none is needed for no wait.
-     *
-     * @throws WebApplicationException (503, with Retry-After) when as many requests as allowed are waiting
+     * Takes a place among the waiting requests for {@code caller}'s wait of {@code wait}, or null when
+     * there is none: as many requests as allowed are waiting, on this process or for this caller. No
+     * place is needed for no wait.
      */
-    public Place enter(Duration wait) {
+    public Place tryEnter(Duration wait, String caller) {
         if (wait.isZero()) {
             return NONE;
         }
+        boolean[] taken = {false};
+        byCaller.compute(caller, (k, held) -> {
+            int now = held == null ? 0 : held;
+            if (now >= perCaller) {
+                return held;
+            }
+            taken[0] = true;
+            return now + 1;
+        });
+        if (!taken[0]) {
+            return null;
+        }
         if (!waiting.tryAcquire()) {
+            leave(caller);
+            return null;
+        }
+        return () -> {
+            waiting.release();
+            leave(caller);
+        };
+    }
+
+    /**
+     * As {@link #tryEnter}, refusing instead of giving null.
+     *
+     * @throws WebApplicationException (503, with Retry-After) when as many requests as allowed are waiting
+     */
+    public Place enter(Duration wait, String caller) {
+        Place place = tryEnter(wait, caller);
+        if (place == null) {
             throw new WebApplicationException(Response.status(Response.Status.SERVICE_UNAVAILABLE)
                 .header("Retry-After", Integer.toString(RETRY_AFTER))
                 .type(MediaType.APPLICATION_JSON)
@@ -80,7 +116,12 @@ public class RunWaits {
                     + RETRY_AFTER + " seconds, or ask without wait and read the run later."))
                 .build());
         }
-        return waiting::release;
+        return place;
+    }
+
+    /** Gives back one of {@code caller}'s places, forgetting the caller when it holds none. */
+    private void leave(String caller) {
+        byCaller.computeIfPresent(caller, (k, held) -> held <= 1 ? null : held - 1);
     }
 
     /**

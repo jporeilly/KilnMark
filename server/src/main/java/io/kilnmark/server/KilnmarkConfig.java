@@ -386,10 +386,18 @@ public interface KilnmarkConfig {
 
         /**
          * Requests that may wait for a run at the same time, on each process with the api role. One
-         * more is refused with 503 and Retry-After, so waiting schedulers cannot crowd out the API.
+         * more read is refused with 503 and Retry-After, so waiting schedulers cannot crowd out the API.
          */
         @WithDefault("100")
         int maxWaiting();
+
+        /**
+         * Of those, how many one token or person may hold, so one caller cannot take every place.
+         * One more is refused as above; a start that finds no place still starts its run, and
+         * answers at once.
+         */
+        @WithDefault("10")
+        int maxWaitingPerCaller();
     }
 
     interface Files {

@@ -46,13 +46,9 @@ public class FlowResource {
     @jakarta.inject.Inject
     io.kilnmark.server.quality.Sights sights;
 
-    /** Waiting for a run to end ({@code ?wait=}), with the cap and the limit on waits at once (ADR 0047). */
+    /** Starting and reading runs for callers that wait, with request keys (ADR 0047). */
     @jakarta.inject.Inject
-    RunWaits waits;
-
-    /** Request keys ({@code Idempotency-Key}): a retried start gives the run the first one started. */
-    @jakarta.inject.Inject
-    RunRequestKeys keys;
+    RunRequests runRequests;
 
     public FlowResource(FlowService flows, SecurityIdentity identity) {
         this.flows = flows;
@@ -198,11 +194,12 @@ public class FlowResource {
         + "The version is checked again first, since pipelines may have changed: one with problems is refused, and "
         + "so is a second run while one is queued or running. The pipelines it runs run as you, with your role. "
         + "With wait (whole seconds, at most kilnmark.api.max-wait, 15 minutes by default) the answer comes when "
-        + "the run has ended (200) or when the wait is up (202): read the run with wait to go on waiting. With an "
-        + "Idempotency-Key header (1 to 200 printable characters), the same key from the same token or person for "
-        + "the same flow within 24 hours gives the run the first request started (200, with Idempotent-Replayed: "
-        + "true) instead of another, so a retry never runs the work twice. A request that could not start a run "
-        + "keeps no key. With Accept: text/plain the run comes as name: value lines (id, kind, name, status, "
+        + "the run has ended (200) or when the wait is up (202): read the run with wait to go on waiting. A start is "
+        + "never refused for want of a wait place: with as many waiting as allowed, it answers at once (202). With "
+        + "an Idempotency-Key header (1 to 200 printable characters), the same key from the same token or person "
+        + "for the same request (this flow, version and parameter values) within 24 hours gives the run the first "
+        + "request started (200, with Idempotent-Replayed: true) instead of another, so a retry never runs the "
+        + "work twice; the key and its run are kept together or not at all. With Accept: text/plain the run comes as name: value lines (id, kind, name, status, "
         + "ended, page, message). Role: steward.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "The run ended within the wait, or the key had started it; "
@@ -217,30 +214,21 @@ public class FlowResource {
         @APIResponse(responseCode = "404", description = "No such flow or version"),
         @APIResponse(responseCode = "409", description = "The version has problems that stop it running, or a run "
             + "is already queued or running"),
-        @APIResponse(responseCode = "422", description = "The key started a run of another pipeline or flow in the "
-            + "last 24 hours"),
-        @APIResponse(responseCode = "503", description = "With wait: as many requests as allowed are waiting; ask "
-            + "again after Retry-After seconds. No run was started")})
+        @APIResponse(responseCode = "422", description = "The key started a different request in the last 24 "
+            + "hours: another pipeline or flow, version or parameter values")})
     public Response run(@PathParam("name") String name, @QueryParam("wait") String wait,
                         @HeaderParam(RunWaits.KEY_HEADER) String key, FlowViews.RunRequest body,
                         @jakarta.ws.rs.core.Context jakarta.ws.rs.core.HttpHeaders headers,
                         @jakarta.ws.rs.core.Context io.vertx.core.http.HttpServerRequest request) {
-        java.time.Duration waitFor = waits.parse(wait);
-        String checkedKey = RunRequestKeys.check(key);
-        try (RunWaits.Place _ = waits.enter(waitFor)) {
-            AccessRole role = role();
-            java.util.function.LongSupplier queue = () -> flows.queueRun(name, body == null ? null : body.version(),
-                body == null || body.parameters() == null ? Map.of() : body.parameters(), who(), role).id();
-            RunRequestKeys.Started started = checkedKey == null ? new RunRequestKeys.Started(queue.getAsLong(), false)
-                : keys.start(RunRequestKeys.caller(identity), checkedKey, "flow", name, queue);
-            long id = started.runId();
-            waits.until(() -> RunWaits.endedOrGone(flows.run(id).map(FlowStore.Run::status).orElse(null)), waitFor,
-                RunWaits.gone(request));
-            FlowViews.RunSummary run = flows.runView(id, sights.data());
-            return RunWaits.started(run, RunWaits.plain(headers)
-                ? RunWaits.text("flow", id, run.flow(), run.status(), run.error()) : null,
-                run.status(), started.repeated(), URI.create("/api/v1/flow-runs/" + id));
-        }
+        AccessRole role = role();
+        Integer version = body == null ? null : body.version();
+        Map<String, Object> parameters = body == null || body.parameters() == null ? Map.of() : body.parameters();
+        return runRequests.start("flow", name, version, parameters, wait, key, identity, headers, request,
+            () -> flows.queueRun(name, version, parameters, who(), role).id(),
+            id -> flows.run(id).map(FlowStore.Run::status).orElse(null), id -> {
+                FlowViews.RunSummary run = flows.runView(id, sights.data());
+                return new RunRequests.Shown(run, run.flow(), run.status(), run.error());
+            });
     }
 
     @GET

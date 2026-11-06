@@ -37,9 +37,9 @@ public class PipelineRunResource {
     @jakarta.inject.Inject
     com.fasterxml.jackson.databind.ObjectMapper json;
 
-    /** Waiting for a run to end ({@code ?wait=}), with the cap and the limit on waits at once (ADR 0047). */
+    /** Starting and reading runs for callers that wait, with request keys (ADR 0047). */
     @jakarta.inject.Inject
-    RunWaits waits;
+    RunRequests runRequests;
 
     public PipelineRunResource(PipelineService pipelines, SecurityIdentity identity) {
         this.pipelines = pipelines;
@@ -65,21 +65,15 @@ public class PipelineRunResource {
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "404", description = "No such run"),
         @APIResponse(responseCode = "503", description = "With wait, on a run still going: as many requests as "
-            + "allowed are waiting; ask again after Retry-After seconds")})
+            + "allowed are waiting, on this server or for this caller; ask again after Retry-After seconds, or "
+            + "without wait")})
     public Response get(@PathParam("id") long id, @QueryParam("wait") String wait,
                         @jakarta.ws.rs.core.Context jakarta.ws.rs.core.HttpHeaders headers,
                         @jakarta.ws.rs.core.Context io.vertx.core.http.HttpServerRequest request) {
-        java.time.Duration waitFor = waits.parse(wait);
-        if (!RunWaits.endedOrGone(waitFor.isZero() ? null : pipelines.runStatus(id))) {
-            try (RunWaits.Place _ = waits.enter(waitFor)) {
-                waits.until(() -> RunWaits.endedOrGone(pipelines.runStatus(id)), waitFor, RunWaits.gone(request));
-            }
-        }
-        if (RunWaits.plain(headers)) {
-            PipelineViews.RunSummary run = pipelines.runSummary(id, sights);
-            return RunWaits.read(null, RunWaits.text("pipeline", id, run.pipeline(), run.status(), run.error()));
-        }
-        return RunWaits.read(pipelines.run(id, sights), null);
+        return runRequests.read("pipeline", id, wait, identity, headers, request, pipelines::runStatus, runId -> {
+            PipelineViews.RunSummary run = pipelines.runSummary(runId, sights);
+            return new RunRequests.Shown(run, run.pipeline(), run.status(), run.error());
+        }, () -> pipelines.run(id, sights));
     }
 
     @GET

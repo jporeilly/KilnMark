@@ -34,9 +34,9 @@ public class FlowRunResource {
     @jakarta.inject.Inject
     io.kilnmark.server.quality.Sights sights;
 
-    /** Waiting for a run to end ({@code ?wait=}), with the cap and the limit on waits at once (ADR 0047). */
+    /** Starting and reading runs for callers that wait, with request keys (ADR 0047). */
     @jakarta.inject.Inject
-    RunWaits waits;
+    RunRequests runRequests;
 
     public FlowRunResource(FlowService flows, SecurityIdentity identity) {
         this.flows = flows;
@@ -66,21 +66,15 @@ public class FlowRunResource {
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "404", description = "No such run"),
         @APIResponse(responseCode = "503", description = "With wait, on a run still going: as many requests as "
-            + "allowed are waiting; ask again after Retry-After seconds")})
+            + "allowed are waiting, on this server or for this caller; ask again after Retry-After seconds, or "
+            + "without wait")})
     public Response get(@PathParam("id") long id, @QueryParam("wait") String wait,
                         @jakarta.ws.rs.core.Context jakarta.ws.rs.core.HttpHeaders headers,
                         @jakarta.ws.rs.core.Context io.vertx.core.http.HttpServerRequest request) {
-        java.time.Duration waitFor = waits.parse(wait);
-        if (!RunWaits.endedOrGone(waitFor.isZero() ? null : status(id))) {
-            try (RunWaits.Place _ = waits.enter(waitFor)) {
-                waits.until(() -> RunWaits.endedOrGone(status(id)), waitFor, RunWaits.gone(request));
-            }
-        }
-        if (RunWaits.plain(headers)) {
-            FlowViews.RunSummary run = flows.runView(id, sights.data());
-            return RunWaits.read(null, RunWaits.text("flow", id, run.flow(), run.status(), run.error()));
-        }
-        return RunWaits.read(flows.runDetail(id, sights.data()), null);
+        return runRequests.read("flow", id, wait, identity, headers, request, this::status, runId -> {
+            FlowViews.RunSummary run = flows.runView(runId, sights.data());
+            return new RunRequests.Shown(run, run.flow(), run.status(), run.error());
+        }, () -> flows.runDetail(id, sights.data()));
     }
 
     /** The run's status now, or null when there is no such run. */

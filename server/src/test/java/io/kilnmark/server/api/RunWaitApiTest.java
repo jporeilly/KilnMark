@@ -10,13 +10,19 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.net.Socket;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.MethodOrderer;
@@ -27,6 +33,7 @@ import org.junit.jupiter.api.TestMethodOrder;
 import io.kilnmark.server.Db;
 import io.kilnmark.server.Tokens;
 import io.kilnmark.server.pipelines.MemoryConnector;
+import io.quarkus.test.common.http.TestHTTPResource;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import io.restassured.response.Response;
@@ -36,9 +43,11 @@ import jakarta.inject.Inject;
 /**
  * Waiting for a run to end and request keys on the run endpoints (ADR 0047): wait returns when the
  * run ends or at the limit, never past kilnmark.api.max-wait (10 seconds in tests); at most
- * kilnmark.api.max-waiting (2 in tests) wait at once and one more gets 503; the same key from the
- * same caller for the same pipeline or flow gives the same run, even when two arrive at once; the
- * same key for another is 422; another caller's key is its own; keys expire after 24 hours.
+ * kilnmark.api.max-waiting (2 in tests) wait at once, at most one per caller in tests, and one more
+ * read gets 503, while a start still starts; a caller who has gone stops waiting. The same key from
+ * the same caller for the same request gives the same run, even when two arrive at once; the same
+ * key for another pipeline or flow, or other values, is 422; another caller's key is its own; a key
+ * and its run commit together; keys expire after 24 hours.
  */
 @QuarkusTest
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -88,6 +97,9 @@ class RunWaitApiTest {
 
     @Inject
     RunRequestKeys keys;
+
+    @TestHTTPResource("/")
+    URL base;
 
     private static RequestSpecification as(String token) {
         return Tokens.as(token).contentType(ContentType.JSON);
@@ -192,27 +204,52 @@ class RunWaitApiTest {
 
     @Test
     @Order(7)
-    void oneWaitMoreThanTheLimitIsRefusedAndStartsNothing() throws Exception {
+    void waitsOverTheLimitsAreRefusedButStartsAreNot() throws Exception {
+        // one caller holds its one place (kilnmark.api.max-waiting-per-caller is 1 in tests)
         CompletableFuture<Integer> a = CompletableFuture.supplyAsync(() ->
             as(viewer).get("/api/v1/flow-runs/" + slow + "?wait=6").statusCode(), THREADS);
-        CompletableFuture<Integer> b = CompletableFuture.supplyAsync(() ->
-            as(steward).get("/api/v1/flow-runs/" + slow + "?wait=6").statusCode(), THREADS);
-        Thread.sleep(3_000); // both are waiting now
+        Thread.sleep(2_000);
         as(viewer).get("/api/v1/flow-runs/" + slow + "?wait=3").then().statusCode(503)
             .header("Retry-After", "5").body("error", containsString("waiting"));
+        // another caller still waits: the server holds two (kilnmark.api.max-waiting)
+        CompletableFuture<Integer> b = CompletableFuture.supplyAsync(() ->
+            as(steward).get("/api/v1/flow-runs/" + slow + "?wait=6").statusCode(), THREADS);
+        Thread.sleep(2_000);
+        as(other).get("/api/v1/flow-runs/" + slow + "?wait=3").then().statusCode(503);
+        // a start with wait is never refused: it starts the run and answers at once
         int before = as(viewer).get("/api/v1/flows/rw-other/runs").then().extract().jsonPath().getList("$").size();
-        as(steward).body(Map.of()).post("/api/v1/flows/rw-other/runs?wait=5").then().statusCode(503);
-        assertEquals(before, as(viewer).get("/api/v1/flows/rw-other/runs").then().extract().jsonPath()
-            .getList("$").size(), "a refused wait starts no run");
+        long t = System.nanoTime();
+        long started = as(other).body(Map.of()).post("/api/v1/flows/rw-other/runs?wait=5").then().statusCode(202)
+            .extract().jsonPath().getLong("id");
+        assertTrue(seconds(t) < 3, "answered at once");
+        assertEquals(before + 1, as(viewer).get("/api/v1/flows/rw-other/runs").then().extract().jsonPath()
+            .getList("$").size(), "the start started its run");
         // without wait, or on a run that has ended, nothing waits and nothing is refused
         as(viewer).get("/api/v1/flow-runs/" + slow).then().statusCode(200);
         assertEquals(200, a.get(20, TimeUnit.SECONDS));
         assertEquals(200, b.get(20, TimeUnit.SECONDS));
+        as(viewer).get("/api/v1/flow-runs/" + started + "?wait=10").then().statusCode(200)
+            .body("run.status", equalTo("succeeded"));
         as(viewer).get("/api/v1/flow-runs/" + slow + "?wait=3").then().statusCode(200);
     }
 
     @Test
     @Order(8)
+    void aCallerWhoHasGoneStopsWaiting() throws Exception {
+        try (Socket socket = new Socket(java.net.InetAddress.getLoopbackAddress(), base.getPort())) {
+            socket.getOutputStream().write(("GET /api/v1/flow-runs/" + slow + "?wait=10 HTTP/1.1\r\nHost: "
+                + base.getHost() + "\r\nAuthorization: Bearer " + viewer + "\r\n\r\n")
+                .getBytes(StandardCharsets.US_ASCII));
+            socket.getOutputStream().flush();
+            Thread.sleep(1_500);
+            as(viewer).get("/api/v1/flow-runs/" + slow + "?wait=1").then().statusCode(503); // its place is held
+        }
+        Thread.sleep(2_500); // the server sees the connection close within about a second
+        as(viewer).get("/api/v1/flow-runs/" + slow + "?wait=1").then().statusCode(200);
+    }
+
+    @Test
+    @Order(9)
     void theSameKeyGivesTheSameRunAndAnotherPipelineIsRefused() {
         Response first = as(steward).header("Idempotency-Key", "nightly 2026-11-06").body(Map.of())
             .post("/api/v1/pipelines/rw-copy/runs?wait=10");
@@ -234,7 +271,7 @@ class RunWaitApiTest {
     }
 
     @Test
-    @Order(9)
+    @Order(10)
     void aKeyThatCouldNotStartARunIsNotKept() {
         as(steward).header("Idempotency-Key", "no-such-thing").body(Map.of())
             .post("/api/v1/pipelines/rw-missing/runs").then().statusCode(404);
@@ -245,29 +282,83 @@ class RunWaitApiTest {
     }
 
     @Test
-    @Order(10)
+    @Order(11)
     void twoRequestsWithOneKeyAtOnceStartOneRun() throws Exception {
         int before = as(viewer).get("/api/v1/flows/rw-pair/runs").then().extract().jsonPath().getList("$").size();
-        List<CompletableFuture<Response>> both = List.of(
-            CompletableFuture.supplyAsync(() -> as(steward).header("Idempotency-Key", "pair-1").body(Map.of())
-                .post("/api/v1/flows/rw-pair/runs"), THREADS),
-            CompletableFuture.supplyAsync(() -> as(steward).header("Idempotency-Key", "pair-1").body(Map.of())
-                .post("/api/v1/flows/rw-pair/runs"), THREADS));
-        Response one = both.get(0).get(30, TimeUnit.SECONDS);
-        Response two = both.get(1).get(30, TimeUnit.SECONDS);
-        assertTrue(List.of(200, 202).contains(one.statusCode()), one.asString());
-        assertTrue(List.of(200, 202).contains(two.statusCode()), two.asString());
-        assertEquals(one.jsonPath().getLong("id"), two.jsonPath().getLong("id"), "one run for both");
-        assertEquals(1, (one.header(RunWaits.REPLAYED_HEADER) == null ? 0 : 1)
-            + (two.header(RunWaits.REPLAYED_HEADER) == null ? 0 : 1), "one started it, the other found it");
-        assertEquals(before + 1, as(viewer).get("/api/v1/flows/rw-pair/runs").then().extract().jsonPath()
-            .getList("$").size());
-        as(viewer).get("/api/v1/flow-runs/" + one.jsonPath().getLong("id") + "?wait=10").then().statusCode(200)
-            .body("run.status", equalTo("succeeded"));
+        CountDownLatch inside = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicBoolean first = new AtomicBoolean(true);
+        // the first request stops after queueing its run, before its key and run commit
+        keys.afterQueue(() -> {
+            if (first.getAndSet(false)) {
+                inside.countDown();
+                try {
+                    release.await(30, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+        try {
+            Future<Response> one = THREADS.submit(() -> as(steward).header("Idempotency-Key", "pair-1")
+                .body(Map.of()).post("/api/v1/flows/rw-pair/runs"));
+            assertTrue(inside.await(30, TimeUnit.SECONDS), "the first request queued its run");
+            Future<Response> two = THREADS.submit(() -> as(steward).header("Idempotency-Key", "pair-1")
+                .body(Map.of()).post("/api/v1/flows/rw-pair/runs"));
+            Thread.sleep(1_500);
+            assertTrue(!two.isDone(), "the second waits for the first's key");
+            release.countDown();
+            Response a = one.get(30, TimeUnit.SECONDS);
+            Response b = two.get(30, TimeUnit.SECONDS);
+            assertTrue(List.of(200, 202).contains(a.statusCode()), a.asString());
+            assertTrue(List.of(200, 202).contains(b.statusCode()), b.asString());
+            assertEquals(a.jsonPath().getLong("id"), b.jsonPath().getLong("id"), "one run for both");
+            assertEquals(null, a.header(RunWaits.REPLAYED_HEADER), "the first started it");
+            assertEquals("true", b.header(RunWaits.REPLAYED_HEADER), "the second found it");
+            assertEquals(before + 1, as(viewer).get("/api/v1/flows/rw-pair/runs").then().extract().jsonPath()
+                .getList("$").size());
+            as(viewer).get("/api/v1/flow-runs/" + a.jsonPath().getLong("id") + "?wait=10").then().statusCode(200)
+                .body("run.status", equalTo("succeeded"));
+        } finally {
+            release.countDown();
+            keys.afterQueue(null);
+        }
     }
 
     @Test
-    @Order(11)
+    @Order(12)
+    void aKeyAndItsRunAreKeptTogetherOrNotAtAll() {
+        int before = as(viewer).get("/api/v1/flows/rw-other/runs").then().extract().jsonPath().getList("$").size();
+        keys.afterQueue(() -> {
+            throw new IllegalStateException("the key could not be kept");
+        });
+        try {
+            as(steward).header("Idempotency-Key", "together").body(Map.of()).post("/api/v1/flows/rw-other/runs")
+                .then().statusCode(500);
+        } finally {
+            keys.afterQueue(null);
+        }
+        assertEquals(0, count("together"), "no key");
+        assertEquals(before, as(viewer).get("/api/v1/flows/rw-other/runs").then().extract().jsonPath()
+            .getList("$").size(), "and no run without it");
+    }
+
+    @Test
+    @Order(13)
+    void theSameKeyWithOtherValuesIsRefused() {
+        long id = as(steward).header("Idempotency-Key", "values").body(Map.of())
+            .post("/api/v1/flows/rw-other/runs?wait=10").then().statusCode(200).extract().jsonPath().getLong("id");
+        as(steward).header("Idempotency-Key", "values").body(Map.of("version", 1))
+            .post("/api/v1/flows/rw-other/runs").then().statusCode(422).body("error", containsString("other"));
+        as(steward).header("Idempotency-Key", "values").body(Map.of("parameters", Map.of("x", 1)))
+            .post("/api/v1/flows/rw-other/runs").then().statusCode(422);
+        // the same values, written in another order or with no body at all, are the same request
+        as(steward).header("Idempotency-Key", "values").body(Map.of("parameters", Map.of()))
+            .post("/api/v1/flows/rw-other/runs").then().statusCode(200).body("id", equalTo((int) id));
+    }
+
+    @Test
+    @Order(14)
     void keysOlderThanADayAreUnusedAndCleanedUp() {
         long id = as(steward).header("Idempotency-Key", "aging").body(Map.of())
             .post("/api/v1/flows/rw-other/runs?wait=10").then().statusCode(200).extract().jsonPath().getLong("id");

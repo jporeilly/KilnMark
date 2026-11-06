@@ -31,8 +31,22 @@ public class Db {
         return source.getConnection();
     }
 
-    /** Runs {@code work} in one transaction: committed if it returns, rolled back if it throws. */
+    /** The transaction {@link #together} keeps open on this thread, which every {@link #tx} inside it joins. */
+    private static final ThreadLocal<Connection> JOINED = new ThreadLocal<>();
+
+    /**
+     * Runs {@code work} in one transaction: committed if it returns, rolled back if it throws. Inside
+     * {@link #together} on the same thread, it joins that transaction instead, and commits with it.
+     */
     public <T> T tx(Work<T> work) {
+        Connection joined = JOINED.get();
+        if (joined != null) {
+            try {
+                return work.run(joined);
+            } catch (SQLException e) {
+                throw new DbException(e.getMessage(), e);
+            }
+        }
         try (Connection c = source.getConnection()) {
             boolean auto = c.getAutoCommit();
             c.setAutoCommit(false);
@@ -49,6 +63,26 @@ public class Db {
         } catch (SQLException e) {
             throw new DbException(e.getMessage(), e);
         }
+    }
+
+    /**
+     * Runs {@code work} in one transaction that every {@link #tx} it makes on this thread joins, so
+     * all of it commits together or none of it does: a run queued by code that knows nothing of the
+     * caller's own rows (a request key, ADR 0047) commits with them. Work inside must not catch a
+     * failed statement and go on: PostgreSQL refuses every statement after one fails.
+     */
+    public <T> T together(Work<T> work) {
+        if (JOINED.get() != null) {
+            throw new IllegalStateException("already inside together()");
+        }
+        return tx(c -> {
+            JOINED.set(c);
+            try {
+                return work.run(c);
+            } finally {
+                JOINED.remove();
+            }
+        });
     }
 
     /** A database call failed; the message is PostgreSQL's. */
