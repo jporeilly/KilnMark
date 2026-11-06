@@ -11,8 +11,8 @@ run timelines).
 ## 1. Finish what is half built
 
 1. **Flow controls, the rest** ([ADR 0041](../adr/0041-flow-nodes-for-resources-and-control.md),
-   docs/design/flow-controls.md; owner, 5 November 2026): `timeout` (C3) and `priority` (C5) are
-   built; then the `check-source` and `wait-for` nodes, then a node's `retries`. When it is
+   docs/design/flow-controls.md; owner, 5 November 2026): `timeout` (C3), `priority` (C5) and the
+   `check-source` node (C1) are built; then the `wait-for` node, then a node's `retries`. When it is
    finished, take `FlowDefinition`, its test, `FlowService` and `JobQueue` out of Error Prone's
    `excludedPaths` in `build.gradle.kts` and fix what it finds there (ADR 0042, decision 5).
 2. **Dependency updates**: Dependabot's Gradle group (#76) less the MariaDB driver 3.x, which sets
