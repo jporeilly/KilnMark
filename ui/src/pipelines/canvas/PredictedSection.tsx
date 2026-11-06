@@ -2,6 +2,9 @@ import { formatNumber } from "../../api";
 import { dimensionWord, percent, RULE_STATUS_WORDS } from "../quality";
 import { ESTIMATE, predictedWords, rowsWords, type PredictedQuality } from "../prediction";
 
+/** The words as a sentence of their own: a capital first letter. */
+const sentence = (w: string) => (w ? w[0].toUpperCase() + w.slice(1) : w);
+
 const DECISION: Record<string, string> = {
   passed: "pass every row",
   warned: "warn and let every row through",
@@ -20,7 +23,7 @@ export function PredictedSection({ p, id }: { p: PredictedQuality; id: string })
     <section className="cv-section cv-predicted" aria-labelledby={id}>
       <h4 id={id}>Predicted quality {ESTIMATE}</h4>
       <p className="small">
-        {predictedWords(p)}, from the catalogue's metadata about what this node reads; no data was read. {rowsWords(p.rows)}.
+        {predictedWords(p)}, from the catalogue's metadata about what this node reads; no data was read. {sentence(rowsWords(p.rows))}.
       </p>
       {Object.keys(p.dimensions).length > 0 && (
         <ul className="small cv-quality-dims" aria-label="Predicted score per dimension">

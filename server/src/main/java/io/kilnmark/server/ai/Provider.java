@@ -8,7 +8,7 @@ import java.util.Locale;
  */
 public enum Provider {
     /** Any server with the OpenAI API: llama-server, vLLM, Ollama ({@code /v1}), LM Studio. */
-    OPENAI_COMPATIBLE("openai-compatible", "OpenAI-compatible server (llama-server, vLLM, Ollama)", null, false, true),
+    OPENAI_COMPATIBLE("openai-compatible", "OpenAI-compatible server", null, false, true),
     OPENAI("openai", "OpenAI", "https://api.openai.com/v1", true, true),
     /** Azure OpenAI's v1 API, which is the OpenAI API at {@code https://RESOURCE.openai.azure.com/openai/v1}. */
     AZURE_OPENAI("azure-openai", "Azure OpenAI", null, true, true),

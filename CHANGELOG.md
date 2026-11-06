@@ -15,6 +15,15 @@ details.
 
 ### Details
 
+- **Wording**: every setting's help reads as a sentence, starting with what the setting does rather
+  than a value ("How rows are written: create fails if ...", "Lets pipelines write ...; off keeps it
+  read-only"); 20 settings of nodes, sources and connectors are rewritten, and the components
+  reference with them. A new check fails the build when a setting's help starts with a small
+  letter. The token form's role list and the AI model form's purpose list show short names, with
+  what the chosen one means under the box, so no option is cut short; the OpenAI-compatible
+  provider's name is shorter, with the servers it suits said under it. Predicted quality's row
+  count starts its sentence with a capital.
+
 - **A provider sign-in renews with the refresh token** (ADR 0036, decision 4, amended). Quarkus's
   OIDC client was set up without `quarkus.oidc.token.refresh-expired`, so a session lasted only as
   long as the provider's first ID token: 5 minutes with Keycloak's default, about an hour with
