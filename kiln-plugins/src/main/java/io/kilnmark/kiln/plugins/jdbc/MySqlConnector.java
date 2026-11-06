@@ -167,16 +167,16 @@ public class MySqlConnector extends JdbcConnector {
                 + "database to keep the source to it"),
             Setting.text("username", "User name", true, "A login with SELECT is enough for scanning; pipelines that "
                 + "write to this source need a login with write rights"),
-            Setting.choice("tls_mode", "TLS", List.copyOf(TLS_MODES.keySet()), "preferred", "preferred (the default) "
-                + "encrypts when the server offers TLS, without checking its certificate; required always encrypts; "
+            Setting.choice("tls_mode", "TLS", List.copyOf(TLS_MODES.keySet()), "preferred", "How the connection is encrypted: "
+                + "preferred encrypts when the server offers TLS, without checking its certificate; required always encrypts; "
                 + "verify-ca also checks the certificate against the server CA certificate; verify-full also checks "
                 + "the host name; disabled never encrypts"),
             Setting.text("server_ca", "Server CA certificate", false, "For verify-ca and verify-full: the PEM "
                 + "certificate (-----BEGIN CERTIFICATE----- ...) of the authority that signed the server's "
                 + "certificate. Leave empty to use the certificates this server trusts"),
-            Setting.bool("tinyint1_as_boolean", "Read TINYINT(1) as true or false", true, "true (the default) reads "
-                + "TINYINT(1) columns, which is how " + product.displayName + " stores BOOLEAN, as true or false; "
-                + "false reads them as numbers"),
+            Setting.bool("tinyint1_as_boolean", "Read TINYINT(1) as true or false", true, "Reads TINYINT(1) columns, "
+                + "which is how " + product.displayName + " stores BOOLEAN, as true or false; off reads them as "
+                + "numbers"),
             new Setting("schemas", "Databases", false, "Leave empty to scan every database, or choose them from a list",
                 true));
     }

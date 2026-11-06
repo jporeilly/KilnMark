@@ -4,11 +4,12 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { accessReviewApi, aiApi, api, formatTime, type AccessRole, type ApiToken, type CreatedToken, type Me } from "../api";
 import { useTitle } from "../components/useTitle";
 
-const ROLES: { value: AccessRole; label: string }[] = [
-  { value: "viewer", label: "Viewer: search and read the catalogue" },
-  { value: "steward", label: "Steward: also run pipelines, scan, and look after quality" },
-  { value: "designer", label: "Designer: also build pipelines and flows, add sources, see sensitive values" },
-  { value: "admin", label: "Admin: also Settings and tokens (sees sensitive values masked)" },
+// The box shows the name; what the chosen role may do is said under it, so no option is cut short.
+const ROLES: { value: AccessRole; label: string; help: string }[] = [
+  { value: "viewer", label: "Viewer", help: "Searches and reads the catalogue." },
+  { value: "steward", label: "Steward", help: "Also runs pipelines, scans sources and looks after quality." },
+  { value: "designer", label: "Designer", help: "Also builds pipelines and flows, adds sources and may see sensitive values." },
+  { value: "admin", label: "Admin", help: "Also Settings and tokens; sees sensitive values masked." },
 ];
 
 const EXPIRY: { value: string; label: string }[] = [
@@ -295,13 +296,15 @@ function CreateToken({ onCreated }: { onCreated: (t: CreatedToken) => void }) {
         <div className="field-row">
           <div className="field">
             <label htmlFor="tok-role">Role</label>
-            <select id="tok-role" value={role} onChange={(e) => setRole(e.target.value as AccessRole)}>
+            <select id="tok-role" value={role} onChange={(e) => setRole(e.target.value as AccessRole)}
+              aria-describedby="tok-role-hint">
               {ROLES.map((r) => (
                 <option key={r.value} value={r.value}>
                   {r.label}
                 </option>
               ))}
             </select>
+            <p id="tok-role-hint" className="hint">{ROLES.find((r) => r.value === role)?.help}</p>
           </div>
           <div className="field">
             <label htmlFor="tok-expiry">Expires</label>

@@ -139,7 +139,7 @@ Writes the rows it receives to a table or a file in a saved source.
 | `target` | table or file | no |  | no | A table as schema.table, or a path inside the source for files. |
 | `table` | text | no |  | part of the name | Another name for target, for a table. |
 | `path` | text | no |  | part of the name | Another name for target, for a file. |
-| `mode` | choice | no | `create` | no | create fails if it exists; append adds rows; replace swaps in the new rows at the end; upsert updates rows with the same key and adds the rest. One of `create`, `append`, `replace`, `upsert`. |
+| `mode` | choice | no | `create` | no | How rows are written: create fails if the table or file exists; append adds rows; replace swaps in the new rows at the end; upsert updates rows with the same key and adds the rest. One of `create`, `append`, `replace`, `upsert`. |
 | `key` | list of columns | no |  | no | The columns that identify a row, for upsert. |
 | `format` | choice | no |  | no | For files: csv or parquet. Taken from the path's extension when left out. One of `csv`, `parquet`. |
 
@@ -152,7 +152,7 @@ The writer settings, which only some kinds of source take:
 | `compression` | choice | `snappy` | `files`, `s3` | Parquet only: how pages are compressed. One of `snappy`, `zstd`, `gzip`, `none`. |
 | `allow_unscanned` | true or false | `false` | `files`, `s3` | Write even where scans of this source would not find the file. |
 | `profile_output` | true or false | `true` | `files`, `jdbc`, `mariadb`, `mysql`, `oracle`, `postgresql`, `s3`, `sqlserver` | Profile the rows in the same pass and record the profile with the written table or file. |
-| `keep_values` | true or false | `true` | `files`, `jdbc`, `mariadb`, `mysql`, `oracle`, `postgresql`, `s3`, `sqlserver` | false keeps statistics without example values or sample rows; the source's own rule still applies. |
+| `keep_values` | true or false | `true` | `files`, `jdbc`, `mariadb`, `mysql`, `oracle`, `postgresql`, `s3`, `sqlserver` | Whether the profile keeps example values and sample rows; off keeps the statistics only. The source's own rule still applies. |
 | `commit_every` | number | `0` | `jdbc`, `mariadb`, `mysql`, `oracle`, `postgresql`, `sqlserver` | 0 (the default) writes in one transaction; otherwise commit after each batch reaching N rows. A failure then keeps the rows already committed. |
 | `batch_size` | number | `1000` | `jdbc`, `mariadb`, `mysql`, `oracle`, `postgresql`, `sqlserver` | Differs by kind of source: see each one in [Reference: connectors](reference-connectors.md). |
 | `text_length` | number | `0` | `jdbc`, `mariadb`, `mysql`, `oracle`, `postgresql`, `sqlserver` | Differs by kind of source: see each one in [Reference: connectors](reference-connectors.md). |
@@ -233,7 +233,7 @@ Checks the rows passing through it against quality rules, in the same pass that 
 
 | Setting | Type | Required | Default | Parameters | What it does |
 | --- | --- | --- | --- | --- | --- |
-| `on_fail` | choice | no | `stop` | no | stop fails the run, so the writes after the gate do not commit; quarantine sends failing rows to the quarantine port and the rest on; warn lets every row through and records what failed. One of `stop`, `quarantine`, `warn`. |
+| `on_fail` | choice | no | `stop` | no | What to do when rows fail: stop fails the run, so the writes after the gate do not commit; quarantine sends failing rows to the quarantine port and the rest on; warn lets every row through and records what failed. One of `stop`, `quarantine`, `warn`. |
 | `asset_rules` | true or false | no | `true` | whole value | Checks the enabled quality rules of the table or file read upstream. |
 | `rules_from` | text | no |  | no | When rows come from more than one read node: the id of the one whose asset's rules to check. |
 | `rules` | list of rules | no |  | no | Rules for this pipeline only, each with a type, a column and its own settings. |
@@ -471,8 +471,8 @@ join.
 | --- | --- | --- | --- | --- | --- |
 | `on` | column to column | yes |  | no | Key columns: each main column and the lookup column it must equal. |
 | `keep` | list of columns | no |  | no | Lookup columns to add to main rows. Leave empty to add every lookup column except the keys. |
-| `join` | choice | no | `left` | no | left keeps main rows with no match; inner drops them. One of `left`, `inner`. |
-| `unmatched` | choice | no |  | no | keep, drop, or send to the rejected port. Overrides join when set. One of `keep`, `drop`, `rejected`. |
+| `join` | choice | no | `left` | no | What happens to main rows with no match: left keeps them, inner drops them. One of `left`, `inner`. |
+| `unmatched` | choice | no |  | no | What to do with a main row that has no match: keep it, drop it, or send it to the rejected port. Overrides join when set. One of `keep`, `drop`, `rejected`. |
 | `duplicates` | choice | no | `first` | no | When the lookup side has a key more than once: use the first row, or stop with an error. One of `first`, `error`. |
 | `memory_limit_mb` | number | no | `256` | whole value | The most memory the lookup side (and main rows waiting for it) may take. |
 

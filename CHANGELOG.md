@@ -37,6 +37,15 @@ details.
 - **A node can say how much it wrote to disk.** `NodeContext.spilled(bytes)` adds to the run's
   `NodeResult.spilledBytes` (not yet stored in the database), and `NodeContext.note(text)` adds a
   line in the node's own words to the run's log (`node_note`, through `RunListener.nodeNote`).
+- **Wording**: every setting's help reads as a sentence, starting with what the setting does rather
+  than a value ("How rows are written: create fails if ...", "Lets pipelines write ...; off keeps it
+  read-only"); 20 settings of nodes, sources and connectors are rewritten, and the components
+  reference with them. A new check fails the build when a setting's help starts with a small
+  letter. The token form's role list and the AI model form's purpose list show short names, with
+  what the chosen one means under the box, so no option is cut short; the OpenAI-compatible
+  provider's name is shorter, with the servers it suits said under it. Predicted quality's row
+  count starts its sentence with a capital.
+
 - **A provider sign-in renews with the refresh token** (ADR 0036, decision 4, amended). Quarkus's
   OIDC client was set up without `quarkus.oidc.token.refresh-expired`, so a session lasted only as
   long as the provider's first ID token: 5 minutes with Keycloak's default, about an hour with
@@ -60,6 +69,29 @@ details.
   node that names its table with `table:` (or its file with `path:`) no longer shows an empty
   "Table or file" box beside it. A setting with several controls, such as Key columns, no longer
   draws a rule and padding above itself, and its box comes before the list of what is chosen.
+- **A refactoring plan** on the backlog (item 21): one run lifecycle for pipelines and flows first,
+  then the UI's API file split by area, one form-field building block, and the two largest server
+  classes split. Each step changes no behaviour.
+
+- **Panels laid out evenly**: a sweep of every panel at 1900, 1280 and 1024 pixels, measured
+  rather than eyeballed.
+  - Node settings: an on/off setting's name now sits level with the names beside it (it was
+    11 pixels lower), and every setting's name is the same size, whether one box or several.
+    A list of columns keeps one column's width whether or not any are chosen, instead of
+    stretching across the panel once the first is added, and a long column name wraps inside its
+    chip (a read node's columns take the whole row, before and after the table's columns are
+    known). A pair's two boxes (a column and its expression, a column and the one it matches, a
+    column and its new name) sit side by side where there is room. A read node's checklist says
+    what it reads under the boxes, a node's id has its help under the box, "None chosen." no
+    longer leaves a gap before the help, and a long node id wraps in the side column instead of
+    running into the settings. A setting's default no longer pulls the word before it onto the
+    next line.
+  - Boxes in the code face are as tall as the others (40 pixels, not 41).
+  - Email settings: a number's unit sits beside its box, centred, and the boxes are a number's
+    width; Send a test email is as wide as its words; Allowed email domains has the box under
+    its name and the help last.
+  - Explore: a long table name keeps its kind on the same line, and the SQL tab's choices and
+    Generate SQL no longer touch the text above them.
 
 - **Quieter start and stop**: `kilnmark.sh` and `kilnmark.cmd` no longer show Podman's notice
   that it runs an external compose tool (they set `PODMAN_COMPOSE_WARNING_LOGS=false` for their
