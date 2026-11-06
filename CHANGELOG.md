@@ -278,6 +278,10 @@ details.
   say designers and admins turn writing on, as the server enforces. A diagram of the component
   families joins the guides.
 
+- **Noted for later** (docs/product/backlog.md, "Later, not scheduled"): OCR for scanned
+  documents, with a trial of Tesseract against a local vision model, and Apache OpenNLP's name
+  finder as a fallback for finding personal data with AI off, once its models' licences are
+  checked. Low priority.
 - **Agents are decided** ([ADR 0052](docs/adr/0052-agents.md)): agents work at design time and in
   operations, never inside a run; in flows a model chooses only between fixed branches, through an
   `ai` node's `classify` and a `route` or `gate`, with low-confidence rows sent to a person. Each

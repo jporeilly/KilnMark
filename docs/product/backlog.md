@@ -136,6 +136,22 @@ dependency verification (ADR 0042, #99) and signed images with an offline instal
        leaking into forms; the panel layout sweep starts this.
     4. **`FlowService` and `QualityPredictor` (about 2,600 lines) split** into focused parts.
 
+## Later, not scheduled
+
+Noted so they are not lost; low priority until a customer needs them.
+
+- **OCR for scanned documents and images** (owner, 6 November 2026): scanned work orders,
+  delivery notes and invoices are recorded today but not read (ADR 0017, "Left out, for
+  later"). A short trial first: Tesseract through Tika's OCR parser, as a separate worker
+  image, against a local vision model through the model runtime (ADR 0012), on synthetic
+  scanned work orders in the lab, comparing accuracy, time per page and image size. The text
+  then reaches the `ai` node's tasks like any document's (ADR 0050).
+- **Names and places without a model** (owner, 6 November 2026): Apache OpenNLP's name finder
+  as the fallback for `detect-personal-data` with AI off (ADR 0050, decision 6), which today
+  finds account numbers by pattern and checksum but not names or places. First check the
+  licences of its trained models against ADR 0007: the code is Apache-2.0, the models are
+  trained on corpora with licences of their own.
+
 ## Owner's items
 
 - The demo deck and the partnership status slide, last made for 0.0.8: refresh for the Foundation milestone.
