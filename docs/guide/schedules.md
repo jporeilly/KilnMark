@@ -4,8 +4,9 @@ A schedule runs a pipeline or a flow at set times, such as 02:00 every weekday, 
 pressing **Run now**. Each run is of the latest saved version, with values you choose for its
 parameters, and is checked exactly as Run now checks it.
 
-For now, schedules are set through the API, `/api/v1/schedules`. Pages to set and read them follow
-in the next release.
+You set schedules on a pipeline's or flow's page, in the **Schedules** tab under its canvas or
+diagram, and see every schedule on the server on the **Schedules** page in the sidebar. Scripts
+can do the same through the API (see [With the API](#with-the-api)).
 
 ## Before you start
 
@@ -15,9 +16,6 @@ in the next release.
   to start.
 - The pipeline or flow must exist and have a saved version. A pipeline or flow can have several
   schedules: a nightly run and a month-end run with other values, say.
-
-Requests below use an API token in `$TOKEN` (see [Signing in, roles and tokens](signing-in.md))
-and Kilnmark's address in `$KILNMARK`.
 
 ## Who a scheduled run acts as
 
@@ -33,7 +31,8 @@ changes a schedule becomes the name its later runs carry, so they are answerable
 
 The role is checked when the schedule is saved. If someone leaves, or their token is revoked,
 their schedules keep running in their name: change each one, so it carries a current person's
-name, or delete it. List them with `GET /api/v1/schedules` and look at `updatedBy`.
+name, or delete it. The **Schedules** page lists every schedule with who set it (see
+[Finding schedules](#finding-schedules)).
 
 A scheduled flow's pipeline runs carry the same name and role. Like any run, it can only write to
 sources that allow writing.
@@ -41,31 +40,51 @@ sources that allow writing.
 Today a run as designer can do no more than a run as steward: Kilnmark checks only that a run's
 role is steward or above. The role is recorded with each run, for when that changes.
 
+## A pipeline's or flow's schedules
+
+Open the pipeline or flow and choose the **Schedules** tab in the panel under it. Each schedule
+shows:
+
+- **Schedule**: when it runs, in words where that is easy ("Weekdays (Monday to Friday) at
+  06:30"), with its cron expression, its time zone, its number and its description. Stewards and
+  above also see the **Values** its runs start with; viewers do not;
+- **Set by**: who last added or changed it, the role its runs have, and when. Its runs carry
+  this name;
+- **State and next run**: **On** or **Paused**, and the next run in your own time, with your zone
+  named; when the schedule's zone is another, the same time in that zone too;
+- **Last time it was due**: what happened, in a word with a colour (**Started**, **Starting**,
+  **Skipped**, **Missed** or **Failed**), when, why, and a link to the run it started.
+
+The line under the pipeline's or flow's name says when it next runs on a schedule; choosing it
+shows the tab.
+
+![The Schedules tab under a pipeline's canvas, with Add a schedule: two schedules, both on. The first runs on weekdays at 06:30 in Europe/London with its values, set by first admin to run as steward; its next run is Monday at 06:30 and last time it Started, with a link to its pipeline run. The second runs every hour in UTC with the defaults, set by data-team; its next run is shown in the viewer's time and in UTC, and last time it was Skipped because a run was still going. Each row has Edit, Pause and Delete](images/schedules-section.png)
+
 ## Adding a schedule
 
-Send what to run, when, and in which time zone:
+1. Open the pipeline or flow, choose the **Schedules** tab under it, then **Add a schedule**.
+2. Under **When**, choose how often in **Repeats**: every day at a time, weekdays at a time,
+   every hour, every few minutes, or a day of each month. Then give the time, the minutes past the
+   hour, how many minutes, or the day. Each fills in the **Cron expression**.
+3. For anything else, choose **Something else** and write the cron expression yourself (see
+   [Writing the times](#writing-the-times)). Typing an expression that is one of the presets
+   chooses that preset.
+4. Choose the **Time zone**. It starts as your own. The times are in this zone all year.
+5. Check **Next five runs**, which follows what you choose: each time is in your own zone, and in
+   the schedule's zone when that is another. An expression that cannot be used says why here.
+6. Under **Values**, change the values of the parameters the latest version declares, as in the
+   Run now dialog. A field left as its default is not saved, so each run takes the default of the
+   version then latest.
+7. Choose what it **Runs as**: steward, or designer.
+8. Add a short **Description** of what it is for, if you like, and tick **Paused** to add it
+   without it running yet.
+9. Choose **Add schedule**.
 
-```bash
-curl -s -X POST "$KILNMARK/api/v1/schedules" \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"pipeline": "customer-billing", "cron": "0 2 * * MON-FRI", "zone": "Europe/London",
-       "parameters": {"region": "EMEA"}, "description": "Weekday billing load"}'
-```
-
-| Field | What it is |
-| --- | --- |
-| `pipeline` or `flow` | What to run: give one, not both |
-| `cron` | When, in five fields (below) |
-| `zone` | The time zone the times are in, such as `Europe/London` or `America/New_York`. `UTC` if left out |
-| `parameters` | Values for the latest version's parameters; the others take their defaults. A flow's parameter with no default must be given |
-| `runAs` | `steward` (the default) or `designer` |
-| `enabled` | `false` adds it paused; on by default |
-| `description` | One short line, at most 200 characters, saying what it is for |
+![The form to add a schedule to a pipeline: Repeats set to weekdays at a time, at 07:15, which fills in the cron expression 15 7 * * MON-FRI; the time zone Europe/London, marked as yours; the next five runs, Monday to Friday at 07:15. Under them the pipeline's three parameters with their defaults and descriptions, Runs as steward, a description, Paused, and Add schedule](images/schedule-form.png)
 
 Kilnmark checks everything before saving: the expression must fire, the zone must be known, and the
 values must suit the latest version, as Run now would check them. A mistake is refused at once,
-naming the field, rather than at the first run. The answer is the schedule, with `nextAt`, when it
-fires next.
+naming the field, and the form shows the message, rather than the first run failing.
 
 ## Writing the times
 
@@ -97,15 +116,8 @@ Each field takes `*` (any), a number, a range (`9-17`), a list (`0,30`) and a st
 - **No seconds**, and no `@reboot`: a schedule runs at set times.
 - **An expression that never runs**, such as `0 0 30 2 *` (the 30th of February), is refused.
 
-To see when an expression would run before you save it, try it. Anyone signed in may:
-
-```bash
-curl -s -X POST "$KILNMARK/api/v1/schedules/preview" \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"cron": "0 2 * * MON-FRI", "zone": "Europe/London"}'
-```
-
-The answer lists the next five times, or says what is wrong (`valid` false, with `problem`).
+The schedule form shows the next five times an expression runs as you type it, or what is wrong
+with it. Scripts can ask the same of the API (see [With the API](#with-the-api)).
 
 ### When the clocks change
 
@@ -129,19 +141,21 @@ run you can see is safer than a doubled one.
 
 ## What happened last time
 
-Each schedule shows `lastAt`, when it was last due, and `lastOutcome`, what happened then:
+Each schedule shows, under **Last time it was due**, when that was and what happened, as a word
+with a colour, the reason, and a link to the run it started (in the API, `lastAt` and
+`lastOutcome`):
 
 ![What happens when a schedule is due: a time due more than an hour ago is missed and not run late; if a run of the pipeline or flow is still going, the time is skipped; if the latest version cannot run, it fails with the server's reason; otherwise the run starts. Either way the next time is worked out from now](images/schedule-outcomes.svg)
 
 | Outcome | What it means | What to do |
 | --- | --- | --- |
-| `starting` | Kilnmark is starting the run, which takes a moment | Look again shortly |
-| `started` | The run was queued; `lastPipelineRun` or `lastFlowRun` is its number | Open the run to follow it |
-| `skipped: a run was still going` | The last run had not finished, and only one runs at a time | If it happens often, the runs take longer than the gap between them: space the times out |
-| `missed: the server was not running` | Kilnmark was stopped when it was due, for longer than an hour. It does not run late | Run it now by hand if the work is still needed |
-| `failed: …` | The run could not start, for the reason given: the latest version has problems, a value no longer suits it, a source no longer allows writing. Viewers see only `failed` | Fix what it says; the next time runs as usual |
-| `missed: changed while it was due` | Someone changed its times, zone or pausing just as it was due, so that time did not run | Run it now by hand if the work is still needed |
-| `failed: the server stopped before the run was queued` | Kilnmark stopped at the moment it was starting the run, so that time was lost. It shows once it has said `starting` for a few minutes | Run it now by hand if the work is still needed |
+| **Starting** (`starting`) | Kilnmark is starting the run, which takes a moment | Look again shortly |
+| **Started** (`started`) | The run was queued; the link opens it (`lastPipelineRun` or `lastFlowRun` in the API) | Open the run to follow it |
+| **Skipped** (`skipped: a run was still going`) | The last run had not finished, and only one runs at a time | If it happens often, the runs take longer than the gap between them: space the times out |
+| **Missed** (`missed: the server was not running`) | Kilnmark was stopped when it was due, for longer than an hour. It does not run late | Run it now by hand if the work is still needed |
+| **Failed** (`failed: …`) | The run could not start, for the reason given: the latest version has problems, a value no longer suits it, a source no longer allows writing. Viewers see only `failed` | Fix what it says; the next time runs as usual |
+| **Missed** (`missed: changed while it was due`) | Someone changed its times, zone or pausing just as it was due, so that time did not run | Run it now by hand if the work is still needed |
+| **Failed** (`failed: the server stopped before the run was queued`) | Kilnmark stopped at the moment it was starting the run, so that time was lost. It shows once it has said `starting` for a few minutes | Run it now by hand if the work is still needed |
 
 A missed or skipped time is never made up later, and a schedule that was due several times while
 Kilnmark was stopped for less than an hour runs once, not once for each. How late a time may still
@@ -149,18 +163,26 @@ run is `kilnmark.schedules.catch-up` (1 hour), set by whoever runs Kilnmark.
 
 ## Changing, pausing and deleting
 
-`PUT /api/v1/schedules/<id>` replaces everything a schedule is set to, so send all of it. If it
-now runs a different pipeline or flow, its last outcome is cleared.
+In the **Schedules** tab, or on the **Schedules** page, each schedule has three buttons for
+designers and admins:
+
+- **Edit** opens the form with what it is set to now. Change what you need and choose **Save
+  changes**.
+- **Pause** stops it running until you choose **Resume**. Kilnmark reads the schedule again first,
+  so a change someone else made since the page was read is kept.
+- **Delete** asks first, then deletes it.
+
+Saving, pausing and resuming each make you the schedule's **Set by**: its later runs carry your
+name.
 
 A change that keeps the times, the zone and whether it is paused keeps its next time, so editing
 the description or the values never moves or drops a run. A change to the times, the zone or
 pausing works the next time out again; if a time was due at that moment and had not started, it
-is recorded as `missed: changed while it was due` rather than lost without a word. To pause
-one, send it with `"enabled": false`; it has no next time while paused. To resume, send `true`: the
-next time is worked out from then, and the times it was paused are not made up.
+is recorded as `missed: changed while it was due` rather than lost without a word. A paused
+schedule has no next time. Resuming works the next time out from then, and the times it was paused
+are not made up.
 
-`DELETE /api/v1/schedules/<id>` deletes a schedule. Its runs stay, in the pipeline's or flow's
-history. Deleting a pipeline deletes its schedules too, and each is recorded in the audit log as
+A deleted schedule's runs stay, in the pipeline's or flow's history. Deleting a pipeline deletes its schedules too, and each is recorded in the audit log as
 deleted with it. Flows cannot be deleted yet; when they can, their schedules will go with them.
 
 Every change to a schedule is in the [audit log](audit-log.md), as **Schedule set** or **Schedule
@@ -169,6 +191,53 @@ its runs start with are never recorded there.
 
 ## Finding schedules
 
-`GET /api/v1/schedules` lists them all; add `?pipeline=customer-billing` or `?flow=month-end` for
-one pipeline's or flow's. `GET /api/v1/schedules/<id>` gives one. A run started by a schedule shows
-`schedule <id> (set by <name>)` as who asked for it, on its run page and in the History tab.
+The **Schedules** page, in the sidebar after **Flows**, lists every schedule on the server: when it
+runs, what it runs (linked to the pipeline or flow), who set it and as which role, whether it is
+on, its next run and what happened last time. Choose **On**, **Paused** or **Failed last time** to
+see only those; each says how many there are.
+
+![The Schedules page: filters for All 6, On 5, Paused 1 and Failed last time 1; a note for access reviews saying the 6 schedules run in the name of 2 people; and a table of every schedule with when it runs, the pipeline or flow it runs, linked, who set it and its role, its state and next run, and the last time it was due: Started with a link to the run, Skipped because a run was still going, Not run yet for the paused one, and Failed with the reason, a server variable that was not set](images/schedules-page.png)
+
+**For access reviews**, admins see a note saying how many people the schedules run in the name of.
+Read the **Set by** column: a schedule set by someone who has left, or lost their role, still
+runs in their name until it is changed or deleted.
+
+A run started by a schedule shows `schedule <id> (set by <name>)` as who asked for it, on its run
+page and in the History tab.
+
+## With the API
+
+Scripts set and read schedules at `/api/v1/schedules`. The requests below use an API token in
+`$TOKEN` (see [Signing in, roles and tokens](signing-in.md)) and Kilnmark's address in
+`$KILNMARK`.
+
+To add one, send what to run, when, and in which time zone:
+
+```bash
+curl -s -X POST "$KILNMARK/api/v1/schedules" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"pipeline": "customer-billing", "cron": "0 2 * * MON-FRI", "zone": "Europe/London",
+       "parameters": {"region": "EMEA"}, "description": "Weekday billing load"}'
+```
+
+| Field | What it is |
+| --- | --- |
+| `pipeline` or `flow` | What to run: give one, not both |
+| `cron` | When, in five fields (see [Writing the times](#writing-the-times)) |
+| `zone` | The time zone the times are in, such as `Europe/London` or `America/New_York`. `UTC` if left out |
+| `parameters` | Values for the latest version's parameters; the others take their defaults. A flow's parameter with no default must be given |
+| `runAs` | `steward` (the default) or `designer` |
+| `enabled` | `false` adds it paused; on by default |
+| `description` | One short line, at most 200 characters, saying what it is for |
+
+The answer is the schedule, with `nextAt`, when it fires next.
+
+- `PUT /api/v1/schedules/<id>` replaces everything a schedule is set to, so send all of it: send
+  `"enabled": false` to pause it and `true` to resume it. If it now runs a different pipeline or
+  flow, its last outcome is cleared.
+- `DELETE /api/v1/schedules/<id>` deletes it.
+- `GET /api/v1/schedules` lists them all; add `?pipeline=customer-billing` or `?flow=month-end` for
+  one pipeline's or flow's. `GET /api/v1/schedules/<id>` gives one. Each shows `updatedBy`, the name
+  its runs carry, `lastAt`, `lastOutcome`, and `lastPipelineRun` or `lastFlowRun`.
+- `POST /api/v1/schedules/preview` with `{"cron": "0 2 * * MON-FRI", "zone": "Europe/London"}` gives
+  the next five times, or what is wrong (`valid` false, with `problem`). Anyone signed in may.

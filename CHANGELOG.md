@@ -12,7 +12,10 @@ details.
   the role they act as (steward or designer, never admin). Each run is of the latest version,
   checked as Run now checks it, and is recorded as asked for by the schedule. A schedule fires at
   most once per time; a time missed while Kilnmark was stopped, or one that finds the last run still
-  going, is not made up. Set through the API for now; the pages follow.
+  going, is not made up. Each pipeline and flow has a **Schedules** tab under its canvas, with a form
+  whose presets (every day, weekdays, every hour, every few minutes, a day of the month) fill in the
+  cron and show the next five runs as you choose; the **Schedules** page in the sidebar lists every
+  schedule with who set it, for access reviews.
   ([Running pipelines and flows on a schedule](docs/guide/schedules.md))
 
 - **Try a node again after a failure** (ADR 0041). A `run-pipeline`, `for-each` or `sql` node's
@@ -77,6 +80,22 @@ details.
   apart by its own exception (`AlreadyRunning`, still a 409). The audit log records
   `schedule.set` and `schedule.deleted` (for a deleted pipeline's schedules, exactly those its
   transaction deleted), never the values, and the audit page lists them.
+- **The scheduler's pages** (ui/src/schedules, docs/design/schedules.md section 11). The panel under
+  a pipeline or flow has a Schedules tab (`SchedulesSection`), and the line under its name gives
+  the next scheduled run. Each schedule shows its cron in words where it is a common shape
+  (`cronWords`), with the expression and zone; who set it and its role; On or Paused; the next run
+  in the viewer's zone, and in the schedule's when that differs; the last outcome as a word with a
+  tone, its reason and a link to the run; and, for stewards and above, its values. Designers and
+  admins add and edit in `ScheduleForm`: presets fill the cron (`presetCron`, read back by
+  `readPreset`), a zone picker from `Intl.supportedValuesOf`, runs as steward or designer, the
+  latest version's parameters (a pipeline's read from its YAML), a description and Paused; the
+  next five times come from `POST /schedules/preview` a moment after each change, and only the
+  answer for the current expression and zone is shown. The form will not save while the
+  parameters are unread, so stored values are never replaced with none. Pause, Resume and Edit read
+  the schedule again before a PUT, so another person's change is kept. Delete asks first. The
+  Run now dialog's parameter fields are now `ParameterFields`, shared with the form. `#/schedules`
+  (`SchedulesPage`, in the sidebar after Flows) lists every schedule with what it runs, filters
+  for on, paused and failed last time, and a note for admins' access reviews.
 - **The `wait-for` flow node** (ADR 0041, docs/design/flow-controls.md, C2). It takes `source` and
   either `file` (a pattern with `*` and `?` in its last part; `at_least`, 1 by default) or `query`,
   plus `every` (30s to 1h, 5m) and `timeout` (up to 24h, 1h). It looks at once, then every `every`,
