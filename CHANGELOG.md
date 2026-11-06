@@ -7,6 +7,10 @@ details.
 
 ### Details
 
+- **A refactoring plan** on the backlog (item 21): one run lifecycle for pipelines and flows first,
+  then the UI's API file split by area, one form-field building block, and the two largest server
+  classes split. Each step changes no behaviour.
+
 - **Quieter start and stop**: `kilnmark.sh` and `kilnmark.cmd` no longer show Podman's notice
   that it runs an external compose tool (they set `PODMAN_COMPOSE_WARNING_LOGS=false` for their
   own compose commands), and `up` and `down` show compose's container ids and names only when
