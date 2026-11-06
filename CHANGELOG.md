@@ -64,6 +64,13 @@ details.
   behind a per-source Allow changes switch, previewed, confirmed and audited, with a second
   person's approval on production sources. ADR 0045 amends ADR 0028. Explore and the SQL
   generator are built (above); settings on tabs and operations follow.
+- **Run pipelines and flows from your scheduler** (ADR 0047). Control-M, AutoSys, IBM Workload
+  Automation, cron and Windows Task Scheduler can start a run and wait for it to end, so the job
+  ends when the work does. The new `kilnmark-run` script, in the release folder for Linux and
+  Windows, exits 0 when the run succeeded, 1 when it failed, 2 when it could not start, 3 when it
+  timed out, 4 when it was cancelled and 5 when Kilnmark could not be reached. A retry with the
+  same request key never runs the work twice.
+  ([Running from an external scheduler](docs/guide/external-schedulers.md))
 
 ### Details
 
@@ -177,6 +184,32 @@ details.
   names, or with "Could not reach <source>"; it reports `missing`. Messages never quote the source's
   settings or its driver. Saving checks that the source exists and holds tables (databases) or files
   (file and object stores). The diagram, Settings tab and run timeline show it.
+- **Waiting for a run, and request keys** (ADR 0047, docs/design/pipelines.md). `wait` (whole
+  seconds) on `POST /api/v1/pipelines/{name}/runs`, `POST /api/v1/flows/{name}/runs`,
+  `GET /api/v1/pipeline-runs/{id}` and `GET /api/v1/flow-runs/{id}` answers when the run has ended
+  (a start 200, a read 200) or the wait is up (a start 202, a read 200 with the run still going).
+  Waits run on virtual threads, look at the run once a second, and end when the caller goes;
+  `kilnmark.api.max-wait` (15 minutes) cuts each one, `kilnmark.api.max-waiting` (100) limits how
+  many wait at once and `kilnmark.api.max-waiting-per-caller` (10) how many one token or person
+  holds. A read beyond them gets 503 with `Retry-After`; a start is never refused, and answers at
+  once (202). The `Idempotency-Key` header on the two starts (1 to 200 printable characters) gives
+  back the run the same key started, from the same token or person, for the same request (pipeline
+  or flow, version and parameter values), within 24 hours (200, `Idempotent-Replayed: true`); the
+  same key for a different request is 422. Keys are in `run_request_key` (migration V37, after the
+  built-in scheduler's V36), written in one transaction with their run after the run is checked, so
+  many starts at once never use up the database pool; two requests with one key at once start one
+  run, a start never deadlocks with a delete of its pipeline, and the scheduler role deletes keys
+  after 24 hours. With `Accept: text/plain` the four endpoints
+  answer with the run as `name: value` lines. The two reads now say so in the API docs.
+- **`kilnmark-run.sh`, `kilnmark-run.ps1` and `kilnmark-run.cmd`** in the release's root, beside
+  `kilnmark.sh` (ADR 0044). The shell edition needs only POSIX `sh` and `curl`; the PowerShell one
+  Windows PowerShell 5.1. Both read the token from the file `KILNMARK_TOKEN_FILE` names, never
+  from the command line or the environment, accept a private CA in `KILNMARK_CA_FILE`, never turn
+  certificate checks off, and refuse plain `http://` except to the same machine. They wait 50
+  seconds at a time (under common proxy timeouts), retry a lost connection with the same key, give
+  up on a server that stays busy after about five minutes, never pause past `--timeout` or for more
+  than a minute, and send each parameter exactly as typed (`007` as text, long numbers unrounded). Tests run both editions against a test server and a stub,
+  and check the Windows files are ASCII.
 - **Dev mode starts again**: `./gradlew :server:quarkusDev` needs two POMs the build itself does
   not (`org.jboss:jboss-parent:37`, `org.jboss.slf4j:slf4j-jboss-logmanager:1.1.0.Final`); their
   checksums, matched against Maven Central, are now in `gradle/verification-metadata.xml`

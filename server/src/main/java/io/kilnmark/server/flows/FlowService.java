@@ -557,6 +557,23 @@ public class FlowService {
      */
     public FlowStore.Run queueRun(String name, Integer version, Map<String, Object> parameters, String by,
                                   AccessRole role) {
+        return queueChecked(checkRun(name, version, parameters, role), by, role);
+    }
+
+    /**
+     * A run checked and ready to queue: its version, and the values it starts with as JSON. Checking
+     * reads the flow's pipelines on connections of their own, so it is done before any transaction
+     * that queues the run (ADR 0047: a request key and its run commit together).
+     */
+    public record CheckedRun(String name, int version, String parameters, String variables) {
+    }
+
+    /**
+     * The checks of {@link #queueRun}, queueing nothing.
+     *
+     * @throws WebApplicationException (403, 404, 409) and IllegalArgumentException (400) as queueRun does
+     */
+    public CheckedRun checkRun(String name, Integer version, Map<String, Object> parameters, AccessRole role) {
         requireSteward(role, "Running a flow");
         FlowStore.Flow f = store.find(name).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No flow called " + name));
         int n = version == null ? f.latestVersion() : version;
@@ -575,12 +592,25 @@ public class FlowService {
         Map<String, Object> vars = variables();
         Map<String, Object> resolved = resolveParameters(def, parameters, vars);
         try {
-            return store.queueRun(name, n, by, role.id(), json.writeValueAsString(resolved), json.writeValueAsString(vars));
-        } catch (FlowStore.Busy e) {
-            throw new io.kilnmark.server.api.AlreadyRunning("A run of " + name + " is already queued or running. Wait "
-                + "for it to finish, or cancel it, then run the flow again.");
+            return new CheckedRun(name, n, json.writeValueAsString(resolved), json.writeValueAsString(vars));
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("parameters: could not be read");
+        }
+    }
+
+    /**
+     * Queues a run checked by {@link #checkRun}: one transaction on the run's tables only, which a
+     * caller's own transaction ({@code Db.together}) joins.
+     *
+     * @throws io.kilnmark.server.api.AlreadyRunning (409) while a run of the flow is queued or running
+     */
+    public FlowStore.Run queueChecked(CheckedRun checked, String by, AccessRole role) {
+        try {
+            return store.queueRun(checked.name(), checked.version(), by, role.id(), checked.parameters(),
+                checked.variables());
+        } catch (FlowStore.Busy e) {
+            throw new io.kilnmark.server.api.AlreadyRunning("A run of " + checked.name() + " is already queued or "
+                + "running. Wait for it to finish, or cancel it, then run the flow again.");
         }
     }
 
@@ -834,10 +864,12 @@ public class FlowService {
         return view(cancel(id, by, role), true);
     }
 
-    /** Queues a run, as {@link #queueRun}, answering as the API shows runs. */
-    public FlowViews.RunSummary queueRunView(String name, Integer version, Map<String, Object> parameters, String by,
-                                             AccessRole role) {
-        return view(queueRun(name, version, parameters, by, role), true);
+    /**
+     * One run as the API lists runs; without {@code values} (viewers), the values it started with are
+     * left out. 404 when there is no such run.
+     */
+    public FlowViews.RunSummary runView(long id, boolean values) {
+        return view(store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No flow run " + id)), values);
     }
 
     private FlowStore.Flow flow(String name) {

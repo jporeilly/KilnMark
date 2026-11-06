@@ -518,6 +518,10 @@ the diagram (designers and admins): see
 the flow's parameters as Run now does. A run a schedule started shows `schedule <id> (set by
 <name>)` as who asked for it.
 
+To run a flow from your organisation's scheduler (Control-M, AutoSys, cron, Windows Task
+Scheduler), so that the job waits for the run and ends with its outcome, see
+[Running from an external scheduler](external-schedulers.md).
+
 ## Reading a run
 
 Open a run from the **History** tab on the flow's page, or the last run from the line under its name.
