@@ -34,6 +34,17 @@ values and each rule's facts, and the build fails when the pages and the catalog
 settings tables of flow nodes and rules are written by hand; the build checks that they name
 exactly the keys Kilnmark reads, not their types or defaults.
 
+## Starting what you build
+
+A pipeline or flow runs when someone chooses **Run now**, when a flow's `run-pipeline` or
+`for-each` node runs it, on one of Kilnmark's own schedules
+([Running pipelines and flows on a schedule](schedules.md)), or from an enterprise scheduler such
+as Control-M, AutoSys or cron through `kilnmark-run`, which waits for the run and exits with a code
+saying how it went ([Running from an external scheduler](external-schedulers.md)). However it
+starts, a run is checked as **Run now** checks it and acts with the role of whoever started it (a
+schedule's runs as steward or designer, never admin), so everything the entries below say about
+roles, sources and Allow writing holds for it.
+
 ## Pipeline nodes
 
 A pipeline reads from sources, changes the rows, checks them and writes them, in one pass. The

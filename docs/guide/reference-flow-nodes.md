@@ -27,6 +27,15 @@ Who may do what: designers save flows, stewards run and cancel them, and viewers
 runs. A flow with a `sql` node, or a `wait-for` node with a query, is saved only by a designer whose
 token sees unmasked values.
 
+A flow can run on a schedule of its own
+([Running pipelines and flows on a schedule](schedules.md)): its runs, and the pipeline runs its
+nodes start, act as the schedule, as steward or designer, never admin. An enterprise scheduler
+starts a flow with `kilnmark-run`, which waits for the whole flow and exits with a code: a flow a
+`stop` node ended as failed, or one with a failure no connection dealt with, counts as failed
+([Running from an external scheduler](external-schedulers.md)). Where the enterprise scheduler
+already orders the jobs, a flow can still hold the ordering that belongs inside Kilnmark: checks,
+waits, notices and conditions on quality.
+
 ## run-pipeline
 
 Runs a saved pipeline, by name, and waits for its run to end. The node succeeds when the run does.

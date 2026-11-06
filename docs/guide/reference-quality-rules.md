@@ -10,9 +10,12 @@ kinds of component, see the [Components reference](components-reference.md).
 - **On an asset**, made in **Quality**, by accepting a suggestion from the profile, or through the
   API (`POST /api/v1/quality/rules`, whose JSON body each entry's example shows). It runs after
   each scan, or when run by hand: on a database as SQL inside the database, so the data stays where
-  it is; on files while Kilnmark reads them.
+  it is; on files while Kilnmark reads them. A gate also checks the asset's rules on the rows a
+  pipeline reads.
 - **On a gate node**, written in the pipeline under `rules:`, for that pipeline only. It checks the
-  rows as they pass, with no second read. On a gate the keys are written in `snake_case`, as each
+  rows as they pass, with no second read, on every run, however it was started: by a person, a
+  flow, a [schedule](schedules.md), or an [external scheduler](external-schedulers.md), whose
+  `kilnmark-run` exits with code 1 when a stop gate fails the run. On a gate the keys are written in `snake_case`, as each
   entry's table shows. `references` and `custom_sql` run in a database, so they cannot go on a gate.
 
 Each entry gives the rule's facts (its dimension, whether it needs a column, whether it gives a

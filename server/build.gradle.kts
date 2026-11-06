@@ -126,7 +126,7 @@ tasks.withType<Test>().configureEach {
 // catalogue, and its versions tested against the integration tests' images: part of `check`, and run
 // again when a guide or those tests change, without running the rest of the server's tests.
 val referenceTest = "io.kilnmark.server.pipelines.ComponentsReferenceTest"
-val checkReference by tasks.registering(Test::class) {
+val checkReference = tasks.register<Test>("checkReference") {
     group = "verification"
     description = "Checks the components reference against the catalogue and its examples as saving does."
     testClassesDirs = sourceSets["test"].output.classesDirs

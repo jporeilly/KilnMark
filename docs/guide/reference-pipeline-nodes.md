@@ -25,8 +25,11 @@ Rows sent to a port that nothing reads are dropped. Every other key of a node is
 settings; a key the node does not take is a problem, with its line.
 
 Who may do what, for every node: designers save pipelines, stewards run them, and viewers see them
-and their runs. A run acts as the person who started it (or the schedule), so a pipeline that
-writes needs each target source to allow writing.
+and their runs. A run acts as the person who started it, or as the schedule that did
+([Running pipelines and flows on a schedule](schedules.md)), so a pipeline that writes needs each
+target source to allow writing. An enterprise scheduler starts a pipeline with `kilnmark-run`,
+whose exit code says whether the run succeeded, failed (a stop gate fails it) or was cancelled
+([Running from an external scheduler](external-schedulers.md)).
 
 ## read
 

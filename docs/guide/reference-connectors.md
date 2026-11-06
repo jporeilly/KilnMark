@@ -51,6 +51,11 @@ is encrypted, never shown again and never sent to an address it was not saved fo
 address asks for it again. Which hosts sources may reach is the administrator's to set, and a
 server can refuse sources that are not encrypted.
 
+Runs started by a schedule or by `kilnmark-run` use sources exactly as runs started by a person:
+the source's own login, Allow writing and Allow SQL, and its `max_runs`, under which further runs
+wait their turn ([Running pipelines and flows on a schedule](schedules.md),
+[Running from an external scheduler](external-schedulers.md)).
+
 ## Versions tested
 
 Each connector's integration tests run against a real server in CI, pinned to these images:
