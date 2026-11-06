@@ -37,14 +37,50 @@ public final class AuthErrors {
         }
     }
 
-    /** A token was sent but is not valid. */
+    /** A provider session that could not be renewed, or whose renewal was refused (ADR 0036). */
+    static final String SESSION_ENDED = "Your sign-in has ended. Sign in again.";
+
+    /**
+     * A token was sent but is not valid; or, with no token, a provider session cookie that no longer
+     * signs anyone in (its renewal failed or was refused). That cookie is cleared here, at the path
+     * and domain the OIDC client sets it with: this answer takes the place of the OIDC client's own
+     * challenge, which would clear it, and otherwise each later request would ask the provider again.
+     */
     @Provider
     public static class Failed implements ExceptionMapper<AuthenticationFailedException> {
+
+        @jakarta.ws.rs.core.Context
+        jakarta.ws.rs.core.HttpHeaders headers;
+
+        @org.eclipse.microprofile.config.inject.ConfigProperty(name = "quarkus.oidc.authentication.cookie-path",
+            defaultValue = "/")
+        String cookiePath;
+
+        @org.eclipse.microprofile.config.inject.ConfigProperty(name = "quarkus.oidc.authentication.cookie-domain")
+        java.util.Optional<String> cookieDomain;
+
         @Override
         public Response toResponse(AuthenticationFailedException e) {
-            return unauthorized(NOT_ACCEPTED);
+            java.util.List<String> sessions = headers == null || headers.getHeaderString("Authorization") != null
+                ? java.util.List.of()
+                : headers.getCookies().keySet().stream().filter(n -> n.startsWith(SESSION_COOKIE)).toList();
+            if (sessions.isEmpty()) {
+                return unauthorized(NOT_ACCEPTED);
+            }
+            Response.ResponseBuilder r = Response.status(Response.Status.UNAUTHORIZED)
+                .type(MediaType.APPLICATION_JSON).header("WWW-Authenticate", ApiTokenMechanism.CHALLENGE)
+                .entity(new ApiError(SESSION_ENDED));
+            for (String name : sessions) {
+                r.cookie(new jakarta.ws.rs.core.NewCookie.Builder(name).value("").path(cookiePath)
+                    .domain(cookieDomain == null ? null : cookieDomain.orElse(null)).maxAge(0).httpOnly(true)
+                    .sameSite(jakarta.ws.rs.core.NewCookie.SameSite.LAX).build());
+            }
+            return r.build();
         }
     }
+
+    /** The OIDC client's session cookie, and its chunks and per-tenant variants, as SessionRequests reads them. */
+    static final String SESSION_COOKIE = "q_session";
 
     /** The token is valid but its role is too low. */
     @Provider
