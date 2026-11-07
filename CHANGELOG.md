@@ -7,13 +7,27 @@ details.
 
 ### What's new
 
-- **The Starter Pack**, for trials, demonstrations and training: an admin turns it on under
-  **Settings**, **Starter Pack**, and Kilnmark adds example data in a database of its own, every
-  sample ready to run in the Library. A banner tells everyone while it is on. Turning it off takes
-  all of it out again. Where your settings allow it, the control script adds five example people to
-  sign in as, one per role: `kilnmark.sh starter people`. A new install can have it at once:
-  `kilnmark.sh install --starter`. It is refused on an install marked as production
-  (`KILNMARK_PRODUCTION=true`).
+- **Two ways to deploy, chosen once at install**: **Production**, for real work, or a **Starter
+  Pack** install, for training, demonstrations and development. The mode is recorded at the first
+  start, and an install never changes mode: for production, install afresh. INSTALL.md starts with
+  a table of what each has ([Choosing a deployment](INSTALL.md#choosing-a-deployment)).
+- **The Starter Pack**, on a Starter Pack install: an admin turns it on under **Settings**,
+  **Starter Pack** (install does it at once), and Kilnmark adds example data in a database of its
+  own, every sample ready to run in the Library. Every page says it is a Starter Pack install.
+  Turning it off takes all of it out again. The control script adds five example people to sign in
+  as, one per role, with a password you type: `kilnmark.sh starter people`. A Starter Pack install
+  always signs in with the bundled Keycloak. A production install never has the pack, its database
+  or the example people, and refuses their sign-ins. The templates are on every install.
+- **Adding people to the bundled Keycloak** from the control script, in either mode:
+  `kilnmark.sh people add` for one person, admins included, `people import FILE` for a class or a
+  team from a CSV file (never admins; an example, `people.example.csv`, ships with the release),
+  and `people list` to see who has not yet signed in. Each gets a temporary password and chooses
+  their own at their first sign-in. Install offers to add Kilnmark's first admin this way, so
+  nobody has to make the first person in Keycloak's console. A production install asks how people
+  will sign in, and recommends your organisation's own identity provider.
+- **Backups hold Keycloak's people too**: with the bundled Keycloak, `kilnmark.sh backup` now
+  dumps Keycloak's database beside Kilnmark's, and `restore` puts it back, so a restored install
+  still has its people, groups and one-time code setups.
 - **A writable files folder on every install**: `/srv/files` is now a volume Kilnmark can write
   to, so file sources with **Allow writing** work out of the box. Put your own folder there with
   `KILNMARK_FILES_DIR` in `config/.env`, which Kilnmark sees read-only at `/srv/share`; the
@@ -39,67 +53,98 @@ details.
 
 ### Details
 
-- **Starter Pack** ([ADR 0051](docs/adr/0051-starter-pack.md)): `GET /api/v1/starter-pack`
-  (everyone; drives the banner), `GET /api/v1/starter-pack/details`, `POST /api/v1/starter-pack`
-  (`?force=true` on production, API only) and `DELETE /api/v1/starter-pack` with
-  `{"confirm": "DELETE"}` (admins). Turning it on adds the sources `starter-samples-db` (on
-  `kilnmark_samples`, Allow writing and Allow SQL on) and `starter-samples-files` (on
-  `/srv/files/starter-pack`), creates the sample tables and adds the samples; each step's outcome
-  comes back and shows on the page. Turning it off removes the samples in the Library, those
-  sources, the tables (the database stays, empty) and the pack's files, and reports off only once
-  all of it is gone. A source of either name that the pack did not make is left as it is. Both are
-  safe to repeat.
-- **A database of its own**: the release's compose runs a one-off, `samples-db`, at every start,
-  which makes or keeps the empty database `kilnmark_samples` and its login `kilnmark_samples` (its
-  password is `KILNMARK_SAMPLES_DB_PASSWORD`, made by the control script on install, up and
-  upgrade). That login can connect to its own database only; every other database on the server,
-  Kilnmark's included, is closed to everyone but its owner, again at every start, so a database a
-  restore makes is closed too. Kilnmark's backups hold its own database only. The server checks on
-  every connection that it is in `kilnmark_samples`, over TLS, as a login that is not a superuser.
+- **Deployment modes** ([ADR 0051](docs/adr/0051-starter-pack.md)): `KILNMARK_MODE`
+  (`kilnmark.mode`) is `production` or `starter-pack`, in ASCII lower case; the server and the
+  control scripts refuse anything else. The control scripts write it at install (`--starter` for a
+  Starter Pack install). The server records it in its database at the first start
+  (`deployment_mode`) and refuses to start with a setting that differs, either way round. A
+  Starter Pack install needs the bundled Keycloak: install turns on the `auth` profile with new
+  secrets for it, the control scripts refuse to start one without it, and the server refuses to
+  start one unless sign-in is on against the bundled realm, never an outside identity provider.
+  Whether the example data and the example people are allowed are two checks in the code, both on a
+  Starter Pack install only.
+- **Starter Pack**: `GET /api/v1/starter-pack` (everyone; the mode, and whether the example data is
+  on: drives the marking), `GET /api/v1/starter-pack/details`, `POST /api/v1/starter-pack` and
+  `DELETE /api/v1/starter-pack` with `{"confirm": "DELETE"}` (admins). On production `POST` is
+  always refused (409), and recorded; there is no `force`. Turning it on adds the sources
+  `starter-samples-db` (on `kilnmark_samples`, Allow writing and Allow SQL on) and
+  `starter-samples-files` (on `/srv/files/starter-pack`), creates the sample tables and adds the
+  samples; each step's outcome comes back and shows on the page. Turning it off removes the samples
+  in the Library, those sources, the tables (the database stays, empty) and the pack's files, and
+  reports off only once all of it is gone. A source of either name that the pack did not make is
+  left as it is. Both are safe to repeat. The pack makes its folder new, marks it, and never adopts
+  or deletes a `starter-pack` folder of the site's own. A step's failure on the page never names a
+  host: what a called service said goes to the server's log. Only admins see who turned the pack on.
+- **A database of its own**: on a Starter Pack install the release's compose runs a one-off,
+  `samples-db` (compose profile `starter-pack`), at every start, which makes or keeps the empty
+  database `kilnmark_samples` and its login `kilnmark_samples` (its password is
+  `KILNMARK_SAMPLES_DB_PASSWORD`, made by the control script). When it makes the database it closes
+  it to everyone but that login, once; it changes no other database. That login reads and makes
+  nothing in Kilnmark's database. The server checks on every connection that it is in
+  `kilnmark_samples`, over TLS, as a login that is not a superuser.
 - **Example people made by Keycloak's own setup**: `kilnmark.sh starter people`
-  (`kilnmark.cmd starter people`), with `KILNMARK_STARTER=allowed` and the bundled Keycloak, has
-  `keycloak-setup` make the five with Keycloak's own admin, in the group `kilnmark-starter-pack`
-  (only admins put people in groups, and setup puts a person in it only as it makes them, so someone
-  else with one of the addresses is never adopted), and shows their new password once on the
-  terminal. The password reaches `keycloak-setup` on its standard input: never in `.env`, a
-  container's settings, a command line, `logs` or Kilnmark. A later run keeps an existing person's
-  password unless `--new-password`; `--remove` removes them, and so does the next `up` once
-  `KILNMARK_STARTER` is removed or the install is marked production, only the group's people. The
-  realm's own settings are left as they are, but for turning on admin events. Kilnmark holds no
-  Keycloak credential in any setting. `KILNMARK_KEYCLOAK_DEMO_PASSWORD` is retired: `up` empties
-  it, and people it made are left for an admin to remove.
-- **Guard rails**: the banner, the audit events `starter.added` (a refused attempt too) and
+  (`kilnmark.cmd starter people`), on a Starter Pack install with `KILNMARK_STARTER=allowed`, has
+  `keycloak-setup` make the five with Keycloak's own admin, in the group `kilnmark-starter-pack`,
+  which carries a mark only setup sets (a same-named group it did not make stops it, changing
+  nothing). Their password is typed twice with the echo off, or piped in, and never shown: it
+  reaches `keycloak-setup` on its standard input, never `.env`, a container's settings, a command
+  line, `logs` or Kilnmark. A later run keeps an existing person's password unless
+  `--new-password`; `--remove` removes them, and so does the next `up` once `KILNMARK_STARTER` is
+  removed: only the group's members, whatever their user name now is. What setup did goes to
+  Kilnmark's audit log as `starter.people` (`POST /api/v1/starter-pack/people`, admin, from the
+  control script). On production, a sign-in whose groups hold `kilnmark-starter-pack`, or by one of
+  the five addresses, is refused and recorded, and `keycloak-setup` refuses a realm that has any of
+  the five. Kilnmark holds no Keycloak credential in any setting.
+- **People of your own** (ADR 0051, decision 10): `kilnmark.sh people add`, `people import FILE`
+  and `people list` (`kilnmark.cmd people ...`), with the bundled Keycloak, in either mode, run
+  `keycloak-setup` once. Each person gets a temporary password (Keycloak's update-password action),
+  typed with the echo off or piped in, never shown. `kilnmark-admins` only one at a time, with
+  `add`. An import checks the whole file first and names each bad line by number, never its values,
+  making nobody if any is wrong. Someone already there is left exactly as they are, and kilnmark.com
+  addresses are refused. People added so are never in the pack's group, so its removal never takes
+  them. Each person made and each import is in the audit log (`auth.person_added`,
+  `auth.people_imported`; `POST /api/v1/auth/people`, admin, from the control script), never with a
+  password. With an outside identity provider the commands refuse. The release ships
+  `containers/keycloak/people.example.csv`.
+- **Backup and restore with the bundled Keycloak** ([ADR 0039](docs/adr/0039-backup-and-restore.md),
+  decision 8): `backup.sh` also dumps `keycloak-db` (`keycloak-db.dump`, read back in full, in
+  `SHA256SUMS`, `keycloak=yes` in `backup.txt`) while the `auth` profile is on; `restore.sh`
+  restores it beside Kilnmark's database, keeping the one it replaces as `keycloak_before_<time>`.
+  Both control scripts do the same, and say whether Keycloak was included. No password is needed
+  or shown.
+- **Guard rails**: the marking, the audit events `starter.added` (a refused attempt too),
   `starter.removed` (naming what it deleted; each schedule deleted with a sample is recorded as a
-  `schedule.deleted`), each with every step's outcome, the access review's new `example` column
-  (kilnmark.com accounts, marked **Example account** on the page), and the new setting
-  `KILNMARK_PRODUCTION` (`kilnmark.production`, off by default), `true` or `false` only: the server
-  and the control script refuse anything else, so it means the same to the server, the scripts and
-  `keycloak-setup`. On an install marked production, kilnmark.com sign-ins are refused, and at every
-  start their unfinished pipeline and flow runs are cancelled (`run.cancelled`), the API tokens an
-  example account made or approved the unmask grant of (and the tokens those made) are revoked and
-  their schedules paused, each recorded; such a token is refused and such a run cancelled at any
-  time, not only at the start. The control scripts ignore those settings in the shell's
-  environment, read `export` lines in `config/.env` as compose does, and never show or log the
-  podman command lines podman-compose 1.0.x prints, secrets and all, logging or not; they read a
-  setting's name with its case exactly, as compose does. A run asked for by a token names it
-  `token <id> (<name>)`, and only the id ever says which token: an example token named like a real
-  one stops none of the real one's work. A schedule an example person set does not fire on
-  production. The pack makes its folder new, marks it, and never adopts or deletes a
-  `starter-pack` folder of the site's own. A schedule a token sets names it by id too.
-  `KILNMARK_PRODUCTION` is compared in ASCII (`falſe` is not false). `keycloak-setup` removes every
-  member of the pack's group, whatever their user name now is. Turning off keeps `sample-data`
-  while a pipeline or flow names it in JSON-style YAML too. Only admins see who turned the pack on.
-  On Windows, `install -Auth -Starter` stops its transcript while the people are made, so their
-  password never lands in `logs\`, and `starter people` never prints it to redirected output. `keycloak-setup` finds groups by
-  path, so a subgroup named like one of its groups is never taken for it. A source the pack deletes
-  says in the audit log whether it had columns marked sensitive. A step's failure on the page
-  never names a host: what a called service said goes to the server's log.
-- **Control script**: `install --starter` (`-Starter`), with `--auth` also `starter people`;
-  `starter people [--new-password | --remove]`; `up` adds secrets a newer version needs to `config/.env`
-  before starting. `install --auth` with other ports now also sets `KILNMARK_KEYCLOAK_URL` and
-  `KILNMARK_URL` to match them, so a second install's sign-in never goes to the first one's
-  Keycloak. The server image makes `/srv/files` its user's, and the
-  database image carries `kilnmark-samples-db.sh`.
+  `schedule.deleted`) and `starter.people`, and the access review's new `example` column
+  (kilnmark.com accounts, marked **Example account** on the page). A run asked for by a token names
+  it `token <id> (<name>)`, and only the id ever says which token; a schedule a token sets names it
+  by id too. A source the pack deletes says in the audit log whether it had columns marked
+  sensitive.
+- **Control script**: `install --starter` (`-Starter`) makes a Starter Pack install, with the
+  bundled Keycloak, and turns the pack on; `install` asks how people sign in on production
+  (`--auth`: the bundled Keycloak) and, with the bundled Keycloak, offers the first admin;
+  `starter people [--new-password | --remove]`; `people add | import FILE | list`. `up` adds
+  secrets a newer version needs to `config/.env` before starting, and refuses a one-run setting
+  (`KILNMARK_PEOPLE_ACTION`, `KILNMARK_PERSON_*`, `KILNMARK_STARTER_PEOPLE_ACTION`) written there.
+  The control scripts ignore the mode and those settings in the shell's environment, read `export`
+  lines in `config/.env` as compose does, read a setting's name with its case exactly, and never
+  show or log the podman command lines podman-compose 1.0.x prints, secrets and all, logging or
+  not. `install --auth` with other ports now also sets `KILNMARK_KEYCLOAK_URL` and `KILNMARK_URL` to
+  match them, so a second install's sign-in never goes to the first one's Keycloak. The server
+  image makes `/srv/files` its user's, and the database image carries `kilnmark-samples-db.sh`.
+  `keycloak-setup` finds groups by path, so a subgroup named like one of its groups is never taken
+  for it. `KILNMARK_FILES_DIR` must be a full path.
+- **Developer stack**: the root `compose.yaml` mounts the share at `/srv/share`, as the release
+  does, and is a production install unless `KILNMARK_MODE` says otherwise (it has no Keycloak);
+  `quarkusDev` and the tests are Starter Pack installs.
+- **Upgrading** (INSTALL.md, "Upgrading from 0.1.1"). Release 0.1.1 was a preview, not a production
+  release: a production install starts fresh, in production mode. On the first `up` or `upgrade`,
+  an install from before there were modes gets `KILNMARK_MODE=starter-pack` when
+  `KILNMARK_KEYCLOAK_DEMO_PASSWORD` is set, and `production` otherwise; production is then refused,
+  with a message to install afresh, if Kilnmark's records or Keycloak's realm show any of the five
+  example people. Delete `KILNMARK_KEYCLOAK_DEMO_PASSWORD` from `config/.env`: it is retired, and
+  production does not start while it is set. A share of your own that an earlier `compose.yaml` was
+  edited to mount at `/srv/files` now goes in `KILNMARK_FILES_DIR`, seen at `/srv/share`; `up`
+  warns while the old mount is there.
 - **`sort` is an external merge sort** (`ExternalSorter` in `kiln-nodes`; docs/design/pipelines.md,
   "Sorting, and spilling to disk"). Each row's key is encoded once into bytes that order as the
   values do (`KeyCodec`), as the expression language's `<` orders them: numbers by value, -0.0 equal

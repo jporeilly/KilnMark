@@ -46,13 +46,15 @@ services:
       # backups and administration, on 5442 so it never clashes with another PostgreSQL here.
       - "127.0.0.1:${KILNMARK_DB_PORT:-5442}:5432"
 
-  # The Starter Pack's database (ADR 0051): at every start, makes or keeps an empty database
-  # kilnmark_samples on the server above, owned by a login of its own (kilnmark_samples) that can
-  # connect to that database only, and closes every other database here to everyone but its owner.
-  # Then it stops. Kilnmark fills it only when an admin turns the Starter Pack on (Settings,
-  # Starter Pack). Kilnmark's backups hold Kilnmark's own database only, never this one.
+  # The Starter Pack's database (ADR 0051), on a Starter Pack install only (the control script
+  # turns this profile on in that mode): a one-off at every start that makes, or keeps, the empty
+  # database kilnmark_samples on the server above, owned by a login of its own (kilnmark_samples),
+  # and, once, when it makes it, closes it to everyone but that login. Then it stops. Kilnmark
+  # fills it only when an admin turns the Starter Pack on (Settings, Starter Pack). Kilnmark's
+  # backups hold Kilnmark's own database only, never this one.
   samples-db:
     image: ghcr.io/jporeilly/kilnmark-postgres:@VERSION@
+    profiles: ["starter-pack"]
     entrypoint: ["/usr/local/bin/kilnmark-samples-db.sh"]
     environment:
       PGHOST: postgres
@@ -88,9 +90,11 @@ services:
       # The Starter Pack (ADR 0051; Settings, Starter Pack): the samples' database login, made by
       # samples-db above. No default, as for every secret.
       KILNMARK_SAMPLES_DB_PASSWORD: ${KILNMARK_SAMPLES_DB_PASSWORD}
-      # true marks this install as production: the Starter Pack is then refused. Kilnmark holds no
-      # Keycloak credential: the pack's example people are made by keycloak-setup (below).
-      KILNMARK_PRODUCTION: ${KILNMARK_PRODUCTION:-false}
+      # The deployment mode (ADR 0051): production, or starter-pack for training and development,
+      # written at install and recorded in Kilnmark's database at the first start. The server does
+      # not start without it, or with one that differs from the record. Kilnmark holds no Keycloak
+      # credential: the pack's example people are made by keycloak-setup (below).
+      KILNMARK_MODE: ${KILNMARK_MODE:?Set KILNMARK_MODE to production or starter-pack (the control script sets it)}
       # Optional host names bulk import rewrites when asked to (remapHosts=true), as from=to pairs,
       # for example localhost=host.docker.internal. Unset by default.
       KILNMARK_SOURCES_HOST_MAP: ${KILNMARK_SOURCES_HOST_MAP:-}
@@ -245,15 +249,23 @@ services:
       KILNMARK_OIDC_CLIENT_SECRET: ${KILNMARK_OIDC_CLIENT_SECRET}
       # The address browsers reach Kilnmark at: Keycloak sends people back there after sign-in.
       KILNMARK_URL: ${KILNMARK_URL:-http://localhost:8780}
-      # The Starter Pack's five example people (ADR 0051), only for trials and training: made when
-      # the control script asks (kilnmark.sh starter people, which hands this one run their new
-      # password on standard input, never here), while KILNMARK_STARTER=allowed and the install is
-      # not marked production, and removed at the next start once either stops being so.
+      # The Starter Pack's five example people (ADR 0051), only on a Starter Pack install: made when
+      # the control script asks (kilnmark.sh starter people, which hands this one run the password
+      # you typed, on standard input, never here), while KILNMARK_STARTER=allowed, and removed at the
+      # next start once it is not. A production install refuses a realm that has them.
       KILNMARK_STARTER: ${KILNMARK_STARTER:-}
-      KILNMARK_PRODUCTION: ${KILNMARK_PRODUCTION:-false}
+      KILNMARK_MODE: ${KILNMARK_MODE:-}
       # Set by the control script's starter people for that one run only, from its own environment,
       # never from .env: add, new-password or remove.
       KILNMARK_STARTER_PEOPLE_ACTION: ${KILNMARK_STARTER_PEOPLE_ACTION:-}
+      # People of your own, in either mode: set by the control script's people command (and
+      # install's first admin) for that one run only, never in .env (the script refuses them there):
+      # add, import or list, and the one person to add. Passwords go on standard input.
+      KILNMARK_PEOPLE_ACTION: ${KILNMARK_PEOPLE_ACTION:-}
+      KILNMARK_PERSON_EMAIL: ${KILNMARK_PERSON_EMAIL:-}
+      KILNMARK_PERSON_FIRST_NAME: ${KILNMARK_PERSON_FIRST_NAME:-}
+      KILNMARK_PERSON_LAST_NAME: ${KILNMARK_PERSON_LAST_NAME:-}
+      KILNMARK_PERSON_GROUPS: ${KILNMARK_PERSON_GROUPS:-}
     volumes:
       - ./containers/keycloak/setup.sh:/opt/kilnmark/setup.sh:ro,Z
     depends_on:

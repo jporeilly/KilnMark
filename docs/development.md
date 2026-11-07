@@ -198,21 +198,29 @@ server variable `<name>` as text when the server starts, unless it is set alread
 `/srv/files` is the writable `files` volume, and `/srv/share` the customer's own folder, read-only,
 when `KILNMARK_FILES_DIR` names it (else an empty volume). The AI profiles work as described in [AI models](#ai-models).
 
-**The Starter Pack** (ADR 0051; INSTALL.md, "Try Kilnmark with the Starter Pack"). The release's
-compose also runs `samples-db` at every start: a one-off in the `kilnmark-postgres` image that runs
-`kilnmark-samples-db.sh` as the database's superuser, making or keeping the empty database
-`kilnmark_samples` and its login, and closing every other database to everyone but its owner. The
-server turns the pack on and off itself (`StarterPack`, `/api/v1/starter-pack`). Its settings:
+**The deployment mode and the Starter Pack** (ADR 0051; INSTALL.md, "Choosing a deployment" and "Try
+Kilnmark with the Starter Pack"). Every install is production or a Starter Pack install, chosen at
+install and recorded in Kilnmark's database at the first start (`ModeCheck`, `deployment_mode` in
+`kilnmark.server_setting`). On a Starter Pack install the release's compose also runs `samples-db`
+at every start (the compose profile `starter-pack`, which the control scripts add): a one-off in the
+`kilnmark-postgres` image that runs `kilnmark-samples-db.sh` as the database's superuser, making or
+keeping the empty database `kilnmark_samples` and its login, and closing that database to everyone
+but its owner when it makes it. The server turns the pack on and off itself (`StarterPack`,
+`/api/v1/starter-pack`); whether its example data and its example people are allowed are two
+checks (`ModeCheck.samplesAllowed`, `ModeCheck.examplePeopleAllowed`), both true on a Starter Pack
+install only. `quarkusDev` and the tests are Starter Pack installs (`%dev` and `%test` in
+`application.properties`); the developer `compose.yaml`, which has no Keycloak, is production unless
+`KILNMARK_MODE` says otherwise. Its settings:
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `KILNMARK_SAMPLES_DB_PASSWORD` (`kilnmark.samples-db.password`) | none | Password of the login `kilnmark_samples`, which can connect to the database `kilnmark_samples` only. The control script makes one; unset, `samples-db` makes nothing and the pack cannot be turned on |
+| `KILNMARK_MODE` (`kilnmark.mode`) | none in a release (install writes it) | `production` or `starter-pack`, in ASCII lower case: the server does not start with anything else, nor do the control scripts, nor with a value that differs from the one recorded at the first start. A Starter Pack install also needs sign-in with the bundled Keycloak (`http://keycloak:8080/realms/kilnmark`), or the server does not start (the check is skipped in `quarkusDev` and the tests) |
+| `KILNMARK_SAMPLES_DB_PASSWORD` (`kilnmark.samples-db.password`) | none | Password of the login `kilnmark_samples`, which owns the database `kilnmark_samples`. The control script makes one on a Starter Pack install; unset, `samples-db` makes nothing and the pack's database step fails |
 | `kilnmark.samples-db.url` (`KILNMARK_SAMPLES_DB_URL`) | `kilnmark_samples` on the server of Kilnmark's own database, with `sslmode=require` | Where the pack's database is. Whatever it says, the pack works only in a database called `kilnmark_samples`, over TLS, as a login that is not a superuser, with none of Kilnmark's tables there |
 | `kilnmark.samples-db.username` | `kilnmark_samples` | The pack's login |
-| `KILNMARK_PRODUCTION` (`kilnmark.production`) | `false` | `true` or `false`, in any case: the server does not start with anything else (`ProductionCheck`), nor does the control script. `true` marks the install as production: turning the pack on is refused (409) unless an admin calls the API with `force=true`; kilnmark.com sign-ins are refused, and at every start their tokens are revoked and their schedules paused; `keycloak-setup` (which gets it too, and takes anything but `false` as production) refuses the example people and deletes those it made |
-| `KILNMARK_FILES_DIR` (compose only) | the `files` volume | The customer's own folder for `/srv/files`, writable by uid 1001. The pack writes in `/srv/files/starter-pack` only |
-| `KILNMARK_STARTER` (`keycloak-setup` only) | unset | `allowed`: `kilnmark.sh starter people` may have `keycloak-setup` make the five example people; unset (or production), `keycloak-setup` deletes those in the group `kilnmark-starter-pack` at every run. Never passed to Kilnmark, which holds no Keycloak credential |
-| `KILNMARK_STARTER_PEOPLE_ACTION` (`keycloak-setup` only) | none | Set by `starter people` in compose's own environment for that one run, which `compose.yaml` passes to `keycloak-setup`: `add`, `new-password` or `remove`. The new password goes on `keycloak-setup`'s standard input, one line, never in an environment: compose would keep it in the container's settings and podman-compose would put it on podman's command line |
+| `KILNMARK_FILES_DIR` (compose only) | none | The full path of the customer's own folder, mounted read-only at `/srv/share`; the control scripts refuse a path that is not absolute. Kilnmark's own folder, `/srv/files`, is the `files` volume, where the pack writes in `/srv/files/starter-pack` only |
+| `KILNMARK_STARTER` (`keycloak-setup` only) | `allowed` on a Starter Pack install | `allowed`: `kilnmark.sh starter people` may have `keycloak-setup` make the five example people; unset, `keycloak-setup` deletes the members of the group `kilnmark-starter-pack` at every start. Never on a production install |
+| `KILNMARK_STARTER_PEOPLE_ACTION`, `KILNMARK_PEOPLE_ACTION`, `KILNMARK_PERSON_EMAIL`, `KILNMARK_PERSON_FIRST_NAME`, `KILNMARK_PERSON_LAST_NAME`, `KILNMARK_PERSON_GROUPS` (`keycloak-setup` only) | none | Set by `starter people` and `people add`, `import` or `list` in compose's own environment for that one run, which `compose.yaml` passes to `keycloak-setup`; the control scripts refuse them in `config/.env`. Passwords, and an import's file, go on `keycloak-setup`'s standard input, never here |
 
 The isolation is tested against the real image (`SamplesDatabaseIsolationTest`, which runs this tree's
 script in it, so a `kilnmark-postgres:dev` other work has tagged meanwhile cannot stand in) and the people against the Keycloak image

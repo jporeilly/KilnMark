@@ -12,15 +12,22 @@
 #   not count setting it up as using it, so Kilnmark then asks them to sign in once more, with it;
 # - the Kilnmark sign-in page (themes/kilnmark).
 # - the Starter Pack's five example people (ADR 0051), one per role, at kilnmark.com addresses that
-#   receive no mail, in the group kilnmark-starter-pack: made only when the control script asks
-#   (kilnmark.sh starter people), while KILNMARK_STARTER=allowed and the install is not marked
-#   production, and deleted at the next run once either stops being so. Never for real use.
+#   receive no mail, in the group kilnmark-starter-pack: on a Starter Pack install only
+#   (KILNMARK_MODE=starter-pack), made when the control script asks (kilnmark.sh starter people)
+#   while KILNMARK_STARTER=allowed, and deleted at the next run once it is not. A production install
+#   refuses a realm that has them. Never for real use.
+# - people of the organisation's own, in both modes, when the control script's people add (install
+#   asks for Kilnmark's first admin this way) or people import asks, each with a temporary password;
+#   and, for people list, who is here. Never Keycloak's own admin (KILNMARK_KEYCLOAK_ADMIN), who
+#   signs in to Keycloak's console, not to Kilnmark.
 #
 # Each part is checked on its own and made if it is missing, so a run that stopped half way is
 # finished by the next. What is there is kept, except the client's address and secret, which follow
 # the settings. Secrets never go on a command line, where other users of the machine could see them:
 # kcadm reads the admin password from KC_CLI_PASSWORD, and the rest come in as JSON on its input.
 set -euo pipefail
+# The first line of every run: the control script reads what the latest run did from here on.
+echo "keycloak-setup: started"
 
 KEYCLOAK_URL="${KEYCLOAK_URL:-http://keycloak:8080}"
 KILNMARK_URL="${KILNMARK_URL:-http://localhost:8780}"
@@ -30,32 +37,151 @@ KILNMARK_URL="${KILNMARK_URL%/}"
 : "${KILNMARK_OIDC_CLIENT_SECRET:?Set KILNMARK_OIDC_CLIENT_SECRET (see .env.example)}"
 # The Starter Pack's example people (below). KILNMARK_STARTER_PEOPLE_ACTION comes only from the
 # control script's starter people command, for this one run, and their password on standard input.
-# KILNMARK_PRODUCTION is true or false in any case, as the server reads it (the server refuses to
-# start on anything else); here anything but false counts as production, so a value the server
-# would refuse never lets the example people in.
-production="${KILNMARK_PRODUCTION:-false}"
+# KILNMARK_MODE is production or starter-pack (ADR 0051), as the server reads it: anything but
+# starter-pack, exactly, is production here, where the example people never are.
+STARTER_MODE=false
+if [ "${KILNMARK_MODE:-}" = starter-pack ]; then STARTER_MODE=true; fi
 STARTER_ALLOWED=false
-if [ "${KILNMARK_STARTER:-}" = allowed ] && [ "${production,,}" = false ]; then STARTER_ALLOWED=true; fi
+if [ "${KILNMARK_STARTER:-}" = allowed ] && [ "$STARTER_MODE" = true ]; then STARTER_ALLOWED=true; fi
 PEOPLE_ACTION="${KILNMARK_STARTER_PEOPLE_ACTION:-}"
 PEOPLE_PASSWORD=""
 case "$PEOPLE_ACTION" in
   ""|add|new-password|remove) ;;
   *) echo "keycloak-setup: KILNMARK_STARTER_PEOPLE_ACTION is add, new-password or remove" >&2; exit 1 ;;
 esac
+# People of the organisation's own (ADR 0051, decision 10), in both modes, only when the control
+# script's people command asks: KILNMARK_PEOPLE_ACTION add (one person: KILNMARK_PERSON_EMAIL,
+# _FIRST_NAME, _LAST_NAME, _GROUPS, a ;-separated list), import (a CSV after the password, on
+# standard input) or list. Their temporary password comes on standard input, never the
+# environment or a command line. Never in the Starter Pack's group, so its removal never touches
+# them; never at kilnmark.com, whose addresses are the example people's.
+PERSON_ACTION="${KILNMARK_PEOPLE_ACTION:-}"
+case "$PERSON_ACTION" in
+  ""|add|import|list) ;;
+  *) echo "keycloak-setup: KILNMARK_PEOPLE_ACTION is add, import or list" >&2; exit 1 ;;
+esac
+if [ -n "$PERSON_ACTION" ] && [ -n "$PEOPLE_ACTION" ]; then
+  echo "keycloak-setup: people of your own and the Starter Pack's example people are separate runs. Nothing was changed" >&2
+  exit 1
+fi
+PERSON_PASSWORD=""
+# Kilnmark's groups; an admin is added one at a time (add), never from a file (import).
+KNOWN_GROUPS="kilnmark-viewers kilnmark-stewards kilnmark-designers kilnmark-admins kilnmark-sensitive-data"
+# One line on standard input, never the environment or a command line; from Windows it can start
+# with a byte-order mark and ends in CR. $1 says whose it is, for the refusal.
+read_password() {
+  local p=""
+  IFS= read -r p || true
+  while [[ "$p" == $'\xef\xbb\xbf'* ]]; do p="${p#$'\xef\xbb\xbf'}"; done
+  p="${p%$'\r'}"
+  if [ "${#p}" -lt 12 ]; then
+    echo "keycloak-setup: $1 password, on standard input, must be at least 12 characters (the realm's password policy). Nothing was changed" >&2
+    exit 1
+  fi
+  printf '%s' "$p"
+}
+trim() { local t="$1"; t="${t#"${t%%[![:space:]]*}"}"; printf '%s' "${t%"${t##*[![:space:]]}"}"; }
+# Why an address (in lower case) is refused, or nothing. Never echoes it.
+address_problem() {
+  if ! [[ "$1" =~ ^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$ ]]; then echo "not an email address"
+  elif [[ "$1" == *@kilnmark.com ]] || [[ "$1" == *.kilnmark.com ]]; then
+    echo "a kilnmark.com address: those are the Starter Pack's example people; use an address of your own organisation"
+  fi
+}
+name_problem() {
+  if [ -z "$1" ] || [ "${#1}" -gt 100 ] || [[ "$1" == *[[:cntrl:]]* ]]; then
+    echo "needs a first and a last name, up to 100 characters each"
+  fi
+}
+# Why a ;-separated group list is refused, or nothing; $2 is true where an admin may be added.
+groups_problem() {
+  local g seen=" " any=false list
+  IFS=';' read -r -a list <<< "$1"
+  for g in "${list[@]}"; do
+    g="$(trim "$g")"
+    [ -n "$g" ] || continue
+    any=true
+    if [ "$g" = kilnmark-admins ] && [ "$2" != true ]; then
+      echo "admins are added one at a time, with people add, never from a file"; return
+    fi
+    if [[ " $KNOWN_GROUPS " != *" $g "* ]]; then
+      echo "a group that is not one of Kilnmark's ($KNOWN_GROUPS)"; return
+    fi
+    if [[ "$seen" == *" $g "* ]]; then echo "a group named twice"; return; fi
+    seen="$seen$g "
+  done
+  $any || echo "no group: each person needs at least one of Kilnmark's groups"
+}
+# The groups, cleaned: trimmed, ;-separated.
+clean_groups() {
+  local g out="" list
+  IFS=';' read -r -a list <<< "$1"
+  for g in "${list[@]}"; do g="$(trim "$g")"; [ -z "$g" ] || out="${out:+$out;}$g"; done
+  printf '%s' "$out"
+}
+PERSON_ROWS=()   # email, first, last, groups, joined by the unit separator
+SEP=$'\x1f'
+if [ "$PERSON_ACTION" = add ]; then
+  email="$(trim "${KILNMARK_PERSON_EMAIL:-}")"; email="${email,,}"
+  first="$(trim "${KILNMARK_PERSON_FIRST_NAME:-}")"; last="$(trim "${KILNMARK_PERSON_LAST_NAME:-}")"
+  groups="${KILNMARK_PERSON_GROUPS:-}"; groups="${groups//,/;}"
+  why="$(address_problem "$email")"
+  [ -n "$why" ] || why="$(name_problem "$first")"
+  [ -n "$why" ] || why="$(name_problem "$last")"
+  [ -n "$why" ] || why="$(groups_problem "$groups" true)"
+  if [ -n "$why" ]; then
+    echo "keycloak-setup: the person was not made: $why. Nothing was changed" >&2
+    exit 1
+  fi
+  PERSON_PASSWORD="$(read_password "the person's temporary")"
+  PERSON_ROWS+=("$email$SEP$first$SEP$last$SEP$(clean_groups "$groups")")
+elif [ "$PERSON_ACTION" = import ]; then
+  PERSON_PASSWORD="$(read_password "the people's temporary")"
+  # The whole file is checked before anyone is made: each bad line is named by its number, never
+  # its values, and then nobody is made.
+  bad=() n=0 header=false seen=" "
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    line="${line%$'\r'}"
+    while [[ "$line" == $'\xef\xbb\xbf'* ]]; do line="${line#$'\xef\xbb\xbf'}"; done
+    line="$(trim "$line")"
+    [ -n "$line" ] || continue
+    [[ "$line" != \#* ]] || continue
+    if [ "$header" = false ]; then
+      header=true
+      [ "$line" = "email,first_name,last_name,groups" ] || bad+=("line $n: the first line must be the header email,first_name,last_name,groups")
+      continue
+    fi
+    commas="${line//[^,]/}"
+    if [ "${#commas}" -ne 3 ]; then bad+=("line $n: not four fields (email, first name, last name, groups), or a comma inside one"); continue; fi
+    IFS=, read -r email first last groups <<< "$line"
+    email="$(trim "$email")"; email="${email,,}"; first="$(trim "$first")"; last="$(trim "$last")"
+    why="$(address_problem "$email")"
+    [ -n "$why" ] || why="$(name_problem "$first")"
+    [ -n "$why" ] || why="$(name_problem "$last")"
+    [ -n "$why" ] || why="$(groups_problem "$groups" false)"
+    if [ -z "$why" ] && [[ "$seen" == *" $email "* ]]; then why="the same address as an earlier line"; fi
+    if [ -n "$why" ]; then bad+=("line $n: $why"); continue; fi
+    seen="$seen$email "
+    PERSON_ROWS+=("$email$SEP$first$SEP$last$SEP$(clean_groups "$groups")")
+  done
+  if [ "${#PERSON_ROWS[@]}" -gt 1000 ]; then bad+=("more than 1000 people: split the file"); fi
+  if [ "${#bad[@]}" -gt 0 ]; then
+    for b in "${bad[@]}"; do echo "keycloak-setup: $b" >&2; done
+    echo "keycloak-setup: people import: made 0, already there 0, refused ${#bad[@]}. Nothing was changed: fix those lines, then import the file again" >&2
+    exit 1
+  fi
+  if [ "${#PERSON_ROWS[@]}" -eq 0 ]; then
+    echo "keycloak-setup: the file has no people after its header. Nothing was changed" >&2
+    exit 1
+  fi
+fi
 if [ "$PEOPLE_ACTION" = add ] || [ "$PEOPLE_ACTION" = new-password ]; then
   if [ "$STARTER_ALLOWED" != true ]; then
-    echo "keycloak-setup: the example people were not made: they need KILNMARK_STARTER=allowed, on an install not marked production (KILNMARK_PRODUCTION). Nothing was changed" >&2
+    echo "keycloak-setup: the example people were not made: they need a Starter Pack install (KILNMARK_MODE=starter-pack) with KILNMARK_STARTER=allowed. Nothing was changed" >&2
     exit 1
   fi
-  # One line on standard input, never the environment or a command line; from Windows it can start
-  # with a byte-order mark and ends in CR.
-  IFS= read -r PEOPLE_PASSWORD || true
-  while [[ "$PEOPLE_PASSWORD" == $'\xef\xbb\xbf'* ]]; do PEOPLE_PASSWORD="${PEOPLE_PASSWORD#$'\xef\xbb\xbf'}"; done
-  PEOPLE_PASSWORD="${PEOPLE_PASSWORD%$'\r'}"
-  if [ "${#PEOPLE_PASSWORD}" -lt 12 ]; then
-    echo "keycloak-setup: the example people's password, on standard input, must be at least 12 characters (the realm's password policy)" >&2
-    exit 1
-  fi
+  PEOPLE_PASSWORD="$(read_password "the example people's")"
 fi
 REALM=kilnmark
 FLOW="kilnmark browser"
@@ -201,13 +327,17 @@ printf '{"redirectUris":[%s],"webOrigins":[%s],"attributes":{"post.logout.redire
   "$(json "$KILNMARK_OIDC_CLIENT_SECRET")" | kc update "clients/$client" -r "$REALM" -f -
 say "the client kilnmark signs in to $KILNMARK_URL"
 
-# The Starter Pack's example people (ADR 0051). The group kilnmark-starter-pack is their mark: only
-# its members are ever changed or deleted here, and only admins can put people in a group, whatever
-# the realm lets people set on themselves. Setup puts a person in it only as it makes them, so someone
-# else with one of these addresses (an admin's account, or one a person registered) is never adopted,
-# given the people's groups or deleted. While the people are allowed, Keycloak records every change to
-# people as an admin event (Realm settings, Events, Admin events); its other event settings are the site's.
+# The Starter Pack's example people (ADR 0051), on a Starter Pack install only. The group
+# kilnmark-starter-pack is their mark: only its members are ever changed or deleted here, and only
+# admins can put people in a group. The group itself carries the attribute kilnmark_starter_pack,
+# which only setup sets: a group of that name it did not make (one a directory federation brings,
+# say) is never taken for it. Setup puts in it the people it makes, and the five exact addresses an
+# earlier version made with KILNMARK_KEYCLOAK_DEMO_PASSWORD, so the rules below cover them too.
+# While the people are allowed, Keycloak records every change to people as an admin event (Realm
+# settings, Events, Admin events); its other event settings are the site's. A production install
+# refuses a realm that has any of the five.
 STARTER_GROUP=kilnmark-starter-pack
+GROUP_MARK=kilnmark_starter_pack
 PEOPLE="vera.lane@kilnmark.com:Vera:Lane:kilnmark-viewers
 sam.okafor@kilnmark.com:Sam:Okafor:kilnmark-stewards
 dana.reyes@kilnmark.com:Dana:Reyes:kilnmark-designers
@@ -222,11 +352,52 @@ set_password() {
   printf '{"type":"password","temporary":false,"value":%s}' "$(json "$PEOPLE_PASSWORD")" \
     | kc update "users/$1/reset-password" -r "$REALM" -f -
 }
+# Whether group $1 (an id) carries the mark only setup sets (the whole group: kcadm's --fields
+# drops attributes).
+group_marked() {
+  local a; a="$(kc get "groups/$1" -r "$REALM" 2> /dev/null | tr -d ' \n\r\t')"
+  [[ "$a" == *"\"$GROUP_MARK\":[\"true\"]"* ]]
+}
+# The pack's group: its id when setup made it, nothing when there is none. A group of that name
+# without the mark is never taken for it: setup stops, changing nothing.
+starter_group() {
+  local gid; gid="$(group_id "$STARTER_GROUP")"
+  [ -n "$gid" ] || return 0
+  if ! group_marked "$gid"; then
+    echo "keycloak-setup: a group $STARTER_GROUP is here that keycloak-setup did not make (from a directory, say): its members are never touched. Rename it, then run up again. Nothing was changed" >&2
+    exit 1
+  fi
+  echo "$gid"
+}
+# The pack's group, made with its mark when there is none.
+make_starter_group() {
+  local gid; gid="$(starter_group)"
+  if [ -z "$gid" ]; then
+    printf '{"name":%s,"attributes":{"%s":["true"]}}' "$(json "$STARTER_GROUP")" "$GROUP_MARK" \
+      | kc create groups -r "$REALM" -f - > /dev/null
+    gid="$(starter_group)"
+  fi
+  echo "$gid"
+}
+# The five exact addresses an earlier version made, brought into the pack's group, so its rules and
+# its removal cover them (each said, for Kilnmark's audit log).
+adopt_people() {
+  local email first last groups uid gid=""
+  while IFS=: read -r email first last groups; do
+    uid="$(user_id "$email")"
+    [ -n "$uid" ] || continue
+    [ -n "$gid" ] || gid="$(make_starter_group)"
+    if ! in_group "$uid" "$gid"; then
+      kc update "users/$uid/groups/$gid" -r "$REALM" -n > /dev/null
+      say "brought $email into the Starter Pack (made by an earlier version)"
+    fi
+  done <<< "$PEOPLE"
+}
 # The people the pack made are the members of its group, whatever their user name is now (a realm
 # can let people change it): each is deleted, then the group. Anyone else is left as they are.
 remove_people() {
   local gid members id username
-  gid="$(group_id "$STARTER_GROUP")"
+  gid="$(starter_group)"
   [ -n "$gid" ] || return 0
   members="$(kc get "groups/$gid/members" -r "$REALM" -q first=0 -q max=1000 --fields id,username --format csv --noquotes)"
   while IFS=, read -r id username; do
@@ -237,18 +408,30 @@ remove_people() {
   kc delete "groups/$gid" -r "$REALM"
 }
 
-if [ "$STARTER_ALLOWED" = true ]; then
-  kc update "realms/$REALM" -s adminEventsEnabled=true
+if [ "$STARTER_MODE" != true ]; then
+  # A production install: the example people are never here. A realm that has any of the five
+  # (an earlier version made them) belongs to an install that may only be a Starter Pack one.
+  found=""
+  while IFS=: read -r email first last groups; do
+    [ -z "$(user_id "$email")" ] || found="$found $email"
+  done <<< "$PEOPLE"
+  if [ -n "$found" ]; then
+    echo "keycloak-setup: this realm has the Starter Pack's example people ($found ), so this install may only be a Starter Pack install (KILNMARK_MODE=starter-pack). Production needs a fresh install. The people were left as they are" >&2
+    exit 1
+  fi
+else
+  adopt_people
+  if [ "$STARTER_ALLOWED" = true ]; then
+    kc update "realms/$REALM" -s adminEventsEnabled=true
+  fi
 fi
-if [ "$PEOPLE_ACTION" = remove ] || [ "$STARTER_ALLOWED" = false ]; then
-  # Asked to, or no longer allowed (KILNMARK_STARTER unset, or the install marked production).
+if [ "$STARTER_MODE" != true ]; then
+  :
+elif [ "$PEOPLE_ACTION" = remove ] || [ "$STARTER_ALLOWED" = false ]; then
+  # Asked to, or no longer allowed (KILNMARK_STARTER unset).
   remove_people
 elif [ "$PEOPLE_ACTION" = add ] || [ "$PEOPLE_ACTION" = new-password ]; then
-  gid="$(group_id "$STARTER_GROUP")"
-  if [ -z "$gid" ]; then
-    kc create groups -r "$REALM" -s name="$STARTER_GROUP" > /dev/null
-    gid="$(group_id "$STARTER_GROUP")"
-  fi
+  gid="$(make_starter_group)"
   while IFS=: read -r email first last groups; do
     uid="$(user_id "$email")"
     if [ -z "$uid" ]; then
@@ -280,5 +463,60 @@ elif [ "$PEOPLE_ACTION" = add ] || [ "$PEOPLE_ACTION" = new-password ]; then
   done <<< "$PEOPLE"
 fi
 unset PEOPLE_PASSWORD
+
+# People of the organisation's own, asked for by the control script's people command (add or
+# import): in their groups, never in the Starter Pack's, with a temporary password, so Keycloak has
+# them choose their own at the first sign-in (and set up the one-time code, as everyone does).
+# Made once: anyone with that user name or email already is left exactly as they are, their
+# password and groups too. Each line says what was done, for Kilnmark's audit log.
+if [ "$PERSON_ACTION" = add ] || [ "$PERSON_ACTION" = import ]; then
+  made=0 kept=0
+  for row in "${PERSON_ROWS[@]}"; do
+    IFS="$SEP" read -r email first last groups <<< "$row"
+    existing="$(user_id "$email")"
+    [ -n "$existing" ] || existing="$(kc get users -r "$REALM" -q email="$email" -q exact=true --fields id --format csv --noquotes | one)"
+    if [ -n "$existing" ]; then
+      say "left $email as they are: someone with this address is here already (their password and groups are unchanged)"
+      kept=$((kept + 1))
+      continue
+    fi
+    paths=""
+    IFS=';' read -r -a list <<< "$groups"
+    for g in "${list[@]}"; do paths="${paths:+$paths,}$(json "/$g")"; done
+    printf '{"username":%s,"email":%s,"emailVerified":true,"firstName":%s,"lastName":%s,"enabled":true,"groups":[%s],"credentials":[{"type":"password","temporary":true,"value":%s}]}' \
+      "$(json "$email")" "$(json "$email")" "$(json "$first")" "$(json "$last")" "$paths" "$(json "$PERSON_PASSWORD")" \
+      | kc create users -r "$REALM" -f - > /dev/null
+    uid="$(user_id "$email")"
+    for g in "${list[@]}"; do
+      if [ -z "$uid" ] || ! in_group "$uid" "$(group_id "$g")"; then
+        [ -z "$uid" ] || kc delete "users/$uid" -r "$REALM"
+        echo "keycloak-setup: $email could not be put in their groups, so was not made; nothing more was done" >&2
+        exit 1
+      fi
+    done
+    say "made $email ($groups): they choose their own password at their first sign-in"
+    made=$((made + 1))
+  done
+  if [ "$PERSON_ACTION" = import ]; then say "people import: made $made, already there $kept, refused 0"; fi
+fi
+unset PERSON_PASSWORD
+
+# The realm's people, with their Kilnmark groups and whether they must still choose their own
+# password (they have not signed in since being given a temporary one). No password is shown.
+if [ "$PERSON_ACTION" = list ]; then
+  count=0
+  while IFS=, read -r id username; do
+    [ -n "$id" ] || continue
+    names=""
+    while IFS= read -r g; do
+      if [[ " $KNOWN_GROUPS $STARTER_GROUP " == *" $g "* ]]; then names="${names:+$names;}$g"; fi
+    done < <(kc get "users/$id/groups" -r "$REALM" --fields name --format csv --noquotes)
+    change=no
+    if kc get "users/$id" -r "$REALM" --fields requiredActions | tr -d ' \n\r\t' | grep UPDATE_PASSWORD > /dev/null; then change=yes; fi
+    say "person $username groups=${names:-none} must-choose-password=$change"
+    count=$((count + 1))
+  done < <(kc get users -r "$REALM" -q first=0 -q max=10000 --fields id,username --format csv --noquotes)
+  say "people: $count"
+fi
 
 say "done: open $KILNMARK_URL and choose Sign in with your provider"

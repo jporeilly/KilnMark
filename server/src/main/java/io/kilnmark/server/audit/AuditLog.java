@@ -91,6 +91,13 @@ public class AuditLog {
     public static final String SIGN_IN_REFUSED = "auth.sign_in_refused";
     /** Someone signed out of a provider sign-in. */
     public static final String SIGN_OUT = "auth.sign_out";
+    /**
+     * The control script's people add or import made a person of the organisation's own in the
+     * bundled Keycloak (ADR 0051); detail: person, groups, via (add or import). Never a password.
+     */
+    public static final String PERSON_ADDED = "auth.person_added";
+    /** The control script's people import ran; detail: made, alreadyThere, refused (counts). */
+    public static final String PEOPLE_IMPORTED = "auth.people_imported";
 
     /** A designer token's unmask grant waits for a second admin (ADR 0038); detail: name. */
     public static final String UNMASK_REQUESTED = "unmask.requested";
@@ -123,21 +130,23 @@ public class AuditLog {
     public static final String SCHEDULE_PAUSED = "schedule.paused";
 
     /**
-     * An admin turned the Starter Pack on (ADR 0051), or tried to: its example data; detail: forced (on
-     * an install marked production), steps (each step's outcome). Its example people are made by
-     * keycloak-setup, whose changes Keycloak records as admin events.
+     * An admin turned the Starter Pack on (ADR 0051), or tried to: its example data; detail: steps
+     * (each step's outcome), or refused and why.
      */
     public static final String STARTER_PACK_ADDED = "starter.added";
-    /** An admin turned the Starter Pack off, removing what it added; detail: steps. */
+    /** An admin turned the Starter Pack off, removing what it added; detail: steps, and what went. */
     public static final String STARTER_PACK_REMOVED = "starter.removed";
-    /** A run cancelled by the server: on production, a Starter Pack example account asked for it (ADR 0051). */
-    public static final String RUN_CANCELLED = "run.cancelled";
+    /**
+     * The control script's starter people made, gave a new password to, or removed the Starter
+     * Pack's example people in the bundled Keycloak (ADR 0051); detail: action, people.
+     */
+    public static final String STARTER_PEOPLE = "starter.people";
 
     /** Every kind of event, for the API's filter. */
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
         SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, MAX_RUNS_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
-        SIGN_OUT, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED, SCHEDULE_SET,
-        SCHEDULE_DELETED, SCHEDULE_PAUSED, STARTER_PACK_ADDED, STARTER_PACK_REMOVED, RUN_CANCELLED);
+        SIGN_OUT, PERSON_ADDED, PEOPLE_IMPORTED, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED, SCHEDULE_SET,
+        SCHEDULE_DELETED, SCHEDULE_PAUSED, STARTER_PACK_ADDED, STARTER_PACK_REMOVED, STARTER_PEOPLE);
 
     /** The most events one request returns. */
     public static final int MAX_LIMIT = 500;
@@ -280,28 +289,6 @@ public class AuditLog {
         return l.stream().filter(g -> g != null).map(String::valueOf).toList();
     }
 
-    /**
-     * The key of each person who has signed in with the identity provider (ADR 0046's opaque key,
-     * which a schedule they set names), with the name their latest sign-in went by.
-     */
-    public Map<String, String> signedInPeople() {
-        return db.tx(c -> {
-            Map<String, String> out = new LinkedHashMap<>();
-            try (PreparedStatement ps = c.prepareStatement("SELECT DISTINCT ON (detail ->> 'person') detail ->> 'person', "
-                + "actor FROM kilnmark.audit_event WHERE action IN (?, ?) AND detail ->> 'person' IS NOT NULL "
-                + "ORDER BY detail ->> 'person', id DESC")) {
-                ps.setString(1, SIGN_IN);
-                ps.setString(2, SIGN_IN_REFUSED);
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        out.put(rs.getString(1), rs.getString(2));
-                    }
-                }
-            }
-            return out;
-        });
-    }
-
     /** Everyone who has signed in with the identity provider and been given a role, most recent first. */
     public List<ProviderAccess> providerAccess() {
         return db.tx(c -> {
@@ -416,9 +403,9 @@ public class AuditLog {
     public static final String ANONYMOUS = "anonymous";
 
     /**
-     * How a run, or anything queued for later, names who asked for it: a person by their sign-in's
-     * name, a token as {@code token <id> (<name>)}, so that the id, never a name chosen freely,
-     * says which token it was (ADR 0051).
+     * How a run, a schedule, or anything queued for later, names who asked for it: a person by their
+     * sign-in's name, a token as {@code token <id> (<name>)}, so that the id, never a name chosen
+     * freely, says which token it was.
      */
     public static String requester(SecurityIdentity identity) {
         return actor(identity).toString();

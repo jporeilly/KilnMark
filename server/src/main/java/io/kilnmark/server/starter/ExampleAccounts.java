@@ -13,21 +13,12 @@ public final class ExampleAccounts {
     private ExampleAccounts() {
     }
 
-    /** Why a run is cancelled on production (ADR 0051), as the run and the audit log say. */
-    public static final String RUN_CANCELLED = "Cancelled: this install is marked production, and a Starter Pack "
-        + "example account, or a token or schedule of one, asked for it";
-
     /**
-     * Records {@code run.cancelled} for run {@code id} of {@code kind} ("pipeline" or "flow")
-     * {@code name}, cancelled because an example account asked for it on production.
+     * The five example people, by their exact addresses (and user names), the same since 0.1.1,
+     * where KILNMARK_KEYCLOAK_DEMO_PASSWORD made them.
      */
-    public static void recordCancelled(io.kilnmark.server.audit.AuditLog audit, String kind, String name, long id) {
-        if (audit != null) {
-            audit.record(io.kilnmark.server.audit.AuditLog.Actor.server("production: no Starter Pack example accounts"),
-                io.kilnmark.server.audit.AuditLog.RUN_CANCELLED, kind + " run " + id,
-                java.util.Map.of(kind, name, "reason", RUN_CANCELLED));
-        }
-    }
+    public static final java.util.List<String> PEOPLE = java.util.List.of("vera.lane@kilnmark.com",
+        "sam.okafor@kilnmark.com", "dana.reyes@kilnmark.com", "priya.shah@kilnmark.com", "alex.morgan@kilnmark.com");
 
     /**
      * Whether a sign-in name is a kilnmark.com example account: as the audit log records it,

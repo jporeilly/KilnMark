@@ -10,6 +10,7 @@ is in [ADR 0039](../adr/0039-backup-and-restore.md).
 | --- | --- | --- |
 | The database: sources and their sealed passwords, pipelines and their versions, flows, runs, profiles, rules, tokens, notifications, the audit log | The `pgdata` volume | The backup dumps it |
 | The keys: `secret.key`, which opens the stored source passwords, and the drivers registered under **Settings › Drivers** | The `keys` volume | The backup copies it |
+| With the bundled Keycloak: its people, groups and one-time code setups, without which nobody could sign in to a restored install | The `keycloak-pgdata` volume | The backup dumps it, while the `auth` profile is on |
 | The settings: `.env` (the database password, the admin token, the sign-in settings) | The release folder | Your secrets store, once and after each change |
 | Your own files: `tls/`, `branding/`, and the certificate for the database if you gave it one | The release folder, and the `pgdata` volume's `tls` folder | Your usual file backups |
 
@@ -43,7 +44,10 @@ Without a folder it uses the install root's `backups`. It writes a new folder, `
 
 - `kilnmark-db.dump`: the database, as one consistent snapshot, in PostgreSQL's custom format;
 - `kilnmark-keys.tar`: the keys volume;
-- `backup.txt`: when it was taken, the Kilnmark version, and the last database migration;
+- `keycloak-db.dump`, with the bundled Keycloak: Keycloak's database, dumped and read back the
+  same way, inside its container as its own user (no password is needed or shown);
+- `backup.txt`: when it was taken, the Kilnmark version, the last database migration, and whether
+  it holds Keycloak's database (`keycloak=yes`);
 - `SHA256SUMS`: a checksum of each file, which the restore checks.
 
 The script reads the whole dump back before it finishes, as a restore reads it, so a dump that was
@@ -97,6 +101,11 @@ A restore puts Kilnmark back as it was when the backup was taken. Everything sin
    - puts the restored database in place as `kilnmark`;
    - replaces the keys volume with the backup's, keeping the keys it had in `before-restore-<time>`
      in the volume;
+   - with Keycloak's database in the backup: restores it first into `keycloak_restoring` while
+     Keycloak runs, then stops Keycloak, keeps the database it had as `keycloak_before_<time>` and
+     puts the restored one in place as `keycloak`. A backup with Keycloak's database is refused,
+     changing nothing, where Keycloak is not on (turn on the `auth` profile first); a backup without
+     it restores Kilnmark alone, and Keycloak's people stay as they are;
    - starts Kilnmark and waits until it is ready.
 
    If it stops part way, it says how far it got and what it left.
@@ -108,6 +117,9 @@ A restore puts Kilnmark back as it was when the backup was taken. Everything sin
      (`mark.*` and `unmask.*` events).
    - People who sign in with your identity provider are not affected: their roles come from the
      provider each time.
+   - With the bundled Keycloak restored too, people added or changed in Keycloak since the backup
+     are gone, and anyone removed since is back: remove them again (`people list` shows who is
+     there).
 4. **Run again** the scans, quality checks, pipelines and flows that ran after the backup, if you
    need their results.
 
@@ -138,6 +150,12 @@ podman compose exec kilnmark rm -rf /var/lib/kilnmark/before-restore-<time>
 ```
 
 A restore with `--without-keys` keeps the keys volume as it was.
+
+With the bundled Keycloak restored too, Keycloak's previous database is kept the same way. To go
+back to it, `podman compose stop keycloak`, then rename `keycloak` to `keycloak_restored` and
+`keycloak_before_<time>` to `keycloak` with `podman compose exec keycloak-db psql -U keycloak -d
+postgres -c "..."`, and `podman compose up -d`. To remove it:
+`podman compose exec keycloak-db dropdb -U keycloak keycloak_before_<time>`.
 
 ## Test a restore
 

@@ -34,15 +34,17 @@ samples' API refuses; samples already added stay. The templates are offered eith
 
 ### Samples ready to run: the Starter Pack
 
-On a trial, demonstration or training install, an admin turns on the **Starter Pack** under
-**Settings** (INSTALL.md, "Try Kilnmark with the Starter Pack"). Kilnmark then creates the sample
-tables in a database of their own, `kilnmark_samples`, adds a database source and a files source
-that allow writing, and adds every sample here, reading those tables: nothing to prepare, and
-every sample can run. Turning the pack off takes all of it out again.
+On a **Starter Pack install**, for training, demonstrations and development, an admin turns on the
+**Starter Pack** under **Settings** (INSTALL.md, "Try Kilnmark with the Starter Pack"; install turns
+it on itself). Kilnmark then creates the sample tables in a database of their own,
+`kilnmark_samples`, adds a database source and a files source that allow writing, and adds every
+sample here, reading those tables: nothing to prepare, and every sample can run. Turning the pack
+off takes all of it out again. A production install never has the pack: its page under
+**Settings** says so and offers nothing. The templates are here on every install.
 
 ![Settings, Starter Pack, after turning it on: what the pack holds, the run creating the sample tables, the control script's commands for the example people, and each step of turning it on with how it went](images/starter-pack-settings.png)
 
-![The Library's Samples tab after the Starter Pack was turned on: every sample added, with the banner saying the install holds example data and accounts](images/library-starter-pack.png)
+![The Library's Samples tab after the Starter Pack was turned on: every sample added, with the marking saying this is a Starter Pack install, for training and development only, with its example data and accounts on](images/library-starter-pack.png)
 
 The pack does not add the two samples that run SQL (`sample-read-query` and
 `sample-sql-before-and-after`): an admin may not see unmasked values. A designer who may adds them

@@ -20,14 +20,17 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 /**
- * The control script's part in the Starter Pack (ADR 0051), in both editions: before every start it
- * adds the samples' database password when config/.env has none and empties the retired
- * KILNMARK_KEYCLOAK_DEMO_PASSWORD, and refuses a KILNMARK_PRODUCTION that is not true or false (in
- * any case, as the server reads it); {@code starter people} refuses on production (TRUE too),
- * without KILNMARK_STARTER=allowed and without Keycloak, and hands the people's new password to that
- * one keycloak-setup run on its standard input only, showing it on the terminal and never in logs. And the
- * release compose file: a writable files folder for every install, the samples-db one-off, no
- * default for any new secret, and no Keycloak credential for the kilnmark service in any setting.
+ * The control script's part in the two deployment modes and the Starter Pack (ADR 0051), in both
+ * editions: before every start it takes KILNMARK_MODE as production or starter-pack only, picks it
+ * for an install from before there were modes (starter-pack where KILNMARK_KEYCLOAK_DEMO_PASSWORD
+ * shows it has had the example people), refuses production while that retired setting is there,
+ * adds the samples' database password on a Starter Pack install only, refuses a KILNMARK_FILES_DIR
+ * that is not a full path and warns about an earlier version's share at /srv/files;
+ * {@code starter people} refuses on production, without KILNMARK_STARTER=allowed and without
+ * Keycloak, and hands the password typed (or piped in) to that one keycloak-setup run on its
+ * standard input, never showing it. And the release compose file: a writable files folder for every
+ * install, the samples-db one-off on a Starter Pack install only, no default for any new secret,
+ * and no Keycloak credential for the kilnmark service in any setting.
  *
  * <p>The scripts are run for real, with an engine that cannot start anything: they change
  * config/.env, or refuse, then stop at the engine. Bash runs where there is one (set
@@ -85,7 +88,7 @@ class ControlScriptStarterTest {
     }
 
     @Test
-    void composeGivesEveryInstallAWritableFilesFolderAndTheSamplesDatabaseWithNoDefaultSecrets() throws IOException {
+    void composeGivesEveryInstallAWritableFilesFolderAndTheSamplesDatabaseOnlyInStarterPackMode() throws IOException {
         String c = Files.readString(COMPOSE);
         assertTrue(c.contains("      - files:/srv/files:Z\n"), "Kilnmark's own files folder, writable: the files volume");
         assertFalse(c.contains("/srv/files:ro"), "never read-only");
@@ -93,14 +96,20 @@ class ControlScriptStarterTest {
         assertTrue(c.contains("      - ${KILNMARK_FILES_DIR:-share}:/srv/share:ro,Z\n"), "the site's folder, read-only");
         assertEquals(1, c.split("KILNMARK_FILES_DIR:", -1).length - 1, "mounted once, read-only");
         assertTrue(c.contains("KILNMARK_FILES_ROOTS: /srv/files,/srv/share\n"));
-        assertTrue(c.contains("  samples-db:\n") && c.contains("entrypoint: [\"/usr/local/bin/kilnmark-samples-db.sh\"]"));
+        assertTrue(c.contains("  samples-db:\n    image: ghcr.io/jporeilly/kilnmark-postgres:@VERSION@\n"
+            + "    profiles: [\"starter-pack\"]\n"), "the samples' database only on a Starter Pack install");
+        assertTrue(c.contains("entrypoint: [\"/usr/local/bin/kilnmark-samples-db.sh\"]"));
         assertTrue(c.contains("KILNMARK_SAMPLES_DB_PASSWORD: ${KILNMARK_SAMPLES_DB_PASSWORD}\n"), "no default");
+        assertTrue(c.contains("KILNMARK_MODE: ${KILNMARK_MODE:?"), "the server is given the mode, and has no default");
         String image = Files.readString(Path.of("../containers/postgres/Containerfile"));
         assertTrue(image.contains("COPY kilnmark-samples-db.sh /usr/local/bin/kilnmark-samples-db.sh"),
             "the database image carries the script samples-db runs");
         assertTrue(Files.readString(Path.of("../containers/server/Containerfile"))
             .contains("chown 1001:1001 /var/lib/kilnmark /srv/files"),
             "the server image makes /srv/files its user's, so a new files volume is writable");
+        // the developer stack as the release: the share read-only at /srv/share
+        String dev = Files.readString(Path.of("../compose.yaml"));
+        assertTrue(dev.contains(":/srv/share:ro,Z") && !dev.contains(":/srv/files:ro"), "the dev share at /srv/share");
     }
 
     /**
@@ -137,67 +146,140 @@ class ControlScriptStarterTest {
         for (String f : List.of("../containers/release.env.example", "../containers/keycloak/setup.sh")) {
             assertFalse(Files.readString(Path.of(f)).contains("STARTER_PEOPLE_PASSWORD"), "never a setting: " + f);
         }
-        assertTrue(Files.readString(Path.of("../containers/keycloak/setup.sh")).contains("  IFS= read -r PEOPLE_PASSWORD"),
-            "setup reads it from its standard input");
+        String script = Files.readString(Path.of("../containers/keycloak/setup.sh"));
+        assertTrue(script.contains("  IFS= read -r p || true") && script.contains("PEOPLE_PASSWORD=\"$(read_password ")
+            && script.contains("PERSON_PASSWORD=\"$(read_password "), "setup reads them from its standard input");
+        assertFalse(script.contains("KILNMARK_PERSON_PASSWORD"), "a person's password is never a setting either");
         assertFalse(c.contains("KILNMARK_KEYCLOAK_DEMO_PASSWORD"), "the old way is gone");
+        assertFalse(Files.readString(Path.of("../containers/release.env.example")).contains("KILNMARK_KEYCLOAK_DEMO_PASSWORD="),
+            "and not offered in .env.example");
         assertTrue(setup.contains("KILNMARK_STARTER: ${KILNMARK_STARTER:-}")
-            && setup.contains("KILNMARK_PRODUCTION: ${KILNMARK_PRODUCTION:-false}"), "setup refuses on production itself");
+            && setup.contains("KILNMARK_MODE: ${KILNMARK_MODE:-}"), "setup knows the mode itself");
     }
 
+    /** The example people's password as the tests type it, on the scripts' standard input. */
+    static final String PEOPLE_PASSWORD = "typed-people-password-0123";
+
     @Test
-    void bothEditionsHandThePeoplesPasswordToSetupOnItsStandardInputAndShowItOnTheTerminalOnly() throws IOException {
+    void thePeoplesPasswordIsTypedOrPipedInAndNeverShown() throws IOException {
         String sh = Files.readString(LAUNCH.resolve("kilnmark.sh"));
-        assertTrue(sh.contains("  if ! printf '%s\\n' \"$password\" | KILNMARK_STARTER_PEOPLE_ACTION=\"$action\" \\\n"
-            + "    \"${compose[@]}\" run --rm -T keycloak-setup 2>&1 | hide_compose_commands; then"),
+        assertTrue(sh.contains("  if ! out=\"$(printf '%s\\n' \"$people_password\" | KILNMARK_STARTER_PEOPLE_ACTION=\"$action\" \\\n"
+            + "    \"${compose[@]}\" run --rm -T keycloak-setup 2>&1 | hide_compose_commands)\"; then"),
             "on keycloak-setup's standard input, from printf (a builtin: no command line)");
-        assertTrue(sh.contains("echo \"shown only now and kept nowhere, not even in logs/: $password\"")
-            && sh.contains("    } > /dev/tty\n  else"), "to the terminal, past logs/");
+        assertTrue(sh.contains("read -r -s -p \"A password for the example people"), "typed with the echo off");
         String ps = Files.readString(LAUNCH.resolve("kilnmark.ps1")).replace("\r\n", "\n");
-        assertTrue(ps.contains("        $password | & $script:Engine @base run --rm -T keycloak-setup 2>&1 |"),
+        assertTrue(ps.contains("$out = @($password | & $script:Engine @base run --rm -T keycloak-setup 2>&1 |"),
             "on keycloak-setup's standard input");
+        assertTrue(ps.contains("Read-Host -AsSecureString 'A password for the example people"), "typed, not shown");
+        // a person's password the same way, beside the email, names and groups compose hands setup
+        assertTrue(sh.contains("  run_people_setup add < <(printf '%s\\n' \"$person_password\") || ok=false")
+            && sh.contains("run_people_setup import < <(printf '%s\\n' \"$person_password\"; cat -- \"$file\") || ok=false"),
+            "on keycloak-setup's standard input, from printf (a builtin) and the file");
+        assertTrue(sh.contains("read -r -s -p \"A temporary password for them")
+            && sh.contains("read -r -s -p \"A temporary password for everyone in the file"), "typed with the echo off");
+        assertTrue(ps.contains("$out = @($Lines | & $script:Engine @base run --rm -T keycloak-setup 2>&1 |"),
+            "on keycloak-setup's standard input");
+        assertTrue(ps.contains("$a = Read-Host -AsSecureString $Prompt"), "typed, not shown");
         for (String text : List.of(sh, ps)) {
-            assertFalse(text.contains("STARTER_PEOPLE_PASSWORD"), "never in an environment");
-        }
-        // Windows PowerShell writes a child's console output into a running transcript: install stops
-        // its own around the child that makes the people, and starts it again after
-        assertTrue(ps.contains("                Stop-Log\n                & powershell.exe -NoProfile -ExecutionPolicy Bypass "
-            + "-File (Join-Path $script:Root 'kilnmark.ps1') starter people\n                Start-Log 'install'\n"),
-            "install -Auth -Starter makes the people with no transcript running");
-        assertTrue(ps.indexOf("if ([Console]::IsOutputRedirected) {") < ps.indexOf("[Console]::WriteLine('shown only now"),
-            "never printed into redirected output");
-        assertTrue(ps.contains("[Console]::WriteLine('shown only now and kept nowhere, not even in logs\\: ' + $password)"),
-            "to the console, past the transcript");
-        for (String text : List.of(sh, ps)) {
-            Matcher m = Pattern.compile("(?m)^.*\\$password.*$").matcher(text);
+            assertFalse(text.contains("STARTER_PEOPLE_PASSWORD") || text.contains("PERSON_PASSWORD"),
+                "never in an environment");
+            assertFalse(text.contains("[Console]::WriteLine") || text.contains("/dev/tty"), "never written past the logs");
+            Matcher m = Pattern.compile("(?m)^.*(\\$(people_|person_)?password\\b|\\$Person\\.Password\\b).*$").matcher(text);
             while (m.find()) {
-                String line = m.group();
-                assertFalse((line.contains("echo \"") && !line.contains("kept nowhere")) || line.contains("Write-Host"),
-                    "the password is printed somewhere logs/ keep: " + line.strip());
+                String line = m.group().strip();
+                assertFalse(line.matches(".*\\b(echo|Write-Host|Write-Output|Out-Host)\\b.*")
+                    || (line.contains("printf") && !line.contains("| KILNMARK_STARTER_PEOPLE_ACTION")
+                        && !line.contains("< <(printf")),
+                    "the password is printed: " + line);
             }
         }
+        // install no longer makes the people: they take a password the person running it types
+        assertFalse(sh.contains("\"$root/kilnmark.sh\" starter people"), "install runs no people step");
+        assertFalse(ps.contains("kilnmark.ps1') starter people"), "install runs no people step");
     }
 
     // ---- what up does to config/.env ----
 
-    /** The settings config/.env holds after {@code up} ran with them, by edition. */
-    interface Edition {
-        Map<String, String> up(Map<String, String> settings) throws Exception;
+    /** What {@code up} printed and the settings config/.env holds after it ran with them, by edition. */
+    record Up(String out, Map<String, String> env) {
     }
 
-    private static void starterRules(Edition e) throws Exception {
-        // a password for the samples' database is added when there is none, and kept when there is one
-        Map<String, String> out = e.up(Map.of());
-        assertTrue(out.getOrDefault("KILNMARK_SAMPLES_DB_PASSWORD", "").length() >= 40, out.toString());
-        assertEquals("kept-secret-0123456789", e.up(Map.of("KILNMARK_SAMPLES_DB_PASSWORD", "kept-secret-0123456789"))
-            .get("KILNMARK_SAMPLES_DB_PASSWORD"));
-        // the retired way of making the people: its password is emptied, not kept
-        assertEquals("", e.up(Map.of("KILNMARK_KEYCLOAK_DEMO_PASSWORD", "old-demo-0123456789"))
-            .getOrDefault("KILNMARK_KEYCLOAK_DEMO_PASSWORD", ""));
+    interface Edition {
+        /** {@code older}: an earlier version's compose.yaml beside, as found on an upgrade. */
+        Up up(Map<String, String> settings, String older) throws Exception;
+    }
+
+    private static void modeRules(Edition e) throws Exception {
+        // a Starter Pack install: a password for the samples' database is added, and kept when there is one
+        Up up = e.up(Map.of("KILNMARK_MODE", "starter-pack", "COMPOSE_PROFILES", "auth"), null);
+        assertTrue(up.env().getOrDefault("KILNMARK_SAMPLES_DB_PASSWORD", "").length() >= 40, up.out());
+        assertEquals("kept-secret-0123456789", e.up(Map.of("KILNMARK_MODE", "starter-pack", "COMPOSE_PROFILES", "auth",
+            "KILNMARK_SAMPLES_DB_PASSWORD", "kept-secret-0123456789"), null).env().get("KILNMARK_SAMPLES_DB_PASSWORD"));
+        // a Starter Pack install never starts without the bundled Keycloak, where its example people are
+        for (String profiles : List.of("", "ai", "authx", "ai,auth-x")) {
+            String out = e.up(Map.of("KILNMARK_MODE", "starter-pack", "COMPOSE_PROFILES", profiles), null).out();
+            assertTrue(out.contains("needs the bundled Keycloak") && !out.contains("does not work"), profiles + ": " + out);
+        }
+        assertFalse(e.up(Map.of("KILNMARK_MODE", "starter-pack", "COMPOSE_PROFILES", "ai, auth"), null).out()
+            .contains("needs the bundled Keycloak"), "auth among others");
+        // production starts with or without it
+        assertFalse(e.up(Map.of("KILNMARK_MODE", "production", "COMPOSE_PROFILES", ""), null).out()
+            .contains("needs the bundled Keycloak"));
+        // a production install has no samples' database
+        assertEquals("", e.up(Map.of("KILNMARK_MODE", "production"), null).env()
+            .getOrDefault("KILNMARK_SAMPLES_DB_PASSWORD", ""));
+        // only the two modes, exactly: anything else stops before the engine
+        for (String v : List.of("Production", "PRODUCTION", "starter_pack", "true", "staging")) {
+            String out = e.up(Map.of("KILNMARK_MODE", v), null).out();
+            assertTrue(out.contains("KILNMARK_MODE in config") && !out.contains("does not work"), v + ": " + out);
+        }
+
+        // Upgrading an install from before there were modes: with KILNMARK_KEYCLOAK_DEMO_PASSWORD it has
+        // had the example people, so it becomes a Starter Pack install; with no sign, production.
+        Up demo = e.up(Map.of("KILNMARK_MODE", "", "COMPOSE_PROFILES", "auth", "KILNMARK_KEYCLOAK_DEMO_PASSWORD",
+            "old-demo-0123456789"), null);
+        assertEquals("starter-pack", demo.env().get("KILNMARK_MODE"), demo.out());
+        assertTrue(demo.out().contains("is retired: delete it"), demo.out());
+        assertEquals("production", e.up(Map.of("KILNMARK_MODE", ""), null).env().get("KILNMARK_MODE"));
+        // and production refuses to start while KILNMARK_KEYCLOAK_DEMO_PASSWORD is set
+        Up refused = e.up(Map.of("KILNMARK_MODE", "production", "KILNMARK_KEYCLOAK_DEMO_PASSWORD", "old-demo-0123456789"),
+            null);
+        assertTrue(refused.out().contains("may only be a Starter Pack install") && !refused.out().contains("does not work"),
+            refused.out());
+
+        // a folder of your own by its full path only: a bare name would mount a volume of Kilnmark's own
+        for (String bare : List.of("keys", "pgdata", "share/x")) {
+            String out = e.up(Map.of("KILNMARK_MODE", "production", "KILNMARK_FILES_DIR", bare), null).out();
+            assertTrue(out.contains("KILNMARK_FILES_DIR in config") && !out.contains("does not work"), bare + ": " + out);
+        }
+        // upgrading: an earlier version's compose.yaml mounted a share of your own at /srv/files
+        assertTrue(e.up(Map.of("KILNMARK_MODE", "production"), "      - /data/share:/srv/files:ro,Z\n").out()
+            .contains("an earlier version mounted a folder of your own at /srv/files"));
     }
 
     /** What {@code starter people} says, run with the given settings, by edition: its output. */
     interface People {
         String run(Map<String, String> settings) throws Exception;
+    }
+
+    private static void peopleRules(People p) throws Exception {
+        assertTrue(p.run(Map.of("KILNMARK_MODE", "starter-pack", "KILNMARK_STARTER", "allowed"))
+            .contains("needs the bundled Keycloak"), "no Keycloak");
+        assertTrue(p.run(Map.of("KILNMARK_MODE", "production", "COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed"))
+            .contains("This is a production install"), "never on a production install");
+        assertTrue(p.run(Map.of("KILNMARK_MODE", "starter-pack", "COMPOSE_PROFILES", "auth"))
+            .contains("Set KILNMARK_STARTER=allowed"), "not allowed");
+        // a Starter Pack install, allowed, with Keycloak: it goes on, to the engine, with the typed password
+        assertTrue(p.run(Map.of("KILNMARK_MODE", "starter-pack", "COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed"))
+            .contains("does not work"), "allowed: it would run keycloak-setup");
+        // too short a password stops it first
+        stdin = "short";
+        try {
+            String out = p.run(Map.of("KILNMARK_MODE", "starter-pack", "COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed"));
+            assertTrue(out.contains("12 characters or more") && !out.contains("does not work"), out);
+        } finally {
+            stdin = PEOPLE_PASSWORD;
+        }
     }
 
     /** What a command of the script prints, run with these settings and this outside environment. */
@@ -210,17 +292,22 @@ class ControlScriptStarterTest {
     /** The leaked secret the fake engine prints as podman-compose 1.0.x prints a podman command. */
     static final String LEAKED = "leaked-0123456789";
 
+    static final Map<String, String> PEOPLE_ALLOWED = Map.of("KILNMARK_MODE", "starter-pack", "COMPOSE_PROFILES", "auth",
+        "KILNMARK_STARTER", "allowed");
+
     /**
      * What reaches compose and logs/, through an engine that prints what podman-compose 1.0.x prints
-     * (each podman command, settings and all) and the settings it was handed, then fails: the
-     * outside environment never decides production or the switch, and no command line reaches logs/.
+     * (each podman command, settings and all) and the settings it was handed, then fails: the outside
+     * environment never decides the mode or the switch, no command line reaches the screen or logs/,
+     * and the typed password is never shown.
      */
     private static void composeRules(Scripted s, Path[] root) throws Exception {
-        String out = s.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed"),
-            Map.of("KILNMARK_PRODUCTION", "from-the-shell", "KILNMARK_STARTER", "from-the-shell"), "starter", true);
+        String out = s.run(PEOPLE_ALLOWED, Map.of("KILNMARK_MODE", "from-the-shell", "KILNMARK_STARTER", "from-the-shell"),
+            "starter", true);
         assertTrue(out.contains("keycloak-setup: seen"), out);
         assertFalse(out.contains("from-the-shell"), "the outside environment reached compose: " + out);
         assertFalse(out.contains(LEAKED), "a podman command line was shown: " + out);
+        assertFalse(out.contains(PEOPLE_PASSWORD), "the password was shown: " + out);
         StringBuilder logs = new StringBuilder();
         try (var files = Files.list(root[0].resolve("logs"))) {
             for (Path f : files.toList()) {
@@ -229,24 +316,189 @@ class ControlScriptStarterTest {
         }
         assertTrue(logs.toString().contains("keycloak-setup: seen"), "what setup says is kept: " + logs);
         assertFalse(logs.toString().contains(LEAKED), "a podman command line was kept in logs: " + logs);
-        // with no logs/ folder nothing is logged, and nothing filtered there: the screen is filtered all the same,
-        // for starter people and for a compose call that shows its output only when it fails (down)
+        assertFalse(logs.toString().contains(PEOPLE_PASSWORD), "the password was kept in logs: " + logs);
+        // with no logs/ folder the screen is filtered all the same, for starter people and for a
+        // compose call that shows its output only when it fails (down)
         for (String command : List.of("starter", "down")) {
-            String bare = s.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed"), Map.of(), command, false);
+            String bare = s.run(PEOPLE_ALLOWED, Map.of(), command, false);
             assertTrue(bare.contains("keycloak-setup: seen"), command + ": " + bare);
             assertFalse(bare.contains(LEAKED), command + ": a podman command line was shown: " + bare);
         }
         // an export in front, which compose reads too
-        assertTrue(s.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed", "export KILNMARK_PRODUCTION",
-            "TRUE"), Map.of(), "starter", true).contains("marked production"), "export KILNMARK_PRODUCTION=TRUE is production");
-        // the name's case exactly, as compose reads it: kilnmark_production is another setting
-        Map<String, String> lower = new LinkedHashMap<>();
-        lower.put("COMPOSE_PROFILES", "auth");
-        lower.put("KILNMARK_STARTER", "allowed");
-        lower.put("KILNMARK_PRODUCTION", "false");
-        lower.put("kilnmark_production", "true");
+        assertTrue(s.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed", "export KILNMARK_MODE",
+            "production"), Map.of(), "starter", true).contains("This is a production install"),
+            "export KILNMARK_MODE=production is production");
+        // the name's case exactly, as compose reads it: kilnmark_mode is another setting
+        Map<String, String> lower = new LinkedHashMap<>(PEOPLE_ALLOWED);
+        lower.put("kilnmark_mode", "production");
         assertTrue(s.run(lower, Map.of(), "starter", true).contains("keycloak-setup: seen"),
-            "KILNMARK_PRODUCTION=false, then kilnmark_production=true: not production, as compose reads it");
+            "KILNMARK_MODE=starter-pack, then kilnmark_mode=production: still starter-pack, as compose reads it");
+    }
+
+    /**
+     * starter people with an engine that does what it is asked: keycloak-setup is handed the typed
+     * password, the people are made, and the password is never shown, in either edition.
+     */
+    private static void madeRules(Scripted ok) throws Exception {
+        String out = ok.run(PEOPLE_ALLOWED, Map.of(), "starter", true);
+        assertTrue(out.contains("keycloak-setup: got a password"), out);
+        assertTrue(out.contains("with the password you gave"), out);
+        assertFalse(out.contains(PEOPLE_PASSWORD), "the password was shown: " + out);
+    }
+
+    /** A person's temporary password as the tests type it. */
+    static final String PERSON_PASSWORD = "typed-person-password-0123";
+
+    /** What a people command printed, what logs/ kept, and what it sent Kilnmark's API, by edition. */
+    record Admin(String out, String logs, List<String> posted) {
+    }
+
+    interface AdminRun {
+        /**
+         * {@code args}: the people command's words; {@code input}: the lines on its standard input;
+         * {@code ok}: whether keycloak-setup works.
+         */
+        Admin run(Map<String, String> settings, List<String> args, String input, boolean ok) throws Exception;
+    }
+
+    static final Map<String, String> WITH_KEYCLOAK = Map.of("KILNMARK_MODE", "production", "COMPOSE_PROFILES", "auth");
+    static final List<String> ADD = List.of("people", "add");
+    static final String EXAMPLE_CSV = Path.of("../containers/keycloak/people.example.csv").toAbsolutePath().normalize()
+        .toString();
+
+    /**
+     * People of your own, in either mode, with the bundled Keycloak only: the email (in lower case),
+     * names and groups go to one run of keycloak-setup, the password on its standard input only,
+     * never shown or kept in logs/; what setup did goes to Kilnmark's audit log, never with the
+     * password; an example address, or one at kilnmark.com, stops it before the engine, as do a short
+     * password, a missing name or group, and a one-run setting in .env.
+     */
+    private static void adminRules(AdminRun a) throws Exception {
+        String typed = "Rita@Bank.example\nRita\nOkoro\nkilnmark-admins\n" + PERSON_PASSWORD;
+        for (String mode : List.of("production", "starter-pack")) {
+            Admin made = a.run(Map.of("KILNMARK_MODE", mode, "COMPOSE_PROFILES", "auth"), ADD, typed, true);
+            assertTrue(made.out().contains("keycloak-setup: person [add] [rita@bank.example] [Rita] [Okoro] [kilnmark-admins]"),
+                made.out());
+            assertTrue(made.out().contains("keycloak-setup: got a password"), made.out());
+            assertTrue(made.out().contains("signs in to Kilnmark with that password"), made.out());
+            assertFalse(made.out().contains(PERSON_PASSWORD) || made.logs().contains(PERSON_PASSWORD), "the password was shown");
+            assertFalse(made.logs().isEmpty(), "logs/ has the run");
+            assertEquals(List.of("{\"via\":\"add\",\"made\":[{\"person\":\"rita@bank.example\",\"groups\":\"kilnmark-admins\"}],"
+                + "\"kept\":[],\"refused\":0}"), made.posted(), mode);
+        }
+        // someone with that email already: left as they are, and recorded so
+        Admin kept = a.run(WITH_KEYCLOAK, ADD, "here.rita@bank.example\nRita\nOkoro\nkilnmark-viewers\n" + PERSON_PASSWORD, true);
+        assertTrue(kept.out().contains("left as they are: nothing was changed"), kept.out());
+        assertEquals(List.of("{\"via\":\"add\",\"made\":[],\"kept\":[\"here.rita@bank.example\"],\"refused\":0}"),
+            kept.posted());
+        // no email: nobody is made, and nothing reaches the engine
+        Admin none = a.run(WITH_KEYCLOAK, ADD, "", true);
+        assertTrue(none.out().contains("Nobody was made") && !none.out().contains("keycloak-setup:"), none.out());
+        // refused before the engine: the example people's addresses, kilnmark.com, not an address
+        for (String email : List.of("vera.lane@kilnmark.com", "ALEX.MORGAN@KILNMARK.COM", "rita@kilnmark.com",
+            "rita@eu.kilnmark.com", "rita", "rita@bank")) {
+            Admin refused = a.run(WITH_KEYCLOAK, ADD, email + "\nRita\nOkoro\nkilnmark-viewers\n" + PERSON_PASSWORD, true);
+            assertTrue(refused.out().contains("Nobody was made") && !refused.out().contains("keycloak-setup:"),
+                email + ": " + refused.out());
+            assertTrue(refused.posted().isEmpty(), email);
+        }
+        assertTrue(a.run(WITH_KEYCLOAK, ADD, "vera.lane@kilnmark.com\nVera\nLane\nkilnmark-viewers\n" + PERSON_PASSWORD, true)
+            .out().contains("kilnmark.com addresses are the Starter Pack's example people"));
+        for (String[] bad : new String[][] {{"rita@bank.example\nRita\nOkoro\nkilnmark-viewers\nshort", "12 characters or more"},
+            {"rita@bank.example\n\nOkoro\nkilnmark-viewers\n" + PERSON_PASSWORD, "a first and a last name"},
+            {"rita@bank.example\nRita\nOkoro\n ; \n" + PERSON_PASSWORD, "at least one of Kilnmark's groups"}}) {
+            Admin refused = a.run(WITH_KEYCLOAK, ADD, bad[0], true);
+            assertTrue(refused.out().contains(bad[1]) && !refused.out().contains("keycloak-setup:"), refused.out());
+        }
+        // only with the bundled Keycloak: an outside identity provider's people are added there
+        for (List<String> args : List.of(ADD, List.of("people", "import", EXAMPLE_CSV), List.of("people", "list"))) {
+            Admin outside = a.run(Map.of("KILNMARK_MODE", "production"), args, typed, true);
+            assertTrue(outside.out().contains("add people in your organisation's own identity provider")
+                && !outside.out().contains("keycloak-setup:"), outside.out());
+        }
+        // a one-run setting in .env would reach every start: refused
+        for (String key : List.of("KILNMARK_PEOPLE_ACTION", "KILNMARK_PERSON_EMAIL", "KILNMARK_PERSON_GROUPS",
+            "KILNMARK_STARTER_PEOPLE_ACTION")) {
+            Map<String, String> withIt = new LinkedHashMap<>(WITH_KEYCLOAK);
+            withIt.put(key, "add");
+            Admin refused = a.run(withIt, ADD, typed, true);
+            assertTrue(refused.out().contains(key + " is for one run of the control script only")
+                && !refused.out().contains("keycloak-setup:"), refused.out());
+        }
+        // setup fails: said, nothing recorded, the password still never shown
+        Admin failed = a.run(WITH_KEYCLOAK, ADD, typed, false);
+        assertTrue(failed.out().contains("Nobody was made"), failed.out());
+        assertFalse(failed.out().contains(PERSON_PASSWORD), failed.out());
+        assertTrue(failed.posted().isEmpty());
+
+        // import: the shipped example file and one password reach setup; recorded, never with the password
+        Admin imported = a.run(WITH_KEYCLOAK, List.of("people", "import", EXAMPLE_CSV), PERSON_PASSWORD, true);
+        assertTrue(imported.out().contains("keycloak-setup: person [import] [] [] [] []"), imported.out());
+        assertTrue(imported.out().contains("keycloak-setup: got a password"), imported.out());
+        assertFalse(imported.out().contains(PERSON_PASSWORD) || imported.logs().contains(PERSON_PASSWORD),
+            "the password was shown");
+        assertEquals(List.of("{\"via\":\"import\",\"made\":[{\"person\":\"priya.shah@example.com\",\"groups\":"
+            + "\"kilnmark-designers;kilnmark-sensitive-data\"}],\"kept\":[],\"refused\":0}"), imported.posted());
+        // an import setup refused is recorded too, with how many lines it refused
+        Admin refusedFile = a.run(WITH_KEYCLOAK, List.of("people", "import", EXAMPLE_CSV), PERSON_PASSWORD, false);
+        assertTrue(refusedFile.out().contains("Nobody was made"), refusedFile.out());
+        assertEquals(List.of("{\"via\":\"import\",\"made\":[],\"kept\":[],\"refused\":2}"), refusedFile.posted());
+        assertTrue(a.run(WITH_KEYCLOAK, List.of("people", "import", EXAMPLE_CSV + ".missing"), PERSON_PASSWORD, true).out()
+            .contains("Say which file"));
+        assertTrue(a.run(WITH_KEYCLOAK, List.of("people", "import", EXAMPLE_CSV), "short", true).out()
+            .contains("12 characters or more"));
+        // list: who is there, and who must still choose their password; nothing recorded
+        Admin list = a.run(WITH_KEYCLOAK, List.of("people", "list"), "", true);
+        assertTrue(list.out().contains("rita@bank.example groups=kilnmark-admins must-choose-password=yes")
+            && list.out().contains("people: 1"), list.out());
+        assertTrue(list.posted().isEmpty());
+    }
+
+    /**
+     * Kilnmark's API as the scripts reach it, on a port of its own: each body posted to
+     * /api/v1/auth/people, answered 204.
+     */
+    record Api(com.sun.net.httpserver.HttpServer server, List<String> posted) implements AutoCloseable {
+        static Api start() throws IOException {
+            List<String> posted = java.util.Collections.synchronizedList(new ArrayList<>());
+            var server = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress(java.net.InetAddress.getLoopbackAddress(), 0), 0);
+            server.createContext("/api/v1/auth/people", x -> {
+                posted.add(new String(x.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                x.sendResponseHeaders(204, -1);
+                x.close();
+            });
+            server.start();
+            return new Api(server, posted);
+        }
+
+        int port() {
+            return server.getAddress().getPort();
+        }
+
+        @Override
+        public void close() {
+            server.stop(0);
+        }
+    }
+
+    /** An install root with these settings, Kilnmark's API at the test's server. */
+    private static Path adminRoot(boolean windows, Map<String, String> settings, Api api) throws IOException {
+        Path root = installRoot(windows);
+        Map<String, String> all = new LinkedHashMap<>(settings);
+        all.put("KILNMARK_PORT", String.valueOf(api.port()));
+        writeEnv(root, all);
+        return root;
+    }
+
+    private static String logsOf(Path root) throws IOException {
+        StringBuilder logs = new StringBuilder();
+        try (var files = Files.list(root.resolve("logs"))) {
+            for (Path f : files.toList()) {
+                logs.append(Files.readString(f, StandardCharsets.ISO_8859_1));
+            }
+        }
+        return logs.toString();
     }
 
     /**
@@ -275,47 +527,25 @@ class ControlScriptStarterTest {
         assertEquals(0, p.exitValue(), out);
     }
 
-    private static void peopleRules(People p) throws Exception {
-        assertTrue(p.run(Map.of("KILNMARK_STARTER", "allowed")).contains("need the bundled Keycloak"), "no Keycloak");
-        assertTrue(p.run(Map.of("COMPOSE_PROFILES", "auth")).contains("Set KILNMARK_STARTER=allowed"), "not allowed");
-        // production as the server reads it: true in any case
-        for (String v : List.of("true", "TRUE", "True")) {
-            assertTrue(p.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed", "KILNMARK_PRODUCTION", v))
-                .contains("marked production"), "production: " + v);
-        }
-        // a value the server refuses to start with is refused here too, never taken as not production
-        for (String v : List.of("1", "yes", "on")) {
-            String out = p.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed", "KILNMARK_PRODUCTION", v));
-            assertTrue(out.contains("KILNMARK_PRODUCTION in config") && out.contains("is true or false"), v + ": " + out);
-            assertFalse(out.contains("does not work"), v + ": it stopped before the engine");
-        }
-        // allowed, with Keycloak, not production (false in any case, or unset): it goes on, to the engine
-        for (String v : List.of("", "false", "FALSE")) {
-            assertTrue(p.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed", "KILNMARK_PRODUCTION", v))
-                .contains("does not work"), "allowed: it would run keycloak-setup (" + v + ")");
-        }
-    }
-
     @Test
     void theLinuxEditionKeepsTheStarterSettingsRight() throws Exception {
         String bash = System.getenv("KILNMARK_TEST_BASH");
         boolean windows = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win");
         String shell = bash != null && !bash.isBlank() ? bash : windows ? null : "bash";
         Assumptions.assumeTrue(shell != null, "set KILNMARK_TEST_BASH to bash to run this on Windows");
-        starterRules(settings -> {
+        String script = LAUNCH.resolve("kilnmark.sh").toAbsolutePath().toString();
+        modeRules((settings, older) -> {
             Path root = installRoot(false);
+            older(root, older);
             writeEnv(root, settings);
-            start(List.of(shell, LAUNCH.resolve("kilnmark.sh").toAbsolutePath().toString(), "up", "--no-browser"),
-                root, "false");
-            return readEnv(root);
+            return new Up(run(List.of(shell, script, "up", "--no-browser"), root, "false"), readEnv(root));
         });
         peopleRules(settings -> {
             Path root = installRoot(false);
             writeEnv(root, settings);
-            return run(List.of(shell, LAUNCH.resolve("kilnmark.sh").toAbsolutePath().toString(), "starter", "people"),
-                root, "false");
+            return run(List.of(shell, script, "starter", "people"), root, "false");
         });
-        Path engine = fakeEngine(false);
+        Path engine = fakeEngine(false, false);
         Path[] last = new Path[1];
         composeRules((settings, outside, command, logs) -> {
             Path root = installRoot(false);
@@ -325,17 +555,26 @@ class ControlScriptStarterTest {
                 Files.delete(root.resolve("logs"));
             }
             writeEnv(root, settings);
-            List<String> c = new ArrayList<>(List.of(shell, LAUNCH.resolve("kilnmark.sh").toAbsolutePath().toString()));
+            List<String> c = new ArrayList<>(List.of(shell, script));
             c.addAll(command.equals("down") ? List.of("down") : List.of("starter", "people"));
             return run(c, root, engine.toString().replace('\\', '/'), outside);
         }, last);
         Path works = fakeEngine(false, true);
-        redirectedRules((settings, outside, command, logs) -> {
+        madeRules((settings, outside, command, logs) -> {
             Path root = installRoot(false);
             writeEnv(root, settings);
-            return run(List.of(shell, LAUNCH.resolve("kilnmark.sh").toAbsolutePath().toString(), "starter", "people"),
-                root, works.toString().replace('\\', '/'), outside);
+            return run(List.of(shell, script, "starter", "people"), root, works.toString().replace('\\', '/'), outside);
         });
+        try (Api api = Api.start()) {
+            adminRules((settings, args, input, ok) -> {
+                Path root = adminRoot(false, settings, api);
+                api.posted().clear();
+                List<String> c = new ArrayList<>(List.of(shell, script));
+                c.addAll(args.stream().map(w -> w.replace('\\', '/')).toList());
+                String out = withInput(input, () -> run(c, root, (ok ? works : engine).toString().replace('\\', '/')));
+                return new Admin(out, logsOf(root), List.copyOf(api.posted()));
+            });
+        }
     }
 
     @Test
@@ -343,20 +582,24 @@ class ControlScriptStarterTest {
         String powershell = System.getenv("KILNMARK_TEST_POWERSHELL");
         Assumptions.assumeTrue(powershell != null && !powershell.isBlank(),
             "set KILNMARK_TEST_POWERSHELL to powershell.exe to run this");
-        starterRules(settings -> {
+        List<String> ps = List.of(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+            LAUNCH.resolve("kilnmark.ps1").toAbsolutePath().toString());
+        modeRules((settings, older) -> {
             Path root = installRoot(true);
+            older(root, older);
             writeEnv(root, settings);
-            start(List.of(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
-                LAUNCH.resolve("kilnmark.ps1").toAbsolutePath().toString(), "up", "-NoBrowser"), root, "where.exe");
-            return readEnv(root);
+            List<String> c = new ArrayList<>(ps);
+            c.addAll(List.of("up", "-NoBrowser"));
+            return new Up(run(c, root, "where.exe"), readEnv(root));
         });
         peopleRules(settings -> {
             Path root = installRoot(true);
             writeEnv(root, settings);
-            return run(List.of(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
-                LAUNCH.resolve("kilnmark.ps1").toAbsolutePath().toString(), "starter", "people"), root, "where.exe");
+            List<String> c = new ArrayList<>(ps);
+            c.addAll(List.of("starter", "people"));
+            return run(c, root, "where.exe");
         });
-        Path engine = fakeEngine(true);
+        Path engine = fakeEngine(true, false);
         Path[] last = new Path[1];
         composeRules((settings, outside, command, logs) -> {
             Path root = installRoot(true);
@@ -366,31 +609,51 @@ class ControlScriptStarterTest {
                 Files.delete(root.resolve("logs"));
             }
             writeEnv(root, settings);
-            List<String> c = new ArrayList<>(List.of(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy",
-                "Bypass", "-File", LAUNCH.resolve("kilnmark.ps1").toAbsolutePath().toString()));
+            List<String> c = new ArrayList<>(ps);
             c.addAll(command.equals("down") ? List.of("down") : List.of("starter", "people"));
             return run(c, root, engine.toString(), outside);
         }, last);
         Path works = fakeEngine(true, true);
-        redirectedRules((settings, outside, command, logs) -> {
+        madeRules((settings, outside, command, logs) -> {
             Path root = installRoot(true);
             writeEnv(root, settings);
-            return run(List.of(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
-                LAUNCH.resolve("kilnmark.ps1").toAbsolutePath().toString(), "starter", "people"), root, works.toString(),
-                outside);
+            List<String> c = new ArrayList<>(ps);
+            c.addAll(List.of("starter", "people"));
+            return run(c, root, works.toString(), outside);
         });
+        try (Api api = Api.start()) {
+            adminRules((settings, args, input, ok) -> {
+                Path root = adminRoot(true, settings, api);
+                api.posted().clear();
+                List<String> c = new ArrayList<>(ps);
+                c.addAll(args);
+                String out = withInput(input, () -> run(c, root, (ok ? works : engine).toString()));
+                return new Admin(out, logsOf(root), List.copyOf(api.posted()));
+            });
+        }
+    }
+
+    interface Call {
+        String call() throws Exception;
+    }
+
+    /** Runs {@code c} with these lines on the scripts' standard input in place of the people's password. */
+    private static String withInput(String input, Call c) throws Exception {
+        String before = stdin;
+        stdin = input;
+        try {
+            return c.call();
+        } finally {
+            stdin = before;
+        }
     }
 
     /**
      * An engine that says compose works, then for anything else prints a podman command line with a
-     * secret on it (to its error output, as podman-compose 1.0.x does), and the Starter Pack settings
-     * compose was handed, as keycloak-setup's line, and fails.
+     * secret on it (to its error output, as podman-compose 1.0.x does, joined and as a Python list),
+     * whether keycloak-setup was handed a password on its input, and the Starter Pack settings compose
+     * was handed, as keycloak-setup's lines; it fails unless {@code ok}.
      */
-    private static Path fakeEngine(boolean windows) throws IOException {
-        return fakeEngine(windows, false);
-    }
-
-    /** As {@link #fakeEngine(boolean)}; {@code ok}: every command but compose version also succeeds. */
     private static Path fakeEngine(boolean windows, boolean ok) throws IOException {
         Path dir = Files.createTempDirectory("kilnmark-fake-engine");
         String exit = ok ? "0" : "1";
@@ -399,18 +662,42 @@ class ControlScriptStarterTest {
             Path f = dir.resolve(name + ".cmd");
             Files.writeString(f, "@echo off\r\n"
                 + "if \"%1 %2\"==\"compose version\" exit /b 0\r\n"
+                + "set pw=\r\n"
+                + "set /p pw=\r\n"
                 + "echo podman run --name kilnmark_x -e KC_ADMIN_PASSWORD=" + LEAKED + " quay.io/keycloak/keycloak 1>&2\r\n"
                 + "echo ['podman', 'run', '-e', 'KILNMARK_OIDC_CLIENT_SECRET=" + LEAKED + "'] 1>&2\r\n"
-                + "echo keycloak-setup: seen [%KILNMARK_PRODUCTION%] [%KILNMARK_STARTER%]\r\n"
+                + "if defined pw echo keycloak-setup: got a password\r\n"
+                + "echo keycloak-setup: seen [%KILNMARK_MODE%] [%KILNMARK_STARTER%]\r\n"
+                + "if not defined KILNMARK_PEOPLE_ACTION exit /b " + exit + "\r\n"
+                + "echo keycloak-setup: person [%KILNMARK_PEOPLE_ACTION%] [%KILNMARK_PERSON_EMAIL%] [%KILNMARK_PERSON_FIRST_NAME%] [%KILNMARK_PERSON_LAST_NAME%] [%KILNMARK_PERSON_GROUPS%]\r\n"
+                + (ok ? "if \"%KILNMARK_PEOPLE_ACTION%\"==\"list\" (echo keycloak-setup: person rita@bank.example groups=kilnmark-admins must-choose-password=yes& echo keycloak-setup: people: 1)\r\n"
+                    + "if \"%KILNMARK_PEOPLE_ACTION%\"==\"import\" (echo keycloak-setup: made priya.shah@example.com ^(kilnmark-designers;kilnmark-sensitive-data^): they choose their own password at their first sign-in& echo keycloak-setup: people import: made 1, already there 0, refused 0)\r\n"
+                    + "if not \"%KILNMARK_PEOPLE_ACTION%\"==\"add\" exit /b 0\r\n"
+                    + "if \"%KILNMARK_PERSON_EMAIL:~0,5%\"==\"here.\" (echo keycloak-setup: left %KILNMARK_PERSON_EMAIL% as they are: someone with this address is here already) else (echo keycloak-setup: made %KILNMARK_PERSON_EMAIL% ^(%KILNMARK_PERSON_GROUPS%^): they choose their own password at their first sign-in)\r\n"
+                    : "if \"%KILNMARK_PEOPLE_ACTION%\"==\"import\" echo keycloak-setup: people import: made 0, already there 0, refused 2. Nothing was changed\r\n")
                 + "exit /b " + exit + "\r\n");
             return f;
         }
         Path f = dir.resolve(name + ".sh");
         Files.writeString(f, "#!/bin/bash\n"
             + "if [ \"$1 $2\" = \"compose version\" ]; then exit 0; fi\n"
+            + "pw=''; IFS= read -r -t 2 pw || true\n"
             + "echo \"podman run --name kilnmark_x -e KC_ADMIN_PASSWORD=" + LEAKED + " quay.io/keycloak/keycloak\" >&2\n"
             + "echo \"['podman', 'run', '-e', 'KILNMARK_OIDC_CLIENT_SECRET=" + LEAKED + "']\" >&2\n"
-            + "echo \"keycloak-setup: seen [${KILNMARK_PRODUCTION-}] [${KILNMARK_STARTER-}]\"\n"
+            + "[ -z \"$pw\" ] || echo \"keycloak-setup: got a password\"\n"
+            + "echo \"keycloak-setup: seen [${KILNMARK_MODE-}] [${KILNMARK_STARTER-}]\"\n"
+            + "if [ -n \"${KILNMARK_PEOPLE_ACTION-}\" ]; then\n"
+            + "  echo \"keycloak-setup: person [$KILNMARK_PEOPLE_ACTION] [${KILNMARK_PERSON_EMAIL-}] [${KILNMARK_PERSON_FIRST_NAME-}] [${KILNMARK_PERSON_LAST_NAME-}] [${KILNMARK_PERSON_GROUPS-}]\"\n"
+            + (ok ? "  case \"$KILNMARK_PEOPLE_ACTION\" in\n"
+                + "    list) echo \"keycloak-setup: person rita@bank.example groups=kilnmark-admins must-choose-password=yes\"; echo \"keycloak-setup: people: 1\" ;;\n"
+                + "    import) echo \"keycloak-setup: lines [$(cat | wc -l | tr -d ' ')]\"\n"
+                + "      echo \"keycloak-setup: made priya.shah@example.com (kilnmark-designers;kilnmark-sensitive-data): they choose their own password at their first sign-in\"\n"
+                + "      echo \"keycloak-setup: people import: made 1, already there 0, refused 0\" ;;\n"
+                + "    add) case \"$KILNMARK_PERSON_EMAIL\" in here.*) echo \"keycloak-setup: left $KILNMARK_PERSON_EMAIL as they are: someone with this address is here already\" ;;\n"
+                + "      *) echo \"keycloak-setup: made $KILNMARK_PERSON_EMAIL ($KILNMARK_PERSON_GROUPS): they choose their own password at their first sign-in\" ;; esac ;;\n"
+                + "  esac\n"
+                : "  [ \"$KILNMARK_PEOPLE_ACTION\" != import ] || echo \"keycloak-setup: people import: made 0, already there 0, refused 2. Nothing was changed\"\n")
+            + "fi\n"
             + "exit " + exit + "\n");
         try {
             Files.setPosixFilePermissions(f, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
@@ -436,8 +723,21 @@ class ControlScriptStarterTest {
         return root;
     }
 
+    /** An earlier version beside the current one, its compose.yaml with these volume lines. */
+    private static void older(Path root, String volumes) throws IOException {
+        if (volumes != null) {
+            Path v = Files.createDirectories(root.resolve("versions/9.9.8"));
+            Files.writeString(v.resolve("compose.yaml"), "services:\n  kilnmark:\n"
+                + "    image: ghcr.io/jporeilly/kilnmark-server:9.9.8\n    volumes:\n" + volumes);
+        }
+    }
+
+    /** config/.env with these settings; a Starter Pack install unless they name KILNMARK_MODE. */
     private static void writeEnv(Path root, Map<String, String> settings) throws IOException {
         StringBuilder b = new StringBuilder("KILNMARK_DB_PASSWORD=db-0123456789\nKILNMARK_ADMIN_TOKEN=km_x\n");
+        if (settings.keySet().stream().noneMatch(k -> k.endsWith("KILNMARK_MODE"))) {
+            b.append("KILNMARK_MODE=starter-pack\n");
+        }
         settings.forEach((k, v) -> b.append(k).append('=').append(v).append('\n'));
         Files.writeString(root.resolve("config/.env"), b.toString());
     }
@@ -453,22 +753,8 @@ class ControlScriptStarterTest {
         return out;
     }
 
-    /** Runs up with an engine that cannot start anything: it stops there, after config/.env is settled. */
-    private static void start(List<String> command, Path root, String engine) throws Exception {
-        String out = run(command, root, engine);
-        assertTrue(out.contains("compose") && out.contains("does not work"), out);
-    }
-
-    /**
-     * starter people with an engine that does what it is asked, its output redirected (as here, or
-     * to a file): the people are made, and their password is not printed, in either edition.
-     */
-    private static void redirectedRules(Scripted ok) throws Exception {
-        String out = ok.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed"), Map.of(), "starter", true);
-        assertTrue(out.contains("keycloak-setup: seen"), out);
-        assertFalse(out.contains("kept nowhere"), "the password was printed into redirected output: " + out);
-        assertTrue(out.contains("no console") || out.contains("no terminal"), out);
-    }
+    /** What the scripts read on their standard input: the example people's password, typed. */
+    static String stdin = PEOPLE_PASSWORD;
 
     /** Runs a command of the script with an engine that cannot start anything; it must fail. Its output. */
     private static String run(List<String> command, Path root, String engine) throws Exception {
@@ -484,6 +770,11 @@ class ControlScriptStarterTest {
         pb.environment().remove("KILNMARK_PROJECT");
         pb.environment().putAll(outside);
         Process p = pb.start();
+        try (var in = p.getOutputStream()) {
+            in.write((stdin + "\n").getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            // it read nothing and went on: fine
+        }
         String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         assertTrue(p.waitFor(60, TimeUnit.SECONDS), "it stopped");
         assertTrue(engine.contains("engine-ok") || p.exitValue() != 0, "it cannot go on with no engine: " + out);

@@ -463,21 +463,6 @@ public class FlowStore {
         return db.tx(c -> findRun(c, id));
     }
 
-    /** Every run not finished yet (queued or running), oldest first. */
-    public List<Run> unfinishedRuns() {
-        return db.tx(c -> {
-            List<Run> out = new ArrayList<>();
-            try (PreparedStatement ps = c.prepareStatement("SELECT " + RUN_COLUMNS
-                + " FROM kilnmark.flow_run r WHERE r.status IN ('queued', 'running') ORDER BY r.id");
-                 ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    out.add(run(rs));
-                }
-            }
-            return out;
-        });
-    }
-
     public List<Run> runs(String flow, int limit) {
         return db.tx(c -> {
             List<Run> out = new ArrayList<>();

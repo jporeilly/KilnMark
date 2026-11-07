@@ -749,21 +749,6 @@ public class PipelineStore {
         return db.tx(c -> findRun(c, id));
     }
 
-    /** Every run not finished yet (queued, waiting for a place, or running), oldest first. */
-    public List<Run> unfinishedRuns() {
-        return db.tx(c -> {
-            List<Run> out = new ArrayList<>();
-            try (PreparedStatement ps = c.prepareStatement("SELECT " + RUN_COLUMNS
-                + " FROM kilnmark.pipeline_run r WHERE r.status IN ('queued', 'running') ORDER BY r.id");
-                 ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    out.add(run(rs, 1));
-                }
-            }
-            return out;
-        });
-    }
-
     /** A pipeline's latest runs, newest first. */
     public List<Run> runs(String name, int limit) {
         return db.tx(c -> {

@@ -70,8 +70,8 @@ import jakarta.ws.rs.core.Response;
  * kilnmark.com accounts have signed in, from its own audit log, and the commands.
  *
  * <p>The pack's two sources are remembered by their ids in its setting: a source of either name that
- * is not the pack's own is never changed or deleted. Refused on an install marked production
- * ({@code KILNMARK_PRODUCTION=true}) unless forced through the API. Each turn is one audit event,
+ * is not the pack's own is never changed or deleted. Only on a Starter Pack install
+ * ({@code KILNMARK_MODE=starter-pack}): a production install refuses it, always. Each turn is one audit event,
  * with every step's outcome. Both are safe to repeat: what is already there is kept, what is
  * already gone is skipped.
  */
@@ -98,8 +98,11 @@ public class StarterPack {
     public record Step(String step, String outcome, String detail) {
     }
 
-    /** Whether the pack is on, since when and by whom: what the banner reads, for everyone. */
-    public record State(boolean on, Instant since, String by) {
+    /**
+     * The install's mode (production or starter-pack), and whether the pack is on, since when and by
+     * whom: what the banner reads, for everyone (who only for admins).
+     */
+    public record State(String mode, boolean on, Instant since, String by) {
     }
 
     /**
@@ -114,7 +117,7 @@ public class StarterPack {
     public static final String PEOPLE_REMOVE = "kilnmark.sh starter people --remove   (Windows: kilnmark.cmd starter people -Remove)";
 
     /** The pack in full, for admins on Settings, Starter Pack. */
-    public record Details(boolean on, Instant since, String by, boolean production, boolean ready, String notReady,
+    public record Details(boolean on, Instant since, String by, String mode, boolean ready, String notReady,
                           String database, String files, PipelineViews.RunSummary tablesRun, int samples,
                           People people) {
     }
@@ -157,11 +160,13 @@ public class StarterPack {
     public State state() {
         JsonNode n = stored();
         boolean on = n.path("on").asBoolean(false);
+        String mode = io.kilnmark.server.starter.ModeCheck.starterPack(config) ? io.kilnmark.server.starter.ModeCheck.STARTER_PACK
+            : io.kilnmark.server.starter.ModeCheck.PRODUCTION;
         try {
-            return new State(on, on && n.hasNonNull("since") ? Instant.parse(n.get("since").asText()) : null,
+            return new State(mode, on, on && n.hasNonNull("since") ? Instant.parse(n.get("since").asText()) : null,
                 on ? n.path("by").asText(null) : null);
         } catch (RuntimeException e) {
-            return new State(on, null, null);
+            return new State(mode, on, null, null);
         }
     }
 
@@ -240,6 +245,29 @@ public class StarterPack {
         }
     }
 
+    /** The actions keycloak-setup takes on the example people, as the control script reports them. */
+    static final java.util.Set<String> PEOPLE_ACTIONS = java.util.Set.of("add", "new-password", "remove", "adopt");
+
+    /**
+     * Records what the control script says keycloak-setup did to the example people
+     * ({@code starter.people}): Kilnmark holds no Keycloak credential, so this is its only way to
+     * know. Only the five example addresses, and only on a Starter Pack install.
+     */
+    public void recordPeople(String action, List<String> people, AuditLog.Actor actor) {
+        if (!io.kilnmark.server.starter.ModeCheck.examplePeopleAllowed(config)) {
+            throw ApiError.of(Response.Status.CONFLICT, "This is a production install: it has no example people");
+        }
+        if (action == null || !PEOPLE_ACTIONS.contains(action)) {
+            throw new IllegalArgumentException("action: add, new-password, remove or adopt");
+        }
+        if (people == null || people.size() > ExampleAccounts.PEOPLE.size()
+            || !ExampleAccounts.PEOPLE.containsAll(people)) {
+            throw new IllegalArgumentException("people: the Starter Pack's example addresses only");
+        }
+        audit.record(actor, AuditLog.STARTER_PEOPLE, "starter pack people", Map.of("action", action, "people",
+            List.copyOf(people)));
+    }
+
     /** Why the pack cannot be turned on here, or null. */
     String notReady() {
         if (config.samplesDb().password().filter(p -> !p.isBlank()).isEmpty()) {
@@ -259,7 +287,7 @@ public class StarterPack {
         int added = c == null ? 0 : (int) c.samples().stream().filter(Samples.SampleView::exists).count();
         PipelineViews.RunSummary run = c == null || c.tables() == null ? null : c.tables().lastRun();
         Path folder = folder();
-        return new Details(s.on(), s.since(), s.by(), config.production(), notReady == null, notReady,
+        return new Details(s.on(), s.since(), s.by(), s.mode(), notReady == null, notReady,
             DATABASE, folder == null ? null : folder.toString().replace('\\', '/'), run, added,
             new People(PEOPLE_ADD, PEOPLE_REMOVE, audit.providerAccess().stream().map(AuditLog.ProviderAccess::name)
                 .filter(ExampleAccounts::isExample).toList()));
@@ -268,14 +296,14 @@ public class StarterPack {
     // ---- turning it on ----
 
     /**
-     * Turns the pack on: the two sources, the sample tables and the samples. Refused (409) on an
-     * install marked production unless {@code force}.
+     * Turns the pack on: the two sources, the sample tables and the samples. Refused (409) on a
+     * production install, always: only a Starter Pack install has it (ADR 0051).
      */
-    public Result turnOn(boolean force, String by, AccessRole role, Sights sights, AuditLog.Actor actor) {
-        if (config.production() && !force) {
-            throw refused(actor, "production", "This install is marked as production (KILNMARK_PRODUCTION=true): "
-                + "the Starter Pack, with its example data, is not for production, so it was not "
-                + "turned on. Nothing was changed");
+    public Result turnOn(String by, AccessRole role, Sights sights, AuditLog.Actor actor) {
+        if (!io.kilnmark.server.starter.ModeCheck.samplesAllowed(config)) {
+            throw refused(actor, "production", "This is a production install: the Starter Pack, for training and "
+                + "development only, is never turned on here. Nothing was changed. For a trial, install a separate "
+                + "Kilnmark in Starter Pack mode");
         }
         if (!settings.samplesOffered()) {
             throw refused(actor, "samples not offered", "The samples are not offered on this server: turn on Offer the "
@@ -292,8 +320,7 @@ public class StarterPack {
                 steps.add(new Step("database", "done", "kilnmark_samples answers its own login, over TLS"));
             } catch (RuntimeException e) {
                 steps.add(new Step("database", "failed", shown("database", e)));
-                audit.record(actor, AuditLog.STARTER_PACK_ADDED, "starter pack", Map.of("forced", force && config.production(),
-                    "steps", outcomes(steps)));
+                audit.record(actor, AuditLog.STARTER_PACK_ADDED, "starter pack", Map.of("steps", outcomes(steps)));
                 return new Result(state().on(), steps, null);
             }
             // On from here, so even a pack added in part shows the banner until it is turned off.
@@ -335,9 +362,8 @@ public class StarterPack {
                     return String.join(", ", words) + ", in the Library";
                 });
             }
-            audit.record(actor, AuditLog.STARTER_PACK_ADDED, "starter pack", Map.of("forced", force && config.production(),
-                "steps", outcomes(steps)));
-            LOG.infof("Starter Pack turned on by %s%s", by, force && config.production() ? ", forced on a production install" : "");
+            audit.record(actor, AuditLog.STARTER_PACK_ADDED, "starter pack", Map.of("steps", outcomes(steps)));
+            LOG.infof("Starter Pack turned on by %s", by);
             return new Result(true, steps, tables[0]);
         }
     }

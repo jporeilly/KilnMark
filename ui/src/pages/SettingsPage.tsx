@@ -33,7 +33,7 @@ export function SettingsPage({ role }: { role: AccessRole }) {
     { title: "JDBC drivers", link: href.jdbcDrivers(), icon: "database", tint: "teal", text: "Drivers you bring for databases without a connector of their own, such as Db2 or Teradata: register them for Generic JDBC sources." },
     { title: "Audit log", link: href.audit(), icon: "timeline", tint: "slate", text: "Who changed what, and requests refused: tokens, marks, sources, Allow writing and Allow SQL." },
     { title: "Access review", link: href.accessReview(), icon: "users", tint: "slate", text: "Who can do what: every API token and everyone who signs in with your identity provider, when they last did anything, as a CSV for your auditors." },
-    { title: "Starter Pack", link: href.starterPack(), icon: "library", tint: "amber", text: "Example data, samples ready to run and, where allowed, example people, for trials, demos and training: turn it on, and off again before real use." },
+    { title: "Starter Pack", link: href.starterPack(), icon: "library", tint: "amber", text: "On a Starter Pack install, for training, demonstrations and development: example data, samples ready to run and example people. Never on a production install." },
     { title: "Sent emails", link: href.emailLog(), icon: "mail-queued", tint: "slate", text: "Every email sent or tried in the last 30 days, with errors." },
     { title: "AI models", link: href.ai(), icon: "model", tint: "violet", text: "Local and hosted models, which feature uses which, and the rule for hosted models." },
     { title: "AI usage", link: href.aiUsage(), icon: "chart", tint: "sky", text: "Model calls by day and model, with failures and refusals." },

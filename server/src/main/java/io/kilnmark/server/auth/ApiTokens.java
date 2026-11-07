@@ -350,9 +350,6 @@ public class ApiTokens {
      * lifetime, by the database's clock), else empty: what a schedule it set is checked by.
      */
     public Optional<AccessRole> workingRole(long id) {
-        if (config.production() && madeByExample(id)) {
-            return Optional.empty(); // ADR 0051: on production nothing an example account made acts
-        }
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement(
                 "SELECT t.role FROM kilnmark.api_token t WHERE t.id = ? AND " + worksSql("t"))) {
@@ -362,35 +359,6 @@ public class ApiTokens {
                 }
             }
         });
-    }
-
-    /**
-     * How Kilnmark names a token as a caller ({@code AuditLog.Actor}): "token 12 (its name)". Only
-     * the id says which token: names are chosen freely and need not be unique.
-     */
-    public static final Pattern AS_CALLER = Pattern.compile("^token (\\d{1,18}) \\(");
-
-    /**
-     * Whether token {@code t} was made by one of the Starter Pack's example accounts, or had its
-     * unmask grant approved by one, or was made by a token that was, however far up (ADR 0051).
-     * {@code lookup} finds a token by its id.
-     */
-    public static boolean madeByExample(Token t, java.util.function.LongFunction<Optional<Token>> lookup) {
-        Token at = t;
-        for (int depth = 0; at != null && depth < 64; depth++) {
-            if (io.kilnmark.server.starter.ExampleAccounts.isExample(at.createdBy())
-                || io.kilnmark.server.starter.ExampleAccounts.isExample(at.unmaskApprovedBy())) {
-                return true;
-            }
-            java.util.regex.Matcher m = AS_CALLER.matcher(at.createdBy() == null ? "" : at.createdBy());
-            at = m.find() ? lookup.apply(Long.parseLong(m.group(1))).orElse(null) : null;
-        }
-        return at != null; // a chain longer than any made by hand: refused
-    }
-
-    /** Whether token {@code id} is one {@link #madeByExample} finds; false for no such token. */
-    public boolean madeByExample(long id) {
-        return find(id).map(t -> madeByExample(t, this::find)).orElse(false);
     }
 
     public Optional<Token> find(long id) {
@@ -532,7 +500,7 @@ public class ApiTokens {
             return Optional.empty();
         }
         byte[] wanted = hash(presented);
-        Optional<Caller> found = db.tx(c -> {
+        return db.tx(c -> {
             Caller caller;
             Instant lastUsed;
             Instant now;
@@ -559,13 +527,6 @@ public class ApiTokens {
             touch(c, caller.tokenId(), lastUsed, now);
             return Optional.of(caller);
         });
-        // ADR 0051: on production, a token an example account made or approved, or one made by such a
-        // token, is refused here too, so it never works, even before the start-up sweep revokes it.
-        if (found.isPresent() && config.production()
-            && find(found.get().tokenId()).map(t -> madeByExample(t, this::find)).orElse(true)) {
-            return Optional.empty();
-        }
-        return found;
     }
 
     private void touch(Connection c, long id, Instant lastUsed, Instant now) throws SQLException {

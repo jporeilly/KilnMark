@@ -8,8 +8,11 @@
 # it replaces are kept, as kilnmark_before_<time> and before-restore-<time> in the keys volume, to
 # go back to. Everything changed since the backup is lost from the restored copy, including tokens
 # revoked since: see the guide for what to check afterwards. --without-keys restores the database
-# alone, when the keys file is lost: every stored password must then be entered again.
-# KILNMARK_COMPOSE overrides the compose command.
+# alone, when the keys file is lost: every stored password must then be entered again. A backup
+# taken with the bundled Keycloak has its database too (people, groups, one-time code setups): it
+# is restored the same way, beside Kilnmark's, the one it replaces kept as keycloak_before_<time>.
+# KILNMARK_COMPOSE overrides the compose command; KILNMARK_KEYCLOAK (on or off) says whether the
+# bundled Keycloak is on, else COMPOSE_PROFILES (or .env beside compose.yaml) does.
 set -eu
 
 src=${1:-}
@@ -36,11 +39,20 @@ if [ -z "$compose" ]; then
   if command -v podman >/dev/null 2>&1; then compose="podman compose"; else compose="docker compose"; fi
 fi
 if command -v sha256sum >/dev/null 2>&1; then sums="sha256sum"; else sums="shasum -a 256"; fi
+keycloak=${KILNMARK_KEYCLOAK:-}
+if [ -z "$keycloak" ]; then
+  profiles=${COMPOSE_PROFILES:-$(sed -n 's/^COMPOSE_PROFILES=//p' .env 2>/dev/null | tail -n 1)}
+  case ",$(printf '%s' "$profiles" | tr -d ' \r')," in *,auth,*) keycloak=on ;; *) keycloak=off ;; esac
+fi
+# Whether the backup has Keycloak's database: backup.txt says so, and then its checksum must match.
+with_keycloak=false
+if grep -qx 'keycloak=yes' "$src/backup.txt"; then with_keycloak=true; fi
 
 # The backup must be whole, and no newer than this release: an older server cannot run a newer
 # database. Each file is checked by name, so a list missing one is refused too.
 files="kilnmark-db.dump backup.txt"
 if $keys; then files="$files kilnmark-keys.tar"; fi
+if $with_keycloak; then files="$files keycloak-db.dump"; fi
 for f in $files; do
   line=$(grep -E "^[0-9a-f]{64} [ *]$f\$" "$src/SHA256SUMS" || true)     # " *" marks binary mode
   if [ -z "$line" ] || ! (cd "$src" && printf '%s\n' "$line" | $sums -c > /dev/null 2>&1); then
@@ -64,14 +76,25 @@ if [ "$(printf '%s\n%s\n' "$from" "$here" | sort -V | tail -n 1)" != "$here" ]; 
   echo "The backup is from Kilnmark $from, newer than this release ($here). Restore it with $from or later. Nothing was changed." >&2
   exit 1
 fi
+restore_keycloak=false
+if $with_keycloak && [ "$keycloak" = on ]; then
+  restore_keycloak=true
+elif $with_keycloak; then
+  echo "The backup has the bundled Keycloak's database, but Keycloak is not on here (the auth profile): turn it on, then restore again. Nothing was changed." >&2
+  exit 1
+elif [ "$keycloak" = on ]; then
+  echo "Note: the backup has no Keycloak database (taken without the bundled Keycloak, or by an earlier version): Keycloak's people stay as they are now."
+fi
 if ! $yes; then
   echo "This puts Kilnmark back to the backup taken at $taken (Kilnmark $from)."
+  if $restore_keycloak; then echo "The bundled Keycloak goes back to it too: its people, groups and one-time code setups."; fi
   echo "The database and keys it replaces are kept, to go back to. To go on: ./restore.sh $src --yes"
   exit 2
 fi
 
 stamp=$(date -u +%Y%m%d%H%M%S)     # digits only: PostgreSQL folds a database name to lower case
 before="kilnmark_before_$stamp"
+kc_before="keycloak_before_$stamp"
 stage="checking the database"
 # Says, if anything fails, how far the restore got and what state it left.
 trap 'rc=$?; if [ $rc -ne 0 ]; then
@@ -79,6 +102,8 @@ trap 'rc=$?; if [ $rc -ne 0 ]; then
   case "$stage" in
     "putting the restored database in place"|"restoring the keys volume")
       echo "Kilnmark is stopped. Its previous database is $before (or still kilnmark), and its previous keys are in before-restore-$stamp in the keys volume: see the guide, \"Going back\"." >&2 ;;
+    "putting the restored Keycloak database in place")
+      echo "Kilnmark and Keycloak are stopped. The database and keys of Kilnmark are restored; the previous Keycloak database is $kc_before (or still keycloak): see the guide, \"Going back\"." >&2 ;;
     *) echo "Kilnmark and its database are as they were." >&2 ;;
   esac
 fi' EXIT
@@ -97,6 +122,9 @@ wait_for() {
 sql() {
   $compose exec -T postgres psql -U kilnmark -d postgres -q -v ON_ERROR_STOP=1 -Atc "$1"
 }
+kc_sql() {
+  $compose exec -T keycloak-db psql -U keycloak -d postgres -q -v ON_ERROR_STOP=1 -Atc "$1"
+}
 
 $compose up -d postgres
 # Over TCP: the database's first start answers on its socket before it is ready.
@@ -108,6 +136,17 @@ $compose exec -T postgres dropdb -U kilnmark --if-exists kilnmark_restoring
 $compose exec -T postgres createdb -U kilnmark kilnmark_restoring
 $compose exec -T postgres pg_restore -U kilnmark -d kilnmark_restoring --exit-on-error --single-transaction \
   < "$src/kilnmark-db.dump"
+
+if $restore_keycloak; then
+  stage="restoring Keycloak's database into keycloak_restoring"
+  echo "Restoring Keycloak's database into a database of its own (Keycloak keeps running)"
+  $compose up -d keycloak-db
+  wait_for "Keycloak's database" "$compose exec -T keycloak-db pg_isready -h 127.0.0.1 -U keycloak -d postgres" 60
+  $compose exec -T keycloak-db dropdb -U keycloak --if-exists keycloak_restoring
+  $compose exec -T keycloak-db createdb -U keycloak keycloak_restoring
+  $compose exec -T keycloak-db pg_restore -U keycloak -d keycloak_restoring --exit-on-error --single-transaction \
+    < "$src/keycloak-db.dump"
+fi
 
 stage="stopping Kilnmark"
 echo "Stopping Kilnmark"
@@ -148,6 +187,16 @@ else
     'printf "%s\n" "$1" > /var/lib/kilnmark/restored.properties' sh "$record" < /dev/null
 fi
 
+if $restore_keycloak; then
+  stage="stopping Keycloak"
+  echo "Stopping Keycloak"
+  $compose stop keycloak
+  stage="putting the restored Keycloak database in place"
+  echo "Putting Keycloak's restored database in place; the previous one is kept as $kc_before"
+  kc_sql "ALTER DATABASE keycloak RENAME TO $kc_before"
+  kc_sql "ALTER DATABASE keycloak_restoring RENAME TO keycloak"
+fi
+
 stage="starting Kilnmark"
 echo "Starting Kilnmark"
 $compose up -d
@@ -162,3 +211,8 @@ fi
 echo "  - run again the scans and pipelines that ran after it, if their results are needed;"
 echo "  - once all is well, drop the previous database: podman compose exec postgres dropdb -U kilnmark $before"
 echo "    and remove before-restore-$stamp from the keys volume (the guide says how)."
+if $restore_keycloak; then
+  echo "  - Keycloak is back to the backup too: people added or changed since then are gone, and anyone"
+  echo "    removed since is back (remove them again). Then drop its previous database:"
+  echo "    podman compose exec keycloak-db dropdb -U keycloak $kc_before"
+fi

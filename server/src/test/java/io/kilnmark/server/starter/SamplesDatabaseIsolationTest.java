@@ -27,10 +27,10 @@ import org.testcontainers.utility.MountableFile;
 
 /**
  * The Starter Pack's database (ADR 0051), against the real kilnmark-postgres image and this tree's
- * kilnmark-samples-db.sh, kilnmark-samples-db.sh, which the samples-db
- * service runs at every start: the login kilnmark_samples connects to kilnmark_samples only, over
- * TLS; it cannot connect to Kilnmark's own database, nor read its tables even if it were let in;
- * and every start closes again a database a restore left open.
+ * kilnmark-samples-db.sh, which the samples-db service runs at every start of a Starter Pack
+ * install: the login kilnmark_samples owns kilnmark_samples, reached over TLS, which is closed to
+ * everyone else when it is made, once; it reads and makes nothing in Kilnmark's own database; and
+ * the script changes no other database's grants, nor, at a later start, the samples database's.
  */
 @Testcontainers
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -97,9 +97,9 @@ class SamplesDatabaseIsolationTest {
         }
     }
 
-    /** "permission denied for database": refused for want of CONNECT. */
-    private static void refused(String database) {
-        SQLException e = assertThrows(SQLException.class, () -> samples(database).close(), database);
+    /** "permission denied for database": this login refused for want of CONNECT. */
+    private static void refused(String user, String password, String database) {
+        SQLException e = assertThrows(SQLException.class, () -> as(user, password, database).close(), database);
         assertEquals("42501", e.getSQLState(), database + ": " + e.getMessage());
     }
 
@@ -116,18 +116,41 @@ class SamplesDatabaseIsolationTest {
         assertFalse(exists("SELECT 1 FROM pg_roles WHERE rolname = 'kilnmark_samples'"));
     }
 
+    /** Each database's grants, by name: what the script must leave as it was. */
+    private static java.util.Map<String, String> grants() throws SQLException {
+        java.util.Map<String, String> out = new java.util.TreeMap<>();
+        try (Connection c = superuser("postgres"); Statement st = c.createStatement();
+             ResultSet rs = st.executeQuery("SELECT datname, coalesce(datacl::text, '') FROM pg_database")) {
+            while (rs.next()) {
+                out.put(rs.getString(1), rs.getString(2));
+            }
+        }
+        return out;
+    }
+
     @Test
     @Order(2)
-    void theSamplesLoginConnectsToItsOwnDatabaseOnlyOverTls() throws Exception {
+    void theSamplesLoginOwnsItsDatabaseClosedToOthersAndReadsNothingOfKilnmarks() throws Exception {
         // Kilnmark's own tables, as its migrations make them: a schema of its own, owned by kilnmark.
         try (Connection c = superuser("kilnmark")) {
             exec(c, "CREATE SCHEMA kilnmark", "CREATE TABLE kilnmark.api_token (id int, hash text)",
                 "INSERT INTO kilnmark.api_token VALUES (1, 'secret')", "CREATE TABLE public.notes (t text)");
         }
+        java.util.Map<String, String> before = grants();
         for (int run = 0; run < 2; run++) { // twice: the second run changes nothing and fails nothing
             ExecResult r = provision(SAMPLES_PASSWORD);
             assertEquals(0, r.getExitCode(), r.getStderr());
         }
+        java.util.Map<String, String> after = grants();
+        String samplesAcl = after.remove("kilnmark_samples");
+        assertEquals(before, after, "no other database's grants changed");
+        // an entry for PUBLIC has no name before its "="
+        assertFalse(java.util.regex.Pattern.compile("[{,]=[A-Za-z*]*c").matcher(samplesAcl).find(),
+            "PUBLIC may not connect to it: " + samplesAcl);
+        try (Connection c = superuser("postgres")) {
+            exec(c, "CREATE ROLE someone_else LOGIN PASSWORD 'someone-0123456789'");
+        }
+        refused("someone_else", "someone-0123456789", "kilnmark_samples");
         try (Connection c = samples("kilnmark_samples"); Statement st = c.createStatement();
              ResultSet rs = st.executeQuery("SELECT current_database(), ssl, (SELECT rolsuper OR rolcreatedb OR rolcreaterole "
                  + "OR rolreplication OR rolbypassrls FROM pg_roles WHERE rolname = current_user), (SELECT count(*) FROM "
@@ -141,42 +164,30 @@ class SamplesDatabaseIsolationTest {
             // it owns its database, so it can make the sample tables there
             exec(c, "CREATE TABLE public.crm_customers (id int)", "DROP TABLE public.crm_customers");
         }
-        refused("kilnmark");
-        refused("postgres");
-        refused("template1");
         assertTrue(exists("SELECT 1 FROM pg_database WHERE datname = 'kilnmark_samples' AND datdba = "
             + "(SELECT oid FROM pg_roles WHERE rolname = 'kilnmark_samples')"), "owned by its login");
         assertTrue(exists("SELECT 1 FROM pg_database WHERE datname = 'kilnmark' AND datdba = "
             + "(SELECT oid FROM pg_roles WHERE rolname = 'kilnmark')"), "Kilnmark's own database is still Kilnmark's");
-    }
-
-    @Test
-    @Order(3)
-    void letInByMistakeItStillCannotReadKilnmarksTablesAndTheNextStartShutsItOutAgain() throws Exception {
-        try (Connection c = superuser("kilnmark")) {
-            exec(c, "GRANT CONNECT ON DATABASE kilnmark TO kilnmark_samples");
-        }
+        // In Kilnmark's own database, as PostgreSQL lets any login connect: it reads and makes nothing.
         try (Connection c = samples("kilnmark"); Statement st = c.createStatement()) {
             for (String sql : new String[] {"SELECT * FROM kilnmark.api_token", "SELECT * FROM public.notes",
-                "CREATE TABLE public.mine (id int)", "CREATE SCHEMA mine"}) {
+                "CREATE TABLE public.mine (id int)", "CREATE SCHEMA mine", "CREATE TABLE kilnmark.mine (id int)"}) {
                 SQLException e = assertThrows(SQLException.class, () -> st.execute(sql), sql);
                 assertEquals("42501", e.getSQLState(), sql + ": " + e.getMessage());
             }
         }
-        assertEquals(0, provision(SAMPLES_PASSWORD).getExitCode());
-        refused("kilnmark");
     }
 
     @Test
-    @Order(4)
-    void aDatabaseARestoreMadeIsClosedAgainAtTheNextStart() throws Exception {
-        // restore.sh makes kilnmark_restoring with createdb and renames it to kilnmark: PostgreSQL
-        // opens a new database to everyone.
+    @Order(3)
+    void aLaterStartLeavesTheSamplesDatabasesGrantsAsTheSiteSetThem() throws Exception {
+        // the samples database is closed once, when it is made: a grant an admin adds since is theirs
         try (Connection c = superuser("postgres")) {
-            exec(c, "CREATE DATABASE kilnmark_restoring");
+            exec(c, "CREATE ROLE reporting LOGIN", "GRANT CONNECT ON DATABASE kilnmark_samples TO reporting");
         }
-        samples("kilnmark_restoring").close(); // the hole, before samples-db runs again
+        java.util.Map<String, String> before = grants();
         assertEquals(0, provision(SAMPLES_PASSWORD).getExitCode());
-        refused("kilnmark_restoring");
+        assertEquals(before, grants(), "nothing revoked or granted again");
+        assertTrue(before.get("kilnmark_samples").contains("reporting=c"), before.toString());
     }
 }

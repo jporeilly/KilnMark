@@ -139,7 +139,8 @@ class StarterPackApiTest {
             .statusCode(400).body("error", containsString("type DELETE"));
         JsonPath d = admin().get("/api/v1/starter-pack/details").then().statusCode(200).extract().jsonPath();
         assertTrue(d.getBoolean("ready"), d.prettify());
-        assertFalse(d.getBoolean("production"));
+        assertEquals("starter-pack", d.getString("mode"));
+        Tokens.as(viewer).get("/api/v1/starter-pack").then().statusCode(200).body("mode", equalTo("starter-pack"));
         assertTrue(d.getString("people.add").startsWith("kilnmark.sh starter people"), "people are the control script's");
         assertEquals(List.of(), d.getList("people.signedIn"));
     }
@@ -315,6 +316,27 @@ class StarterPackApiTest {
         assertEquals("the site's own", Files.readString(own.resolve("keep.txt")), "never deleted");
         Files.delete(own.resolve("keep.txt"));
         Files.delete(own);
+    }
+
+    @Test
+    @Order(8)
+    void whatTheControlScriptDidToTheExamplePeopleIsInTheAuditLog() throws Exception {
+        int before = events(AuditLog.STARTER_PEOPLE);
+        admin().contentType(ContentType.JSON).body(Map.of("action", "adopt", "people",
+            List.of("vera.lane@kilnmark.com", "alex.morgan@kilnmark.com"))).post("/api/v1/starter-pack/people").then()
+            .statusCode(204);
+        eventually(AuditLog.STARTER_PEOPLE, before + 1);
+        JsonPath ev = admin().get("/api/v1/audit?action=" + AuditLog.STARTER_PEOPLE + "&limit=1").then().statusCode(200)
+            .extract().jsonPath();
+        assertEquals("adopt", ev.getString("events[0].detail.action"));
+        assertEquals(List.of("vera.lane@kilnmark.com", "alex.morgan@kilnmark.com"), ev.getList("events[0].detail.people"));
+        // only the five example addresses, only the four actions, only admins
+        admin().contentType(ContentType.JSON).body(Map.of("action", "add", "people", List.of("rita@bank.example")))
+            .post("/api/v1/starter-pack/people").then().statusCode(400);
+        admin().contentType(ContentType.JSON).body(Map.of("action", "promote", "people", List.of("vera.lane@kilnmark.com")))
+            .post("/api/v1/starter-pack/people").then().statusCode(400);
+        Tokens.as(Tokens.newToken("designer", false)).contentType(ContentType.JSON).body(Map.of("action", "add",
+            "people", List.of("vera.lane@kilnmark.com"))).post("/api/v1/starter-pack/people").then().statusCode(403);
     }
 
     @AfterAll

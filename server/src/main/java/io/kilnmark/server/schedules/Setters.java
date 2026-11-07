@@ -59,11 +59,6 @@ public class Setters {
             return role.get().atLeast(needed) ? null : paused("the token that set it has a lower role");
         }
         if (s.setByPerson() != null) {
-            if (config.production() && io.kilnmark.server.starter.ExampleAccounts.isExample(s.updatedBy())) {
-                // ADR 0051: whatever role their last sign-in in a trial gave them
-                return paused("the person who set it is a Starter Pack example account, and the install is marked "
-                    + "production");
-            }
             Optional<AuditLog.Standing> standing = audit.providerStanding(s.setByPerson(), s.updatedBy());
             if (standing.isEmpty()) {
                 return paused("the person who set it has no role at their latest sign-in");

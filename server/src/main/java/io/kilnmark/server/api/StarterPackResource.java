@@ -1,5 +1,7 @@
 package io.kilnmark.server.api;
 
+import java.util.List;
+
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
@@ -16,7 +18,6 @@ import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
-import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 
 /**
@@ -42,22 +43,23 @@ public class StarterPackResource {
     Sights sights;
 
     @GET
-    @Operation(summary = "Whether the Starter Pack is on", description = "Whether the Starter Pack (example data and "
-        + "accounts, not for production) is on, and since when. The app shows a banner while it is. Who turned it on "
+    @Operation(summary = "The install's mode, and whether the Starter Pack is on", description = "The deployment "
+        + "mode (production, or starter-pack for training and development) and whether the Starter Pack (example data "
+        + "and accounts) is on, and since when. The app marks a Starter Pack install on every page. Who turned it on "
         + "is under details, for admins (by is always null here). Role: viewer.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "Whether it is on"),
         @APIResponse(responseCode = "401", description = "Not signed in")})
     public StarterPack.State state() {
         StarterPack.State s = pack.state();
-        return new StarterPack.State(s.on(), s.since(), null); // who: an admin's sign-in or a token, for admins only
+        return new StarterPack.State(s.mode(), s.on(), s.since(), null); // who: for admins only
     }
 
     @GET
     @Path("details")
     @RolesAllowed(AccessRole.ADMIN_ROLE)
-    @Operation(summary = "The Starter Pack in full", description = "Whether it is on; whether this install is marked "
-        + "production (KILNMARK_PRODUCTION), where the pack is refused; whether it can be turned on here and why not; "
+    @Operation(summary = "The Starter Pack in full", description = "Whether it is on; the install's mode (on a "
+        + "production install the pack is never turned on); whether it can be turned on here and why not; "
         + "its database (kilnmark_samples) and files folder; the last run creating the sample tables; how many samples "
         + "are in the Library; and, for the example people, which the control script makes and removes (Kilnmark "
         + "holds no Keycloak credential), the commands and the kilnmark.com accounts that have signed in. Role: admin.")
@@ -75,16 +77,41 @@ public class StarterPackResource {
         + "kilnmark_samples (its own database on Kilnmark's PostgreSQL server, reached with its own login) and a files "
         + "source on the pack's folder in the files folder, both with Allow writing on; the sample tables (the pipeline "
         + "sample-tables, run at once) and every sample into the Library. A source of either name that the pack did "
-        + "not make is left as it is. Safe to repeat. Refused (409) on an install marked production (KILNMARK_PRODUCTION=true) "
-        + "unless force=true, which the audit event records. Answers with each step and how it went. Role: admin.")
+        + "not make is left as it is. Safe to repeat. Refused (409) on a production install, always, and recorded. "
+        + "Answers with each step and how it went. Role: admin.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "Each step and how it went"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "403", description = "Not an admin"),
-        @APIResponse(responseCode = "409", description = "Marked production, the samples not offered, or no database "
-            + "for the pack here")})
-    public StarterPack.Result turnOn(@QueryParam("force") boolean force) {
-        return pack.turnOn(force, who(), AccessRole.highest(identity::hasRole), sights, AuditLog.actor(identity));
+        @APIResponse(responseCode = "409", description = "A production install, the samples not offered, or no "
+            + "database for the pack here")})
+    public StarterPack.Result turnOn() {
+        return pack.turnOn(who(), AccessRole.highest(identity::hasRole), sights, AuditLog.actor(identity));
+    }
+
+    /** Body of {@code POST /api/v1/starter-pack/people}. */
+    public record PeopleDone(String action, List<String> people) {
+    }
+
+    @POST
+    @Path("people")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @RolesAllowed(AccessRole.ADMIN_ROLE)
+    @Operation(summary = "Record what the example people step did", description = "The control script's starter "
+        + "people, and its up, tell Kilnmark what keycloak-setup did to the Starter Pack's example people, so its "
+        + "audit log holds it (starter.people): action is add, new-password, remove or adopt (people of an earlier "
+        + "version brought into the pack), people the kilnmark.com addresses. Kilnmark holds no Keycloak credential "
+        + "and changes nothing here. Refused (409) on a production install. Role: admin.")
+    @APIResponses({
+        @APIResponse(responseCode = "204", description = "Recorded"),
+        @APIResponse(responseCode = "400", description = "Not an action or not example addresses"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "403", description = "Not an admin"),
+        @APIResponse(responseCode = "409", description = "A production install")})
+    public jakarta.ws.rs.core.Response people(PeopleDone body) {
+        pack.recordPeople(body == null ? null : body.action(), body == null ? null : body.people(),
+            AuditLog.actor(identity));
+        return jakarta.ws.rs.core.Response.noContent().build();
     }
 
     @DELETE

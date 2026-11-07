@@ -205,8 +205,8 @@ real sources, register a read-only login that is not a superuser (see
 can read anything it can see.
 
 Kilnmark reads folders only inside the ones its administrator allows. The developer
-`compose.yaml` at the root of the repository mounts `lab/files/share` read-only at `/srv/files` and allows it, so in the compose stack add a
-source of kind **files** with path `/srv/files`. Running the server outside a container, set
+`compose.yaml` at the root of the repository mounts `lab/files/share` read-only at `/srv/share` and allows it, so in the compose stack add a
+source of kind **files** with path `/srv/share`. Running the server outside a container, set
 `KILNMARK_FILES_ROOTS` to the full path of `lab/files/share` and use that path.
 
 ## Try email notifications

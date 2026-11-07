@@ -16,6 +16,8 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 
 ## User guides
 
+- [Choosing a deployment](../INSTALL.md#choosing-a-deployment): Production or Starter Pack, chosen once at install; how people sign in and are added in each; what a backup holds
+
 - [Asking Kilnmark](guide/assistant.md): the Ask panel, what it answers from, sources and links, and privacy
 - [Setting data quality rules](guide/quality-rules.md): one-click rules from the profile, writing rules, thresholds, previews, alerts and recipes
 - [Writing data from a pipeline](guide/writing-data.md): writing to tables (create, append, replace, upsert) and to CSV and Parquet files, the rights a write needs, and what replace keeps

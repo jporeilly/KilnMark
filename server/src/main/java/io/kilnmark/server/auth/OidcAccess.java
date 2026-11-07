@@ -47,26 +47,47 @@ public final class OidcAccess {
     /** Why a sign-in older than the longest session is refused. */
     public static final String TOO_OLD = "Your sign-in is older than Kilnmark allows. Sign in again.";
 
-    /** Why one of the Starter Pack's example accounts is refused on an install marked production (ADR 0051). */
-    public static final String EXAMPLE_ON_PRODUCTION = "This is one of the Starter Pack's example accounts, which "
-        + "an install marked production does not let in. Sign in with your own account.";
+    /** Why a member of the Starter Pack's group is refused on a production install (ADR 0051). */
+    public static final String STARTER_GROUP_ON_PRODUCTION = "Your sign-in is one of the Starter Pack's example "
+        + "people, which are for training and development installs only: a production install does not let them in. "
+        + "Sign in with your own account.";
+
+    /** The Starter Pack's group in the bundled Keycloak (containers/keycloak/setup.sh). */
+    public static final String STARTER_GROUP = "kilnmark-starter-pack";
 
     private OidcAccess() {
     }
 
     /**
      * Decides from the provider's ID token, as {@link #decide(KilnmarkConfig.Oidc, Function, Instant)}
-     * does, and refuses the Starter Pack's example accounts (by the name Kilnmark gives the sign-in, or
-     * its email) on an install marked production (ADR 0051): every sign-in, renewal and request with a
-     * session is decided here, so a session an example person had from a trial ends too.
+     * does, and on a production install refuses anyone whose groups claim holds the Starter Pack's
+     * group (ADR 0051), by name or path: a defence in depth, as a production install never has the
+     * pack's people. Every sign-in, renewal and request with a session is decided here.
      */
     public static Decision decide(KilnmarkConfig config, org.eclipse.microprofile.jwt.JsonWebToken token, Instant now) {
-        if (config.production() && (io.kilnmark.server.starter.ExampleAccounts.isExample(
-            OidcIdentityAugmentor.actorName(token)) || strings(token.getClaim("email")).stream()
-                .anyMatch(io.kilnmark.server.starter.ExampleAccounts::isExample))) {
-            return Decision.refused(EXAMPLE_ON_PRODUCTION);
+        if (!io.kilnmark.server.starter.ModeCheck.examplePeopleAllowed(config) && (strings(token.getClaim(
+            config.auth().oidc().groupsClaim())).stream().anyMatch(g -> STARTER_GROUP.equals(g)
+                || ("/" + STARTER_GROUP).equals(g))
+            || examplePerson(token))) {
+            return Decision.refused(STARTER_GROUP_ON_PRODUCTION);
         }
         return decide(config.auth().oidc(), token::getClaim, now);
+    }
+
+    /**
+     * Whether the sign-in is one of the five example people by their exact address (user name or
+     * email), as earlier versions made them without the pack's group: the fallback for a realm never
+     * run through this version's keycloak-setup.
+     */
+    static boolean examplePerson(org.eclipse.microprofile.jwt.JsonWebToken token) {
+        for (String claim : List.of("preferred_username", "email", "upn")) {
+            for (String v : strings(token.getClaim(claim))) {
+                if (io.kilnmark.server.starter.ExampleAccounts.PEOPLE.contains(v.strip().toLowerCase(Locale.ROOT))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

@@ -18,6 +18,8 @@ export const ACTIONS: { value: string; label: string; tone: Tone }[] = [
   { value: "auth.sign_in", label: "Signed in", tone: "neutral" },
   { value: "auth.sign_in_refused", label: "Sign-in given no role", tone: "bad" },
   { value: "auth.sign_out", label: "Signed out", tone: "neutral" },
+  { value: "auth.person_added", label: "Person added", tone: "warn" },
+  { value: "auth.people_imported", label: "People imported", tone: "warn" },
   { value: "access.review", label: "Access review viewed", tone: "neutral" },
   { value: "unmask.requested", label: "Sensitive values asked for", tone: "warn" },
   { value: "unmask.approved", label: "Sensitive values approved", tone: "warn" },
@@ -28,7 +30,7 @@ export const ACTIONS: { value: string; label: string; tone: Tone }[] = [
   { value: "schedule.paused", label: "Schedule paused", tone: "warn" },
   { value: "starter.added", label: "Starter Pack turned on", tone: "warn" },
   { value: "starter.removed", label: "Starter Pack turned off", tone: "neutral" },
-  { value: "run.cancelled", label: "Run cancelled", tone: "warn" },
+  { value: "starter.people", label: "Starter Pack people changed", tone: "warn" },
   { value: "api.request", label: "Request", tone: "neutral" },
   { value: "api.refused", label: "Request refused", tone: "bad" },
 ];
@@ -75,15 +77,28 @@ export function describe(e: AuditEvent): string {
   if (e.action === "starter.added" && d.refused) {
     return `Refused, nothing changed: ${String(d.refused)}`;
   }
-  if (e.action === "run.cancelled") {
-    const what = d.pipeline ? `Pipeline ${String(d.pipeline)}` : `Flow ${String(d.flow ?? "")}`;
-    return `${what}: ${String(d.reason ?? "cancelled")}`;
+  if (e.action === "auth.person_added") {
+    const groups = Array.isArray(d.groups) ? (d.groups as unknown[]).map(String).join(", ") : "";
+    const via = d.via === "import" ? "from a file" : "one at a time";
+    return `Added ${String(d.person ?? "")} (${groups}) ${via}, with a password they change at their first sign-in`;
+  }
+  if (e.action === "auth.people_imported") {
+    return `Made ${String(d.made ?? 0)}, already there ${String(d.alreadyThere ?? 0)}, refused ${String(d.refused ?? 0)}`;
+  }
+  if (e.action === "starter.people") {
+    const verb: Record<string, string> = {
+      add: "Added",
+      "new-password": "Gave a new password to",
+      remove: "Removed",
+      adopt: "Brought into the pack",
+    };
+    const people = Array.isArray(d.people) ? (d.people as unknown[]).map(String).join(", ") : "";
+    return `${verb[String(d.action)] ?? String(d.action ?? "")}: ${people}`;
   }
   if (e.action === "starter.added" || e.action === "starter.removed") {
     const steps = (d.steps ?? {}) as Record<string, string>;
     const failed = Object.entries(steps).filter(([, v]) => v === "failed").map(([k]) => k);
-    const forced = d.forced ? "Forced on an install marked production. " : "";
-    return `${forced}${failed.length ? `Not every step worked: ${failed.join(", ")}` : "Every step worked"}`;
+    return failed.length ? `Not every step worked: ${failed.join(", ")}` : "Every step worked";
   }
   if (e.action === "api.request" || e.action === "api.refused") {
     const call = `${String(d.method ?? "")} ${String(d.status ?? "")}`.trim();

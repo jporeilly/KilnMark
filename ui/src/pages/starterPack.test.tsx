@@ -46,7 +46,7 @@ const details: StarterPackDetails = {
   on: false,
   since: null,
   by: null,
-  production: false,
+  mode: "starter-pack",
   ready: true,
   notReady: null,
   database: "kilnmark_samples",
@@ -60,17 +60,28 @@ const details: StarterPackDetails = {
   },
 };
 
-describe("the Starter Pack banner", () => {
-  test("shows for everyone while the server says the pack is on", async () => {
-    server({ "GET /api/v1/starter-pack": () => json({ on: true, since: "2026-11-06T10:00:00Z", by: "admin" }) });
+describe("the Starter Pack marking", () => {
+  test("shows for everyone on a Starter Pack install, and says when the example data is on", async () => {
+    server({
+      "GET /api/v1/starter-pack": () =>
+        json({ mode: "starter-pack", on: true, since: "2026-11-06T10:00:00Z", by: null }),
+    });
     await show(<StarterPackBanner />);
     const banner = host.querySelector(".km-starter-banner");
-    expect(banner?.textContent).toBe("Starter Pack: example data and accounts, not for production.");
+    expect(banner?.textContent).toBe(
+      "Starter Pack: training and development only. Its example data and accounts are on.",
+    );
     expect(banner?.getAttribute("role")).toBe("status");
   });
 
-  test("is not there while the pack is off, or when the server cannot be asked", async () => {
-    server({ "GET /api/v1/starter-pack": () => json({ on: false, since: null, by: null }) });
+  test("shows on a Starter Pack install while the pack is off too", async () => {
+    server({ "GET /api/v1/starter-pack": () => json({ mode: "starter-pack", on: false, since: null, by: null }) });
+    await show(<StarterPackBanner />);
+    expect(host.querySelector(".km-starter-banner")?.textContent).toBe("Starter Pack: training and development only.");
+  });
+
+  test("is never on a production install, or when the server cannot be asked", async () => {
+    server({ "GET /api/v1/starter-pack": () => json({ mode: "production", on: false, since: null, by: null }) });
     await show(<StarterPackBanner />);
     expect(host.querySelector(".km-starter-banner")).toBeNull();
     server({});
@@ -80,12 +91,12 @@ describe("the Starter Pack banner", () => {
 
   test("follows the pack when an admin turns it on", async () => {
     let on = false;
-    server({ "GET /api/v1/starter-pack": () => json({ on, since: null, by: null }) });
+    server({ "GET /api/v1/starter-pack": () => json({ mode: "starter-pack", on, since: null, by: null }) });
     await show(<StarterPackBanner />);
-    expect(host.querySelector(".km-starter-banner")).toBeNull();
+    expect(host.querySelector(".km-starter-banner")?.textContent).not.toContain("are on");
     on = true;
     await act(async () => window.dispatchEvent(new Event(STARTER_PACK_CHANGED)));
-    expect(host.querySelector(".km-starter-banner")).not.toBeNull();
+    expect(host.querySelector(".km-starter-banner")?.textContent).toContain("are on");
   });
 });
 
@@ -106,12 +117,13 @@ describe("Settings, Starter Pack", () => {
     expect(parse("#/settings/starter-pack")).toEqual({ page: "starter-pack" });
   });
 
-  test("cannot be turned on on an install marked production, and says why", async () => {
-    server({ "GET /api/v1/starter-pack/details": () => json({ ...details, production: true }) });
+  test("offers nothing on a production install, and says why", async () => {
+    server({ "GET /api/v1/starter-pack/details": () => json({ ...details, mode: "production" }) });
     await show(<StarterPackPage />);
-    const on = [...host.querySelectorAll("button")].find((b) => b.textContent === "Turn on")!;
-    expect(on.disabled).toBe(true);
-    expect(host.textContent).toContain("marked as production");
+    expect([...host.querySelectorAll("button")].find((b) => b.textContent === "Turn on")).toBeUndefined();
+    expect(host.textContent).toContain("This is a production install");
+    expect(host.textContent).toContain("The templates are here");
+    expect(host.textContent).not.toContain("Example people");
   });
 
   test("turns off only once DELETE is typed", async () => {

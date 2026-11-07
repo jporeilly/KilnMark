@@ -1,6 +1,7 @@
 package io.kilnmark.server.api;
 
 import java.net.URI;
+import java.util.List;
 import java.util.Map;
 
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -10,6 +11,7 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
 
 import io.kilnmark.server.KilnmarkConfig;
 import io.kilnmark.server.audit.AuditLog;
+import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.auth.MaxAgeRedirect;
 import io.kilnmark.server.auth.OidcIdentityAugmentor;
 import io.quarkus.oidc.OidcProviderClient;
@@ -18,7 +20,9 @@ import io.quarkus.oidc.RefreshToken;
 import io.quarkus.security.Authenticated;
 import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.annotation.security.PermitAll;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
+import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
@@ -108,6 +112,87 @@ public class AuthResource {
             audit.record(AuditLog.actor(identity), AuditLog.SIGN_OUT, "session", Map.of());
             revokeRefreshToken();
             session.get().logout().await().indefinitely();
+        }
+        return Response.noContent().build();
+    }
+
+    /** One person keycloak-setup made: their email, and their groups, ;-separated. */
+    public record PersonMade(String person, String groups) {
+    }
+
+    /**
+     * Body of {@code POST /api/v1/auth/people}: how (add or import), who was made, who was there
+     * already, and, for an import, how many lines were refused.
+     */
+    public record PeopleDone(String via, List<PersonMade> made, List<String> kept, Integer refused) {
+    }
+
+    /** An email address, in lower case, as the control script and keycloak-setup take it. */
+    static final java.util.regex.Pattern EMAIL = java.util.regex.Pattern.compile("[a-z0-9._%+-]+@[a-z0-9-]+(\\.[a-z0-9-]+)+");
+
+    /** Kilnmark's groups in the bundled Keycloak, as keycloak-setup makes them. */
+    static final java.util.Set<String> GROUPS = java.util.Set.of("kilnmark-viewers", "kilnmark-stewards",
+        "kilnmark-designers", "kilnmark-admins", "kilnmark-sensitive-data");
+
+    /** The most people one call records: keycloak-setup takes at most 1000 from a file. */
+    static final int MAX_PEOPLE = 1000;
+
+    private static String own(String person) {
+        if (person == null || !EMAIL.matcher(person).matches() || person.endsWith("@kilnmark.com")
+            || person.endsWith(".kilnmark.com")) {
+            throw new IllegalArgumentException("people: email addresses of your own organisation, in lower case");
+        }
+        return person;
+    }
+
+    @POST
+    @Path("people")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @RolesAllowed(AccessRole.ADMIN_ROLE)
+    @Operation(summary = "Record what the people command did", description = "The control script's people add "
+        + "(and install's first admin) and people import tell Kilnmark what keycloak-setup did in the bundled "
+        + "Keycloak, so its audit log holds it: auth.person_added for each person made, with their groups, and "
+        + "auth.people_imported for each import, with how many were made, already there and refused. Never a "
+        + "password. An import never makes an admin. Kilnmark holds no Keycloak credential and changes nothing "
+        + "here. Role: admin.")
+    @APIResponses({
+        @APIResponse(responseCode = "204", description = "Recorded"),
+        @APIResponse(responseCode = "400", description = "Not add or import, not addresses of the organisation's "
+            + "own, not Kilnmark's groups, or an admin from a file"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "403", description = "Not an admin")})
+    public Response people(PeopleDone body) {
+        String via = body == null ? null : body.via();
+        if (!"add".equals(via) && !"import".equals(via)) {
+            throw new IllegalArgumentException("via: add or import");
+        }
+        List<PersonMade> made = body.made() == null ? List.of() : body.made();
+        List<String> kept = body.kept() == null ? List.of() : body.kept();
+        int refused = body.refused() == null ? 0 : body.refused();
+        if (made.size() + kept.size() > MAX_PEOPLE || refused < 0 || refused > MAX_PEOPLE
+            || ("add".equals(via) && (made.size() + kept.size() != 1 || refused != 0))) {
+            throw new IllegalArgumentException("people: one person for add, at most " + MAX_PEOPLE + " for import");
+        }
+        List<Map<String, Object>> events = new java.util.ArrayList<>();
+        for (PersonMade m : made) {
+            List<String> groups = m == null || m.groups() == null ? List.of()
+                : java.util.Arrays.stream(m.groups().split(";", -1)).toList();
+            if (groups.isEmpty() || !GROUPS.containsAll(groups) || groups.size() != java.util.Set.copyOf(groups).size()) {
+                throw new IllegalArgumentException("groups: Kilnmark's groups, each once");
+            }
+            if ("import".equals(via) && groups.contains("kilnmark-admins")) {
+                throw new IllegalArgumentException("groups: admins are added one at a time, never from a file");
+            }
+            events.add(Map.of("person", own(m.person()), "groups", groups, "via", via));
+        }
+        kept.forEach(AuthResource::own);
+        AuditLog.Actor actor = AuditLog.actor(identity);
+        for (Map<String, Object> e : events) {
+            audit.record(actor, AuditLog.PERSON_ADDED, "person", e);
+        }
+        if ("import".equals(via)) {
+            audit.record(actor, AuditLog.PEOPLE_IMPORTED, "people", Map.of("made", made.size(), "alreadyThere",
+                kept.size(), "refused", refused));
         }
         return Response.noContent().build();
     }

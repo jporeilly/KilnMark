@@ -1,24 +1,25 @@
 import { useEffect, useState } from "react";
-import { starterPackApi } from "../api";
+import { starterPackApi, type StarterPackState } from "../api";
 
 /** The event Settings › Starter Pack sends when it turns the pack on or off, so the banner follows at once. */
 export const STARTER_PACK_CHANGED = "kilnmark:starter-pack";
 
 /**
- * The banner every role sees while the Starter Pack is on (ADR 0051): the server says whether it
- * is, so no one can miss that this install holds example data and accounts. Read again on every
- * page change and when an admin turns the pack on or off.
+ * The marking every role sees on a Starter Pack install (ADR 0051): the server says the install's
+ * mode, so no one can take a training and development install for a production one, and whether
+ * the pack's example data is on. Nothing on a production install. Read again on every page change
+ * and when an admin turns the pack on or off.
  */
 export function StarterPackBanner({ refresh }: { refresh?: unknown }) {
-  const [on, setOn] = useState(false);
+  const [state, setState] = useState<StarterPackState | null>(null);
 
   useEffect(() => {
     let live = true;
     const read = () =>
       starterPackApi
         .state()
-        .then((s) => live && setOn(s.on))
-        .catch(() => live && setOn(false));
+        .then((s) => live && setState(s))
+        .catch(() => live && setState(null));
     read();
     window.addEventListener(STARTER_PACK_CHANGED, read);
     return () => {
@@ -27,15 +28,16 @@ export function StarterPackBanner({ refresh }: { refresh?: unknown }) {
     };
   }, [refresh]);
 
-  if (!on) return null;
-  return <StarterPackNotice />;
+  if (!state || state.mode !== "starter-pack") return null;
+  return <StarterPackNotice on={state.on} />;
 }
 
 /** The banner's words, on their own for tests and for the Starter Pack page. */
-export function StarterPackNotice() {
+export function StarterPackNotice({ on }: { on: boolean }) {
   return (
     <div className="km-starter-banner" role="status">
-      <strong>Starter Pack:</strong> example data and accounts, not for production.
+      <strong>Starter Pack:</strong> training and development only.
+      {on ? " Its example data and accounts are on." : ""}
     </div>
   );
 }

@@ -1587,7 +1587,10 @@ export const samplesApi = {
 };
 
 /** Whether the Starter Pack (ADR 0051) is on: everyone reads it, for the banner. */
-export type StarterPackState = { on: boolean; since: string | null; by: string | null };
+/** The install's deployment mode (ADR 0051), fixed at install. */
+export type DeploymentMode = "production" | "starter-pack";
+
+export type StarterPackState = { mode: DeploymentMode; on: boolean; since: string | null; by: string | null };
 
 /** One step of turning the Starter Pack on or off, and how it went. */
 export type StarterPackStep = { step: string; outcome: "done" | "skipped" | "failed"; detail: string | null };
@@ -1597,8 +1600,8 @@ export type StarterPackDetails = {
   on: boolean;
   since: string | null;
   by: string | null;
-  /** This install is marked production (KILNMARK_PRODUCTION=true): the pack is refused. */
-  production: boolean;
+  /** The install's mode: on a production install the pack is never turned on. */
+  mode: DeploymentMode;
   /** Whether the pack can be turned on here; notReady says why not. */
   ready: boolean;
   notReady: string | null;

@@ -43,8 +43,8 @@ export function stepLabel(step: string): string {
 /**
  * Settings › Starter Pack, for admins (ADR 0051): example data and the samples ready to run, for
  * trials, demos and training. Kilnmark does the work itself; this page turns it on, shows each step
- * and how it went, and turns it off again after the admin types DELETE. Refused on an install marked
- * production. The example people are the control script's: this page shows its commands and which
+ * and how it went, and turns it off again after the admin types DELETE. Only on a Starter Pack
+ * install: a production one says so and offers nothing. The example people are the control script's: this page shows its commands and which
  * example accounts have signed in, and never a password.
  */
 export function StarterPackPage() {
@@ -109,16 +109,18 @@ export function StarterPackPage() {
   };
 
   const d = details;
-  const blocked = d?.production ? "production" : d && !d.ready ? "not-ready" : null;
+  const production = d?.mode === "production";
+  const blocked = production ? "production" : d && !d.ready ? "not-ready" : null;
 
   return (
     <>
       <PageHeader
         title="Starter Pack"
         crumbs={[{ label: "Settings", href: href.settings() }, { label: "Starter Pack" }]}
-        lead="Example data and the samples ready to run, for trials, demos and training. Kilnmark adds it all itself, in a database and a folder of its own, and takes it all out again when you turn it off. Not for an install that holds real data."
+        lead="Example data and the samples ready to run, for training, demonstrations and development, on a Starter Pack install only. Kilnmark adds it all itself, in a database and a folder of its own, and takes it all out again when you turn it off."
         actions={
           d &&
+          !production &&
           (d.on ? (
             <button
               type="button"
@@ -149,18 +151,19 @@ export function StarterPackPage() {
           Loading…
         </p>
       )}
-      {d?.production && (
-        <p className="warning" role="note">
-          This install is marked as production (<span className="mono">KILNMARK_PRODUCTION=true</span>), so the Starter
-          Pack cannot be turned on here.
+      {production && (
+        <p className="hint" role="note">
+          This is a production install: the Starter Pack, for training and development only, is never turned on here,
+          and it has no example people. The templates are here as on any install. For a trial, install a separate
+          Kilnmark in Starter Pack mode: an install never moves from one mode to the other.
         </p>
       )}
-      {d && !d.production && !d.ready && (
+      {d && !production && !d.ready && (
         <p className="warning" role="note">
           The Starter Pack cannot be turned on here yet. {d.notReady}.
         </p>
       )}
-      {d && (
+      {d && !production && (
         <Card title="What the pack holds" titleId="starter-what" className="km-section">
           <p>
             {d.on ? (
@@ -169,7 +172,7 @@ export function StarterPackPage() {
                   On
                 </StatusChip>{" "}
                 since {d.since ? formatTime(d.since) : "a while"}
-                {d.by ? `, turned on by ${d.by}` : ""}. Everyone sees this banner meanwhile:
+                {d.by ? `, turned on by ${d.by}` : ""}. Everyone sees this marking on every page:
               </>
             ) : (
               <>
@@ -177,11 +180,11 @@ export function StarterPackPage() {
               </>
             )}
           </p>
-          {d.on && <StarterPackNotice />}
+          <StarterPackNotice on={d.on} />
           <ul>
             <li>
               the sample tables, in <span className="mono">{d.database}</span>: a database of its own on Kilnmark&apos;s
-              PostgreSQL server, reached with a login of its own that can open no other database;
+              PostgreSQL server, closed to all but a login of its own, which reads nothing of Kilnmark&apos;s;
             </li>
             <li>
               a database source and a files source on it, both allowing writing, with the files in{" "}
@@ -204,15 +207,15 @@ export function StarterPackPage() {
           </p>
         </Card>
       )}
-      {d && (
+      {d && !production && (
         <Card title="Example people" titleId="starter-people" className="km-section">
           <p>
             Five people at kilnmark.com addresses, one per role, for trying the roles out: vera.lane (viewer),
             sam.okafor (steward), dana.reyes (designer), priya.shah (designer, sees sensitive values) and
             alex.morgan (admin). The person who runs Kilnmark makes them with the control script, with the bundled
-            Keycloak and <span className="mono">KILNMARK_STARTER=allowed</span> in config/.env; their password
-            shows once on that terminal. Kilnmark holds no Keycloak credential, and turning the pack off here does
-            not remove them.
+            Keycloak and <span className="mono">KILNMARK_STARTER=allowed</span> in config/.env, typing their
+            password, which is never shown. Kilnmark holds no Keycloak credential, and turning the pack off here does
+            not remove them; what the command did is in the audit log.
           </p>
           <dl className="km-starter-commands">
             <dt>To add them</dt>
