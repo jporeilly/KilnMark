@@ -141,6 +141,8 @@ Writes the rows it receives to a table or a file in a saved source.
 | `path` | text | no |  | part of the name | Another name for target, for a file. |
 | `mode` | choice | no | `create` | no | How rows are written: create fails if the table or file exists; append adds rows; replace swaps in the new rows at the end; upsert updates rows with the same key and adds the rest. One of `create`, `append`, `replace`, `upsert`. |
 | `key` | list of columns | no |  | no | The columns that identify a row, for upsert. |
+| `duplicates` | choice | no | `last` | no | For upsert, when the input has a key more than once: which of its rows the table keeps. The first or last to arrive, the latest or earliest by a column, or error to stop the run. One of `first`, `last`, `latest`, `earliest`, `error`. |
+| `duplicates_by` | column | no |  | no | For latest or earliest: the column whose largest (latest) or smallest (earliest) value wins. On a tie the first of the tied rows to arrive wins, and an empty value never beats a value. |
 | `format` | choice | no |  | no | For files: csv or parquet. Taken from the path's extension when left out. One of `csv`, `parquet`. |
 
 The writer settings, which only some kinds of source take:
@@ -473,7 +475,8 @@ join.
 | `keep` | list of columns | no |  | no | Lookup columns to add to main rows. Leave empty to add every lookup column except the keys. |
 | `join` | choice | no | `left` | no | What happens to main rows with no match: left keeps them, inner drops them. One of `left`, `inner`. |
 | `unmatched` | choice | no |  | no | What to do with a main row that has no match: keep it, drop it, or send it to the rejected port. Overrides join when set. One of `keep`, `drop`, `rejected`. |
-| `duplicates` | choice | no | `first` | no | When the lookup side has a key more than once: use the first row, or stop with an error. One of `first`, `error`. |
+| `duplicates` | choice | no | `first` | no | When the lookup side has a key more than once, which of its rows is used: the first or last to arrive, the latest or earliest by a column, or error to stop the run. One of `first`, `last`, `latest`, `earliest`, `error`. |
+| `duplicates_by` | column | no |  | no | For latest or earliest: the lookup column whose largest (latest) or smallest (earliest) value wins. On a tie the first of the tied rows to arrive wins, and an empty value never beats a value. |
 | `memory_limit_mb` | number | no | `256` | whole value | The most memory the lookup side (and main rows waiting for it) may take. |
 
 [end: node lookup]: #
@@ -481,7 +484,10 @@ join.
 **What to know.** The lookup input is read in full and held in memory first, up to
 `memory_limit_mb`; then main rows stream through. Keys match by value (`1`, `1.0` and `1.00`
 match), empty keys never match, and text never matches a number. An added column must not have the
-same name as a main column.
+same name as a main column. When the lookup side has a key more than once, `duplicates` says which
+of its rows is used: the first to arrive unless you say otherwise, the last, the latest or earliest
+by the lookup column `duplicates_by` names, or `error`, which stops the run naming the key's columns
+but never its value ([Which row wins](pipeline-nodes.md#which-row-wins)).
 
 ```yaml
 kilnmark: pipeline/v1
@@ -637,7 +643,7 @@ Keeps the first row for each key; later rows with the same key go to `rejected`.
 
 [generated: node dedupe]: #
 
-**Remove duplicates**: a transform node, in the palette's Filter and route folder. Keeps the first row for each key. Later rows with the same key go to the rejected port, if something is connected to it.
+**Remove duplicates**: a transform node, in the palette's Filter and route folder. Keeps one row for each key: the first to arrive, unless Which row wins says otherwise. The other rows with the same key go to the rejected port, if something is connected to it.
 
 - Reads from: `in`
 - Writes to: `out`, `rejected`
@@ -645,12 +651,19 @@ Keeps the first row for each key; later rows with the same key go to `rejected`.
 | Setting | Type | Required | Default | Parameters | What it does |
 | --- | --- | --- | --- | --- | --- |
 | `key` | list of columns | no |  | no | The columns that make rows duplicates of each other. Leave empty to compare whole rows. |
-| `memory_limit_mb` | number | no | `256` | whole value | The most memory the keys seen so far may take. |
+| `duplicates` | choice | no | `first` | no | Which row of a key is kept: the first or last to arrive, the latest or earliest by a column, or error to stop the run when a key repeats. One of `first`, `last`, `latest`, `earliest`, `error`. |
+| `duplicates_by` | column | no |  | no | For latest or earliest: the column whose largest (latest) or smallest (earliest) value wins. On a tie the first of the tied rows to arrive wins, and an empty value never beats a value. |
+| `memory_limit_mb` | number | no | `256` | whole value | The most memory the keys seen so far may take, with the rows held under last, latest and earliest. |
 
 [end: node dedupe]: #
 
 **What to know.** Empty values count as equal to each other. Without `key`, whole rows are
-compared. The keys seen so far are held in memory up to `memory_limit_mb`.
+compared. Which row of a key is kept is `duplicates`: the first to arrive unless you say
+otherwise, the last, the latest or earliest by `duplicates_by` (a tie goes to the first of the tied
+rows, and an empty value never wins), or `error`, which stops the run naming the key's columns
+([Which row wins](pipeline-nodes.md#which-row-wins)). The keys seen so far are held in memory up to
+`memory_limit_mb`; under `last`, `latest` and `earliest` the rows are held too, and sent on in the
+order they came once the input ends.
 
 ```yaml
 kilnmark: pipeline/v1

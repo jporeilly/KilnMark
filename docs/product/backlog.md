@@ -95,6 +95,7 @@ audit reporting tables and dashboards about Kilnmark itself under item 18, from 
       **error tolerance** on the node (fail past N rows or a share), recorded with the run.
    2. **Which row wins, stated**: upsert, lookup and dedupe say which of two rows with the same key
       is kept (the latest by a column, the first, or an error), never arrival order unsaid.
+      **Built** (branch `which-row-wins`): `duplicates` and `duplicates_by` on all three.
    3. **Incremental reads by watermark**, the watermark recorded with each run so a load can be
       repeated exactly; change data capture later.
    4. **Write modes**: delete, update only, insert only, a conditional merge, and columns left

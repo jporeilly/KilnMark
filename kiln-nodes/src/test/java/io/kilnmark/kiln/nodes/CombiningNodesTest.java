@@ -88,8 +88,8 @@ class CombiningNodesTest {
         try (Harness h = joined(new Harness()).connect("out")) {
             NodeException e = assertThrows(NodeException.class, () -> h.run(new LookupFactory(),
                 config("on", Map.of("customer_id", "id"), "duplicates", "error")));
-            assertEquals("the lookup side has more than one row with the key customer_id = 1; set duplicates: first "
-                + "to use the first such row", e.getMessage());
+            assertEquals("the lookup side has more than one row with the same key (id); set duplicates to first, "
+                + "last, latest or earliest to choose which row is kept", e.getMessage());
         }
     }
 

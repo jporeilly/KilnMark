@@ -218,7 +218,7 @@ describe("what the canvas says about nodes", () => {
     expect(nodeSummary(node({ type: "read", settings: { source: "sales-db", asset: "crm.customers" } }))).toBe("sales-db · crm.customers");
     expect(nodeSummary(node({ type: "filter", settings: { condition: "a > 1" } }))).toBe("a > 1");
     expect(nodeSummary(node({ type: "compute", settings: { columns: { x: "1", y: "2" } } }))).toBe("x, y");
-    expect(nodeSummary(node({ type: "lookup", settings: { on: { a: "b" } } }))).toBe("on a = b");
+    expect(nodeSummary(node({ type: "lookup", settings: { on: { a: "b" } } }))).toBe("on a = b · first match");
     expect(nodeSummary(node({ type: "sort", settings: { by: ["region", "amount desc"] } }))).toBe("by region, amount desc");
     expect(nodeSummary(node({ type: "window", settings: { partition_by: ["account_id"], order_by: ["txn_at"], columns: { balance: "sum(amount)", n: "row_number()" } } }))).toBe(
       "balance, n · per account_id",
@@ -227,6 +227,14 @@ describe("what the canvas says about nodes", () => {
     expect(nodeSummary(node({ type: "join", settings: { on: { customer_id: "id" }, how: "left" } }))).toBe("left on customer_id = id");
     expect(nodeSummary(node({ type: "join", settings: { on: { a: "b" } } }))).toBe("inner on a = b");
     expect(nodeSummary(node({ type: "write", settings: { source: "w", path: "x.csv", mode: "replace" } }))).toBe("w · x.csv · replace");
+    // which row of a repeated key wins is always in sight, the default too
+    expect(nodeSummary(node({ type: "write", settings: { source: "w", table: "a.b", mode: "upsert", key: ["id"] } }))).toBe("w · a.b · upsert · last kept");
+    expect(nodeSummary(node({ type: "dedupe", settings: { key: ["id"] } }))).toBe("key id · first kept");
+    expect(nodeSummary(node({ type: "dedupe" }))).toBe("whole rows · first kept");
+    expect(nodeSummary(node({ type: "dedupe", settings: { key: ["id"], duplicates: "latest", duplicates_by: "updated_at" } }))).toBe(
+      "key id · latest by updated_at kept",
+    );
+    expect(nodeSummary(node({ type: "lookup", settings: { on: { a: "b" }, duplicates: "error" } }))).toBe("on a = b · error on a repeated key");
     expect(nodeSummary(node({ type: "read", settings: { source: "db", asset: 2024.1 }, texts: { asset: "2024.10" } }))).toBe("db · 2024.10");
   });
 
@@ -276,6 +284,25 @@ describe("what the canvas says about nodes", () => {
     expect(keys(null, { path: "out/a.csv" })).toEqual(["source", "path"]);
     // A target the YAML has stays, with a table beside it, so both can be seen and one removed.
     expect(keys(null, { target: "a.b", table: "a.c" })).toEqual(["source", "target", "table"]);
+  });
+
+  test("which row wins is offered where it applies", () => {
+    const write = {
+      type: "write",
+      kind: "sink",
+      settings: [spec("source", "source"), spec("target", "asset"), spec("mode", "choice"), spec("duplicates", "choice"), spec("duplicates_by", "column")],
+      writerSettings: {},
+    } as unknown as NodeType;
+    const keys = (settings = {}) => shownSettings(write, node({ type: "write", settings }), null).specs.map((s) => s.key);
+    expect(keys()).toEqual(["source", "target", "mode"]);
+    expect(keys({ mode: "upsert" })).toEqual(["source", "target", "mode", "duplicates"]);
+    expect(keys({ mode: "upsert", duplicates: "latest" })).toEqual(["source", "target", "mode", "duplicates", "duplicates_by"]);
+    // set in the YAML: shown, so it can be seen and removed
+    expect(keys({ mode: "append", duplicates: "first" })).toEqual(["source", "target", "mode", "duplicates"]);
+    const dedupe = { type: "dedupe", kind: "transform", settings: [spec("key", "columns"), spec("duplicates", "choice"), spec("duplicates_by", "column")] } as unknown as NodeType;
+    const d = (settings = {}) => shownSettings(dedupe, node({ type: "dedupe", settings }), null).specs.map((s) => s.key);
+    expect(d()).toEqual(["key", "duplicates"]);
+    expect(d({ duplicates: "earliest" })).toEqual(["key", "duplicates", "duplicates_by"]);
   });
 
   test("defaults in words", () => {

@@ -548,7 +548,7 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
 | `lookup` | `main`, `lookup` → `out`, `rejected` | Adds columns from the lookup side by key; unmatched rows kept (left), dropped (inner) or sent to `rejected` |
 | `aggregate` | `in` → `out` | Groups and summarises |
 | `union` | `in` (many) → `out` | Appends inputs, matching columns by name |
-| `dedupe` | `in` → `out`, `rejected` | Keeps the first row per key |
+| `dedupe` | `in` → `out`, `rejected` | Keeps one row per key, by a stated rule (the first by default) |
 | `route` | `in` → named outputs, `out` | Sends each row to the first matching condition's port, others to `out` |
 | `limit` | `in` → `out` | First N rows, for trying a pipeline out |
 | `sort` | `in` → `out` | Orders rows by columns, spilling to disk past its memory limit |
@@ -567,8 +567,9 @@ found through `ServiceLoader`. Settings, with defaults:
   text) for want of a column-to-type kind in `SettingSpec`.
 - `lookup`: `on` (main column → lookup column), `keep` (default: every lookup column but the
   keys), `join` (`left`), `unmatched` (`keep` for left, `drop` for inner, or `rejected`),
-  `duplicates` (`first` or `error`), `memory_limit_mb` (256). The lookup side is held as its
-  Arrow batches plus a hash table from key to row. Keys match by value across number types
+  `duplicates` (`first`, `last`, `latest`, `earliest` or `error`; default `first`) with
+  `duplicates_by`, `memory_limit_mb` (256). The lookup side is held as its
+  Arrow batches plus a hash table from key to its winning row (see "Which row wins" below). Keys match by value across number types
   (1, 1.0 and 1.00) and dates match timestamps at midnight; null keys never match. While the
   lookup side loads, main batches that are ready are read and held (counted against the memory
   limit) once the lookup side has been quiet for 250 ms, until it moves again, so a main input fed by the same node
@@ -587,7 +588,8 @@ found through `ServiceLoader`. Settings, with defaults:
   inputs' columns as the pipeline check worked them out (`NodeContext.inputSchema("in", i)`);
   only when those are unknown do batches wait in memory until every input has sent its first
   batch or ended (an input that then sends nothing adds no columns).
-- `dedupe`: `key` (default: whole rows), `memory_limit_mb` (256); nulls equal each other.
+- `dedupe`: `key` (default: whole rows), `duplicates` (default `first`) with `duplicates_by`,
+  `memory_limit_mb` (256); nulls equal each other.
 - `route`: `routes` (port → condition, in order; port names are lower case, not `in` or `out`).
 - `limit`: `rows`. Stops reading once it has its rows; the runner ends the nodes before it that
   feed nothing else.
@@ -595,6 +597,40 @@ found through `ServiceLoader`. Settings, with defaults:
   the UI writes the same text), `memory_limit_mb` (256). See "Sorting, and spilling to disk" below.
 - `window`: `partition_by` (columns), `order_by` (kind `ORDER`, as `sort`'s `by`), `columns` (name →
   one window function), `memory_limit_mb` (256). See "Window functions" below.
+
+### Which row wins
+
+Three places keep one of several rows with the same key: `dedupe`, `lookup` (its lookup side) and
+an upsert `write`. Each states the rule in `duplicates`, read by `WhichRow` in `kiln-nodes`, so
+the choice is never arrival order left unsaid (backlog item 9, point 2). The defaults are what each
+node did before the setting existed, so no pipeline changed: `first` for dedupe and lookup, `last`
+for an upsert.
+
+- `first` and `last` go by arrival. `latest` and `earliest` go by the value of `duplicates_by`,
+  compared as `sort` compares (numbers by value across types, dates and timestamps in time, text
+  by code point, `false` before `true`); a tie keeps the first of the tied rows, and a null never
+  beats a value. The column must be one an expression can read; a binary or list column is a
+  problem when the pipeline is checked.
+- `error` stops the run at the first repeated key with "... more than one row with the same key
+  (account_id) ...": the key's column names, never the value. (Before, a lookup's error quoted
+  the key's value; it no longer does.)
+- `dedupe` streams under `first` and `error`, holding only the keys. Under `last`, `latest` and
+  `earliest` it holds every batch (counted against `memory_limit_mb`) with the winning row of each
+  key, and at the end sends each held batch on in arrival order, the winners to `out` and the rest
+  to `rejected`.
+- `lookup` decides while it loads its lookup side: a hash table from key to the winning row, with
+  the deciding value beside it. Rows that lose stay in the stored batches unused.
+- An upsert keeps the last row it is sent, so `last` uses the source's writer as it is. Any other
+  rule puts `UpsertWinners` in front of the writer: it reads the node's input, keeps a map from
+  key to the deciding value (up to 512 MB), and hands the writer, through a row set of its own and
+  one batch a call as the node contract says, only rows that leave each key's winner in the table:
+  under `first` the first row of a key; under `latest` and `earliest` each row that beats every
+  earlier one, which the upsert's later write puts over the earlier. Nothing is held but the keys,
+  at the cost of writing a key more than once when a better row comes later; the run's log says how
+  many rows were left out and how many were written again. Rows with an empty key column pass to
+  the writer, which refuses them as before.
+- A preview is refused, for all who cannot unmask, when `duplicates_by` names a column marked
+  sensitive, as for a sort: which row wins shows how its values compare.
 
 ### Sorting, and spilling to disk (ADR 0049)
 
@@ -823,7 +859,7 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
   - `upsert` with `key`: PostgreSQL `INSERT … ON CONFLICT (key) DO UPDATE`, which needs a unique
     index or primary key on exactly the key columns (checked first, with the `CREATE UNIQUE INDEX`
     to ask for); SQL Server one `MERGE … WITH (HOLDLOCK)` per row. Empty keys are refused; a
-    repeated key's last row wins.
+    repeated key's last row wins unless `duplicates` says otherwise ("Which row wins", section 4).
   - Speed: PostgreSQL `COPY … FROM STDIN` as CSV for create, append and replace; batches of
     prepared statements (1,000 rows a batch; 5,000 for SQL Server inserts) for upsert and for SQL
     Server, whose driver bulk-copies

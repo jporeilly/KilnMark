@@ -1,7 +1,6 @@
 package io.kilnmark.kiln.nodes;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,6 +18,7 @@ import io.kilnmark.kiln.NodeContext;
 import io.kilnmark.kiln.NodeException;
 import io.kilnmark.kiln.NodeFactory;
 import io.kilnmark.kiln.NodeKind;
+import io.kilnmark.kiln.nodes.expr.Col;
 import io.kilnmark.kiln.nodes.expr.Names;
 import io.kilnmark.kiln.nodes.expr.Type;
 
@@ -31,7 +31,10 @@ import io.kilnmark.kiln.nodes.expr.Type;
  *
  * <p>Rows of main with no match are kept with empty lookup columns ({@code unmatched: keep}, the
  * default for {@code join: left}), dropped ({@code drop}, the default for {@code join: inner}), or
- * sent to the {@code rejected} port unchanged ({@code rejected}). While the lookup side loads, main
+ * sent to the {@code rejected} port unchanged ({@code rejected}). When the lookup side has a key
+ * more than once, {@code duplicates} ({@link WhichRow}) says which of its rows is used: the first
+ * to arrive by default, the last, the latest or earliest by {@code duplicates_by}, or an error that
+ * names the key's columns. While the lookup side loads, main
  * batches are read and held too, so a main input fed by the same node as the lookup input cannot
  * stall the pipeline; they count against the same memory limit.
  */
@@ -40,7 +43,6 @@ public final class LookupFactory implements NodeFactory {
     public static final String TYPE = "lookup";
     private static final List<String> JOINS = List.of("left", "inner");
     private static final List<String> UNMATCHED = List.of("keep", "drop", "rejected");
-    private static final List<String> DUPLICATES = List.of("first", "error");
 
     @Override
     public String type() {
@@ -90,14 +92,15 @@ public final class LookupFactory implements NodeFactory {
             SettingSpec.choice("unmatched", "Rows with no match", false, null,
                 "What to do with a main row that has no match: keep it, drop it, or send it to the rejected port. "
                     + "Overrides join when set.", UNMATCHED),
-            SettingSpec.choice("duplicates", "Duplicate keys", false, "first",
-                "When the lookup side has a key more than once: use the first row, or stop with an error.", DUPLICATES),
+            WhichRow.setting("first", "When the lookup side has a key more than once, which of its rows is used: "
+                + "the first or last to arrive, the latest or earliest by a column, or error to stop the run"),
+            WhichRow.bySetting("lookup"),
             SettingSpec.optional("memory_limit_mb", "Memory limit (MB)", SettingSpec.Kind.NUMBER, 256,
                 "The most memory the lookup side (and main rows waiting for it) may take."));
     }
 
-    record Settings(LinkedHashMap<String, String> on, List<String> keep, String unmatched, boolean failOnDuplicates,
-                    long limitMb) {
+    record Settings(LinkedHashMap<String, String> on, List<String> keep, String unmatched,
+                    WhichRow.Settings duplicates, long limitMb) {
     }
 
     private static Settings read(Config c) {
@@ -110,9 +113,9 @@ public final class LookupFactory implements NodeFactory {
         } else if (join.equals("inner") && unmatched.equals("keep") && c.has("join")) {
             c.problem("unmatched", "'keep' contradicts join: inner; leave one of them out");
         }
-        String duplicates = c.choice("duplicates", DUPLICATES, "first");
+        WhichRow.Settings duplicates = WhichRow.read(c.raw(), "first", c.problems());
         long mb = c.number("memory_limit_mb", 256, 1, 1_048_576);
-        return new Settings(on, keep, unmatched, duplicates.equals("error"), mb);
+        return new Settings(on, keep, unmatched, duplicates, mb);
     }
 
     @Override
@@ -211,6 +214,7 @@ public final class LookupFactory implements NodeFactory {
             }
             types.add(t);
         }
+        WhichRow.checkBy(lookup, s.duplicates(), prefix);
         List<Field> kept = new ArrayList<>();
         if (s.keep() != null) {
             for (String k : s.keep()) {
@@ -251,7 +255,8 @@ public final class LookupFactory implements NodeFactory {
         private Schema lookupSchema;
         private Plan plan;
         private final List<VectorSchemaRoot> stored = new ArrayList<>();
-        private final Map<Object, Long> index = new HashMap<>();
+        /** The lookup row used for each key, as batch and row: the winner by {@code duplicates}. */
+        private final WhichRow.Winners index;
         private long indexBytes;
         private long lookupRows;
         private Schema mainChecked;
@@ -260,6 +265,7 @@ public final class LookupFactory implements NodeFactory {
         LookupNode(Settings settings) {
             super(TYPE);
             this.settings = settings;
+            this.index = new WhichRow.Winners(settings.duplicates());
         }
 
         @Override
@@ -356,20 +362,19 @@ public final class LookupFactory implements NodeFactory {
                     readers[k] = Keys.universal(batch.getVector(plan.lookupKeys().get(k)));
                 }
                 int at = stored.size();
+                String byColumn = settings.duplicates().by();
+                Col by = byColumn == null ? null : WhichRow.values(batch, byColumn);
+                List<String> lookupKeys = plan.lookupKeys();
+                long before = index.bytes();
                 for (int i = 0; i < n; i++) {
                     Object key = Keys.of(readers, i, true);
                     if (key == null) {
                         continue;
                     }
                     long ref = ((long) at << 32) | i;
-                    Long before = index.putIfAbsent(key, ref);
-                    if (before == null) {
-                        indexBytes += 64 + Keys.size(key);
-                    } else if (settings.failOnDuplicates()) {
-                        throw fail("the lookup side has more than one row with the key " + describe(key)
-                            + "; set duplicates: first to use the first such row");
-                    }
+                    index.offer(key, ref, by == null ? null : by.get(i), "the lookup side has", lookupKeys);
                 }
+                indexBytes += index.bytes() - before;
                 lookupRows += n;
                 List<FieldVector> keep = new ArrayList<>();
                 for (Field f : plan.kept()) {
@@ -380,20 +385,6 @@ public final class LookupFactory implements NodeFactory {
                 batch.close();
             }
             checkMemory(ctx);
-        }
-
-        private String describe(Object key) {
-            List<String> names = new ArrayList<>(settings.on().keySet());
-            List<?> parts = key instanceof List<?> l ? l : List.of(key);
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < parts.size(); i++) {
-                if (i > 0) {
-                    sb.append(", ");
-                }
-                String v = String.valueOf(parts.get(i));
-                sb.append(names.get(i)).append(" = ").append(v.length() > 40 ? v.substring(0, 40) + "…" : v);
-            }
-            return sb.toString();
         }
 
         /** Matches one main batch and sends its rows on; the batch is given up. */
@@ -424,7 +415,7 @@ public final class LookupFactory implements NodeFactory {
                 String unmatched = settings.unmatched();
                 for (int i = 0; i < n; i++) {
                     Object key = Keys.of(readers, i, true);
-                    Long ref = key == null ? null : index.get(key);
+                    Long ref = key == null ? null : index.winner(key);
                     if (ref != null) {
                         refs[outCount] = ref;
                         outRows[outCount++] = i;

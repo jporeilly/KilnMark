@@ -97,8 +97,33 @@ every row (and the write is slower).
 - On Oracle each row is merged with `MERGE`, and the table needs a unique index or primary key on
   exactly the key columns; if there is none, the message gives the `ALTER TABLE … ADD UNIQUE`
   statement to ask for.
-- Rows with an empty key column are refused. If the input holds the same key twice, the last row
-  wins.
+- Rows with an empty key column are refused. If the input holds the same key more than once, the
+  last row wins unless `duplicates` says otherwise (below).
+
+### Which row an upsert keeps
+
+When the input has a key more than once, `duplicates` says which of its rows the table keeps:
+`last` (the default, what an upsert does by itself), `first`, `latest` or `earliest` by the column
+`duplicates_by` names, or `error`, which stops the run naming the key's columns, never its value.
+It is for upsert only: the other modes write every row.
+
+```yaml
+    mode: upsert
+    key: [account_id]
+    duplicates: latest
+    duplicates_by: updated_at
+```
+
+- A tie under `latest` or `earliest` goes to the first of the tied rows to arrive, and an empty
+  value never beats a value; values order as `sort` orders them.
+- Rows stream to the table as they arrive, and only each key and its deciding value are held, up
+  to 512 MB. Under `first`, a later row of a key already written is left out. Under `latest` and
+  `earliest`, a row is written only when it beats every earlier row of its key, and replaces the
+  one written before it, so the table ends with each key's winner. Until the commit nobody sees
+  the rows; with `commit_every`, a reader between commits can see a row that is replaced later.
+- The run's log says how many rows the rule left out, and how many were written over an earlier
+  row of their key.
+- `dedupe` and `lookup` take the same rule ([Which row wins](pipeline-nodes.md#which-row-wins)).
 
 ### What replace keeps
 
