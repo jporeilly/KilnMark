@@ -1,6 +1,12 @@
 # Lookup: add columns from another input (a Kilnmark sample).
-# Adds each order's customer name and loyalty tier; orders with no customer go to rejected.
-# Look for: inputs: main and lookup; the lookup side is read in full first.
+# Adds each shop order's customer name and loyalty tier. Orders with no customer go to a file of
+# their own through rejected, so you can see which they are.
+# Why it matters: Adding reference data, such as a customer's tier or a product's category, is one
+# of the most common steps in reporting. Rows with no match are kept apart, so a missing reference
+# shows up instead of an empty column.
+# Look for: inputs: main and lookup. The lookup side is read in full first, so make it the smaller
+# one. sample-which-row chooses which row of a repeated key a lookup uses.
+# Needs: shop-db (the shop schema) and files.
 kilnmark: pipeline/v1
 name: sample-lookup
 description: Shop orders with their customer's name and tier.

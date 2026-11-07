@@ -2,7 +2,13 @@
 # Reads the rows whose key is above after_key and appends them. Run it with after_key set to the
 # highest key already loaded, from a flow or through the API:
 #   POST /api/v1/pipelines/<name>/runs   {"parameters": {"after_key": 41250}}
-# The value is bound, never written into the SQL. Replace each <...> with your own.
+# Replace each <...> with your own.
+# Why it matters: Large tables, such as transactions, are usually loaded by what is new rather than
+# in full each night. Data engineers start here when a full copy takes too long.
+# Look for: ${after_key} in the where. The value is bound, never written into the SQL, and the
+# database leaves out the older rows as it reads.
+# Needs: a database source whose table has a key that only grows, such as an id, and a database
+# source with Allow writing on.
 kilnmark: pipeline/v1
 name: template-incremental-by-key
 description: Rows added since the last load, appended.

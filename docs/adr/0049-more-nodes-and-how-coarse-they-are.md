@@ -1,6 +1,6 @@
 # 0049 More nodes, and how coarse a node is
 
-Status: Accepted (6 November 2026)
+Status: Accepted (6 November 2026); amended 7 November 2026 ("Revised: about 55 nodes", below)
 
 ## Context
 
@@ -78,11 +78,48 @@ web services.
    11. **File actions in flows**: move, copy, archive and zip files and send them by SFTP, with
        the SFTP connector already on the backlog.
 
+## Revised: about 55 nodes (7 November 2026)
+
+The owner set the scope of the minimum viable product on 7 November 2026: at least 50 nodes,
+with about 55 in all. Decisions 1 to 5 stand: no script node, single-value operations stay
+expression functions, one `read` and one `write` serve every connector, and every node ships
+complete. What changes is how fine "a shape of work" is drawn: a node is now also added for work
+people look for by name, or that the migration map from established ETL tools needs one to one (the
+owner's research, kept with the backlog), as long as it is not a single-value operation
+in disguise.
+
+The nodes, by shape of work (built ones marked ✓):
+
+| Shape | Pipeline nodes |
+| --- | --- |
+| Read and write | `read` ✓, `write` ✓ |
+| Check | `gate` ✓, schema check (a column contract, and what to do on drift) |
+| Rows | `filter` ✓, `route` ✓, `limit` ✓, `dedupe` ✓, `sort` ✓, sample (seeded) |
+| Columns | `compute` ✓, `select` ✓ |
+| Combine | `lookup` ✓, `join` ✓, `union` ✓, database lookup (per row, against a large table), fuzzy match |
+| Summarise | `aggregate` ✓, `window` ✓ |
+| Shape | split rows, pivot, unpivot, parse JSON, build JSON, parse XML, build XML |
+| Compare | compare (new, changed, deleted and unchanged rows by key), reconcile (counts and totals between two inputs, as a report) |
+| Generate | generate rows (calendars, date tables), sequence (surrogate keys) |
+| Protect | mask (mask, hash, tokenise) |
+| Reach out | http (a web call per row or batch), list files (a folder's files as rows) |
+| AI (ADR 0050, amended) | classify, extract, summarise, translate, score, AI filter, ask, diagnose, detect personal data, embed |
+
+| Flow nodes |
+| --- |
+| `run-pipeline` ✓, `for-each` ✓, `sql` ✓, `check-source` ✓, `wait-for` ✓, `wait` ✓, `notify` ✓, `stop` ✓, run-flow (a sub-flow), set variable, http call, copy files, move files, archive files, send files (SFTP), wait for approval (a person decides, ADR 0052) |
+
+That is 43 pipeline nodes and 16 flow nodes, 59 in all, of which 23 are built. Names in this table
+are working names; each node's own pull request settles its name and settings. If the MVP is
+ready before all are built, sample, build XML and translate wait. The order of decision 6 gives
+way to the backlog's (item 9); history in a dimension table stays a write mode,
+not a node.
+
 ## Consequences
 
-- The node count will grow to about twenty-four, and stay well below other products' counts by
-  design; the components reference and the guide say why, so a count is never read as the whole
-  story.
+- The node count grows to about 55, still well below other products' counts by design: one
+  `read` and `write` for every connector, and single-value operations as functions. The
+  components reference and the guide say why, so a count is never read as the whole story.
 - Expression functions carry much of the breadth, so they need the same care as nodes: each in
   the reference, with tests, and checked before a pipeline runs.
 - Nodes that hold state (sort, join, window, change detection) need spilling to disk and bounded

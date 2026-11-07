@@ -1,7 +1,10 @@
 # Quality gate: set failing rows aside (a Kilnmark sample).
-# Checks CRM customers on the way: rows with no email or an unknown segment go to quarantine, the
-# rest to the clean file. More than 20% failing would stop the run.
-# Look for: on_fail: quarantine, the quarantine output, and the run's quality chips.
+# Checks the CRM customers on the way. Rows with no email or an unknown segment go to a quarantine
+# file, and the rest to the clean file. If more than 20% failed, the run would stop instead.
+# Why it matters: Bad rows are kept and reviewed, not dropped or loaded, so data-quality controls
+# have evidence. The threshold stops a run whose source has gone badly wrong.
+# Look for: on_fail: quarantine, the quarantine output, and the quality chips on the run's page.
+# Needs: crm-db (the crm schema) and files.
 kilnmark: pipeline/v1
 name: sample-gate-quarantine
 description: CRM customers checked; failing rows set aside.

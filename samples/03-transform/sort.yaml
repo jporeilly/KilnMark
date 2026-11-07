@@ -1,6 +1,11 @@
 # Sort: rows in order (a Kilnmark sample).
 # Lists the shop's orders by status, then the dearest shipping first, then the oldest first.
-# Look for: several columns, the second largest first; orders that are equal on all three keep their order.
+# Why it matters: Statements, reports and reconciliations are typically read in a set order. A
+# stable sort keeps rows that tie in the order they came, so two runs on the same rows give the same
+# file.
+# Look for: several sort columns, the second largest first (desc). Orders that are equal on all
+# three keep the order they arrived in.
+# Needs: shop-db (the shop schema) and files.
 kilnmark: pipeline/v1
 name: sample-sort
 description: Shop orders by status, then dearest shipping first, then oldest first.

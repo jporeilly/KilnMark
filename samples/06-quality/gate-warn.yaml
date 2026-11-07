@@ -1,7 +1,11 @@
 # Quality gate: warn only (a Kilnmark sample).
-# Checks the supplier feed for repeated SKUs and odd prices but lets every row through: what
-# failed is recorded with the run.
-# Look for: on_fail: warn; the run succeeds and its page lists what failed.
+# Checks the supplier feed for repeated SKUs, prices that are not positive and badly shaped SKUs,
+# but lets every row through. What failed is recorded with the run.
+# Why it matters: A partner's or supplier's feed is often loaded even with faults, because waiting
+# would cost more. Recording what failed with the run gives the steward a list to raise with the
+# sender.
+# Look for: on_fail: warn. The run succeeds, and its page lists what failed.
+# Needs: shop-db (the stock schema) and files.
 kilnmark: pipeline/v1
 name: sample-gate-warn
 description: Supplier feed, checked but not stopped.

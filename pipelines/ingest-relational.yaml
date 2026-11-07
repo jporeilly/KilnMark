@@ -1,5 +1,5 @@
 # Built-in pipeline: harvest a relational source, profile it, write the results to the graph.
-# Draft format; the validator arrives in sprint 2 (docs/product/plan-and-scope.md, task 12).
+# Draft format; the validator arrives in sprint 2 (the plan and scope, task 12).
 pipeline: ingest-relational
 version: 1
 description: Harvest schemas, sample tables, profile columns and record everything in the graph.

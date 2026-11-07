@@ -1,7 +1,14 @@
 # Flow: quality decides what runs next (a Kilnmark sample).
-# Runs the quarantine gate sample; carries on to the order totals only if under limit_share of the
-# customers were set aside, else tells the stewards and stops. A failure also stops it.
-# Look for: conditions on what a node measured (check.quarantined_share), notify and stop.
+# Runs the quarantine gate sample. If fewer than limit_share of the customers were set aside, it goes
+# on to total the orders; otherwise it tells the stewards and stops as failed. If the gate's run
+# fails, the flow stops too.
+# Why it matters: A report is often only as good as its inputs: if too many customers fail their
+# checks, the totals built on them should wait. A condition on quality lets the flow stop and tell
+# the stewards instead.
+# Look for: conditions on what a node measured (check.quarantined_share), the notify node and the
+# stop node.
+# Needs: sample-gate-quarantine and sample-aggregate, so crm-db, shop-db and files. Running it needs
+# a steward or above.
 kilnmark: flow/v1
 name: sample-quality-decides
 description: Clean customers, then total the orders only if quality holds.

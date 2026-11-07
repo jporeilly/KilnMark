@@ -1,9 +1,15 @@
 # Volume: four million rows, to see where a run's time goes (a Kilnmark sample).
-# Reads four million made-up till sales from Kilnmark's sample data, works out each line's value,
-# adds the product's category with a lookup, writes the large lines to a file of their own and
-# totals the rest per category and channel. It runs for several seconds: long enough to watch.
-# Look for: on the run's page, where each node spent its time, rows per second through the run
-# and which node held the others up.
+# Reads four million made-up till sales from Kilnmark's sample data and works out each line's
+# value. It adds each product's category with a lookup, writes the large lines to a file of their
+# own and totals the rest per category and channel. It runs for several seconds: long enough to
+# watch.
+# Why it matters: Regulated firms, and teams moving from another ETL tool, typically try a platform
+# on volumes like their own before they trust it with the overnight batch. Seeing where a run's time
+# goes shows which node to change first.
+# Look for: on the run's page, the time each node spent, the rows per second through the run, and
+# which node held the others up.
+# Needs: files. It reads the sample data itself, through the sample-data source, which adding the
+# samples creates.
 kilnmark: pipeline/v1
 name: sample-volume
 description: Four million till sales, totalled per category and channel.

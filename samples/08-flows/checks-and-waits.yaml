@@ -1,0 +1,62 @@
+# Flow: check a source and wait for a file before the work (a Kilnmark sample).
+# First checks that the CRM database can be reached and holds the customers and accounts tables,
+# reading no rows. Then it writes the accounts file, at high priority, and waits until that file is
+# in the file storage before it dedupes the customers, at low priority. If a table is missing, or
+# the file has not arrived after ten minutes, a notice says so and nothing more runs.
+# Why it matters: Batches typically depend on tables and files that other systems deliver. Checking
+# first and waiting for a file turns a confusing failure halfway through into a clear notice at the
+# start, and priority lets the work a deadline depends on start first.
+# Look for: the check-source node and the missing value it reports, the wait-for node (file, every,
+# timeout) and its waited_s value, and priority on the two run-pipeline nodes. Here the file waited
+# for is the one the node before writes, so it is there at once; in real work it is a file another
+# system delivers. Priority orders a run against other runs waiting for a worker, not against the
+# other node here, which runs after it. A wait-for node can also wait for a query to be true, such
+# as a row count, on a PostgreSQL source with Allow SQL on. This sample waits for a file, so it
+# needs no SQL.
+# Needs: sample-read-write-csv and sample-dedupe, so crm-db and files. Running it needs a steward or
+# above.
+kilnmark: flow/v1
+name: sample-checks-and-waits
+description: Check the CRM tables, write the accounts file, wait for it, then dedupe the customers.
+
+nodes:
+  - id: ready
+    type: check-source
+    source: crm-db
+    tables: [crm.customers, crm.accounts]
+    timeout: 2m
+
+  - id: accounts
+    type: run-pipeline
+    pipeline: sample-read-write-csv
+    priority: high
+
+  - id: landed
+    type: wait-for
+    source: files
+    file: samples/read-and-write/accounts.csv
+    every: 30s
+    timeout: 10m
+
+  - id: customers
+    type: run-pipeline
+    pipeline: sample-dedupe
+    priority: low
+
+  - id: missing
+    type: notify
+    severity: high
+    title: The CRM tables are not ready
+    message: "Tables missing: ${ready.missing} (unknown when the database could not be reached). Nothing else ran."
+
+  - id: late
+    type: notify
+    severity: medium
+    title: "No accounts file after ${landed.waited_s} seconds"
+
+connections:
+  - { from: ready, to: accounts }
+  - { from: ready, to: missing, when: failure }
+  - { from: accounts, to: landed }
+  - { from: landed, to: customers }
+  - { from: landed, to: late, when: failure }

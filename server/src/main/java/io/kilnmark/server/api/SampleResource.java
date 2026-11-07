@@ -110,9 +110,10 @@ public class SampleResource {
     @GET
     @Operation(summary = "List the samples", description = "The placeholders the samples name instead of real sources "
         + "(each with the kind of source it stands for and what it should hold), and every sample: its file, name, "
-        + "whether it is a pipeline or a flow, the placeholders it uses, and whether a pipeline of its name is "
-        + "already there; and, once the sample tables have been created, the database and schema they were created "
-        + "in, with the last run that created them. Role: viewer.")
+        + "whether it is a pipeline or a flow, the placeholders it uses, its explanation (what it shows, why it "
+        + "matters, what to look for when it runs, what it needs), and whether a pipeline or flow of its name is "
+        + "already there; and, once the sample tables have been created, the database and schema they were created in, with the last run "
+        + "that created them. Role: viewer.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "The placeholders and the samples"),
         @APIResponse(responseCode = "401", description = "Not signed in")})

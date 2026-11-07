@@ -390,7 +390,8 @@ final class GenericTypes {
                 }
                 return e;
             } catch (ArithmeticException x) {
-                throw new SQLException("The value " + v.toPlainString() + " in column " + name + " does not fit "
+                // Never the value itself: a message may reach a run's log or page (CLAUDE.md, "Writing").
+                throw new SQLException("A value in column " + name + " does not fit "
                     + "decimal(" + mapped.precision() + "," + mapped.scale() + "), the type the driver reports for it, "
                     + "and is never rounded", "22003");
             }

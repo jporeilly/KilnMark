@@ -15,6 +15,7 @@ import io.kilnmark.kiln.NodeFactory;
 import io.kilnmark.kiln.NodeKind;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
+import io.kilnmark.kiln.nodes.WhichRow;
 import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.sources.CommonSettings;
 
@@ -26,6 +27,10 @@ import io.kilnmark.server.sources.CommonSettings;
  *
  * <p>Where to write is {@code target}; {@code table} (databases) and {@code path} (files) are other
  * names for it, as the design's examples use them.
+ *
+ * <p>An upsert states which row wins when its input repeats a key ({@code duplicates},
+ * {@link WhichRow}): {@code last} by default, which is what an upsert does by itself, so the
+ * source's writer is used as it is; any other rule puts {@link UpsertWinners} in front of it.
  */
 public final class WriteNodeFactory implements NodeFactory {
 
@@ -95,11 +100,18 @@ public final class WriteNodeFactory implements NodeFactory {
             + "same key and adds the rest", MODES),
         SettingSpec.optional("key", "Key columns", SettingSpec.Kind.COLUMNS, null,
             "The columns that identify a row, for upsert"),
+        WhichRow.setting("last", "For upsert, when the input has a key more than once: which of its rows the "
+            + "table keeps. The first or last to arrive, the latest or earliest by a column, or error to stop the "
+            + "run"),
+        WhichRow.bySetting(null),
         SettingSpec.choice("format", "File format", false, null,
             "For files: csv or parquet. Taken from the path's extension when left out", FORMATS));
 
     private static final java.util.Set<String> BASE_KEYS = java.util.Set.of("source", "target", "table", "path",
-        "mode", "key", "format");
+        "mode", "key", "format", WhichRow.KEY, WhichRow.BY);
+
+    /** The most memory an upsert's keys may take while it chooses which row wins, in MB. */
+    static final long WINNERS_MB = 512;
 
     @Override
     public List<SettingSpec> settings() {
@@ -192,6 +204,12 @@ public final class WriteNodeFactory implements NodeFactory {
             problems.add("key: a column name or a list of them, such as [customer_id]");
         } else if ("upsert".equals(mode) && key.isEmpty()) {
             problems.add("key: upsert needs the key columns that identify a row");
+        }
+        if ("upsert".equals(mode)) {
+            WhichRow.read(config, "last", problems);
+        } else if (mode != null && (config.get(WhichRow.KEY) != null || config.get(WhichRow.BY) != null)) {
+            problems.add((config.get(WhichRow.KEY) != null ? WhichRow.KEY : WhichRow.BY) + ": only upsert has a key "
+                + "whose rows can repeat; " + mode + " writes every row");
         }
         Object format = config.get("format");
         if (format != null && (!(format instanceof String f) || !FORMATS.contains(f.strip().toLowerCase(Locale.ROOT)))) {
@@ -380,9 +398,16 @@ public final class WriteNodeFactory implements NodeFactory {
         Map<String, String> profiling = sources.profileSettings(r.source(), r.connector(), target, key, urn,
             run.writeColumns(source, target));
         Connector.WriteOptions write = new Connector.WriteOptions(target, mode, key, format, options, urn, profiling);
+        List<String> problems = new ArrayList<>();
+        WhichRow.Settings winners = WhichRow.read(config, "last", problems);
+        if (!problems.isEmpty()) {
+            throw new NodeException("Node " + node + " has settings that need fixing; validate the pipeline");
+        }
         run.wrote(source, target, write.assetUrn());
         try {
-            return r.connector().writer(r.config(), write);
+            Node writer = r.connector().writer(r.config(), write);
+            return mode.equals("upsert") && winners.rule() != WhichRow.Rule.LAST
+                ? new UpsertWinners(writer, winners, key, WINNERS_MB) : writer;
         } catch (ConnectorException e) {
             throw new NodeException("Cannot write " + target + " to " + source + ": " + run.scrub(e.getMessage()));
         } catch (RuntimeException e) {

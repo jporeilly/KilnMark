@@ -13,7 +13,7 @@ to whoever followed that kind of notification, or to nobody.
 
 The owner asked for run retries, owners, and Run again from the failure (backlog item 1, 7 November
 2026), after research into how other schedulers and orchestrators do it
-(docs/design/research/run-options.md, sections 7 and 8). The pitfalls they document shaped what
+(the owner's research into run options, kept with the backlog). The pitfalls they document shaped what
 follows: an alert on every retry, retries that write twice, retries that multiply across levels,
 retry storms, unbounded waits, retrying what cannot pass, and an owner who is also the identity a
 run acts as.

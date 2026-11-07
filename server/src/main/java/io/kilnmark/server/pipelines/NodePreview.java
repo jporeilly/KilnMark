@@ -331,7 +331,8 @@ final class NodePreview {
      * a preview untouched, and is masked where it leaves; no node may look inside one. Refuses
      * ({@link Refused}) when any node upstream names a hidden column in an expression (compute,
      * filter, route, aggregate values), groups, deduplicates or matches by one (aggregate
-     * {@code group_by}, dedupe {@code key} or whole rows, lookup {@code on}), changes its type
+     * {@code group_by}, dedupe {@code key} or whole rows, lookup {@code on}), chooses which row of a
+     * key wins by one ({@code duplicates_by}), changes its type
      * ({@code select}'s {@code cast}) or checks it with a rule (a gate, whatever it does on failure).
      * Each of those could show a value through the rows kept, a computed value, or simply whether
      * the preview succeeds or fails.
@@ -537,6 +538,8 @@ final class NodePreview {
                 List<String> key = list(config.get("key"));
                 uses(id, t, main, key.isEmpty() ? null : key, key.isEmpty() ? "compares whole rows, which include"
                     : "compares rows by");
+                // which row of a key wins shows how the deciding column's values compare
+                uses(id, t, main, list(config.get("duplicates_by")), "chooses which row wins by");
                 return main;
             }
             case "lookup" -> {
@@ -545,6 +548,7 @@ final class NodePreview {
                 Map<String, String> on = texts(config.get("on"));
                 uses(id, t, m, new ArrayList<>(on.keySet()), "matches rows by");
                 uses(id, t, l, new ArrayList<>(on.values()), "matches rows by");
+                uses(id, t, l, list(config.get("duplicates_by")), "chooses which row wins by");
                 return m.plus(l);
             }
             case "gate" -> {
