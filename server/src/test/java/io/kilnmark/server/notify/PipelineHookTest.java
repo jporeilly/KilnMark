@@ -18,11 +18,13 @@ class PipelineHookTest {
     @Vetoed // not a second bean: the parent's scope annotation is @Inherited
     static final class Fake extends NotificationPublisher {
         final List<NotificationEvent> fired = new ArrayList<>();
+        /** Recovered notices: fired on every success, told only when a failure was (Dedupe, Repeat.CLOSES). */
+        final List<NotificationEvent> recovered = new ArrayList<>();
         final List<String> clearedKeys = new ArrayList<>();
 
         @Override
         public void publish(NotificationEvent e) {
-            fired.add(e);
+            (e.kind() == NotificationKind.PIPELINE_RECOVERED ? recovered : fired).add(e);
         }
 
         @Override
@@ -43,9 +45,13 @@ class PipelineHookTest {
         assertEquals("#/pipeline-runs/42", e.link());
         assertEquals("pipeline:nightly-load", e.dedupeKey(), "one email per failing streak of the pipeline");
         assertNull(e.subjectUrn());
+        assertEquals("pipeline:nightly-load", e.ownedBy(), "its owners are told by right (ADR 0053)");
         p.pipelineRunFinished("nightly-load", 43, "succeeded", null, null, "#/pipeline-runs/43");
-        assertEquals(1, p.fired.size(), "a success tells nothing on its own");
-        assertEquals(List.of("pipeline:nightly-load"), p.clearedKeys, "but ends the streak");
+        assertEquals(1, p.fired.size(), "a success tells nothing else");
+        // It ends the streak as a recovery on the same key: told only when the failure was (ADR 0053).
+        assertEquals(1, p.recovered.size());
+        assertEquals("pipeline:nightly-load", p.recovered.get(0).dedupeKey());
+        assertEquals("pipeline:nightly-load", p.recovered.get(0).ownedBy());
     }
 
     @Test

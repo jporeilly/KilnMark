@@ -247,17 +247,40 @@ public class NotificationPublisher {
 
     private void pipelineRunFinishedNow(String pipeline, long runId, String status, Double score, Double threshold,
                                         String output, String link) {
+        pipelineRunFinishedNow(pipeline, runId, status, score, threshold, output, link, null);
+    }
+
+    /**
+     * As {@link #pipelineRunFinished(String, long, String, Double, Double, String, String)}, after the
+     * run's last try (ADR 0053): {@code tries} says how many tries were made and why there were no more
+     * ("after 3 tries. Not tried again: ..."), or is null for a run tried once. A failure is told to the
+     * pipeline's owners by right; a success after a failure that was told is told as recovered.
+     */
+    public void pipelineRunFinished(String pipeline, long runId, String status, Double score, Double threshold,
+                                    String output, String link, String tries) {
+        try {
+            pipelineRunFinishedNow(pipeline, runId, status, score, threshold, output, link, tries);
+        } catch (RuntimeException ex) {
+            LOG.warnf(ex, "Could not tell of an event (%s)", "pipelineRunFinished");
+        }
+    }
+
+    private void pipelineRunFinishedNow(String pipeline, long runId, String status, Double score, Double threshold,
+                                        String output, String link, String tries) {
         String key = "pipeline:" + pipeline;
         if ("failed".equals(status)) {
             publish(new NotificationEvent(NotificationKind.PIPELINE_FAILED, Severity.HIGH, null, "Run " + runId + " of "
-                + pipeline + " failed", "The pipeline run failed. Open the run to see which node stopped it.", link,
-                null, null, null, key, null));
+                + pipeline + " failed", "The pipeline run failed" + (tries == null ? "" : tries) + ". Open the run to "
+                + "see which node stopped it.", link, null, null, null, key, null, "pipeline:" + pipeline));
             return;
         }
         if (!"succeeded".equals(status)) {
             return;
         }
-        clear(key);
+        // Told only when a failure was (Repeat.CLOSES), so it also closes the problem: the next failure is told.
+        publish(new NotificationEvent(NotificationKind.PIPELINE_RECOVERED, Severity.HIGH, null, "Run " + runId + " of "
+            + pipeline + " succeeded again", "The pipeline ran successfully after a failed run" + (tries == null ? ""
+            : tries) + ".", link, null, null, null, key, null, "pipeline:" + pipeline));
         if (score != null && threshold != null && score < threshold) {
             publish(new NotificationEvent(NotificationKind.PIPELINE_LOW_QUALITY, Severity.MEDIUM, null,
                 "Run " + runId + " of " + pipeline + " wrote data below its quality threshold", "Quality score "
@@ -279,13 +302,34 @@ public class NotificationPublisher {
             String key = "flow:" + flow;
             if ("failed".equals(status)) {
                 publish(new NotificationEvent(NotificationKind.FLOW_FAILED, Severity.HIGH, null, "Run " + runId + " of flow "
-                    + flow + " failed", message == null ? "The flow run failed." : message, null, null, null, null, key,
-                    null));
+                    + flow + " failed", message == null ? "The flow run failed." : message, "#/flow-runs/" + runId, null,
+                    null, null, key, null, "flow:" + flow));
             } else if ("succeeded".equals(status)) {
-                clear(key);
+                // Told only when a failure was (Repeat.CLOSES), so it also closes the problem.
+                publish(new NotificationEvent(NotificationKind.FLOW_RECOVERED, Severity.HIGH, null, "Run " + runId
+                    + " of flow " + flow + " succeeded again", "The flow ran successfully after a failed run.",
+                    "#/flow-runs/" + runId, null, null, null, key, null, "flow:" + flow));
             }
         } catch (RuntimeException ex) {
             LOG.warnf(ex, "Could not tell of an event (%s)", "flowRunFinished");
+        }
+    }
+
+    /**
+     * A pipeline or flow run is still going past its {@code run.warn_after} (ADR 0053): told once a run,
+     * to its owners by right and to those who chose the kind, at medium severity. Names and times only.
+     *
+     * @param noun pipeline or flow
+     */
+    public void runTakingLong(String noun, String name, long runId, String warnAfter) {
+        try {
+            String link = "#/" + noun + "-runs/" + runId;
+            publish(new NotificationEvent(NotificationKind.RUN_TAKING_LONG, Severity.MEDIUM, null, "Run " + runId + " of "
+                + noun + " " + name + " is taking longer than expected", "It is still going after " + warnAfter
+                + ", the time its run: warn_after allows. It has not been stopped.", link, null, null, null,
+                "run-long:" + noun + ":" + runId, null, noun + ":" + name));
+        } catch (RuntimeException ex) {
+            LOG.warnf(ex, "Could not tell of an event (%s)", "runTakingLong");
         }
     }
 

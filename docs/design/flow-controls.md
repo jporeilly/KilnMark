@@ -165,7 +165,7 @@ flowchart LR
   at least the timeout and counts it as timed out, as the first worker would have. It allows up to 5
   seconds (a tenth of a shorter timeout) for the first watcher's clock being ahead of the
   database's. A flow cancel the watcher itself asked for is never counted so. (Not covered by a
-  test: a takeover needs a second worker.)
+  test: a takeover past a node's timeout.)
 - No migration: the timeout is read from the flow's version each time.
 - A timed-out try may be retried (C4) when retries allow.
 
@@ -210,9 +210,10 @@ flowchart TD
   (0 for the first), migration V35, with the unique index on all four so each try starts once. The
   node's row and `flowNodeRun`/`flowItemRun(s)` give the latest try; a worker that takes a flow over
   carries on from it (`flowLatestTry`), and a failed latest try found again is tried again then if
-  tries are left (the delay starts again). Today no worker takes a flow over: a flow job is tried
-  once, so a flow whose worker stopped fails (docs/design/flows.md, item 5). This path is for
-  run-level retries (backlog item 1), which will try a flow job again.
+  tries are left (the delay starts again). A worker takes a flow over when its `run: retries`
+  allow it (ADR 0053, docs/design/flows.md, "Carrying on from a failure"); a flow without them is
+  tried once, and fails when its worker stops. A later try of the flow that runs a node again starts
+  its pipeline run after the latest one, and counts the node's own retries from there.
 - While it waits, the node stays **running**, with "Try 1 of 4 failed; trying again in 2m". It holds
   no worker and no place. A cancel or stop of the flow while it waits ends it cancelled ("Not tried
   again: the flow was stopped").
@@ -223,7 +224,12 @@ flowchart TD
   conditions never read. `GET /api/v1/flow-runs/{id}` returns each node's `tries`
   (`[{item, number, pipelineRunId, status, startedAt, finishedAt}]`, number from 1) when any was a
   try again, and the run page lists them under **Tries** in the node's or item's details.
-- Not covered by a test: a takeover mid-wait (it needs a second worker), and a commit in doubt.
+- Each wait is at most an hour, however often it has doubled (ADR 0053: five tries again from
+  `1h` waited 16 hours before).
+- A node's own retries take the place of the flow's `run: retries` for that node: a flow tried
+  again by itself never runs again a node with retries of its own (ADR 0053).
+- Not covered by a test: a takeover mid-wait, and a commit in doubt. A takeover of a running node
+  is (`RunRetriesApiTest`).
 
 ## C5. `priority` (built)
 

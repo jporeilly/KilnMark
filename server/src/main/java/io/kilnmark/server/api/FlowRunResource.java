@@ -34,6 +34,10 @@ public class FlowRunResource {
     @jakarta.inject.Inject
     io.kilnmark.server.quality.Sights sights;
 
+    /** Each Run again from the failure is recorded here (ADR 0029, ADR 0053). */
+    @jakarta.inject.Inject
+    io.kilnmark.server.audit.AuditLog audit;
+
     /** Starting and reading runs for callers that wait, with request keys (ADR 0047). */
     @jakarta.inject.Inject
     RunRequests runRequests;
@@ -96,6 +100,30 @@ public class FlowRunResource {
         @APIResponse(responseCode = "409", description = "The run has already finished")})
     public FlowViews.RunSummary cancel(@PathParam("id") long id) {
         return flows.cancelView(id, who(), AccessRole.highest(identity::hasRole));
+    }
+
+    @POST
+    @Path("{id}/run-again")
+    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @Operation(summary = "Run a failed flow run again from its failure", description = "One more try of the same run "
+        + "(ADR 0053), with the same version, parameters and variables, acting as the run did: the nodes that "
+        + "succeeded keep what they did, the rest run again, and a for-each node runs only its items that did not "
+        + "succeed. Recorded against the run and in the audit log. Refused while another run of the flow is "
+        + "queued or running, and when a node that would run again is not safe to (its pipeline appends, or a sql "
+        + "node committed), naming the node and why. The try is not tried again by itself. Role: steward, and "
+        + "never below the run's own role.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "Queued as the run's next try; the body is the run"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "403", description = "Not a steward, or below the run's own role"),
+        @APIResponse(responseCode = "404", description = "No such run"),
+        @APIResponse(responseCode = "409", description = "The run did not fail, another run of the flow is going, "
+            + "or running it again is not safe; the message says which node and why")})
+    public FlowViews.RunSummary runAgain(@PathParam("id") long id) {
+        FlowViews.RunSummary r = flows.runAgain(id, who(), AccessRole.highest(identity::hasRole));
+        audit.record(io.kilnmark.server.audit.AuditLog.actor(identity), io.kilnmark.server.audit.AuditLog.FLOW_RUN_AGAIN,
+            String.valueOf(id), java.util.Map.of("flow", r.flow(), "try", r.tryNumber(), "version", r.version()));
+        return r;
     }
 
     private String who() {

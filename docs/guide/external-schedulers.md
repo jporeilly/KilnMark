@@ -141,6 +141,14 @@ run within 24 hours would get back today's.
 
 ![A retry with the same request key gets the same run: a first try with a key starts run 42 and the answer is lost; a retry with the same key and the same values finds the key, starts no second run and answers 200 with run 42 and Idempotent-Replayed: true; the same key for another pipeline or flow, or with other values, is refused with 422. A key lasts 24 hours for one token or person, and a request that could not start a run keeps no key](images/request-key-retry.svg)
 
+**Retries in Kilnmark or in the scheduler, never both.** A pipeline or flow with a `run: retries`
+block tries a failed run again itself ([Trying a run again](pipelines.md#trying-a-run-again)): each
+try is a try of the same run, `kilnmark-run` keeps waiting across them, and its exit code is the
+last try's. If the scheduler also reruns the job on failure (Control-M's maximum reruns, AutoSys
+`n_retrys`), the tries multiply. Set the scheduler's own reruns to 0 for such a job, or give the
+pipeline or flow no retries. Reruns for a timeout (3) or a lost connection (5), which find the same
+run again, are fine either way.
+
 ## Control-M
 
 **As an OS job** (the simplest). On a Linux agent, the job's command:

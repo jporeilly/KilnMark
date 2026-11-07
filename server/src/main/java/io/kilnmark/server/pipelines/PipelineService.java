@@ -35,12 +35,14 @@ import io.kilnmark.kiln.graph.PipelineGraph;
 import io.kilnmark.kiln.plugins.write.WriteReport;
 import io.kilnmark.kiln.yaml.Parameters;
 import io.kilnmark.kiln.yaml.PipelineDefinition;
+import io.kilnmark.kiln.yaml.RunOptions;
 import io.kilnmark.server.KilnmarkConfig;
 import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.jobs.JobQueue;
 import io.kilnmark.server.quality.Sights;
 import io.kilnmark.server.quality.QualityService;
 import io.kilnmark.server.runs.RunLifecycle;
+import io.kilnmark.server.runs.RunRetries;
 import io.kilnmark.server.runs.RunStarter;
 import io.kilnmark.server.runs.RunWatch;
 import io.kilnmark.server.scan.ScanService;
@@ -108,6 +110,10 @@ public class PipelineService {
     /** The server's variables (${vars.name}); null in tests that build the service by hand. */
     @Inject
     io.kilnmark.server.variables.VariableService variables;
+
+    /** The server's cap on run retries (ADR 0053); null in tests that build the service by hand: the defaults. */
+    @Inject
+    io.kilnmark.server.runs.RunSettings runSettings;
 
 
     @Inject
@@ -180,12 +186,32 @@ public class PipelineService {
         checkSize(yaml);
         PipelineCompilerPort.Compilation c = compiler.check(yaml, nodes, Map.of(), variables());
         List<PipelineCompilerPort.Problem> problems = new ArrayList<>(c.problems());
+        problems.addAll(runProblems(yaml));
         if (expectedName != null && c.name() != null && !c.name().equals(expectedName)) {
             problems.add(0, new PipelineCompilerPort.Problem(lineOf(yaml, "name"), 1, null, "name: this pipeline is "
                 + "called " + expectedName + "; a pipeline's name cannot change. Write name: " + expectedName));
         }
         return new PipelineViews.Validation(problems.isEmpty(), c.name(), c.description(), problems, c.notes(),
             c.nodes(), c.edges());
+    }
+
+    /**
+     * What is wrong with a pipeline's {@code run:} block against its nodes (ADR 0053): with retries,
+     * every write must replace or upsert, as a retried run starts again from its beginning and writes
+     * again. Whatever {@code retry_on} says: a run lost with its worker may have written too.
+     */
+    static List<PipelineCompilerPort.Problem> runProblems(String yaml) {
+        PipelineDefinition d = PipelineDefinition.parse(yaml).definition();
+        if (d == null || d.run().retries() == 0) {
+            return List.of();
+        }
+        String unsafe = unsafeToRepeat(d);
+        if (unsafe == null) {
+            return List.of();
+        }
+        return List.of(new PipelineCompilerPort.Problem(d.run().at().line(), d.run().at().column(), null,
+            "run.retries tries a failed run again from its beginning, so every write must replace or upsert: "
+                + unsafe));
     }
 
     /** The line of a top-level key, or 0. */
@@ -467,6 +493,7 @@ public class PipelineService {
         try {
             PipelineStore.Pipeline p = store.create(body.name(), display == null ? body.name() : display, description,
                 by, body.yaml(), message, v.valid(), problemsJson(v.problems()), library);
+            store.setOwners(p.name(), io.kilnmark.server.runs.Owners.defaultFor(by)); // whoever first saved it (ADR 0053)
             LOG.infof("Pipeline %s added by %s", p.name(), by);
             return detail(p, store.version(p.name(), 1).orElse(null), null, null);
         } catch (PipelineStore.Exists e) {
@@ -576,7 +603,11 @@ public class PipelineService {
      * compiles the version, which reads the catalogue on connections of its own, so it is done before
      * any transaction that queues the run (ADR 0047: a request key and its run commit together).
      */
-    public record CheckedRun(String name, int version, String parameters, String variables) {
+    public record CheckedRun(String name, int version, String parameters, String variables, int tries) {
+        /** A run tried once. */
+        public CheckedRun(String name, int version, String parameters, String variables) {
+            this(name, version, parameters, variables, 1);
+        }
     }
 
     /**
@@ -587,7 +618,9 @@ public class PipelineService {
     public CheckedRun checkRun(String name, Integer version, Map<String, Object> parameters) {
         Map<String, Object> vars = variables();
         RunnableVersion checked = runnableVersion(name, version, parameters, vars);
-        return new CheckedRun(name, checked.version(), writeJson(checked.parameters()), writeJson(vars));
+        int tries = store.version(name, checked.version()).map(v -> PipelineDefinition.parse(v.yaml()).definition())
+            .map(d -> runSettings().tries(d.run())).orElse(1);
+        return new CheckedRun(name, checked.version(), writeJson(checked.parameters()), writeJson(vars), tries);
     }
 
     /**
@@ -599,7 +632,7 @@ public class PipelineService {
      */
     public PipelineStore.Run queueChecked(CheckedRun checked, String by, AccessRole role) {
         PipelineStore.Run run = lifecycle.queue(checked.name(), () -> store.queueRun(checked.name(), checked.version(),
-            by, role.id(), null, null, checked.parameters(), checked.variables()));
+            by, role.id(), null, null, null, checked.parameters(), checked.variables(), 0, 0, checked.tries()));
         LOG.infof("Run %d of pipeline %s (version %d) queued by %s", run.id(), checked.name(), checked.version(), by);
         return run;
     }
@@ -709,9 +742,10 @@ public class PipelineService {
         }
         checkSize(v.yaml());
         PipelineCompilerPort.Compilation c = compiler.check(v.yaml(), nodes, values, vars);
-        if (!c.valid() || c.name() == null || !c.name().equals(name)) {
-            List<PipelineCompilerPort.Problem> problems = c.problems().isEmpty() ? validate(v.yaml(), name).problems()
-                : c.problems();
+        List<PipelineCompilerPort.Problem> runProblems = runProblems(v.yaml());
+        if (!c.valid() || c.name() == null || !c.name().equals(name) || !runProblems.isEmpty()) {
+            List<PipelineCompilerPort.Problem> problems = !runProblems.isEmpty() ? runProblems
+                : c.problems().isEmpty() ? validate(v.yaml(), name).problems() : c.problems();
             throw fail(Response.Status.CONFLICT, "Version " + n + " of " + name + " cannot run until its problems are "
                 + "fixed: " + firstProblems(problems));
         }
@@ -797,8 +831,9 @@ public class PipelineService {
         List<PipelineViews.LineageLink> lineage = store.lineageOfRun(id).stream()
             .map(l -> new PipelineViews.LineageLink(l.nodeId(), l.inputUrn(), l.outputUrn())).toList();
         List<PipelineViews.NodeQualityView> quality = store.quality(id).stream().map(this::qualityView).toList();
+        // Each earlier try's message is held back as the run's own is: it may quote the engine (ADR 0053).
         return new PipelineViews.RunDetail(summary(r, sights), nodeViews, written, read, lineage, notes, quality,
-            tree(store.progress(id)));
+            tree(store.progress(id)), io.kilnmark.server.runs.RunTryView.of(store.tries(id), withheld == null));
     }
 
     /**
@@ -1055,7 +1090,8 @@ public class PipelineService {
         Double threshold = q != null && q.hasNonNull("threshold") ? q.get("threshold").asDouble() : null;
         return new PipelineViews.RunSummary(r.id(), r.pipeline(), r.version(), r.status(), r.requestedBy(),
             r.requestedAt(), r.startedAt(), r.finishedAt(), r.cancelRequested(),
-            withheld == null ? r.error() : "The run failed. " + withheld, rows, score, threshold);
+            withheld == null ? r.error() : "The run failed. " + withheld, rows, score, threshold, r.runTry() + 1, r.tries(),
+            r.retryAt());
     }
 
     // ---- the node catalogue ----
@@ -1085,10 +1121,13 @@ public class PipelineService {
     /** Marks failed the runs whose worker stopped without finishing them; called by workers' recovery. */
     public void failOrphanedRuns() {
         try {
-            int n = store.failOrphanedRuns();
-            if (n > 0) {
-                LOG.infof("%d pipeline runs were left by a stopped worker and are now marked failed", n);
+            List<PipelineStore.Run> failed = store.failOrphaned();
+            if (!failed.isEmpty()) {
+                LOG.infof("%d pipeline runs were left by a stopped worker and are now marked failed", failed.size());
             }
+            // A run lost on its last try is told, as one that failed on it is (ADR 0053).
+            failed.forEach(r -> finished(r.pipeline(), r.id(), "failed", null, null, null, r.runTry() > 0
+                || r.tries() > 1 ? RunRetries.afterTries(r.runTry()) + ". Not tried again: it has no tries left" : null));
         } catch (RuntimeException e) {
             LOG.debugf(e, "Could not check for pipeline runs left by a stopped worker");
         }
@@ -1165,6 +1204,15 @@ public class PipelineService {
         }
         PipelineStore.Run run = found.run();
         long id = run.id();
+        RunOptions options = runOptions(run);
+        if (run.status().equals("running")) {
+            // Its worker was lost and stale recovery queued its job again (ADR 0053, decision 6): taken over, the
+            // run starts again from its beginning as its next try, when it may; else it ends here.
+            if (!new Try(run, jobId, options).mayTakeOver()) {
+                return new ScanService.Result(ScanService.Outcome.FINISHED, null);
+            }
+            run = store.run(id).orElse(run);
+        }
         // A place on every source it reads or writes that limits runs at once, before it starts (ADR 0040).
         // A run asked to stop ends below without one.
         JobQueue.SourceLimit full = run.cancelRequested() || lease == null ? null : takePlaces(run, lease);
@@ -1176,9 +1224,14 @@ public class PipelineService {
         if (notStarted != null) {
             return notStarted;
         }
+        if (run.runTry() > 0) {
+            store.clearTry(id); // a later try starts from the beginning: the earlier try's details give way
+        }
+        Try t = new Try(run, jobId, options);
         RunContext context = new RunContext(run.pipeline(), id, run.requestedBy(), role(run.requestedRole()));
-        RunLog log = new RunLog(store, id, context, json);
-        log.server(null, "info", "run_started", "The run started: version " + run.version() + " of " + run.pipeline()
+        RunLog log = new RunLog(store, id, context, json, run.runTry() > 0 ? store.lastEventSeq(id) : 0);
+        log.server(null, "info", "run_started", (run.runTry() > 0 ? "Try " + (run.runTry() + 1) + " of " + run.tries()
+            + " started" : "The run started") + ": version " + run.version() + " of " + run.pipeline()
             + ", asked for by " + run.requestedBy(), null);
         log.flush();
         List<String> held = new ArrayList<>();
@@ -1188,16 +1241,24 @@ public class PipelineService {
         boolean ran = false;
         // Whether someone asks the run to stop is read in memory while it works; the process's run watcher
         // turns it, at once for a cancel asked here, at its next look for one asked on another process.
+        // Its run.timeout and warn_after are watched there too (ADR 0053): a try past its timeout stops as a cancel
+        // would, and fails.
         RunWatch.Signal signal = lifecycle.signal(id);
-        BooleanSupplier cancelled = signal == null ? () -> store.cancelRequested(id) : signal::cancelled;
+        if (signal != null) {
+            String pipeline = run.pipeline();
+            signal.limits(Instant.now(), options.timeout(), options.warnAfter(), () -> warnLong(pipeline, id, options));
+        }
+        BooleanSupplier cancelled = signal == null ? () -> store.cancelRequested(id)
+            : () -> signal.cancelled() || signal.timedOut();
         try {
             PipelineStore.Version v = store.version(run.pipeline(), run.version()).orElse(null);
             if (v == null) {
-                store.finishRun(id, "failed", "Version " + run.version() + " of " + run.pipeline() + " no longer exists",
-                    null);
+                t.end("failed", "Version " + run.version() + " of " + run.pipeline() + " no longer exists", null,
+                    RunRetries.Ending.REFUSED);
+                t.tell();
                 return new ScanService.Result(ScanService.Outcome.FINISHED, null);
             }
-            if (stopped(id, cancelled, shutdown, null)) {
+            if (stopped(t, signal, shutdown, null)) {
                 return new ScanService.Result(ScanService.Outcome.FINISHED, null);
             }
             Map<String, Object> runParameters = jsonMap(run.parameters());
@@ -1205,8 +1266,9 @@ public class PipelineService {
             if (runParameters == null || runVariables == null) {
                 // Never run on defaults in place of the values the run was started with.
                 ended(log, "failed", "The pipeline could not start: the values it was started with could not be read");
-                store.finishRun(id, "failed", "The pipeline could not start: the values it was started with could not "
-                    + "be read", null);
+                t.end("failed", "The pipeline could not start: the values it was started with could not be read", null,
+                    RunRetries.Ending.REFUSED);
+                t.tell();
                 return new ScanService.Result(ScanService.Outcome.FINISHED, null);
             }
             // Setting a query read up asks the database to plan the query, and its errors may quote it: the
@@ -1216,7 +1278,8 @@ public class PipelineService {
                     String why = "The pipeline could not start: this version reads with a query and was saved before "
                         + "queries were checked. A designer who may see unmasked values saves it again, then it runs.";
                     ended(log, "failed", why);
-                    store.finishRun(id, "failed", why, null);
+                    t.end("failed", why, null, RunRetries.Ending.REFUSED);
+                    t.tell();
                     return new ScanService.Result(ScanService.Outcome.FINISHED, null);
                 }
                 store.setAssets(id, json.writeValueAsString(List.of(QUERY_READ)));
@@ -1224,11 +1287,12 @@ public class PipelineService {
             c = context.run(() -> compiler.compile(v.yaml(), nodes, runParameters, runVariables));
             if (!c.valid() || c.graph() == null) {
                 ended(log, "failed", "The pipeline could not start: " + firstProblems(c.problems()));
-                store.finishRun(id, "failed", context.scrub("The pipeline could not start: "
-                    + firstProblems(c.problems())), null);
+                t.end("failed", context.scrub("The pipeline could not start: " + firstProblems(c.problems())), null,
+                    RunRetries.Ending.REFUSED);
+                t.tell();
                 return new ScanService.Result(ScanService.Outcome.FINISHED, null);
             }
-            if (stopped(id, cancelled, shutdown, c.graph())) {
+            if (stopped(t, signal, shutdown, c.graph())) {
                 return new ScanService.Result(ScanService.Outcome.FINISHED, null);
             }
             // Each write's asset under the URN its connector worked out (for a prefixed S3 source, the prefix
@@ -1248,12 +1312,13 @@ public class PipelineService {
             BooleanSupplier stop = () -> cancelled.getAsBoolean() || shutdown.getAsBoolean();
             for (String urn : writes.stream().map(PipelineExecution.WriteTarget::urn).distinct().sorted().toList()) {
                 if (!JobQueue.waitFor(() -> lease.tryLockTarget(urn), config.pipelines().waitForTarget(), stop)) {
-                    if (stopped(id, cancelled, shutdown, c.graph())) {
+                    if (stopped(t, signal, shutdown, c.graph())) {
                         return new ScanService.Result(ScanService.Outcome.FINISHED, null);
                     }
                     PipelineExecution.closeNodes(c.graph());
-                    store.finishRun(id, "failed", "Another pipeline run is writing " + urn + ". Run this one again "
-                        + "when it has finished.", null);
+                    t.end("failed", "Another pipeline run is writing " + urn + ". Run this one again when it has "
+                        + "finished.", null, RunRetries.Ending.ERROR);
+                    t.tell();
                     return new ScanService.Result(ScanService.Outcome.FINISHED, null);
                 }
                 held.add(urn);
@@ -1326,10 +1391,30 @@ public class PipelineService {
                 log.server(null, n.path("level").asText("warn"), "run_note", n.path("text").asText(), n.hasNonNull("detail")
                     ? n.get("detail").asText() : null);
             }
-            ended(log, o.status(), o.error());
-            store.finishRun(id, o.status(), o.error(), result.toString());
+            String status = o.status();
+            String error = o.error();
+            RunRetries.Ending ending = RunRetries.Ending.ERROR;
+            boolean timedOut = signal != null && signal.timedOut() && !signal.cancelled();
+            if (!status.equals("succeeded") && timedOut) {
+                status = "failed";
+                error = RunRetries.tookTooLong(options.timeout());
+                ending = RunRetries.Ending.TIMED_OUT;
+            } else if (status.equals("failed") && o.nodes().stream().anyMatch(n -> "gate".equals(n.type())
+                && n.error() != null)) {
+                ending = RunRetries.Ending.GATE; // a gate's verdict stands, even as the worker stops
+            } else if (!status.equals("succeeded") && shutdown.getAsBoolean()) {
+                status = "failed";
+                ending = RunRetries.Ending.LOST;
+            } else if (status.equals("cancelled")) {
+                ending = RunRetries.Ending.CANCELLED;
+            }
+            ended(log, status, error);
+            boolean done = t.end(status, error, result.toString(), ending);
             RunQuality.NodeQuality lowest = RunQuality.lowestOutputNode(measured);
-            finished(run.pipeline(), id, o.status(), score, threshold, lowest == null ? null : lowest.node());
+            if (done) {
+                // t.status: a try that was to be tried again as a cancel landed ends cancelled, and is told so.
+                finished(run.pipeline(), id, t.status, score, threshold, lowest == null ? null : lowest.node(), t.told);
+            }
             LOG.infof("Run %d of pipeline %s: %s", id, run.pipeline(), o.status());
         } catch (InterruptedException e) {
             // Cleared so the run's record can be written. Today it is already clear here, but that
@@ -1342,9 +1427,9 @@ public class PipelineService {
                 saveQuality(id, RunQuality.withPredicted(List.of(), predicted, "failed"), context);
             }
             ended(log, "failed", "The worker running this pipeline was stopped before it started writing.");
-            store.finishRun(id, "failed", "The worker running this pipeline was stopped before it started writing. "
-                + "Run it again.", null);
-            finished(run.pipeline(), id, "failed");
+            t.end("failed", "The worker running this pipeline was stopped before it started writing. Run it again.",
+                null, RunRetries.Ending.LOST);
+            t.tell();
         } catch (RuntimeException | com.fasterxml.jackson.core.JsonProcessingException e) {
             // The exception's own text may hold a source's secret: log it scrubbed, without the trace.
             LOG.errorf("Run %d of pipeline %s failed: %s", id, run.pipeline(), context.scrub(String.valueOf(e)));
@@ -1356,8 +1441,8 @@ public class PipelineService {
                 saveQuality(id, RunQuality.withPredicted(List.of(), predicted, "failed"), context);
             }
             ended(log, "failed", "The run failed: " + e.getMessage());
-            store.finishRun(id, "failed", context.scrub("The run failed: " + e.getMessage()), null);
-            finished(run.pipeline(), id, "failed");
+            t.end("failed", context.scrub("The run failed: " + e.getMessage()), null, RunRetries.Ending.ERROR);
+            t.tell();
         } finally {
             if (signal != null) {
                 signal.close();
@@ -1390,17 +1475,199 @@ public class PipelineService {
      * Whether the run was asked to stop, or its worker is stopping, before its nodes run; if so the
      * run gets its final status and {@code graph}'s nodes (when created) are closed.
      */
-    private boolean stopped(long id, BooleanSupplier cancel, BooleanSupplier shutdown, PipelineGraph graph) {
-        boolean cancelled = cancel.getAsBoolean();
-        if (!cancelled && !shutdown.getAsBoolean()) {
+    private boolean stopped(Try t, RunWatch.Signal signal, BooleanSupplier shutdown, PipelineGraph graph) {
+        long id = t.run.id();
+        boolean cancelled = signal == null ? store.cancelRequested(id) : signal.cancelled();
+        boolean timedOut = signal != null && signal.timedOut();
+        if (!cancelled && !timedOut && !shutdown.getAsBoolean()) {
             return false;
         }
         if (graph != null) {
             PipelineExecution.closeNodes(graph);
         }
-        store.finishRun(id, cancelled ? "cancelled" : "failed", cancelled ? "Cancelled before it started"
-            : "The worker running this pipeline was stopped before it started. Run it again.", null);
+        if (cancelled) {
+            t.end("cancelled", "Cancelled before it started", null, RunRetries.Ending.CANCELLED);
+        } else if (timedOut) {
+            t.end("failed", RunRetries.tookTooLong(t.options.timeout()), null, RunRetries.Ending.TIMED_OUT);
+        } else {
+            t.end("failed", "The worker running this pipeline was stopped before it started. Run it again.", null,
+                RunRetries.Ending.LOST);
+        }
+        t.tell();
         return true;
+    }
+
+    /**
+     * One try of a pipeline run on a worker, and how it ends (ADR 0053): for good, or queued for the
+     * next try when the run's options allow. Only an end for good is told.
+     */
+    private final class Try {
+        final PipelineStore.Run run;
+        final long jobId;
+        final RunOptions options;
+        /** The worker holding the job as this try starts: only it may queue the job again (ADR 0053). */
+        final String holder;
+        /** Whether the run has ended for good (its owners and followers are told then), not queued again. */
+        boolean ended;
+        /** How it ended, for the notice. */
+        String status;
+        /** ", after 3 tries. Not tried again: ..." for the notice, or null for a run tried once. */
+        String told;
+
+        Try(PipelineStore.Run run, long jobId, RunOptions options) {
+            this.run = run;
+            this.jobId = jobId;
+            this.options = options;
+            this.holder = store.jobHolder(jobId);
+        }
+
+        /**
+         * Ends this try: a success or a cancel for good; a failure tried again when it may be (the run is
+         * then queued for its next try with its job), else for good, saying why not. Only while the run is
+         * still on this try: a worker that lost its job, whose run another worker took over, changes nothing.
+         *
+         * @return whether the run has ended for good, here
+         */
+        boolean end(String status, String error, String result, RunRetries.Ending ending) {
+            this.status = status;
+            long id = run.id();
+            int tried = run.runTry();
+            if (status.equals("succeeded") || status.equals("cancelled")) {
+                ended = store.finishRun(id, status, error, result, status.equals("cancelled") ? "cancelled" : null, null,
+                    tried);
+                told = tried > 0 ? RunRetries.afterTries(tried) : null;
+                return ended;
+            }
+            if (holder != null && !holder.equals(store.jobHolder(jobId))) {
+                // Its job is no longer this worker's: recovery queued it again, for another to take the run over.
+                LOG.infof("Run %d of pipeline %s: this worker lost its job; the run is left to the worker that takes it",
+                    id, run.pipeline());
+                ended = false;
+                return false;
+            }
+            RunRetries.Decision d = decide(ending);
+            if (d.again()) {
+                if (holder != null && store.retry(id, jobId, holder, tried, d.at(), error, RunRetries.waiting(tried,
+                    run.tries(), d.at(), java.time.ZoneId.systemDefault()))) {
+                    LOG.infof("Run %d of pipeline %s: try %d of %d failed; trying again at %s", id, run.pipeline(),
+                        tried + 1, run.tries(), d.at());
+                    ended = false;
+                    return false;
+                }
+                if (store.cancelRequested(id)) {
+                    // Asked to stop as it was about to be tried again: it ends cancelled, as a cancel does.
+                    this.status = "cancelled";
+                    ended = store.finishRun(id, "cancelled", "Cancelled", result, "cancelled", null, tried);
+                    told = null;
+                    return ended;
+                }
+                d = new RunRetries.Decision(false, null, "Not tried again: its worker lost its job");
+            }
+            String more = run.tries() > 1 ? RunRetries.afterTries(tried) + ". " + d.why() : null;
+            ended = store.finishRun(id, "failed", more == null ? error : withTries(error, more), result,
+                ending.recorded(), d.why(), tried);
+            told = more;
+            return ended;
+        }
+
+        /** Whether this run, lost with its worker, may be taken over as its next try; if not, it ends here. */
+        boolean mayTakeOver() {
+            RunRetries.Decision d = decide(RunRetries.Ending.LOST);
+            if (d.again() && store.takeOver(run.id())) {
+                LOG.infof("Run %d of pipeline %s was lost with its worker; taken over as try %d", run.id(),
+                    run.pipeline(), run.runTry() + 2);
+                return true;
+            }
+            ended = store.finishRun(run.id(), "failed", "The worker running this pipeline stopped before it finished"
+                + RunRetries.afterTries(run.runTry()) + ". " + d.why(), null, "lost", d.why(), run.runTry());
+            status = "failed";
+            told = RunRetries.afterTries(run.runTry()) + ". " + d.why();
+            tell();
+            return false;
+        }
+
+        /** Whether the try may be tried again now; a lost one is decided without its wait (it has waited). */
+        private RunRetries.Decision decide(RunRetries.Ending ending) {
+            Optional<PipelineStore.Version> v = store.version(run.pipeline(), run.version());
+            String unsafe = v.isEmpty() ? "its version is gone"
+                : unsafeToRepeat(PipelineDefinition.parse(v.get().yaml()).definition());
+            return RunRetries.decide(options, run.tries(), run.runTry(), ending, unsafe, store.nextFire(run.id()),
+                Instant.now(), java.util.concurrent.ThreadLocalRandom.current());
+        }
+
+        /** Tells of the run's end for good: a failure after its last try, or nothing while it waits for the next. */
+        void tell() {
+            if (ended && status != null) {
+                finished(run.pipeline(), run.id(), status, null, null, null, told);
+            }
+        }
+    }
+
+    /** A pipeline's owners for a reader: team addresses only for designers and admins. 404 when there is none. */
+    public io.kilnmark.server.runs.Owners.Shown owners(String name, AccessRole role) {
+        find(name);
+        return io.kilnmark.server.runs.Owners.shown(store.owners(name), role.atLeast(AccessRole.DESIGNER));
+    }
+
+    /**
+     * Sets a pipeline's owners (designers and admins); returns those it had before, for the audit log.
+     * A team address must be one an admin added ({@code teams}). Owners are not part of the YAML, so
+     * this makes no new version (ADR 0053).
+     */
+    public List<String> setOwners(String name, List<String> owners, java.util.Set<String> teams, AccessRole role) {
+        if (!role.atLeast(AccessRole.DESIGNER)) {
+            throw fail(Response.Status.FORBIDDEN, "Setting a pipeline's owners takes the designer role");
+        }
+        List<String> checked = io.kilnmark.server.runs.Owners.check(owners, teams);
+        return store.setOwners(name, checked).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No pipeline called "
+            + name));
+    }
+
+    /** The server's cap on run retries; the defaults in tests that build the service by hand. */
+    private io.kilnmark.server.runs.RunSettings runSettings() {
+        return runSettings == null ? io.kilnmark.server.runs.RunSettings.defaults() : runSettings;
+    }
+
+    /** A failed run's error, with how many tries were made and why there were no more after it. */
+    private static String withTries(String error, String more) {
+        return (error == null ? "The run failed" : error) + more;
+    }
+
+    /** The run options of the version a run uses; none when it cannot be read. */
+    private RunOptions runOptions(PipelineStore.Run run) {
+        return store.version(run.pipeline(), run.version())
+            .map(v -> PipelineDefinition.parse(v.yaml()).definition())
+            .map(PipelineDefinition::run).orElse(RunOptions.NONE);
+    }
+
+    /** Tells a run's owners, once a run, that it is taking longer than its warn_after (ADR 0053). */
+    private void warnLong(String pipeline, long id, RunOptions options) {
+        if (notifications != null && options.warnAfter() != null && store.markWarned(id)) {
+            notifications.runTakingLong("pipeline", pipeline, id,
+                io.kilnmark.kiln.yaml.FlowDefinition.written(options.warnAfter()));
+        }
+    }
+
+    /**
+     * The first write node of {@code pipeline} that trying a run again could write twice, as "write-x
+     * appends", or null when every write replaces or upserts (ADR 0041, ADR 0053). A mode set by a
+     * parameter is not known until the run, so it counts as unsafe.
+     */
+    public static String unsafeToRepeat(PipelineDefinition pipeline) {
+        if (pipeline == null) {
+            return "it could not be read";
+        }
+        for (PipelineDefinition.NodeDefinition n : pipeline.nodes()) {
+            if (!WriteNodeFactory.TYPE.equals(n.type())) {
+                continue;
+            }
+            String mode = WriteNodeFactory.mode(n.config());
+            if (!"replace".equals(mode) && !"upsert".equals(mode)) {
+                return n.id() + (mode == null ? " has a mode set by a value" : " " + (mode.equals("create")
+                    ? "creates its target" : mode.equals("append") ? "appends" : "uses " + mode));
+            }
+        }
+        return null;
     }
 
     /** Tells of a run that finished without measuring anything (it failed before its nodes ran). */
@@ -1415,8 +1682,14 @@ public class PipelineService {
      * node with that score, for the notification's words.
      */
     void finished(String pipeline, long id, String status, Double score, Double threshold, String output) {
+        finished(pipeline, id, status, score, threshold, output, null);
+    }
+
+    /** As above, after the run's last try: {@code tries} says how many were made and why no more, or null. */
+    void finished(String pipeline, long id, String status, Double score, Double threshold, String output, String tries) {
         if (notifications != null) {
-            notifications.pipelineRunFinished(pipeline, id, status, score, threshold, output, "#/pipeline-runs/" + id);
+            notifications.pipelineRunFinished(pipeline, id, status, score, threshold, output, "#/pipeline-runs/" + id,
+                tries);
         }
     }
 

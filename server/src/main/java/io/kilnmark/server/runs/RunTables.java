@@ -4,6 +4,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
@@ -73,20 +74,35 @@ public final class RunTables {
     }
 
     /**
-     * Adds the job of run {@code runId}, tried once (a run is never repeated on its own: a pipeline's
-     * writes, or the pipelines a flow started, may have begun), and wakes the workers once the
-     * transaction commits. {@code priority} is the job's (ADR 0041), or null for the column's own.
+     * Adds the job of run {@code runId}, tried once, and wakes the workers once the transaction
+     * commits. {@code priority} is the job's (ADR 0041), or null for the column's own.
      */
     public static void addJob(Connection c, RunKind k, long runId, Integer priority) throws SQLException {
+        addJob(c, k, runId, priority, 1);
+    }
+
+    /**
+     * As {@link #addJob(Connection, RunKind, long, Integer)}, tried at most {@code tries} times: as
+     * many as the run may have tries (ADR 0053, decision 6), so stale recovery queues it again after a
+     * lost worker while tries are left. A run's tries are never more than its own retries allow: a
+     * pipeline's writes, or the pipelines a flow started, may have begun, and only a run whose writes
+     * are safe to repeat has retries.
+     */
+    public static void addJob(Connection c, RunKind k, long runId, Integer priority, int tries) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.job (kind, payload, max_attempts"
             + (priority == null ? "" : ", priority") + ") VALUES ('" + k.jobKind() + "', jsonb_build_object('"
-            + k.payloadKey() + "', ?::bigint), 1" + (priority == null ? "" : ", ?") + ")")) {
+            + k.payloadKey() + "', ?::bigint), ?" + (priority == null ? "" : ", ?") + ")")) {
             ps.setLong(1, runId);
+            ps.setInt(2, Math.max(1, tries));
             if (priority != null) {
-                ps.setShort(2, priority.shortValue());
+                ps.setShort(3, priority.shortValue());
             }
             ps.executeUpdate();
         }
+        notifyWorkers(c);
+    }
+
+    private static void notifyWorkers(Connection c) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("NOTIFY " + JobQueue.CHANNEL)) {
             ps.execute();
         }
@@ -115,8 +131,9 @@ public final class RunTables {
      */
     public static boolean startRun(Db db, RunKind k, long id) {
         return db.tx(c -> {
+            // What a queued run said while it waited (a source's place, its next try) is cleared.
             try (PreparedStatement ps = c.prepareStatement("UPDATE " + k.runTable() + " SET status = 'running', "
-                + "started_at = now()" + (k.notesWhileQueued() ? ", error = NULL" : "")
+                + "started_at = now(), retry_at = NULL, error = NULL"
                 + " WHERE id = ? AND status = 'queued' AND NOT cancel_requested")) {
                 ps.setLong(1, id);
                 return ps.executeUpdate() == 1;
@@ -129,7 +146,32 @@ public final class RunTables {
      * one. A cancel asked for too late to stop the run is cleared, so the run does not read as stopping.
      */
     public static void finishRun(Db db, RunKind k, long id, String status, String error, String result) {
-        db.tx(c -> {
+        finishRun(db, k, id, status, error, result, null);
+    }
+
+    /**
+     * As {@link #finishRun(Db, RunKind, long, String, String, String)}, recording the try that ended
+     * with it (ADR 0053) when it had started: how it ended, and {@code next}, why it is not tried again
+     * (or null).
+     */
+    public static void finishRun(Db db, RunKind k, long id, String status, String error, String result, String next) {
+        finishRun(db, k, id, status, error, result, next, null);
+    }
+
+    /**
+     * As {@link #finishRun(Db, RunKind, long, String, String, String, String)}, only while the run is
+     * still on try {@code onTry} (null: whatever its try). A worker ending its try never ends another's:
+     * one that lost its job, whose run another worker has taken over, changes nothing (ADR 0053).
+     *
+     * @return whether the run was ended
+     */
+    public static boolean finishRun(Db db, RunKind k, long id, String status, String error, String result, String next,
+                                    Integer onTry) {
+        return db.tx(c -> {
+            if (onTry != null && !onTry(c, k, id, onTry)) {
+                return false;
+            }
+            recordTry(c, k, id, status, error, next);
             try (PreparedStatement ps = c.prepareStatement("UPDATE " + k.runTable() + " SET status = ?, "
                 + "finished_at = now(), error = ?, " + (k.results() ? "result = ?::jsonb, " : "")
                 + "cancel_requested = (? = 'cancelled') WHERE id = ? AND status IN " + UNFINISHED)) {
@@ -141,10 +183,21 @@ public final class RunTables {
                 }
                 ps.setString(i++, status);
                 ps.setLong(i, id);
-                ps.executeUpdate();
+                return ps.executeUpdate() == 1;
             }
-            return null;
         });
+    }
+
+    /** Whether run {@code id} is still on try {@code n}, its row locked till the transaction ends. */
+    private static boolean onTry(Connection c, RunKind k, long id, int n) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM " + k.runTable() + " WHERE id = ? "
+            + "AND run_try = ? FOR UPDATE")) {
+            ps.setLong(1, id);
+            ps.setInt(2, n);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
     }
 
     /** Whether someone has asked the run to stop. */
@@ -292,6 +345,297 @@ public final class RunTables {
                 ps.executeUpdate();
             }
             return Optional.of(gone);
+        });
+    }
+
+    // ---- tries (ADR 0053) ----
+
+    /**
+     * Records the try a running run is on as ended, in {@code c}'s transaction: its number, how it
+     * ended ({@code succeeded}, {@code failed}, {@code cancelled} or {@code lost}), its start, why and
+     * what comes next. Nothing for a run that is not running (it never started this try).
+     */
+    static void recordTry(Connection c, RunKind k, long id, String status, String error, String next)
+        throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("INSERT INTO " + k.tryTable() + " (run_id, n, status, "
+            + "started_at, error, next) SELECT id, run_try, ?, started_at, ?, ? FROM " + k.runTable()
+            + " WHERE id = ? AND status = 'running' ON CONFLICT (run_id, n) DO NOTHING")) {
+            ps.setString(1, status);
+            ps.setString(2, error);
+            ps.setString(3, next == null ? null : clip(next, 500));
+            ps.setLong(4, id);
+            ps.executeUpdate();
+        }
+    }
+
+    private static String clip(String text, int max) {
+        return text.length() <= max ? text : text.substring(0, max - 1) + "…";
+    }
+
+    /**
+     * Ends the try a running run is on and queues it for its next try at {@code at}, in one
+     * transaction with its job (ADR 0053, decision 3): the try is recorded, the run is queued again
+     * with {@code waiting} as what it says meanwhile, and the job, still held by {@code workerId}, is
+     * due again then, counting the try. A try is a new try of the same run, never a new run, so a
+     * schedule's fire is never repeated and one run at a time holds while it waits. {@code workerId} is
+     * the worker that claimed the job for this try, and {@code onTry} the try: a worker that has lost the
+     * job to another, which took the run over, changes nothing.
+     *
+     * @return false, and nothing changed, when the run was asked to stop meanwhile, is no longer
+     *         running, or its job is no longer this worker's: the caller then ends the run for good
+     */
+    public static boolean retry(Db db, RunKind k, long id, long jobId, String workerId, int onTry, Instant at,
+                                String status, String error, String waiting) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM " + k.runTable() + " WHERE id = ? "
+                + "AND status = 'running' AND run_try = ? AND NOT cancel_requested FOR UPDATE")) {
+                ps.setLong(1, id);
+                ps.setInt(2, onTry);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        return false;
+                    }
+                }
+            }
+            int moved;
+            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.job SET status = 'queued', run_after = ?, "
+                + "locked_by = NULL, locked_at = NULL, heartbeat_at = NULL, last_error = ? WHERE id = ? AND kind = '"
+                + k.jobKind() + "' AND locked_by IS NOT DISTINCT FROM ? AND status = 'running'")) {
+                ps.setTimestamp(1, Db.timestamp(at));
+                ps.setString(2, "Waiting for the run's next try");
+                ps.setLong(3, jobId);
+                ps.setString(4, workerId);
+                moved = ps.executeUpdate();
+            }
+            if (moved != 1) {
+                return false; // nothing written yet: the run is still running, for the caller to end
+            }
+            recordTry(c, k, id, status, error, "Tried again");
+            try (PreparedStatement ps = c.prepareStatement("UPDATE " + k.runTable() + " SET status = 'queued', "
+                + "run_try = run_try + 1, retry_at = ?, error = ? WHERE id = ?")) {
+                ps.setTimestamp(1, Db.timestamp(at));
+                ps.setString(2, waiting);
+                ps.setLong(3, id);
+                ps.executeUpdate();
+            }
+            notifyWorkers(c);
+            return true;
+        });
+    }
+
+    /**
+     * Takes over a run whose worker was lost (ADR 0053, decision 6): its job was queued again by stale
+     * recovery and claimed here, and the run still reads running. The lost try is recorded, and the run
+     * goes on as its next try: with {@code requeue} queued again, to start as any try does, else
+     * still running. False when it no longer reads running (it ended meanwhile).
+     */
+    public static boolean takeOver(Db db, RunKind k, long id, boolean requeue) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM " + k.runTable() + " WHERE id = ? "
+                + "AND status = 'running' AND run_try < " + MAX_TRY + " FOR UPDATE")) {
+                ps.setLong(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        return false;
+                    }
+                }
+            }
+            recordTry(c, k, id, "lost", LOST, "Taken over by another worker");
+            // A pipeline starts again from its beginning, so it is queued as its next try and started as any is;
+            // a flow carries on where it is, still running.
+            try (PreparedStatement ps = c.prepareStatement("UPDATE " + k.runTable() + " SET run_try = run_try + 1, "
+                + (requeue ? "status = 'queued', started_at = NULL" : "started_at = now()") + ", retry_at = NULL "
+                + "WHERE id = ?")) {
+                ps.setLong(1, id);
+                ps.executeUpdate();
+            }
+            return true;
+        });
+    }
+
+    /** The worker holding job {@code jobId} now, or null: whose job a try's end may queue again. */
+    public static String jobHolder(Db db, long jobId) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("SELECT locked_by FROM kilnmark.job WHERE id = ? "
+                + "AND status = 'running'")) {
+                ps.setLong(1, jobId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() ? rs.getString(1) : null;
+                }
+            }
+        });
+    }
+
+    /** The highest try number a run may reach (V39 checks it). */
+    public static final int MAX_TRY = 50;
+
+    /** What a try lost with its worker says. */
+    public static final String LOST = "The worker running it stopped, or lost its connection to Kilnmark's database";
+
+    /** One ended try of a run, as recorded: its number from 0. */
+    public record Try(int number, String status, Instant startedAt, Instant finishedAt, String error, String next,
+                      String askedBy) {
+    }
+
+    /** Every ended try of a run, the first first. */
+    public static List<Try> tries(Db db, RunKind k, long id) {
+        return db.tx(c -> {
+            List<Try> out = new java.util.ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT n, status, started_at, finished_at, error, next, "
+                + "asked_by FROM " + k.tryTable() + " WHERE run_id = ? ORDER BY n")) {
+                ps.setLong(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add(new Try(rs.getInt(1), rs.getString(2), Db.instant(rs.getTimestamp(3)),
+                            Db.instant(rs.getTimestamp(4)), rs.getString(5), rs.getString(6), rs.getString(7)));
+                    }
+                }
+            }
+            return out;
+        });
+    }
+
+    /**
+     * When the schedule whose last fire started run {@code id} fires next, or null when no schedule
+     * started it (or it is paused): no try starts after it (ADR 0053, decision 4).
+     */
+    public static Instant nextFire(Db db, RunKind k, long id) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("SELECT min(next_at) FROM kilnmark.schedule WHERE "
+                + k.scheduleRunColumn() + " = ? AND enabled")) {
+                ps.setLong(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() ? Db.instant(rs.getTimestamp(1)) : null;
+                }
+            }
+        });
+    }
+
+    /** Marks that run {@code id}'s owners were told it is taking long; false when they already were (once a run). */
+    public static boolean markWarned(Db db, RunKind k, long id) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("UPDATE " + k.runTable() + " SET warned_at = now() "
+                + "WHERE id = ? AND warned_at IS NULL AND status = 'running'")) {
+                ps.setLong(1, id);
+                return ps.executeUpdate() == 1;
+            }
+        });
+    }
+
+    /**
+     * Makes a failed run run again from its failure, by hand (ADR 0053, decision 9), in {@code c}'s
+     * transaction, the run's row locked: queued as its next try, which may not be tried again by itself
+     * ({@code tries} is the try's own number + 1), and its job queued again, tried once. The try it
+     * failed on records who asked. A run already going (one run at a time) is refused by the store's
+     * own busy refusal before this is called.
+     *
+     * @return false when the run is no longer failed, or has had as many tries as a run may (50)
+     */
+    public static boolean runAgain(Connection c, RunKind k, long id, String by) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM " + k.runTable() + " WHERE id = ? "
+            + "AND status = 'failed' AND run_try < " + MAX_TRY + " FOR UPDATE")) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return false;
+                }
+            }
+        }
+        try (PreparedStatement ps = c.prepareStatement("UPDATE " + k.tryTable() + " SET next = ?, asked_by = ? "
+            + "WHERE run_id = ? AND n = (SELECT run_try FROM " + k.runTable() + " WHERE id = ?)")) {
+            ps.setString(1, "Run again from the failure");
+            ps.setString(2, by);
+            ps.setLong(3, id);
+            ps.setLong(4, id);
+            if (ps.executeUpdate() != 1) {
+                // The worker reads that the try is by hand from this row: without it, nothing is started.
+                return false;
+            }
+        }
+        try (PreparedStatement ps = c.prepareStatement("UPDATE " + k.runTable() + " SET status = 'queued', "
+            + "run_try = run_try + 1, tries = run_try + 2, retry_at = NULL, started_at = NULL, "
+            + "finished_at = NULL, error = NULL, cancel_requested = false WHERE id = ?")) {
+            ps.setLong(1, id);
+            ps.executeUpdate();
+        }
+        // One job per run (a flow's is unique, V20): the run's own job is queued again, tried once.
+        int queued;
+        try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.job SET status = 'queued', attempts = 0, "
+            + "max_attempts = 1, run_after = now(), locked_by = NULL, locked_at = NULL, heartbeat_at = NULL, "
+            + "finished_at = NULL, last_error = NULL WHERE kind = '" + k.jobKind() + "' AND (payload ->> '"
+            + k.payloadKey() + "')::bigint = ?")) {
+            ps.setLong(1, id);
+            queued = ps.executeUpdate();
+        }
+        if (queued == 0) {
+            addJob(c, k, id, null, 1);
+        } else {
+            notifyWorkers(c);
+        }
+        return true;
+    }
+
+    // ---- owners (ADR 0053, decision 10) ----
+
+    /** The owners of the pipeline or flow {@code name}, in the order set; empty when it has none or is not there. */
+    public static List<String> owners(Db db, RunKind k, String name) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("SELECT owners FROM " + k.table() + " WHERE name = ?")) {
+                ps.setString(1, name);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() ? strings(rs.getArray(1)) : List.<String>of();
+                }
+            }
+        });
+    }
+
+    /** The owners of each of these pipelines or flows by name, in one query; those with none are left out. */
+    public static java.util.Map<String, List<String>> ownersOf(Db db, RunKind k, Collection<String> names) {
+        if (names.isEmpty()) {
+            return java.util.Map.of();
+        }
+        return db.tx(c -> {
+            java.util.Map<String, List<String>> out = new java.util.HashMap<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT name, owners FROM " + k.table()
+                + " WHERE name = ANY (?) AND cardinality(owners) > 0")) {
+                ps.setArray(1, c.createArrayOf("text", names.toArray()));
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.put(rs.getString(1), strings(rs.getArray(2)));
+                    }
+                }
+            }
+            return out;
+        });
+    }
+
+    private static List<String> strings(java.sql.Array a) throws SQLException {
+        return a == null ? List.of() : List.of((String[]) a.getArray());
+    }
+
+    /**
+     * Sets the owners of {@code name}, returning those it had before; empty when there is no such
+     * pipeline or flow. The row is locked, so two changes at once are recorded in the order they land.
+     */
+    public static Optional<List<String>> setOwners(Db db, RunKind k, String name, List<String> owners) {
+        return db.tx(c -> {
+            List<String> before;
+            try (PreparedStatement ps = c.prepareStatement("SELECT owners FROM " + k.table() + " WHERE name = ? "
+                + "FOR UPDATE")) {
+                ps.setString(1, name);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        return Optional.<List<String>>empty();
+                    }
+                    before = strings(rs.getArray(1));
+                }
+            }
+            try (PreparedStatement ps = c.prepareStatement("UPDATE " + k.table() + " SET owners = ? WHERE name = ?")) {
+                ps.setArray(1, c.createArrayOf("text", owners.toArray()));
+                ps.setString(2, name);
+                ps.executeUpdate();
+            }
+            return Optional.of(before);
         });
     }
 }

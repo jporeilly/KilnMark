@@ -30,7 +30,7 @@ import io.kilnmark.kiln.graph.PipelineGraph;
 import io.kilnmark.kiln.graph.PortRef;
 
 /**
- * Rough timings of sort and join on this machine, in memory and spilling, at 1 and 10 million rows: a first
+ * Rough timings of sort, join and window on this machine, in memory and spilling, at 1 and 10 million rows: a first
  * data point for docs/design/benchmarks.md, not a benchmark. Runs only with {@code KILNMARK_TIMING=1}
  * ({@code KILNMARK_TIMING=1 ./gradlew :kiln-nodes:test --tests "*SortJoinTiming*" -i}).
  */
@@ -208,6 +208,43 @@ class SortJoinTiming {
             r.node("join").peakMemoryBytes() / 1048576.0);
         System.out.println("TIMING " + line);
         return line;
+    }
+
+    /**
+     * A window over {@code rows} rows in 10,000 groups of {@code k}, by {@code id}: a running total, a row
+     * number and the amount before.
+     */
+    static String timeWindow(String what, long rows, long limitMb) throws Exception {
+        Count count = new Count();
+        List<GraphNode> nodes = new ArrayList<>();
+        nodes.add(new GraphNode("gen", new Generate(rows, 10_000, 7), null));
+        nodes.add(new GraphNode("window", new WindowFactory().create(Map.of("partition_by", List.of("k"), "order_by",
+            List.of("id"), "columns", Map.of("total", "sum(amount)", "n", "row_number()", "before", "lag(amount)"),
+            "memory_limit_mb", limitMb)), null));
+        nodes.add(new GraphNode("count", count, null));
+        List<Edge> edges = List.of(new Edge(PortRef.parse("gen", "out"), PortRef.parse("window", "in")),
+            new Edge(PortRef.parse("window", "out"), PortRef.parse("count", "in")));
+        long started = System.nanoTime();
+        RunResult r = new KilnGraphRunner((limitMb * 3) << 20, 8, Duration.ofMinutes(30))
+            .run(new PipelineGraph("timing", nodes, edges), e -> { });
+        double seconds = (System.nanoTime() - started) / 1e9;
+        assertTrue(r.succeeded(), r.error());
+        assertEquals(rows, count.rows);
+        assertTrue(count.ordered);
+        String line = String.format(java.util.Locale.UK, "%s: %,d rows, memory_limit_mb %d: %.1f s (%,.0f rows/s), "
+            + "spilled %,.0f MB, peak Arrow memory %,.0f MB", what, rows, limitMb, seconds, rows / seconds,
+            r.node("window").spilledBytes() / 1048576.0, r.node("window").peakMemoryBytes() / 1048576.0);
+        System.out.println("TIMING " + line);
+        return line;
+    }
+
+    @Test
+    void window() throws Exception {
+        timeWindow("warm-up", 1_000_000, 4096);
+        timeWindow("window in memory", 1_000_000, 4096);
+        timeWindow("window spilling", 1_000_000, 16);
+        timeWindow("window in memory", 10_000_000, 8192);
+        timeWindow("window spilling", 10_000_000, 256);
     }
 
     @Test

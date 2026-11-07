@@ -795,7 +795,7 @@ function pairLabels(kind: PairKind, nodeType: string | null, key: string): [stri
   if (kind === "conditions") return ["Port", "Condition", "Add a route"];
   if (kind === "expressions") {
     if (key === "cast") return ["Column", "Type", "Add a column"];
-    return ["Column", nodeType === "aggregate" ? "Summary" : "Expression", "Add a column"];
+    return ["Column", nodeType === "aggregate" ? "Summary" : nodeType === "window" ? "Function" : "Expression", "Add a column"];
   }
   if (nodeType === "lookup") return ["Main column", "Lookup column", "Add a key"];
   if (nodeType === "join") return ["Left column", "Right column", "Add a key"];

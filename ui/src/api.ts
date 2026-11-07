@@ -1312,7 +1312,33 @@ export type PipelineRun = {
   qualityScore?: number | null;
   /** The pipeline's quality.min_score for the version that ran; null when it has none. */
   qualityThreshold?: number | null;
+} & RunTries;
+
+/**
+ * A run's tries (ADR 0053): tryNumber is the try it is on or ended on, from 1, of the tries it may have by
+ * itself; retryAt is when its next try starts while it waits for one. Absent from older servers.
+ */
+export type RunTries = {
+  tryNumber?: number;
+  tries?: number;
+  retryAt?: string | null;
 };
+
+/** One ended try of a run: how it ended, when, why, what came next, and who asked for it by hand. */
+export type RunTry = {
+  number: number;
+  status: "succeeded" | "failed" | "cancelled" | "lost";
+  startedAt: string | null;
+  finishedAt: string | null;
+  /** null when it is held back from you, as the run's own error is. */
+  message: string | null;
+  next: string | null;
+  askedBy: string | null;
+};
+
+/** Who answers for a pipeline or flow (ADR 0053); a team address is shown to designers and admins only. */
+export type Owner = { entry: string | null; kind: "person" | "team"; label: string };
+export type Owners = { owners: Owner[]; none: boolean; note: string | null };
 export type PipelineSummary = {
   name: string;
   displayName: string;
@@ -1508,6 +1534,8 @@ export type PipelineRunDetail = {
   quality?: PipelineNodeQuality[];
   /** Where the rows are, while the run goes (and the last snapshot once it has ended); missing from older servers. */
   progress?: PipelineRunProgress | null;
+  /** Each ended try, the first first (ADR 0053); missing from older servers. */
+  tries?: RunTry[];
 };
 /**
  * A run's rows a second over time, read on its own (pipelinesApi.series): t is ms from workerStartedAt; r each node's
@@ -1658,6 +1686,9 @@ export const pipelinesApi = {
   runs: (name: string) => call<PipelineRun[]>(`${pipe(name)}/runs?limit=50`),
   runDetail: (id: number) => call<PipelineRunDetail>(`/api/v1/pipeline-runs/${id}`),
   cancel: (id: number) => call<PipelineRun>(`/api/v1/pipeline-runs/${id}/cancel`, { method: "POST" }),
+  owners: (name: string) => call<Owners>(`${pipe(name)}/owners`),
+  setOwners: (name: string, owners: string[]) =>
+    call<Owners>(`${pipe(name)}/owners`, { method: "PUT", body: JSON.stringify({ owners }) }),
   /** A run's rows a second over time, the points after `after` ms (all when left out). */
   series: (id: number, after?: number) =>
     call<PipelineProgressSeries>(`/api/v1/pipeline-runs/${id}/series${after != null ? `?after=${after}` : ""}`),
@@ -1718,7 +1749,7 @@ export type FlowRun = {
   rowsWritten?: number | null;
   /** The lowest measured quality score (0 to 1) among its pipeline runs; null when nothing was measured. */
   qualityScore?: number | null;
-};
+} & RunTries;
 export type FlowSummary = {
   name: string;
   displayName: string;
@@ -1813,7 +1844,7 @@ export type FlowItemRun = {
   startedAt: string | null;
   finishedAt: string | null;
 };
-export type FlowRunDetail = { run: FlowRun; nodes: FlowNodeRun[] };
+export type FlowRunDetail = { run: FlowRun; nodes: FlowNodeRun[]; tries?: RunTry[] };
 
 const flowPath = (name: string) => `/api/v1/flows/${encodeURIComponent(name)}`;
 
@@ -1845,6 +1876,11 @@ export const flowsApi = {
   runs: (name: string) => call<FlowRun[]>(`${flowPath(name)}/runs?limit=50`),
   runDetail: (id: number) => call<FlowRunDetail>(`/api/v1/flow-runs/${id}`),
   cancel: (id: number) => call<FlowRun>(`/api/v1/flow-runs/${id}/cancel`, { method: "POST" }),
+  /** One more try of a failed run, keeping what succeeded (ADR 0053); 409 says why when it is not safe. */
+  runAgain: (id: number) => call<FlowRun>(`/api/v1/flow-runs/${id}/run-again`, { method: "POST" }),
+  owners: (name: string) => call<Owners>(`${flowPath(name)}/owners`),
+  setOwners: (name: string, owners: string[]) =>
+    call<Owners>(`${flowPath(name)}/owners`, { method: "PUT", body: JSON.stringify({ owners }) }),
   /** Deletes the flow with its versions, runs and schedules; refused (409) while a run is queued or running. */
   remove: (name: string) => call<null>(flowPath(name), { method: "DELETE" }),
 };
@@ -1955,7 +1991,10 @@ export type NotificationKindId =
   | "pipeline_failed"
   | "pipeline_low_quality"
   | "flow_failed"
-  | "flow_notice";
+  | "flow_notice"
+  | "pipeline_recovered"
+  | "flow_recovered"
+  | "run_taking_long";
 /** The feed itself (items, unread count, marking read) is in src/notifications/api.ts, shared with the shell's bell. */
 export type NotificationSeverity = "high" | "medium" | "low" | "info";
 export type EmailStatus = "sent" | "queued" | "failed" | "skipped";

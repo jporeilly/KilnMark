@@ -37,6 +37,23 @@ details.
   to, so file sources with **Allow writing** work out of the box. Put your own folder there with
   `KILNMARK_FILES_DIR` in `config/.env`, which Kilnmark sees read-only at `/srv/share`; the
   samples and the pack write only in their own `files` volume.
+- **A failed run can be tried again by itself** (a `run:` block on a pipeline or a flow, ADR 0053):
+  `retries` (0 to 5), `retry_delay` (doubled each time, each wait at most an hour, with a little
+  added at random), `retry_on` (`any`, or `lost`: only a run lost with its worker), a `timeout` for
+  each try and `warn_after`. A retry is a new try of the same run, never a new run, so a schedule
+  still fires at most once, and no try starts after its next fire. A cancel, a refusal, a quality
+  gate that stopped the run, and writes that would repeat are never tried again. The run page says
+  "Retrying: try 2 of 4, next at 14:05" and lists every try.
+  ([Trying a run again](docs/guide/pipelines.md#trying-a-run-again))
+- **A flow carries on from where it failed**: nodes that succeeded keep what they did, the rest run
+  again, and a for-each node runs only its failed items. A worker that stops no longer fails the
+  flows it was watching for good: another takes them over. A failed flow run can also be **run
+  again from the failure** by hand, from its page.
+  ([Trying a whole run again](docs/guide/flows.md#trying-a-whole-run-again))
+- **Owners** on pipelines and flows: people or team addresses, who are told when a run fails after
+  its last try, when it recovers, and when it takes longer than expected, whatever their own
+  choices. By default whoever first saved it; with no owner, admins are told. Owning gives no
+  rights. ([Owners](docs/guide/pipelines.md#owners))
 - **Sort rows** (a new `sort` node, ADR 0049): orders rows by one or more columns, each smallest or
   largest first, with empty values last unless a column says `nulls first`. Rows with equal values
   keep their order. Any number of rows can be sorted: past the node's memory limit it carries on on
@@ -50,6 +67,21 @@ details.
   sides comes out with its type; a right column whose name the left already has is renamed
   `right_...`. In the Combine folder of the canvas, with a sample, `sample-join`. A `lookup` is
   still the quicker choice for a small table. ([join](docs/guide/pipeline-nodes.md#join))
+- **Window functions** (a new `window` node, ADR 0049): row numbers, ranks, running totals (count,
+  sum, average, smallest and largest so far) and the previous or next row's value, with an offset
+  and a default, worked out over each group of rows (`partition_by`) in an order (`order_by`). Every
+  row comes out with the new columns: a running balance per account, say, or the latest row per key
+  by keeping row number 1. Rows with equal order values keep their order, and empty values go last
+  unless a column says `nulls first`, as in a sort. Any number of rows can be used: past the node's
+  memory limit it carries on on disk, as a sort does, and the run's log says how much it wrote. In
+  the Transform folder of the canvas, with a sample, `sample-window`.
+  ([window](docs/guide/pipeline-nodes.md#window))
+- **More expression functions** (ADR 0049): `if(condition, a, b)`; padding with `lpad` and `rpad`;
+  `left` and `right`; `split_part` to take one field of a text; `starts_with`, `ends_with` and
+  `contains`; `greatest` and `least`; `date_add` to move a date or time by years, quarters, months,
+  weeks, days, hours, minutes or seconds, and `date_diff` to count the whole units between two; and
+  `sha256` to hash a text. A hash of a column marked sensitive stays marked. Each is checked when a
+  pipeline is saved: its arguments' types, and units and other values that must be written out. ([Functions](docs/guide/pipeline-nodes.md#functions))
 - **Signing in through your organisation's provider no longer ends after a few minutes.** A sign-in
   now renews itself while the person works, and lasts until 8 hours after they signed in at the
   provider, until the provider's own session ends, or until they sign out. With the bundled
@@ -58,6 +90,25 @@ details.
 
 ### Details
 
+- **Run retries, carrying on and owners** (ADR 0053; backlog item 1, done; migration V39): the
+  `run:` block (`RunOptions`), checked when saved (with retries, a pipeline's writes must replace or
+  upsert; so must a flow's pipelines with `retry_on: any`, unless a node has retries of its own); a
+  try's end decided in one place (`RunRetries`) and written with its job (`RunTables.retry`: the run
+  queued again, its job due at the next try, the attempt counted); `pipeline_run_try` and
+  `flow_run_try`; a pipeline or flow job tried as many times as its run may be, so stale recovery,
+  after the new `kilnmark.runs.lost-after` (2m), queues a lost run again and the next worker takes it
+  over; `kilnmark.runs.max-retries` (5; 0 turns run retries off); the carry-on plan (`CarryOn`) and
+  `FlowEngine.restore`; `POST /api/v1/flow-runs/{id}/run-again` (`flow.run_again` in the audit log);
+  `GET` and `PUT .../pipelines/{name}/owners` and `.../flows/{name}/owners`
+  (`pipeline.owners_set`, `flow.owners_set`); new notifications `pipeline_recovered`,
+  `flow_recovered` and `run_taking_long`, with owners told by right; and the per-try `timeout` and
+  `warn_after` watched by the run watcher. A node's own retries take the place of the run's, so
+  tries never multiply, and each node retry wait is now at most an hour too (five tries again from
+  `1h` waited 16 hours before). A failure the server refused before a run started (a version that
+  no longer compiles, say) is now told too. A worker that stops while it watches a flow that may be taken over hands it over
+  rather than failing it; a worker that lost its job never ends or queues again another worker's
+  try; a source's place given back never cuts a retry's wait short; and a pipeline run lost on its
+  last try is told.
 - **Research: what other tools offer** (docs/design/research): the settings about twenty data
   integration and orchestration tools give their nodes and their runs, from their own
   documentation, the 15 gaps that matter most for banks, and a migration map. The backlog takes
@@ -254,6 +305,30 @@ details.
   refuses one matching on a hidden column, and masks a hidden right column under its new name;
   marks follow the rename to what a write writes. The canvas shows Left column and Right column
   for its keys.
+- **`window` sorts with `sort`'s `ExternalSorter`** by partition and then order, and works out its
+  columns as the sorted batches pass (`Windowing` in `kiln-nodes`; docs/design/pipelines.md,
+  "Window functions"). Partition and peer boundaries are found by comparing `KeyCodec` bytes with
+  the row before. Running totals use the `rows` frame (each row its own total, ties in arrival
+  order) and the aggregate node's accumulators and types. `lag` and `lead` take a written-out offset
+  from 0 to 1,000 and any expression as a default; a batch waits until the rows its leads reach have
+  arrived, and only the values a lag reaches are kept after it is passed on, within a limit of
+  `memory_limit_mb` of its own (so a window can hold about twice the limit in all). A column must be one window function, and its name must not be an input's or
+  another new column's, ignoring case. `row_number`, `rank`, `dense_rank`, `lag` and `lead` are
+  refused outside a window node. New columns are marked sensitive when their arguments, partition or
+  order columns are; a preview refuses a window that looks at a hidden column. The quality predictor
+  passes rows through and leaves the new columns unestimated. The canvas shows a Function for each
+  new column and "balance, n · per account_id" on the node. The function index of the components
+  reference lists the window functions, and the build checks the guide's tables name them all.
+- **The new functions** (docs/design/pipelines.md, "The functions of ADR 0049, 6.3"): `if` compiles
+  to the same lazy `case`, so only the branch taken is worked out; the text functions count code
+  points and follow PostgreSQL's rules for padding, negative counts and `split_part`; `lpad` and
+  `rpad` keep to the text limits; `date_add` moves by calendar units and `date_diff` counts whole
+  units elapsed, with units written out; `greatest` and `least` skip empty values; `sha256` gives
+  lower-case hex of the UTF-8 bytes. `contains` and `split_part` search in time linear in the
+  lengths of the text and what they look for, so two long values made to be slow cannot hold a run
+  up. `md5` is left out. Marks follow a hash as any computed column,
+  and a preview refuses to hash a hidden column. The guide's function table lists each, with its
+  types and what it does with empty values, and the build checks it names every function.
 - **A node can say how much it wrote to disk.** `NodeContext.spilled(bytes)` adds to the run's
   `NodeResult.spilledBytes` (not yet stored in the database), and `NodeContext.note(text)` adds a
   line in the node's own words to the run's log (`node_note`, through `RunListener.nodeNote`).

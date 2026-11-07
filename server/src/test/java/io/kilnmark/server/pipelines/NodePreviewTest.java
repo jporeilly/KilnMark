@@ -362,6 +362,10 @@ class NodePreviewTest {
         for (String node : List.of("""
               - {id: x, type: compute, input: people, columns: {shout: "upper(name)"}}
             """, """
+              - {id: x, type: compute, input: people, columns: {h: "sha256(name)"}}
+            """, """
+              - {id: x, type: filter, input: people, condition: "if(starts_with(name, 'Person 1'), true, false)"}
+            """, """
               - {id: x, type: compute, input: people, columns: {n: "cast(name as int64)"}}
             """, """
               - {id: x, type: select, input: people, cast: {name: int64}}
@@ -388,6 +392,16 @@ class NodePreviewTest {
               - {id: x, type: sort, input: people, by: [id, name desc]}
             """, """
               - {id: x, type: sort, input: people, by: [name nulls first]}
+            """, """
+              - {id: x, type: window, input: people, partition_by: [name], order_by: [id], columns: {n: "row_number()"}}
+            """, """
+              - {id: x, type: window, input: people, partition_by: [id, name], order_by: [id], columns: {n: "row_number()"}}
+            """, """
+              - {id: x, type: window, input: people, order_by: [name desc], columns: {n: "rank()"}}
+            """, """
+              - {id: x, type: window, input: people, order_by: [id], columns: {before: "lag(name)"}}
+            """, """
+              - {id: x, type: window, input: people, order_by: [id], columns: {n: "count(name)"}}
             """, """
               - {id: x, type: gate, input: people, on_fail: stop, asset_rules: false, rules: [{type: matches_pattern, field: name, regex: "^Person 1$"}]}
             """, """
@@ -426,6 +440,76 @@ class NodePreviewTest {
             + "before it was read."), v.waits());
         NodePreview.Plan p = NodePreview.plan(y, "x", new NodePreview.Caps(50, 10, 256));
         assertEquals(256L, p.definition().nodes().get(1).config().get("memory_limit_mb"), "a sort holds rows");
+    }
+
+    @Test
+    void aWindowIsPreviewedInOrderAndPassesHiddenColumnsThroughMasked() {
+        String y = yaml("""
+              - {id: people, type: read, source: small, asset: lab.people}
+              - {id: x, type: window, input: people, order_by: [id desc], columns: {n: "row_number()", before: "lag(id)"}}
+            """);
+        PipelinePreviews.Viewer nameHidden = new PipelinePreviews.Viewer() {
+            @Override
+            public boolean mayUnmask() {
+                return false;
+            }
+
+            @Override
+            public Set<String> marks(String urn) {
+                return urn.equals("urn:kilnmark:small:lab.people") ? Set.of("name") : Set.of();
+            }
+        };
+        PipelineViews.NodePreviewView v = previews().preview(y, "x", null, 3, "jo", AccessRole.STEWARD, nameHidden,
+            () -> false);
+        List<String> names = v.columns().stream().map(PipelineViews.PreviewColumn::name).toList();
+        int n = names.indexOf("n");
+        int before = names.indexOf("before");
+        assertEquals(List.of("40", "39", "38"), v.rows().stream().map(r -> r.get(0)).toList());
+        assertEquals(List.of("1", "2", "3"), v.rows().stream().map(r -> r.get(n)).toList());
+        assertEquals(java.util.Arrays.asList(null, "40", "39"), v.rows().stream().map(r -> r.get(before)).toList());
+        assertEquals(List.of("name"), v.masked(), "working on visible columns passes a hidden one through masked");
+        assertEquals(List.of("Node x (window) reads every row it is given before it passes any on, so every row "
+            + "before it was read."), v.waits());
+        NodePreview.Plan p = NodePreview.plan(y, "x", new NodePreview.Caps(50, 10, 256));
+        assertEquals(256L, p.definition().nodes().get(1).config().get("memory_limit_mb"), "a window holds rows");
+    }
+
+    @Test
+    void aHashOfAMarkedColumnIsMarked() {
+        sources.asset("urn:kilnmark:small:lab.people", "id:int64", "name:text");
+        String y = yaml("""
+              - {id: people, type: read, source: small, asset: lab.people}
+              - {id: c, type: compute, input: people, columns: {name_hash: "sha256(name)", id_hash: "sha256(cast(id as utf8))", initial: "left(name, 1)"}}
+            """);
+        PipelineCompilerPort.Compilation c = KilnPipelineCompiler.compile(NodePreview.plan(y, "c").definition(),
+            factories, false);
+        assertEquals(List.of(), c.problems());
+        NodePreview.Hidden h = NodePreview.marked(c, Map.of("people", Set.of("name")), "c");
+        assertTrue(h.hides("name_hash") && h.hides("initial"), "a hash, or part, of a sensitive value is sensitive");
+        assertFalse(h.hides("id_hash"));
+    }
+
+    @Test
+    void aWindowMarksWhatItWorksOutFromAMarkedColumn() {
+        sources.asset("urn:kilnmark:small:lab.people", "id:int64", "name:text");
+        String y = yaml("""
+              - {id: people, type: read, source: small, asset: lab.people}
+              - {id: w, type: window, input: people, order_by: [id], columns: {n: "row_number()", before: "lag(name)", next_id: "lead(id)"}}
+              - {id: r, type: window, input: people, partition_by: [id, name], order_by: [id], columns: {k: "row_number()"}}
+              - {id: o, type: window, input: people, order_by: [name], columns: {k: "rank()"}}
+            """);
+        PipelineCompilerPort.Compilation c = KilnPipelineCompiler.compile(NodePreview.plan(y, "w").definition(),
+            factories, false);
+        assertEquals(List.of(), c.problems());
+        NodePreview.Hidden w = NodePreview.marked(c, Map.of("people", Set.of("name")), "w");
+        assertTrue(w.hides("name") && w.hides("before"), "a lag of a marked column is marked");
+        assertFalse(w.hides("n") || w.hides("next_id") || w.hides("id"));
+        for (String node : List.of("r", "o")) {
+            PipelineCompilerPort.Compilation k = KilnPipelineCompiler.compile(NodePreview.plan(y, node).definition(),
+                factories, false);
+            assertTrue(NodePreview.marked(k, Map.of("people", Set.of("name")), node).hides("k"),
+                node + ": a number worked out over groups or an order of a marked column is marked");
+        }
     }
 
     @Test

@@ -50,6 +50,10 @@ public class PipelineResource {
     @jakarta.inject.Inject
     io.kilnmark.server.audit.AuditLog audit;
 
+    /** The team addresses an admin added, which owners may name (ADR 0053). */
+    @jakarta.inject.Inject
+    io.kilnmark.server.notify.NotificationStore notificationStore;
+
     /** Who is looking: a failed run's messages may quote values from the data (see PipelineService). */
     @jakarta.inject.Inject
     io.kilnmark.server.quality.Sights sights;
@@ -399,6 +403,52 @@ public class PipelineResource {
 
     private static jakarta.ws.rs.core.EntityTag etag(PipelineViews.PipelineDetail d) {
         return new jakarta.ws.rs.core.EntityTag(Integer.toString(d.latestVersion()));
+    }
+
+    @GET
+    @Path("{name}/owners")
+    @Operation(summary = "A pipeline's owners", description = "Who answers for the pipeline (ADR 0053): told when its runs "
+        + "fail after their last try, recover, or take longer than expected. Each is a person's sign-in name or a "
+        + "team address; team addresses are shown to designers and admins only. Owners have no rights through "
+        + "owning. With none, admins are told in their place. Role: viewer.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "The owners"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "404", description = "No such pipeline")})
+    public io.kilnmark.server.runs.Owners.Shown owners(@PathParam("name") String name) {
+        return pipelines.owners(name, AccessRole.highest(identity::hasRole));
+    }
+
+    @PUT
+    @Path("{name}/owners")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
+    @Operation(summary = "Set a pipeline's owners", description = "Replaces the owners: 0 to 10 sign-in names and team "
+        + "addresses (a team address must be one an admin added under Notifications). Owners are kept outside the "
+        + "YAML, so this makes no new version; each change is an audit event. Role: designer.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "Set; the body is the owners"),
+        @APIResponse(responseCode = "400", description = "Too many, an entry that is not a sign-in name, or a team "
+            + "address no admin added"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "403", description = "Not a designer"),
+        @APIResponse(responseCode = "404", description = "No such pipeline")})
+    public io.kilnmark.server.runs.Owners.Shown setOwners(@PathParam("name") String name, PipelineViews.OwnersChange body) {
+        AccessRole role = AccessRole.highest(identity::hasRole);
+        java.util.Set<String> teams = new java.util.HashSet<>();
+        notificationStore.teams().forEach(t -> {
+            if (t.subscription().email() != null) {
+                teams.add(t.subscription().email());
+            }
+        });
+        java.util.List<String> before = pipelines.setOwners(name, body == null ? null : body.owners(), teams, role);
+        java.util.Map<String, Object> detail = new java.util.LinkedHashMap<>();
+        detail.put("before", before);
+        detail.put("after", pipelines.owners(name, AccessRole.ADMIN).owners().stream()
+            .map(io.kilnmark.server.runs.Owners.View::entry).toList());
+        audit.record(io.kilnmark.server.audit.AuditLog.actor(identity), io.kilnmark.server.audit.AuditLog.PIPELINE_OWNERS_SET, name,
+            detail);
+        return pipelines.owners(name, role);
     }
 
     private String who() {

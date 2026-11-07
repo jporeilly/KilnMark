@@ -1,4 +1,5 @@
 import { useRef, useState, type FormEvent } from "react";
+import { triedWords } from "../components/RunTries";
 import { flowsApi, type FlowParameter, type FlowRun, type FlowRunStatus, type FlowNodeStatus } from "../api";
 import { defaultText, runValues } from "./parameters";
 import { ParameterFields } from "./ParameterFields";
@@ -34,7 +35,14 @@ export function FlowStatus({ status, stopping }: { status: FlowRunStatus | FlowN
 }
 
 export function FlowRunStatus({ run }: { run: FlowRun | null }) {
-  return <FlowStatus status={run?.status ?? null} stopping={run?.cancelRequested} />;
+  const tried = run ? triedWords(run) : null;
+  return (
+    <>
+      <FlowStatus status={run?.status ?? null} stopping={run?.cancelRequested} />
+      {run && run.status === "queued" && run.retryAt && <span className="small muted"> retrying</span>}
+      {tried && <span className="small muted"> {tried}</span>}
+    </>
+  );
 }
 
 /**

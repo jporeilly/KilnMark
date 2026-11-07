@@ -291,4 +291,29 @@ class FlowEngineTest {
         assertEquals(List.of("c", "d"), e.ready());
         assertEquals(State.SKIPPED, e.state("b"));
     }
+
+    @Test
+    void aRestoredNodeIsNeverStartedAndItsConnectionsFallAsBefore() {
+        // a -> b on success, a -> c on failure, d alone: a succeeded before, b failed, c skipped, d ran
+        FlowEngine e = new FlowEngine(List.of("a", "b", "c", "d"),
+            List.of(p("a", "b", Kind.SUCCESS), p("a", "c", Kind.FAILURE), p("b", "d", Kind.ALWAYS)), Map.of());
+        e.restore("a", State.SUCCEEDED, Map.of("share", 0.1));
+        assertEquals(List.of("b"), e.ready(), "a is kept: b starts, c is skipped, a never starts again");
+        assertEquals(State.SKIPPED, e.state("c"));
+        assertEquals(0.1, e.value("a.share"), "later nodes read what the kept node reported");
+        assertThrows(IllegalStateException.class, () -> e.restore("b", State.SUCCEEDED, Map.of()),
+            "only a node that has not started");
+        e.finish("b", State.SUCCEEDED, Map.of());
+        assertEquals(List.of("d"), e.ready());
+        e.finish("d", State.SUCCEEDED, Map.of());
+        assertTrue(e.done());
+        assertEquals(FlowEngine.Outcome.SUCCEEDED, e.outcome());
+
+        FlowEngine failed = new FlowEngine(List.of("a", "c"), List.of(p("a", "c", Kind.FAILURE)), Map.of());
+        failed.restore("a", State.FAILED, Map.of());
+        assertTrue(failed.handled("a"), "a failure kept as it was is handled as before");
+        assertEquals(List.of("c"), failed.ready());
+        assertThrows(IllegalArgumentException.class, () -> new FlowEngine(List.of("z"), List.of(), Map.of())
+            .restore("z", State.SKIPPED, Map.of()));
+    }
 }

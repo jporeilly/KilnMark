@@ -12,11 +12,10 @@ audit reporting tables and dashboards about Kilnmark itself under item 18, from 
 ## 1. Finish what is half built
 
 1. **Run retries, owners, and Run again from the failure** (owner, 7 November 2026; research in
-   [docs/design/research](../design/research/README.md), run options section 8). Needs an ADR
-   first. Half built: stale jobs are queued again while attempts remain (`JobQueue.recoverStale`)
-   and a flow carries on from a node's latest try, but a flow job is tried once, so no flow is
-   taken over today (docs/design/flows.md says so; flow-controls.md C4 reads as if it were, and is
-   corrected here).
+   [docs/design/research](../design/research/README.md), run options section 8). **Done**
+   ([ADR 0053](../adr/0053-run-retries-and-owners.md), migration V39; docs/design/pipelines.md,
+   "Run retries and owners", and docs/design/flows.md, "Carrying on from a failure"): a pipeline or
+   flow job is now tried as many times as its run may be, so a lost flow is taken over.
    - **Retries on a pipeline or a flow**, however it was started: a number of tries before it
      fails, a delay that doubles to a limit, and which failures to try again (any, or only a lost
      worker). Only when trying again is safe, by node retries' rule; never a cancel; never past the
@@ -70,8 +69,10 @@ audit reporting tables and dashboards about Kilnmark itself under item 18, from 
    its order (Explore, the SQL generator, settings on tabs, operations) are in
    [docs/design/database-tools.md](../design/database-tools.md).
 9. **More nodes** (owner, 6 November 2026; [ADR 0049](../adr/0049-more-nodes-and-how-coarse-they-are.md)).
-   `sort` and `join` (two inputs of any size, spilling to disk) are done (#137, #140); next
-   `window` and more expression functions; then web calls (a REST connector, an `http`
+   `sort` and `join` (two inputs of any size, spilling to disk) are done (#137, #140), and
+   `window` (row numbers, ranks, running totals, lag and lead, spilling to disk), and more
+   expression functions (`if`, padding, splitting, date arithmetic, `sha256` and others); next web
+   calls (a REST connector, an `http`
    node and an `http` flow node, behind the allowed hosts an admin sets), JSON and XML, `pivot`
    and `unpivot`, change detection and dimension history, `sequence`, `mask`, generated rows, and
    file actions in flows. Nodes stay coarse: one per shape of work, single-value operations as

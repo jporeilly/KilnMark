@@ -155,4 +155,43 @@ class RunWatchTest {
             watch.stop();
         }
     }
+
+    @Test
+    void aTryPastItsTimeoutStopsAndItsOwnersAreToldOnceAtWarnAfter() throws Exception {
+        Database database = new Database();
+        java.util.concurrent.atomic.AtomicReference<java.time.Instant> now = new java.util.concurrent.atomic.AtomicReference<>(
+            java.time.Instant.parse("2026-11-07T10:00:00Z"));
+        RunWatch watch = new RunWatch(database, Duration.ofDays(1), now::get);
+        try {
+            AtomicInteger warned = new AtomicInteger();
+            java.util.concurrent.CountDownLatch told = new java.util.concurrent.CountDownLatch(1);
+            RunWatch.Signal s = watch.watch(PipelineStore.KIND, 7).limits(now.get(), Duration.ofHours(2),
+                Duration.ofHours(1), () -> {
+                    warned.incrementAndGet();
+                    told.countDown();
+                });
+            now.set(now.get().plus(Duration.ofMinutes(59)));
+            watch.tick();
+            assertFalse(s.timedOut());
+            assertEquals(0, warned.get(), "not yet");
+            now.set(now.get().plus(Duration.ofMinutes(2)));
+            watch.tick();
+            watch.tick();
+            assertTrue(told.await(5, java.util.concurrent.TimeUnit.SECONDS), "told past warn_after");
+            assertFalse(s.timedOut(), "warn_after does not stop the run");
+            assertFalse(s.cancelled());
+            now.set(now.get().plus(Duration.ofHours(1)));
+            watch.tick();
+            assertTrue(s.timedOut(), "past its timeout the try is to stop");
+            assertFalse(s.cancelled(), "a timeout is not a person's cancel: the try fails, and may be tried again");
+            Thread.sleep(200);
+            assertEquals(1, warned.get(), "told once");
+            RunWatch.Signal free = watch.watch(FlowStore.KIND, 8).limits(now.get(), null, null, () -> { });
+            now.set(now.get().plus(Duration.ofDays(30)));
+            watch.tick();
+            assertFalse(free.timedOut(), "no timeout: no limit");
+        } finally {
+            watch.stop();
+        }
+    }
 }

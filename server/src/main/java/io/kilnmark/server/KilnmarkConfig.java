@@ -48,6 +48,9 @@ public interface KilnmarkConfig {
     /** The scheduler role: how often it looks for schedules that are due (ADR 0046). */
     Schedules schedules();
 
+    /** Run retries and lost runs (ADR 0053): when a run counts as lost, and the server's cap on retries. */
+    Runs runs();
+
     /** Settings for the {@code files} connector and Parquet reading. */
     Files files();
 
@@ -428,6 +431,26 @@ public interface KilnmarkConfig {
          */
         @WithDefault("10")
         int maxWaitingPerCaller();
+    }
+
+    /** Run retries and lost runs, for pipelines and flows (ADR 0053, docs/design/pipelines.md). */
+    interface Runs {
+        /** The least {@link #lostAfter()} may be. */
+        Duration MIN_LOST_AFTER = Duration.ofSeconds(30);
+        /** The most {@link #lostAfter()} may be. */
+        Duration MAX_LOST_AFTER = Duration.ofMinutes(30);
+
+        /**
+         * A running pipeline or flow job whose worker has not renewed its lease for this long, and
+         * whose lock nobody holds, counts as lost: queued again while its run has tries left (30s to
+         * 30m; the server refuses to start otherwise).
+         */
+        @WithDefault("2m")
+        Duration lostAfter();
+
+        /** The most retries any run may have on this server, whatever its YAML says: 0 to 5; 0 turns run retries off. */
+        @WithDefault("5")
+        int maxRetries();
     }
 
     /** Schedules of pipelines and flows (ADR 0046, docs/design/schedules.md). */

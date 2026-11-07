@@ -427,8 +427,11 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
   else … end`, and `cast(x as type)`.
 - Functions: `trim lower upper length substring replace coalesce nullif abs round floor ceil
   concat regex_match regex_replace (with time and size limits) now today date_trunc
-  date_part parse_date parse_timestamp format_date`. Aggregates in `aggregate` only: `count
-  count_distinct sum min max avg`.
+  date_part parse_date parse_timestamp format_date`, and since ADR 0049 `if lpad rpad left right
+  split_part starts_with ends_with contains greatest least date_add date_diff sha256`. Aggregates
+  in `aggregate` only: `count
+  count_distinct sum min max avg`. Window functions in `window` only: `row_number rank dense_rank
+  lag lead` and running `count sum avg min max` (section 4, "Window functions").
 - SQL null rules. Types are checked against the input schema before the run: an unknown column or
   a type mismatch is an error naming the node, the expression and the position.
 - Later, a read followed by filters and computes on the same database can be pushed down as SQL.
@@ -475,9 +478,35 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
   `parse_date` and `parse_timestamp` give null instead.
 - **Functions as built:** `trim lower upper length substring replace coalesce nullif abs round
   floor ceil concat regex_match regex_replace now today date_trunc date_part parse_date
-  parse_timestamp format_date`. `now()` is fixed when the node starts. Date patterns use
-  `DateTimeFormatter` letters, read strictly (31 February is rejected) and must be written out;
+  parse_timestamp format_date if lpad rpad left right split_part starts_with ends_with contains
+  greatest least date_add date_diff sha256`. `now()` is fixed when the node starts. Date patterns
+  use `DateTimeFormatter` letters, read strictly (31 February is rejected) and must be written out;
   so must `date_trunc` / `date_part` units and `round`'s digits, so mistakes are found before a run.
+- **The functions of ADR 0049, 6.3** (decisions):
+  - `if(cond, a, b)` is a function, not new syntax: `case` was already in the language, and a
+    function call needs no new keyword (so no column called `if` has to be quoted). It compiles to
+    the same lazy `case` node, so only the branch taken is worked out; an empty condition takes `b`,
+    as SQL's `case` does.
+  - Text functions count Unicode code points, as `length` and `substring` do. `lpad`, `rpad`,
+    `left`, `right` and `split_part` follow PostgreSQL (padding cuts longer text to `n`; negative
+    counts for `left`, `right` and `split_part` count from the other end), so a reader who knows SQL
+    is not surprised; `lpad` and `rpad` are capped at 1,000,000 characters (UTF-16 units, as the
+    other functions count them) and count against the batch's text budget. `contains` and
+    `split_part` look for a text of more than 64 characters with the Knuth-Morris-Pratt search,
+    linear in both lengths: `String.indexOf` is quadratic at worst, and both values may come from the
+    data. (`replace`, which predates them, still uses `indexOf`.)
+  - `date_add(d, n, 'unit')` moves by calendar units with Java's `plus` (31 January plus a month is
+    the end of February); `date_diff('unit', a, b)` counts whole units elapsed (`ChronoUnit.between`),
+    not boundaries crossed: the guide shows both on a month. Units are written out, as for
+    `date_trunc`. A date with a time unit is refused in `date_add` and read as its midnight in
+    `date_diff`.
+  - `greatest` and `least` skip nulls (PostgreSQL's rule, not SQL Server's), widening to one type.
+  - `sha256` hashes the UTF-8 bytes and gives lower-case hex. `md5` is left out: a bank's reviewers
+    would rightly question it, and anyone who needs one to match another system can be given it
+    then, labelled as not for security. A hash is a value worked out from its column, so marks
+    follow it as they follow any computed column (`NodePreview.marked`), and a preview refuses to
+    hash a hidden column: a hash of a sensitive value is still sensitive (ADR 0027), as a hash of a
+    short value such as a date of birth can be reversed by trying every value.
 - **Regular expressions** are safe on any data and pattern. Refused: a repeated group that itself
   repeats (`(a+)+`, `(\w+\s?)*`), with one exception: an unbounded repeat (`+` or `*`, never a
   counted `{n}` or `{n,m}`, which defeats the matcher's own caching) of a group that starts with
@@ -496,7 +525,7 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
   function call. Compiled patterns are cached, 128 per call. `regex_match` finds the pattern
   anywhere (anchor with `^ $`). `like` is matched without regular expressions, with the same value
   cap and a budget of 50 million steps per value.
-- **Text results** (`||`, `concat`, `replace`, `regex_replace`) are capped at 1,000,000 characters
+- **Text results** (`||`, `concat`, `replace`, `regex_replace`, `lpad`, `rpad`) are capped at 1,000,000 characters
   per value, checked while they are built, and at 64,000,000 characters per batch for each
   operator or call, so a modest result repeated over a full batch cannot exhaust memory. Text compares in Unicode code point order (the order of
   UTF-8 bytes). `trim` strips characters Java counts as whitespace (spaces, tabs, line breaks and
@@ -524,6 +553,7 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
 | `limit` | `in` → `out` | First N rows, for trying a pipeline out |
 | `sort` | `in` → `out` | Orders rows by columns, spilling to disk past its memory limit |
 | `join` | `left`, `right` → `out` | Inner, left, right or full join of two inputs of any size (sort-merge, spilling) |
+| `window` | `in` → `out` | Row numbers, ranks, running totals, lag and lead by partition and order, spilling to disk |
 | `gate` | `in` → `out`, `quarantine` | Checks rows against the asset's rules and its own in the stream; stops the run, quarantines failing rows or warns (docs/design/data-quality.md section 7) |
 | `write` | `in` → | Writes to a database table or a file in a saved source |
 
@@ -563,6 +593,8 @@ found through `ServiceLoader`. Settings, with defaults:
   feed nothing else.
 - `sort`: `by` (kind `ORDER`: a list of `column [asc|desc] [nulls first|last]`, as SQL writes it;
   the UI writes the same text), `memory_limit_mb` (256). See "Sorting, and spilling to disk" below.
+- `window`: `partition_by` (columns), `order_by` (kind `ORDER`, as `sort`'s `by`), `columns` (name →
+  one window function), `memory_limit_mb` (256). See "Window functions" below.
 
 ### Sorting, and spilling to disk (ADR 0049)
 
@@ -683,6 +715,54 @@ found through `ServiceLoader`. Settings, with defaults:
   rename the same way, so a write carries them to `right_name`.
 - **Quality predictor.** It does not yet estimate a join (rows depend on how keys repeat): the
   join's output columns are known, its rows are reported as not known.
+
+### Window functions (ADR 0049)
+
+`window` adds columns worked out over the rows of each partition in order: `row_number`, `rank`,
+`dense_rank`, running `count`, `sum`, `avg`, `min` and `max`, and `lag` and `lead`. The functions are
+`Windowing` in `io.kilnmark.kiln.nodes.expr`; the node is `WindowFactory`.
+
+- **One function per column, arguments as expressions.** Each value of `columns` must be one call
+  of a window function; its arguments are ordinary expressions over the row (`sum(price * qty)`),
+  compiled once against the input. A window column combined with other values (`opening +
+  sum(amount)`) is refused with "work out more from it in a compute node after": a later `compute`
+  says the same with no second kind of expression to learn. `lag`, `lead`, `row_number`, `rank` and
+  `dense_rank` are refused anywhere else, saying they belong in a window node.
+- **Sorting, reused.** Rows go into an `ExternalSorter` keyed by the partition columns (ascending,
+  nulls last) and then `order_by`, so the window spills to disk exactly as `sort` does (the same
+  encrypted private folder, deleted at the end, the same note in the run's log, the same stability:
+  rows with equal keys keep their arrival order). Where a partition starts, and where a run of equal
+  `order_by` values (peers) starts, is found by encoding each sorted batch's partition and order
+  columns with `KeyCodec` and comparing bytes with the row before, across batch boundaries; nulls
+  are equal to each other, so empty values form one partition.
+- **Frames.** Running totals use SQL's `rows between unbounded preceding and current row`, not the
+  default `range` frame: a bank statement's running balance gives each row its own balance even when
+  two postings share a timestamp. Ties are told apart only by arrival order, so the guide advises an
+  id as the last `order_by` column. `rank` and `dense_rank` are the functions that treat peers alike.
+  The totals reuse the aggregate node's accumulators and result types (`Aggregation.newAcc`,
+  `Aggregation.resultType`), so a running `sum` and an `aggregate`'s `sum` always agree.
+- **Lag and lead.** The offset is a literal from 0 to 1,000 (`Windowing.MAX_OFFSET`); the default is
+  any expression on the current row, widened with the value to a common type (refused when there is
+  none). Each sorted batch is held until the rows its furthest `lead` looks at have arrived, then
+  passed on with its new columns (its own vectors moved, not copied); after that only its argument
+  values are kept, as long as a later row's `lag` can reach them. A row looks at another only when
+  both carry the same partition number, given as partitions start. What is held (the batches waiting
+  and the lag values kept, estimated in bytes) is checked against `memory_limit_mb` on its own; past
+  it the run stops with "the rows held for lag and lead take more than N MB", which only very wide
+  rows and a large offset reach. The sorter's own rows are not counted in it: with nothing on disk
+  they stay in memory until the node ends, so a window can hold about twice the limit, where a sort
+  holds about one and an eighth. Counting both against one budget would make a window that fits in
+  memory spill as soon as it has a lead.
+- **Names and types.** The input's columns come out as they were, then the new ones, written with the
+  expression types (`int64` for numbers and ranks, `decimal(38,s)`, `float64`, `utf8`, `date`,
+  `timestamp`). A new name equal to an input column's or another new column's, ignoring case (as a
+  database target would), is refused before the run.
+- **Marks and preview.** A new column is marked sensitive when its arguments name a marked column,
+  or when its partition or order columns are marked (a rank shows how marked values compare); input
+  columns keep their marks. A preview refuses a window that groups, orders or works out a value from
+  a column hidden from the caller, as it refuses `sort` and `compute`, and runs one otherwise with its
+  share of the preview's memory. The quality predictor passes the rows through and reports the new
+  columns as not estimated.
 
 Memory: a node closes every batch it takes or hands it on, and splits batches by copying only
 when rows go to more than one port (a batch whose rows all go one way is handed on whole).
@@ -857,7 +937,8 @@ asset's previous profile.
 - **Queueing.** `POST .../runs` checks the version again (a source may have stopped allowing
   writes since it was saved) and queues a job of kind `pipeline` with the run, in one
   transaction. A pipeline has at most one run queued or running: asking again while one is gets a
-  409. A pipeline job is tried once, never repeated on its own: its writes may have begun.
+  409. A pipeline job is tried once, never repeated on its own, unless its `run: retries` allow it
+  and every write replaces or upserts (ADR 0053, "Run retries and owners" below).
   It holds an advisory lock of its own (keyed by the job), not a source lock, so runs may overlap
   scans of the sources they read; recovery leaves a job alone while its lock is held, and marks
   the run failed when the job is given up.
@@ -1032,6 +1113,84 @@ every half a second (`RunWatch.EVERY`), and asks the database only for what is w
   read a thousand times is none, ten flows watching fifty runs are one. `RunLifecycleTest` writes a
   cancel straight into a running pipeline's and flow's rows, as another process would, and sees each
   stop within seconds.
+
+### Run retries and owners (decisions, ADR 0053)
+
+What the lifecycle above does when a try fails, and who is told. Pipelines and flows share it, in
+`io.kilnmark.server.runs`; the flow's own part (carrying on) is in docs/design/flows.md.
+
+![How a run is tried again: a try that fails is tried again only when it may be (never a cancel, a refusal, a quality gate, a sql commit in doubt or writes that would repeat, never past the schedule's next fire, and only while tries are left); it waits retry_delay, doubled each time and at most an hour, holding no worker; a flow's next try keeps the nodes that succeeded and runs the rest; after the last try one notice goes to the owners](../guide/images/run-retries.svg)
+
+- **The options.** `RunOptions` (kiln-core) reads the top-level `run:` block of a pipeline and a
+  flow: `retries` 0-5, `retry_delay` 10s-1h (1m), `retry_on` `any`|`lost`, `timeout` 90s-7d,
+  `warn_after` 1m-7d and less than `timeout`. `RunOptions.wait` is the doubled delay, each wait at
+  most an hour (node retries' `FlowDefinition.Retry.before` uses it too, which had no cap), and
+  `waitWithJitter` adds up to a tenth at random. The server's `kilnmark.runs.max-retries` (5; 0
+  turns run retries off) caps `retries`; `RunSettings` refuses to start with it, or
+  `kilnmark.runs.lost-after` (2m, 30s-30m), out of range.
+- **Saving.** `PipelineService.runProblems`: with `retries` above 0, every write must replace or
+  upsert (`unsafeToRepeat`, the rule node retries use), whatever `retry_on` says, since a lost run may
+  have written too; checked again when a run is queued (409). A flow: with `retries` above 0 and
+  `retry_on: any`, every pipeline a node without retries of its own runs must be safe
+  (`FlowService.pipelineProblems`); with `retry_on: lost` it need not, as a takeover never starts a
+  pipeline run again.
+- **The tries (V39).** `pipeline_run` and `flow_run` get `run_try` (from 0), `tries` (1 + retries
+  after the cap; 1 for a run a flow node starts), `retry_at` and `warned_at`; a pipeline run gets
+  `failed_as` (refused, gate, timed_out, lost, error, cancelled), so a flow knows whether running its
+  node again could change anything. `pipeline_run_try` and `flow_run_try` hold each ended try: its
+  number, status (`lost` too), start and end, error, `next` (tried again, or why not) and `asked_by`.
+  `RunTables.finishRun` records the try that ends with the run; `failOrphanedRuns` records the lost
+  ones.
+- **One job a run, tried as many times as the run.** `RunTables.addJob` gives the job
+  `max_attempts` = `tries`. A worker that ends a failed try decides with `RunRetries.decide` (pure,
+  `RunRetriesTest`): never a cancel, a refusal, a gate, a commit in doubt, a flow a stop node ended,
+  writes that would repeat (checked against the version the run used), a try past
+  `schedule.next_at` of the schedule whose last fire started it, or one past its tries; `retry_on:
+  lost` only a lost try. To try again, `RunTables.retry` does in one transaction what a new try needs:
+  the try's row, the run queued again with `run_try + 1`, `retry_at` and "Try 1 of 3 failed; trying
+  again at 14:05" as its message, and the job (still this worker's) queued again for then, the
+  attempt counted. A source's place given back wakes the runs waiting for a place, never one waiting
+  for its next try (`JobQueue.wakeWaiting`), so a wait is never cut short. So a schedule's fire is
+  never repeated, one run at a time holds while it waits
+  (a fire then is skipped), `?wait=` and `kilnmark-run` keep waiting, and a request key gives back
+  the same run. A cancel while it waits cancels it at once and takes the job off the queue.
+- **A later try of a pipeline** starts from its beginning: `clearTry` removes the earlier try's node
+  runs, quality, points, progress and result; the log carries on after its last event
+  (`RunLog(..., after)`), "Try 2 of 3 started".
+- **Lost runs.** `JobQueue.recoverStale(staleAfter, lostAfter)` takes pipeline and flow jobs whose
+  heartbeat is older than `kilnmark.runs.lost-after` and whose lock nobody holds, and queues them
+  again while attempts remain. The next worker finds the run still **running**: that is a takeover.
+  It decides as above with the ending `lost` (the lost-after wait is its wait); a pipeline is queued
+  again as its next try (`RunTables.takeOver(..., requeue)`) and starts from its beginning; a flow
+  carries on, still running. A worker that is shutting down, or whose lease was lost, ends its try as
+  lost and decides then.
+- **Timeout and warn_after** are watched by the process's run watcher: `RunWatch.Signal.limits`
+  holds the try's start, its timeout and its warning; each look turns `timedOut()` past the timeout
+  (the run stops as a cancel stops it, and the try fails "Took longer than 2h and was stopped") and
+  calls the warning once past `warn_after`, which marks `warned_at` (once a run, whatever the
+  process) and tells `run_taking_long`. `RunWatchTest` drives both with a clock of its own.
+- **Owners** are `owners text[]` on `pipeline` and `flow`, outside the YAML (0-10; `Owners.check`:
+  a sign-in name, or a team address an admin added, lower-cased), set to the first saver when
+  created (and by V39 for those that existed), changed with `PUT .../owners` by designers and admins,
+  each change `pipeline.owners_set` or `flow.owners_set` with the list before and after. They give no
+  rights and are never what a run acts as. `GET .../owners` shows team addresses to designers and
+  admins only.
+- **Notifications** (docs/design/notifications.md): none for a try that is tried again; the failure
+  after the last try says ", after 3 tries. Not tried again: ..."; `pipeline_recovered` and
+  `flow_recovered` close the problem a failure opened; `run_taking_long` once a run. Each carries the
+  pipeline or flow it is about (`NotificationEvent.ownedBy`), whose owners are told by right.
+- **API.** A run's summary has `tryNumber` (from 1), `tries` and `retryAt`; its detail `tries` (each
+  ended try; a pipeline's messages held back from viewers as its error is). `POST
+  /api/v1/flow-runs/{id}/run-again` (docs/design/flows.md). Pages: "Retrying: try 2 of 4, next at
+  14:05" on the run page, **Tries**, "Succeeded on try 3" in the history, and **Owners** on the
+  pipeline and flow pages.
+- **Tests.** `RunOptionsTest` (ranges, the cap, the spread), `RunRetriesTest` (every rule, a retry
+  storm, the server settings, owners), `CarryOnTest` (the flow's plan), `RunWatchTest` (timeout and
+  warning), and `RunRetriesApiTest` on PostgreSQL: a try again of the same run that tells nobody, one
+  notice after the last try to an owner who unticked the kind, recovered, an appending pipeline
+  refused, a cancel never tried again, a scheduled run not tried past its next fire, a flow carrying
+  on, node retries not multiplied, a for-each node trying only its failed items, Run again from the
+  failure kept and refused, a takeover, owners and the long-run notice.
 
 
 - `GET/POST /api/v1/pipelines`, `GET/PUT/DELETE /api/v1/pipelines/{name}` (PUT saves a new

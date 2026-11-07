@@ -21,15 +21,16 @@ import java.util.Set;
  * @param nodes       the nodes in the order written
  * @param quality     the pipeline's quality settings ({@code quality:}), or null when it has none
  * @param parameters  what it takes ({@code parameters:}), each with a default, in the order written
+ * @param run         how its runs are tried ({@code run:}, ADR 0053); {@link RunOptions#NONE} when not written
  */
 public record PipelineDefinition(String name, String description, List<NodeDefinition> nodes, Quality quality,
-                                 List<Parameters.Parameter> parameters) {
+                                 List<Parameters.Parameter> parameters, RunOptions run) {
 
     /** The format this version reads. */
     public static final String FORMAT = "pipeline/v1";
 
     static final Set<String> TOP_LEVEL_KEYS = Set.of("kilnmark", "name", "description", "parameters", "quality",
-        "nodes", "layout");
+        "run", "nodes", "layout");
     static final Set<String> QUALITY_KEYS = Set.of("min_score");
 
     /**
@@ -43,6 +44,13 @@ public record PipelineDefinition(String name, String description, List<NodeDefin
     public PipelineDefinition {
         nodes = List.copyOf(nodes);
         parameters = parameters == null ? List.of() : List.copyOf(parameters);
+        run = run == null ? RunOptions.NONE : run;
+    }
+
+    /** A pipeline whose runs are tried once. */
+    public PipelineDefinition(String name, String description, List<NodeDefinition> nodes, Quality quality,
+                              List<Parameters.Parameter> parameters) {
+        this(name, description, nodes, quality, parameters, RunOptions.NONE);
     }
 
     /** A pipeline without quality settings. */
@@ -187,7 +195,7 @@ public record PipelineDefinition(String name, String description, List<NodeDefin
             if (!TOP_LEVEL_KEYS.contains(e.key()) && !Renamed.isOld(e.key(), TOP_LEVEL_KEYS)) {
                 problems.add(Problem.at(e.keyPosition(), null, "Unknown key '" + Suggest.clip(e.key()) + "'"
                     + Suggest.hint(e.key(), TOP_LEVEL_KEYS)
-                    + ": a pipeline has kilnmark, name, description, parameters, quality, nodes and layout"));
+                    + ": a pipeline has kilnmark, name, description, parameters, quality, run, nodes and layout"));
             }
         }
         String name = text(top.entries().get("name"), "name", null, problems);
@@ -196,6 +204,7 @@ public record PipelineDefinition(String name, String description, List<NodeDefin
         }
         String description = text(top.entries().get("description"), "description", null, problems);
         Quality quality = quality(top.entries().get("quality"), problems);
+        RunOptions run = RunOptions.read(top.entries().get("run"), problems);
         List<Parameters.Parameter> parameters = Parameters.read(top.entries().get("parameters"), "pipeline", true,
             problems);
 
@@ -217,7 +226,7 @@ public record PipelineDefinition(String name, String description, List<NodeDefin
                 }
             }
         }
-        return new Parsed(new PipelineDefinition(name, description, nodes, quality, parameters), problems);
+        return new Parsed(new PipelineDefinition(name, description, nodes, quality, parameters, run), problems);
     }
 
     /** The {@code quality:} mapping: {@code min_score}, a share from 0 to 1. Null when absent or wrong. */

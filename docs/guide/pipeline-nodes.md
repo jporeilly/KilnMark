@@ -1,7 +1,7 @@
 # Pipeline nodes and expressions
 
 This guide describes the nodes that change rows in a pipeline (filter, compute, select, lookup,
-join, aggregate, union, dedupe, route, limit and sort) and the expression language several of
+join, aggregate, union, dedupe, route, limit, sort and window) and the expression language several of
 them share. Each node has a YAML example you can copy into a pipeline. Every node, with each setting's
 type and default, is also in [Reference: pipeline nodes](reference-pipeline-nodes.md).
 
@@ -24,6 +24,7 @@ Every node has named **ports**. Most nodes read from `in` and write to `out`; so
 | `route` | `in` | one port per route, and `out` |
 | `limit` | `in` | `out` |
 | `sort` | `in` | `out` |
+| `window` | `in` | `out` |
 | `gate` | `in` | `out`, `quarantine`: see [Quality gates](pipelines.md#quality-gates) |
 
 In YAML, `input: tidy` reads the `out` port of the node called `tidy`, and `input: tidy.rejected`
@@ -351,9 +352,129 @@ Good to know:
 - A table read in a fixed order is not guaranteed to arrive in that order. Sort just before a
   write when the order matters, for example for a file someone reads.
 
+## window
+
+Adds columns worked out over the rows around each row: a row number, a rank, a running total, or
+the value of the row before or after. Rows are taken in groups (a **partition**: the rows with equal
+`partition_by` values, such as one account's transactions) and, within each group, in `order_by`
+order. Every row comes out, with its own columns and then the new ones.
+
+A running balance for each account, numbering each account's transactions, with the amount before:
+
+```yaml
+kilnmark: pipeline/v1
+name: running-balance
+nodes:
+  - id: transactions
+    type: read
+    source: sales-db
+    asset: sales.orders
+
+  - id: balances
+    type: window
+    input: transactions
+    partition_by: [customer_id]
+    order_by: [ordered_at, order_id]
+    columns:
+      balance: "sum(amount)"
+      order_number: "row_number()"
+      previous_amount: "lag(amount, 1, 0)"
+
+  - id: out
+    type: write
+    input: balances
+    source: files
+    path: out/balances.csv
+    mode: replace
+```
+
+The latest row for each key: number each group's rows newest first, then keep row number 1.
+
+```yaml
+kilnmark: pipeline/v1
+name: latest-order
+nodes:
+  - id: orders
+    type: read
+    source: sales-db
+    asset: sales.orders
+
+  - id: newest_first
+    type: window
+    input: orders
+    partition_by: [customer_id]
+    order_by: [ordered_at desc, order_id desc]
+    columns:
+      recency: "row_number()"
+
+  - id: latest
+    type: filter
+    input: newest_first
+    condition: "recency = 1"
+
+  - id: out
+    type: write
+    input: latest
+    source: files
+    path: out/latest_orders.csv
+    mode: replace
+```
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `partition_by` | The columns whose values make a group. Numbers and totals start again in each group. Empty values form a group of their own. | None: one group |
+| `order_by` | The order rows are taken in within each group, written as for `sort`: a column, then perhaps `desc`, then perhaps `nulls first`. Required. | |
+| `columns` | Each new column's name and its window function. Required. | |
+| `memory_limit_mb` | The most memory rows may take while they are put in order and worked out. Past it, the node carries on on disk. | 256 |
+
+Each new column is one of these window functions:
+
+| Function | Gives |
+| --- | --- |
+| `row_number()` | The row's place in its group: 1, 2, 3, ... |
+| `rank()` | The row's place, rows with equal `order_by` values sharing one, with a gap after them: 1, 1, 3. |
+| `dense_rank()` | As `rank`, without the gaps: 1, 1, 2. |
+| `count(*)`, `count(x)` | The rows so far in the group, or those where `x` is not empty. |
+| `sum(x)` | The running total of `x`; empty until the first value that is not empty. |
+| `avg(x)` | The average of the values so far (a decimal for decimals, otherwise a float). |
+| `min(x)`, `max(x)` | The smallest or largest value so far. |
+| `lag(x)`, `lag(x, offset)`, `lag(x, offset, default)` | `x` from the row `offset` rows before in the group (1 unless you say), or `default` when there is none (empty unless you give one). |
+| `lead(x)`, `lead(x, offset)`, `lead(x, offset, default)` | The same, from the row after. |
+
+In the settings, **Partition by** lists the grouping columns, **Order by** takes each column with
+its direction and where its empty values go, as a sort's does, and **Columns** pairs each new
+column's name with its function.
+
+Good to know:
+
+- The arguments are expressions, so `sum(price * quantity)` and `lag(upper(status))` work. A
+  window column is one function: to work more out from it, such as `opening + balance`, add a
+  `compute` node after the window node.
+- Running totals take the rows so far, this one included, one row at a time. Rows with equal
+  `order_by` values get different running totals, in the order they arrived; add a column to
+  `order_by`, such as an id, to make the order exact. (SQL's default for a running total gives tied
+  rows the same total; `rank` and `dense_rank` are the functions here that treat ties alike.)
+- Rows with equal `order_by` values keep the order they arrived in, as in a sort, and `row_number`
+  numbers them in that order.
+- Empty values in an `order_by` column go last, unless the column says `nulls first`.
+- Sums, counts, averages, minimums and maximums have the types an `aggregate` gives. A `lag` or
+  `lead` has the type of its value, widened to hold its default; the offset is a whole number from
+  0 to 1,000, written out, and the default must be of the same kind of value (cast one if not).
+- A new column cannot have the name of a column already there, in any case; rename or drop that
+  column first.
+- Rows come out in order of their group (empty values last) and then of `order_by`. A window passes
+  nothing on until all its rows have arrived.
+- Any number of rows can be used: rows are put in order as a `sort` puts them, in memory up to
+  `memory_limit_mb` and on disk past it, in a temporary folder only the server can read, encrypted
+  and deleted when the node ends. The run's log says how much was written. The rows a `lead` looks
+  ahead to, and the values a `lag` looks back to, are held too, within a limit of the same size, so
+  a window may hold up to about twice `memory_limit_mb` in all; with very wide rows and a large
+  offset the run stops and says so.
+- `lag`, `lead`, `row_number`, `rank` and `dense_rank` work only in a window node.
+
 ## Expressions
 
-`filter`, `compute`, `aggregate` and `route` use one small expression language, much like SQL. It
+`filter`, `compute`, `aggregate`, `route` and `window` use one small expression language, much like SQL. It
 is checked against the columns before the pipeline runs, so a typing mistake or a type mismatch is
 reported with its position and, often, a suggestion:
 
@@ -398,12 +519,15 @@ From loosest to tightest:
 Choices:
 
 ```sql
+if(amount >= 1000, 'large', 'small')
 case when amount >= 1000 then 'large' when amount >= 100 then 'medium' else 'small' end
 case status when 'A' then 'active' when 'C' then 'closed' end
 ```
 
-A `case` without `else` gives empty when nothing matches. Only the branch a row takes is worked
-out, so `case when qty <> 0 then total / qty end` never divides by zero.
+`if(condition, a, b)` gives `a` where the condition is true and `b` where it is false or empty; for
+more than two choices, use `case`. A `case` without `else` gives empty when nothing matches. Both
+work out only the branch a row takes, so `if(qty <> 0, total / qty, null)` never divides by zero.
+The results must be of one kind of value: numbers widen to one type, as in arithmetic.
 
 ### Empty values (null)
 
@@ -445,14 +569,20 @@ Whole numbers that overflow, and division by zero, stop the run. Guard a divisio
 
 | Function | Gives |
 | --- | --- |
+| `if(condition, a, b)` | `a` where the condition is true, otherwise `b` (see [Operators](#operators)). |
 | `trim(s)` | `s` without spaces, tabs, line breaks or other whitespace at either end (a no-break space is kept). |
 | `lower(s)`, `upper(s)` | `s` in small or capital letters. |
 | `length(s)` | The number of characters. |
 | `substring(s, start)`, `substring(s, start, length)` | Part of `s`, counting characters from 1. |
 | `replace(s, from, to)` | `s` with every `from` replaced by `to`. |
+| `lpad(s, n)`, `lpad(s, n, fill)`, `rpad(s, n)`, `rpad(s, n, fill)` | `s` filled on the left or right with `fill` (a space unless given) to `n` characters: `lpad('42', 5, '0')` is `00042`. Longer text is cut to its first `n` characters; an empty `fill` leaves `s` as it is. |
+| `left(s, n)`, `right(s, n)` | The first or last `n` characters; with a negative `n`, all but the last or first `-n`. |
+| `split_part(s, separator, n)` | Field `n` of `s` split at each `separator`, counting from 1, or from the end with -1 for the last; empty text when there is no such field. `split_part(email, '@', 2)` is the domain. 0 stops the run. |
+| `starts_with(s, x)`, `ends_with(s, x)`, `contains(s, x)` | Whether `s` starts with, ends with or holds `x`. Case matters. |
 | `concat(a, b, ...)` | The values joined as text, of any type, skipping empty ones. |
 | `coalesce(a, b, ...)` | The first value that is not empty. |
 | `nullif(a, b)` | Empty when `a` equals `b`, otherwise `a`. |
+| `greatest(a, b, ...)`, `least(a, b, ...)` | The largest or smallest value, widened to one type as in arithmetic; empty values are skipped, and the result is empty only when all are. |
 | `abs(x)` | `x` without its sign. |
 | `round(x)`, `round(x, digits)` | `x` rounded half away from zero; `digits` may be negative (`round(1234, -2)` is 1200). |
 | `floor(x)`, `ceil(x)` | `x` rounded down or up to a whole number. |
@@ -465,11 +595,20 @@ Whole numbers that overflow, and division by zero, stop the run. Guard a divisio
 | `parse_date(s)`, `parse_date(s, 'pattern')` | Text read as a date, or empty when it does not fit. |
 | `parse_timestamp(s)`, `parse_timestamp(s, 'pattern')` | Text read as a timestamp (UTC unless the text has an offset), or empty. |
 | `format_date(d, 'pattern')` | A date or timestamp as text, in UTC. |
+| `date_add(d, n, 'unit')` | `d` moved by `n` (negative to go back) years, quarters, months, weeks, days, hours, minutes or seconds, as a calendar moves: `date_add(date '2024-01-31', 1, 'month')` is 29 February. A date takes year to day; cast it to a timestamp for hours. Leaving years -9999 to 9999 stops the run. |
+| `date_diff('unit', a, b)` | How many whole units from `a` to `b` (negative when `b` is earlier), in the same units: `date_diff('month', date '2024-01-31', date '2024-02-29')` is 0, and `date_diff('day', ...)` 29. A date counts from its midnight beside a timestamp. |
+| `sha256(s)` | The SHA-256 hash of the text (its UTF-8 bytes) as 64 small hexadecimal digits, for comparing values or spotting changes without keeping the text. Cast other values first: `sha256(cast(id as utf8))`. A hash of a column marked sensitive is marked too. |
+
+Functions take empty (null) values as operators do: an empty argument gives an empty result, except
+`if`, `coalesce`, `nullif`, `concat`, `greatest` and `least`, which say what they do with them.
+Function names are not case-sensitive (`IF` and `if` are one). There is no `md5`: it is not safe
+for anything that matters, so `sha256` is the hash to use.
 
 Date patterns use letters such as `yyyy` (year), `MM` (month), `MMM` (Jan), `dd` (day), `HH`
 (hour), `mm` (minute), `ss` (second) and `XXX` (offset); put other words in single quotes, as in
-`'dd/MM/yyyy'` or `'yyyy-MM-dd''T''HH:mm'`. Patterns and units must be written out in quotes, so
-mistakes are found before the pipeline runs. Dates are read strictly: 31 February is empty, not
+`'dd/MM/yyyy'` or `'yyyy-MM-dd''T''HH:mm'`. Patterns and units (for `date_trunc`, `date_part`,
+`date_add` and `date_diff`) must be written out in quotes, so mistakes are found before the
+pipeline runs. Dates are read strictly: 31 February is empty, not
 3 March.
 
 ### Regular expressions are kept safe
@@ -498,8 +637,8 @@ running:
   as one operation inside the next.
 - Comparisons do not chain: write `a = b and b = c`, or use brackets.
 - A text value may grow to at most 1,000,000 characters (`||`, `concat`, `replace`,
-  `regex_replace`), and each of them may produce at most 64,000,000 characters for one batch of
-  rows.
+  `regex_replace`, `lpad`, `rpad`), and each of them may produce at most 64,000,000 characters for
+  one batch of rows.
 - Dates and timestamps run from year -9999 to 9999.
 
 For longer logic, split it over several `compute` columns.
