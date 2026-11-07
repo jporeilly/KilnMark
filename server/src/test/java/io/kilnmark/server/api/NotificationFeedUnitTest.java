@@ -71,7 +71,8 @@ class NotificationFeedUnitTest {
     @Test
     void everyKindIsOffered() {
         assertEquals(List.of("rule_failed", "rule_recovered", "issue_opened", "scan_failed", "drift", "connection_failed",
-            "pipeline_failed", "pipeline_low_quality", "flow_failed", "flow_notice"),
+            "pipeline_failed", "pipeline_low_quality", "flow_failed", "flow_notice", "pipeline_recovered", "flow_recovered",
+            "run_taking_long"),
             NotificationResource.kindChoices().stream().map(NotificationResource.KindChoice::id).toList());
     }
 }

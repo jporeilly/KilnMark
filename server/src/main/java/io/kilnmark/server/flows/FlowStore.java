@@ -45,10 +45,14 @@ public class FlowStore implements io.kilnmark.server.runs.RunStore<FlowStore.Run
                           boolean valid, String problems) {
     }
 
-    /** {@code parameters} is a JSON object of the values the run started with. */
+    /**
+     * {@code parameters} is a JSON object of the values the run started with. {@code runTry} is its try
+     * from 0, {@code tries} how many it may have by itself, and {@code retryAt} when its next try starts
+     * while it waits (ADR 0053).
+     */
     public record Run(long id, String flow, int version, String status, String requestedBy, String requestedRole,
                       Instant requestedAt, Instant startedAt, Instant finishedAt, boolean cancelRequested, String error,
-                      String parameters, String variables) implements RunRow {
+                      String parameters, String variables, int runTry, int tries, Instant retryAt) implements RunRow {
 
         @Override
         public boolean finished() {
@@ -351,7 +355,7 @@ public class FlowStore implements io.kilnmark.server.runs.RunStore<FlowStore.Run
 
     private static final String RUN_COLUMNS = "r.id, r.flow, r.version, r.status, r.requested_by, r.requested_role, "
         + "r.requested_at, r.started_at, r.finished_at, r.cancel_requested, r.error, r.parameters::text, "
-        + "r.variables::text";
+        + "r.variables::text, r.run_try, r.tries, r.retry_at";
 
     private static Instant at(ResultSet rs, int i) throws SQLException {
         Timestamp t = rs.getTimestamp(i);
@@ -366,7 +370,8 @@ public class FlowStore implements io.kilnmark.server.runs.RunStore<FlowStore.Run
     private static Run run(ResultSet rs, int from) throws SQLException {
         return new Run(rs.getLong(from + 1), rs.getString(from + 2), rs.getInt(from + 3), rs.getString(from + 4),
             rs.getString(from + 5), rs.getString(from + 6), at(rs, from + 7), at(rs, from + 8), at(rs, from + 9),
-            rs.getBoolean(from + 10), rs.getString(from + 11), rs.getString(from + 12), rs.getString(from + 13));
+            rs.getBoolean(from + 10), rs.getString(from + 11), rs.getString(from + 12), rs.getString(from + 13),
+            rs.getInt(from + 14), rs.getInt(from + 15), at(rs, from + 16));
     }
 
     /**
@@ -376,28 +381,39 @@ public class FlowStore implements io.kilnmark.server.runs.RunStore<FlowStore.Run
      * @throws Missing when the flow is not there (it was deleted a moment ago)
      */
     public Run queueRun(String flow, int version, String by, String role, String parameters, String variables) {
+        return queueRun(flow, version, by, role, parameters, variables, 1);
+    }
+
+    /**
+     * As {@link #queueRun(String, int, String, String, String, String)}, with the {@code tries} the run may
+     * have by itself (ADR 0053): its job is tried as many times, so a run lost with its worker is taken over
+     * while tries are left.
+     */
+    public Run queueRun(String flow, int version, String by, String role, String parameters, String variables,
+                        int tries) {
         return db.tx(c -> {
             // the flow can have been deleted since the caller found it
             RunTables.lockOwner(c, KIND, flow);
             RunTables.refuseWhileBusy(c, KIND, flow, null, null);
             long id;
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.flow_run (flow, version, "
-                + "requested_by, requested_role, parameters, variables) VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb) "
-                + "RETURNING id")) {
+                + "requested_by, requested_role, parameters, variables, tries) VALUES (?, ?, ?, ?, ?::jsonb, "
+                + "?::jsonb, ?) RETURNING id")) {
                 ps.setString(1, flow);
                 ps.setInt(2, version);
                 ps.setString(3, by);
                 ps.setString(4, role);
                 ps.setString(5, parameters);
                 ps.setString(6, variables);
+                ps.setInt(7, tries);
                 try (ResultSet rs = ps.executeQuery()) {
                     rs.next();
                     id = rs.getLong(1);
                 }
             }
-            // A flow only decides what runs next; one that was running when its worker stopped is
-            // failed, not repeated, as pipelines are: the pipelines it started may have written.
-            RunTables.addJob(c, KIND, id, null);
+            // A flow only decides what runs next. One whose worker stopped is taken over while it has tries left
+            // (ADR 0053), carrying on from where it was; the pipeline runs it started are never started again.
+            RunTables.addJob(c, KIND, id, null, tries);
             return findRun(c, id).orElseThrow();
         });
     }
@@ -482,10 +498,22 @@ public class FlowStore implements io.kilnmark.server.runs.RunStore<FlowStore.Run
      */
     public List<Run> failOrphanedRuns() {
         return db.tx(c -> {
+            // The try each was on is recorded as lost (ADR 0053).
+            try (PreparedStatement ps = c.prepareStatement("""
+                INSERT INTO kilnmark.flow_run_try (run_id, n, status, started_at, error, next)
+                SELECT r.id, r.run_try, 'lost', r.started_at, ?, 'Not tried again: it has no tries left'
+                FROM kilnmark.flow_run r JOIN kilnmark.job j ON (j.payload ->> 'flowRunId')::bigint = r.id
+                WHERE j.kind = 'flow' AND j.status IN ('failed', 'done') AND r.status = 'running'
+                ON CONFLICT (run_id, n) DO NOTHING""")) {
+                ps.setString(1, RunTables.LOST);
+                ps.executeUpdate();
+            }
             // Nodes of those runs still marked running will never end: say so.
             try (PreparedStatement ps = c.prepareStatement("""
                 UPDATE kilnmark.flow_node_run s SET status = 'failed', finished_at = now(),
-                    message = 'The worker running this flow stopped'
+                    message = 'The worker running this flow stopped',
+                    -- its statements ran on the worker that stopped: whether they committed is not known (ADR 0053)
+                    reported = CASE WHEN s.type = 'sql' THEN s.reported || '{"in_doubt": true}'::jsonb ELSE s.reported END
                 FROM kilnmark.flow_run r, kilnmark.job j
                 WHERE s.run_id = r.id AND s.status = 'running' AND r.status IN ('queued', 'running')
                   AND j.kind = 'flow' AND j.status IN ('failed', 'done')
@@ -513,6 +541,89 @@ public class FlowStore implements io.kilnmark.server.runs.RunStore<FlowStore.Run
                 return out;
             }
         });
+    }
+
+    // ---- tries (ADR 0053) ----
+
+    /** Queues a run for its next try at {@code at} with its job, held by {@code holder} (RunTables#retry). */
+    public boolean retry(long id, long jobId, String holder, int onTry, Instant at, String error, String waiting) {
+        return RunTables.retry(db, KIND, id, jobId, holder, onTry, at, "failed", error, waiting);
+    }
+
+    /** Takes over a run whose worker was lost: it carries on, still running, as its next try. */
+    public boolean takeOver(long id) {
+        return RunTables.takeOver(db, KIND, id, false);
+    }
+
+    /** When the schedule that started run {@code id} fires next, or null. */
+    public Instant nextFire(long id) {
+        return RunTables.nextFire(db, KIND, id);
+    }
+
+    /** Marks that the run's owners were told it is taking long; false when they already were. */
+    public boolean markWarned(long id) {
+        return RunTables.markWarned(db, KIND, id);
+    }
+
+    /** Every ended try of a run. */
+    public List<RunTables.Try> tries(long id) {
+        return RunTables.tries(db, KIND, id);
+    }
+
+    /** The worker holding job {@code jobId} now, or null. */
+    public String jobHolder(long jobId) {
+        return RunTables.jobHolder(db, jobId);
+    }
+
+    /** Gives an unfinished run its final status, recording why it is not tried again ({@code next}, or null). */
+    public boolean finishRun(long id, String status, String error, String next, Integer onTry) {
+        return RunTables.finishRun(db, KIND, id, status, error, null, next, onTry);
+    }
+
+    /**
+     * Runs a failed run again from its failure, by hand (ADR 0053, decision 9): queued as its next try,
+     * in one transaction with its job, the flow's row locked as a queue locks it.
+     *
+     * @return false when the run is no longer failed
+     * @throws Busy while another run of the flow is queued or running
+     */
+    public boolean runAgain(long id, String flow, String by) {
+        return db.tx(c -> {
+            RunTables.lockOwner(c, KIND, flow);
+            RunTables.refuseWhileBusy(c, KIND, flow, null, null);
+            return RunTables.runAgain(c, KIND, id, by);
+        });
+    }
+
+    /**
+     * Before a run's next try: removes the rows of the nodes it does not keep, so each runs afresh and
+     * one not reached this time reads as skipped (ADR 0053, decision 7). The kept nodes' rows stay.
+     */
+    public void clearNodes(long runId, java.util.Collection<String> keep) {
+        db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.flow_node_run WHERE run_id = ? "
+                + "AND NOT (node_id = ANY (?))")) {
+                ps.setLong(1, runId);
+                ps.setArray(2, c.createArrayOf("text", keep.toArray()));
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    /** The flow's owners (ADR 0053). */
+    public List<String> owners(String name) {
+        return RunTables.owners(db, KIND, name);
+    }
+
+    /** The owners of these flows, by name. */
+    public java.util.Map<String, List<String>> ownersOf(java.util.Collection<String> names) {
+        return RunTables.ownersOf(db, KIND, names);
+    }
+
+    /** Sets the flow's owners; those before, or empty when there is no such flow. */
+    public Optional<List<String>> setOwners(String name, List<String> owners) {
+        return RunTables.setOwners(db, KIND, name, owners);
     }
 
     // ---- nodes ----

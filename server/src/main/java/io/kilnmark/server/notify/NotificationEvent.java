@@ -27,10 +27,20 @@ import java.util.Objects;
  * @param restrictedDetail more detail for roles that may see the data; may be null
  * @param dedupeKey        what makes two events "the same problem", such as {@code rule:42}
  * @param occurredAt       when it happened
+ * @param ownedBy          the pipeline or flow whose owners are always told of it ({@code pipeline:<name>} or
+ *                         {@code flow:<name>}, ADR 0053), or null; never stored, read when it is recorded
  */
 public record NotificationEvent(NotificationKind kind, Severity severity, String subjectUrn, String title, String detail,
                                 String link, String source, String field, String restrictedDetail, String dedupeKey,
-                                Instant occurredAt) {
+                                Instant occurredAt, String ownedBy) {
+
+    /** An event no owners are told of by right: only those whose choices want it. */
+    public NotificationEvent(NotificationKind kind, Severity severity, String subjectUrn, String title, String detail,
+                             String link, String source, String field, String restrictedDetail, String dedupeKey,
+                             Instant occurredAt) {
+        this(kind, severity, subjectUrn, title, detail, link, source, field, restrictedDetail, dedupeKey, occurredAt,
+            null);
+    }
 
     public NotificationEvent {
         Objects.requireNonNull(kind, "kind");
@@ -40,6 +50,9 @@ public record NotificationEvent(NotificationKind kind, Severity severity, String
         detail = detail == null ? null : clip(detail, 4000);
         restrictedDetail = restrictedDetail == null ? null : clip(restrictedDetail, 4000);
         occurredAt = occurredAt == null ? Instant.now() : occurredAt;
+        if (ownedBy != null && !ownedBy.startsWith("pipeline:") && !ownedBy.startsWith("flow:")) {
+            throw new IllegalArgumentException("ownedBy names a pipeline or a flow");
+        }
     }
 
     /** A short event: no source filter, field or restricted detail. */

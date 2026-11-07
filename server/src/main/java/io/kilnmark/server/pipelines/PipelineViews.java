@@ -78,7 +78,8 @@ public final class PipelineViews {
      */
     public record RunSummary(long id, String pipeline, int version, String status, String requestedBy,
                              Instant requestedAt, Instant startedAt, Instant finishedAt, boolean cancelRequested,
-                             String error, Long rowsWritten, Double qualityScore, Double qualityThreshold) {
+                             String error, Long rowsWritten, Double qualityScore, Double qualityThreshold,
+                             int tryNumber, int tries, Instant retryAt) {
     }
 
     /**
@@ -141,7 +142,11 @@ public final class PipelineViews {
      */
     public record RunDetail(RunSummary run, List<NodeRunView> nodes, List<WrittenAsset> written, List<String> read,
                             List<LineageLink> lineage, List<String> notes, List<NodeQualityView> quality,
-                            JsonNode progress) {
+                            JsonNode progress, List<io.kilnmark.server.runs.RunTryView> tries) {
+    }
+
+    /** {@code PUT .../owners}: the owners, sign-in names and team addresses (ADR 0053). */
+    public record OwnersChange(List<String> owners) {
     }
 
     /**

@@ -122,11 +122,24 @@ public class AuditLog {
      */
     public static final String SCHEDULE_PAUSED = "schedule.paused";
 
+    /**
+     * A pipeline's owners were set (ADR 0053); detail: before and after, the sign-in names and team
+     * addresses. Target: the pipeline's name.
+     */
+    public static final String PIPELINE_OWNERS_SET = "pipeline.owners_set";
+    /** A flow's owners were set (ADR 0053); detail as {@link #PIPELINE_OWNERS_SET}. Target: the flow's name. */
+    public static final String FLOW_OWNERS_SET = "flow.owners_set";
+    /**
+     * A failed flow run was run again from its failure, by hand (ADR 0053); detail: flow, try (the new
+     * try's number, from 1), version. Target: the run's id.
+     */
+    public static final String FLOW_RUN_AGAIN = "flow.run_again";
+
     /** Every kind of event, for the API's filter. */
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
         SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, MAX_RUNS_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
         SIGN_OUT, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED, SCHEDULE_SET,
-        SCHEDULE_DELETED, SCHEDULE_PAUSED);
+        SCHEDULE_DELETED, SCHEDULE_PAUSED, PIPELINE_OWNERS_SET, FLOW_OWNERS_SET, FLOW_RUN_AGAIN);
 
     /** The most events one request returns. */
     public static final int MAX_LIMIT = 500;

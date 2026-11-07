@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Tabs, TabPanel, useTabsId } from "../components/ui";
+import { OwnersSection } from "../components/RunTries";
 import {
   allows,
   ApiError,
@@ -531,6 +532,7 @@ export function FlowPage({
         </p>
       )}
       {fromTemplate && <p className="hint">{fromTemplate}</p>}
+      {name && detail && !viewing && <OwnersSection kind="flow" name={name} role={role} />}
       <p role="status" className="notice">
         {notice}
       </p>

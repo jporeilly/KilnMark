@@ -204,7 +204,7 @@ class NotificationFlowTest {
         as(steward).get("/api/v1/me/notifications").then().statusCode(200).body("saved", equalTo(false))
             .body("enabled", equalTo(false)).body("available", equalTo(true)).body("mailReady", equalTo(true))
             .body("confirmationRequired", equalTo(true))
-            .body("inAppKinds.size()", equalTo(10)).body("kindChoices.size()", equalTo(10))
+            .body("inAppKinds.size()", equalTo(13)).body("kindChoices.size()", equalTo(13))
             .body("timeZone", not(equalTo(null)));
         admin().get("/api/v1/me/notifications").then().statusCode(200).body("enabled", equalTo(true))
             .body("minSeverity", equalTo("high"));
@@ -212,7 +212,7 @@ class NotificationFlowTest {
             List.of("connection_failed", "scan_failed"), "minSeverity", "low", "mode", "immediate", "digestHour", 8,
             "allSources", true)).put("/api/v1/me/notifications").then().statusCode(200).body("saved", equalTo(true))
             .body("email", equalTo("steward@example.com")).body("confirmed", equalTo(false))
-            .body("inAppKinds.size()", equalTo(10));
+            .body("inAppKinds.size()", equalTo(13));
 
         await("the confirmation email", () -> !to("steward@example.com", "Confirm your email address").isEmpty());
         String body = GreenMailUtil.getBody(to("steward@example.com", "Confirm your email address").get(0));

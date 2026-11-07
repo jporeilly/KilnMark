@@ -544,8 +544,11 @@ public class JobQueue {
          */
         private static void wakeWaiting(Connection c) {
             try (Statement st = c.createStatement()) {
-                st.executeUpdate("UPDATE kilnmark.job SET run_after = now() WHERE kind = '"
-                    + io.kilnmark.server.pipelines.PipelineStore.JOB_KIND + "' AND status = 'queued' AND run_after > now()");
+                // Not a run waiting for its next try (ADR 0053): its wait is its retry_delay, never cut short.
+                st.executeUpdate("UPDATE kilnmark.job j SET run_after = now() WHERE j.kind = '"
+                    + io.kilnmark.server.pipelines.PipelineStore.JOB_KIND + "' AND j.status = 'queued' AND j.run_after > now() "
+                    + "AND NOT EXISTS (SELECT 1 FROM kilnmark.pipeline_run r WHERE r.id = (j.payload ->> 'pipelineRunId')::bigint "
+                    + "AND r.retry_at > now())");
                 st.execute("NOTIFY " + CHANNEL);
             } catch (SQLException e) {
                 LOG.debugf("Could not wake the runs waiting for a place; they look again within seconds");
@@ -762,6 +765,16 @@ public class JobQueue {
      * requeued without using an attempt: nothing of it ran.
      */
     public Recovery recoverStale(Duration staleAfter) {
+        return recoverStale(staleAfter, staleAfter);
+    }
+
+    /**
+     * As {@link #recoverStale(Duration)}, with pipeline and flow jobs lost after {@code lostAfter}
+     * ({@code kilnmark.runs.lost-after}, ADR 0053) rather than {@code staleAfter}. Such a job is tried
+     * as many times as its run may be: queued again while tries are left, the next worker takes its
+     * run over (it still reads running); otherwise failed, and its run with it.
+     */
+    public Recovery recoverStale(Duration staleAfter, Duration lostAfter) {
         return db.tx(c -> {
             record Stale(long id, int attempts, int maxAttempts, String worker, long runId, boolean neverStarted) {
             }
@@ -772,7 +785,8 @@ public class JobQueue {
                            WHERE r.id = (j.payload ->> 'pipelineRunId')::bigint AND r.status = 'queued')
                 FROM kilnmark.job j
                 WHERE j.status = 'running'
-                  AND (j.heartbeat_at IS NULL OR j.heartbeat_at < now() - make_interval(secs => ?))
+                  AND (j.heartbeat_at IS NULL OR j.heartbeat_at < now() - make_interval(secs =>
+                      CASE WHEN j.kind IN ('pipeline', 'flow') THEN ? ELSE ? END))
                   AND NOT EXISTS (
                       SELECT 1 FROM pg_locks l
                       WHERE l.locktype = 'advisory' AND l.objsubid = 2 AND l.granted
@@ -786,11 +800,12 @@ public class JobQueue {
                         AND l.classid = ?::bigint::oid
                         AND l.objid = (j.id % ?)::oid)
                 FOR UPDATE OF j SKIP LOCKED""")) {
-                ps.setDouble(1, staleAfter.toMillis() / 1000.0);
-                ps.setLong(2, SOURCE_LOCK_CLASS);
-                ps.setLong(3, OID_RANGE);
-                ps.setLong(4, PIPELINE_JOB_LOCK_CLASS);
-                ps.setLong(5, OID_RANGE);
+                ps.setDouble(1, lostAfter.toMillis() / 1000.0);
+                ps.setDouble(2, staleAfter.toMillis() / 1000.0);
+                ps.setLong(3, SOURCE_LOCK_CLASS);
+                ps.setLong(4, OID_RANGE);
+                ps.setLong(5, PIPELINE_JOB_LOCK_CLASS);
+                ps.setLong(6, OID_RANGE);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         stale.add(new Stale(rs.getLong(1), rs.getInt(2), rs.getInt(3), rs.getString(4), rs.getLong(5),
