@@ -41,7 +41,7 @@ final class Like {
 
     boolean matches(String value, int pos) throws ExprException {
         if (value.length() > MAX_INPUT) {
-            throw new ExprException("a value is longer than 100,000 characters, the most 'like' is run on", pos);
+            throw ExprException.row("too_long", "a value is longer than 100,000 characters, the most 'like' is run on", pos);
         }
         long nodes = 0;
         int[] s = value.codePoints().toArray();
@@ -51,7 +51,7 @@ final class Like {
         int starS = 0;
         while (si < s.length) {
             if (++nodes > BUDGET) {
-                throw new ExprException("the 'like' pattern took too long on a value", pos,
+                throw ExprException.row("too_slow", "the 'like' pattern took too long on a value", pos,
                     "use fewer % signs, or regex_match with an anchored pattern");
             }
             if (pi < pattern.length && (pattern[pi] == ANY_ONE || pattern[pi] == s[si])) {

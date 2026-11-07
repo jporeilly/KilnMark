@@ -957,4 +957,84 @@ class PipelineFlowTest {
         as(Tokens.ADMIN).body(Map.of("field", "name", "sensitive", false))
             .put("/api/v1/quality/asset/sensitive?urn=" + READ_URN).then().statusCode(204);
     }
+
+    /**
+     * Rows that fail (ADR 0054): a compute's failing rows go to its errors port and on to a write,
+     * the rest are written; the run records the rows per port and says so in its log; the mark on
+     * what was read reaches the written error rows; and past the tolerance the run fails.
+     */
+    @Test
+    @Order(16)
+    void rowsThatFailAreSetAsideCountedAndKeepTheirMarks() throws Exception {
+        as(designer).body(Map.of("field", "name", "sensitive", true))
+            .put("/api/v1/quality/asset/sensitive?urn=" + READ_URN).then().statusCode(204);
+        String yaml = """
+            kilnmark: pipeline/v1
+            name: people-errors
+            nodes:
+              - id: people
+                type: read
+                source: mem-src
+                asset: lab.people
+              - id: shares
+                type: compute
+                input: people
+                columns:
+                  share: "100 / (id % 500)"
+              - id: good
+                type: write
+                input: shares
+                source: mem-out
+                table: lab.people_shares
+                mode: replace
+              - id: aside
+                type: write
+                input: shares.errors
+                source: mem-out
+                table: lab.people_errors
+                mode: replace
+            """;
+        as(viewer).body(Map.of("yaml", yaml)).post("/api/v1/pipelines/validate").then().statusCode(200)
+            .body("valid", equalTo(true))
+            .body("nodes.find { it.id == 'shares' }.outputs", equalTo(List.of("out", "errors")))
+            .body("nodes.find { it.id == 'shares' }.columns.errors.name", equalTo(List.of("id", "name", "error_node",
+                "error_column", "error_code", "error_message")));
+        as(designer).body(Map.of("name", "people-errors", "yaml", yaml)).post("/api/v1/pipelines").then()
+            .statusCode(201);
+        long id = as(designer).body(Map.of()).post("/api/v1/pipelines/people-errors/runs").then().statusCode(202)
+            .extract().jsonPath().getLong("id");
+        JsonPath run = waitForRun(id, "succeeded");
+        String all = run.prettify();
+        assertEquals(2495L, MemoryConnector.WRITTEN.get("urn:kilnmark:mem-out:lab.people_shares").get(), all);
+        assertEquals(5L, MemoryConnector.WRITTEN.get("urn:kilnmark:mem-out:lab.people_errors").get(), all);
+        assertEquals(2500L, run.getLong("nodes.find { it.node == 'shares' }.ports.in.in"), all);
+        assertEquals(2495L, run.getLong("nodes.find { it.node == 'shares' }.ports.out.out"), all);
+        assertEquals(5L, run.getLong("nodes.find { it.node == 'shares' }.ports.out.errors"), all);
+        String log = as(viewer).queryParam("node", "shares").get("/api/v1/pipeline-runs/" + id + "/events").then()
+            .statusCode(200).extract().jsonPath().prettify();
+        assertTrue(log.contains("5 rows of 2,500 failed and went to the errors port"), log);
+        java.util.Set<String> carried = new java.util.TreeSet<>();
+        try (java.sql.Connection c = db.getConnection(); java.sql.PreparedStatement ps = c.prepareStatement(
+            "SELECT name FROM kilnmark.sensitive_column WHERE asset_urn = ?")) {
+            ps.setString(1, "urn:kilnmark:mem-out:lab.people_errors");
+            try (java.sql.ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    carried.add(rs.getString(1));
+                }
+            }
+        }
+        assertTrue(carried.contains("name"), "the error rows' sensitive column stays marked: " + carried);
+        assertFalse(carried.contains("error_message"), carried.toString());
+
+        // Past its tolerance the run fails, and says how many rows failed.
+        as(designer).header("If-Match", "\"1\"").body(Map.of("yaml", yaml.replace("share: \"100 / (id % 500)\"",
+            "share: \"100 / (id % 500)\"\n    max_errors: 2"))).put("/api/v1/pipelines/people-errors").then()
+            .statusCode(200);
+        long failed = as(designer).body(Map.of()).post("/api/v1/pipelines/people-errors/runs").then().statusCode(202)
+            .extract().jsonPath().getLong("id");
+        JsonPath stopped = waitForRun(failed, "failed");
+        assertTrue(stopped.getString("run.error").contains("more than its max_errors of 2"), stopped.prettify());
+        as(Tokens.ADMIN).body(Map.of("field", "name", "sensitive", false))
+            .put("/api/v1/quality/asset/sensitive?urn=" + READ_URN).then().statusCode(204);
+    }
 }

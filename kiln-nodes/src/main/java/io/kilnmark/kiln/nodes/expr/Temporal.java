@@ -181,7 +181,7 @@ final class Temporal {
         long steps = unit.equals("quarter") ? Math.multiplyExact(n, 3L) : n;
         long out = date(days).plus(steps, chrono(unit)).toEpochDay();
         if (!inRange(out)) {
-            throw new ExprException("a date is out of range (years -9999 to 9999)", pos);
+            throw ExprException.row("out_of_range", "a date is out of range (years -9999 to 9999)", pos);
         }
         return out;
     }
@@ -191,7 +191,7 @@ final class Temporal {
         long steps = unit.equals("quarter") ? Math.multiplyExact(n, 3L) : n;
         long out = micros(dateTime(micros).plus(steps, chrono(unit)));
         if (rangedMicros(out) == null) {
-            throw new ExprException("a timestamp is out of range (years -9999 to 9999)", pos);
+            throw ExprException.row("out_of_range", "a timestamp is out of range (years -9999 to 9999)", pos);
         }
         return out;
     }

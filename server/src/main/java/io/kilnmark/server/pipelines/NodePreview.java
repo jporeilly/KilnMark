@@ -51,6 +51,13 @@ final class NodePreview {
     static final int MAX_ROWS = Preview.MAX_ROWS;
     /** The collector's id: it starts with a capital letter, so it can never be one of the pipeline's own. */
     static final String COLLECTOR = "Preview";
+    /** The start of a preview's own drain nodes' names ({@link Drain}); capitalised, so no pipeline node has one. */
+    static final String DRAIN = "Drain";
+
+    /** Whether a node of a preview's run is one of its own drains, never named to people. */
+    static boolean isDrain(String name) {
+        return name != null && name.startsWith(DRAIN) && name.substring(DRAIN.length()).chars().allMatch(Character::isDigit);
+    }
 
     /**
      * The node types a preview may run: reads and the nodes that work on rows in memory. Anything
@@ -74,9 +81,19 @@ final class NodePreview {
     /**
      * What a preview runs: the pipeline cut down to the chosen node and the nodes upstream of it,
      * in the order written.
+     *
+     * @param drains the nodes in the cut whose errors port the whole pipeline reads from outside it
+     *               (ADR 0054): the preview drains them, so it sets failing rows aside as the run does
      */
-    record Plan(PipelineDefinition definition, String node, String type) {
+    record Plan(PipelineDefinition definition, String node, String type, List<String> drains) {
+
+        Plan(PipelineDefinition definition, String node, String type) {
+            this(definition, node, type, List.of());
+        }
     }
+
+    /** The node types with an errors port (ADR 0054); a write never runs in a preview. */
+    static final Set<String> WITH_ERRORS = Set.of("compute", "select", "filter", "route");
 
     /**
      * How big a preview may be: nodes in all and read nodes among them, and the memory its nodes
@@ -150,8 +167,40 @@ final class NodePreview {
         }
         String name = d.name() == null || d.name().isBlank() ? "preview" : d.name();
         return new Plan(new PipelineDefinition(name, d.description(), clamp(sub, caps.memoryMb()), d.quality(),
-            d.parameters()), id,
-            chosen.type());
+            d.parameters()), id, chosen.type(), drained(sub, d.nodes(), keep));
+    }
+
+    /**
+     * The nodes of {@code sub} with an errors port that the whole pipeline reads from outside it
+     * (ADR 0054). With something on its errors port a node sets a failing row aside rather than
+     * stopping, so the preview drains those ports ({@link Drain}) and fails no sooner than the run.
+     * An errors port nothing reads stays unconnected, and the preview fails where the run would.
+     */
+    static List<String> drained(List<PipelineDefinition.NodeDefinition> sub, List<PipelineDefinition.NodeDefinition> all,
+                                Set<String> keep) {
+        Set<String> withPort = new LinkedHashSet<>();
+        sub.forEach(n -> {
+            if (WITH_ERRORS.contains(n.type())) {
+                withPort.add(n.id());
+            }
+        });
+        Set<String> read = new LinkedHashSet<>();
+        for (PipelineDefinition.NodeDefinition n : all) {
+            if (keep.contains(n.id())) {
+                continue;
+            }
+            for (PipelineDefinition.InputRef r : n.inputs()) {
+                try {
+                    PortRef from = PortRef.parse(r.from(), "out");
+                    if (io.kilnmark.kiln.RowErrors.PORT.equals(from.port()) && withPort.contains(from.node())) {
+                        read.add(from.node());
+                    }
+                } catch (IllegalArgumentException e) {
+                    // an input the check reports
+                }
+            }
+        }
+        return List.copyOf(read);
     }
 
     /**
@@ -399,6 +448,12 @@ final class NodePreview {
             for (PipelineCompilerPort.EdgeOutline e : c.edges()) {
                 if (e.toNode().equals(id)) {
                     Hidden h = out.getOrDefault(e.fromNode(), Hidden.NONE);
+                    PipelineCompilerPort.NodeOutline from = nodes.get(e.fromNode());
+                    if (h.any() && from != null && WriteNodeFactory.TYPE.equals(from.type())
+                        && io.kilnmark.kiln.RowErrors.PORT.equals(e.fromPort())) {
+                        // a write checks every value it is given: what its error rows say comes from any of them
+                        h = h.plus(Hidden.of(FAILED_ON));
+                    }
                     in.merge(e.toPort(), h, Hidden::plus);
                     any = any.plus(h);
                 }
@@ -415,6 +470,14 @@ final class NodePreview {
         return out.getOrDefault(node, Hidden.NONE);
     }
 
+    /**
+     * The columns of an error row that say what a row failed on (ADR 0054): marked when the node
+     * worked the failure out from a marked column, since which value failed, and how, says something
+     * about it. {@code error_node} names only the node.
+     */
+    static final List<String> FAILED_ON = List.of(io.kilnmark.kiln.RowErrors.COLUMN, io.kilnmark.kiln.RowErrors.CODE,
+        io.kilnmark.kiln.RowErrors.MESSAGE);
+
     /** What one node passes on marked, given what arrives marked. */
     private static Hidden marking(String type, Map<String, Object> config, Map<String, Hidden> in, Hidden any,
                                   Set<String> read) {
@@ -424,12 +487,18 @@ final class NodePreview {
                 return Hidden.of(read);
             }
             case "compute" -> {
+                // each expression sees the columns computed before it, so a mark carries down the list
                 Set<String> now = new HashSet<>(main.names());
-                texts(config.get("columns")).forEach((name, expr) -> {
-                    if (main.touches(refs(expr))) {
-                        now.add(name);
+                boolean failedOn = false;
+                for (Map.Entry<String, String> e : texts(config.get("columns")).entrySet()) {
+                    if (Hidden.of(now).touches(refs(e.getValue()))) {
+                        now.add(e.getKey());
+                        failedOn = true;
                     }
-                });
+                }
+                if (failedOn) {
+                    now.addAll(FAILED_ON); // which value failed, and how, is worked out from it too
+                }
                 return main.all() ? Hidden.ALL : Hidden.of(now);
             }
             case "select" -> {
@@ -442,6 +511,9 @@ final class NodePreview {
                         now.add(to);
                     }
                 });
+                if (main.touches(new ArrayList<>(texts(config.get("cast")).keySet()))) {
+                    now.addAll(FAILED_ON);
+                }
                 return Hidden.of(now);
             }
             case "aggregate" -> {
@@ -476,7 +548,14 @@ final class NodePreview {
                 });
                 return Hidden.of(now);
             }
-            case "filter", "route", "dedupe", "gate", "limit", "union", "sort", "write" -> {
+            case "filter" -> {
+                return main.touches(refs(text(config.get("condition")))) ? main.plus(Hidden.of(FAILED_ON)) : main;
+            }
+            case "route" -> {
+                boolean marked = texts(config.get("routes")).values().stream().anyMatch(c -> main.touches(refs(c)));
+                return marked ? main.plus(Hidden.of(FAILED_ON)) : main;
+            }
+            case "dedupe", "gate", "limit", "union", "sort", "write" -> {
                 return any;
             }
             default -> {
@@ -794,7 +873,7 @@ final class NodePreview {
      */
     static Outcome run(PipelineGraph graph, String node, String port, int rows, long memoryBytes, int capacity,
                        Duration stall) throws InterruptedException {
-        return run(graph, node, port, rows, Hidden.NONE, memoryBytes, capacity, stall, null, null);
+        return run(graph, node, port, rows, Hidden.NONE, memoryBytes, capacity, stall, null, null, List.of());
     }
 
     /**
@@ -804,13 +883,23 @@ final class NodePreview {
      */
     static Outcome run(PipelineGraph graph, String node, String port, int rows, Hidden hidden, long memoryBytes,
                        int capacity, Duration stall, Duration stopWait,
-                       java.util.concurrent.atomic.AtomicReference<KilnGraphRunner> runnerOut)
+                       java.util.concurrent.atomic.AtomicReference<KilnGraphRunner> runnerOut, List<String> drains)
         throws InterruptedException {
         Collector collector = new Collector(rows, hidden);
         List<GraphNode> nodes = new ArrayList<>(graph.nodes());
         nodes.add(new GraphNode(COLLECTOR, collector, Map.of()));
         List<Edge> edges = new ArrayList<>(graph.edges());
         edges.add(new Edge(new PortRef(node, port), new PortRef(COLLECTOR, "in")));
+        int k = 0;
+        for (String from : drains) {
+            if (from.equals(node) && io.kilnmark.kiln.RowErrors.PORT.equals(port)) {
+                continue; // the collector reads it
+            }
+            // capitalised, as COLLECTOR is: no pipeline's node id can take the name
+            String id = DRAIN + ++k;
+            nodes.add(new GraphNode(id, new Drain(collector), Map.of()));
+            edges.add(new Edge(new PortRef(from, io.kilnmark.kiln.RowErrors.PORT), new PortRef(id, "in")));
+        }
         KilnGraphRunner runner = new KilnGraphRunner(memoryBytes, capacity, stall,
             KilnGraphRunner.DEFAULT_PROGRESS_EVERY, stopWait);
         if (runnerOut != null) {
@@ -839,6 +928,8 @@ final class NodePreview {
         boolean truncated;
         /** The node's output ended before the rows asked for: these are all its rows. */
         boolean complete;
+        /** It has stopped taking rows, for whatever reason: the drains then stop too. */
+        volatile boolean done;
         private long bytes;
 
         Collector(int limit) {
@@ -876,6 +967,7 @@ final class NodePreview {
             }
             if (batch == null) {
                 complete = true;
+                done = true;
                 return false;
             }
             try (batch) {
@@ -902,13 +994,57 @@ final class NodePreview {
                     }
                     if (bytes + size > Preview.MAX_BYTES) {
                         truncated = true;
+                        done = true;
                         return false;
                     }
                     bytes += size;
                     rows.add(row);
                 }
             }
-            return rows.size() < limit;
+            done = rows.size() >= limit;
+            return !done;
+        }
+    }
+
+    /**
+     * Reads an errors port and drops what it reads, as the run's own reader would take it, until
+     * the collector has its rows: it then ends, so the nodes before it end early as they would with
+     * the collector alone, instead of reading their whole input.
+     */
+    static final class Drain implements Node {
+        private final Collector collector;
+
+        Drain(Collector collector) {
+            this.collector = collector;
+        }
+
+        @Override
+        public String type() {
+            return "preview-drain";
+        }
+
+        @Override
+        public void init(NodeContext context) {
+            // nothing to prepare
+        }
+
+        @Override
+        public boolean process(NodeContext context) throws NodeException {
+            if (collector.done) {
+                return false;
+            }
+            try {
+                VectorSchemaRoot batch = context.input().poll(context.allocator(), 50,
+                    java.util.concurrent.TimeUnit.MILLISECONDS);
+                if (batch != null) {
+                    batch.close();
+                    return true;
+                }
+                return !context.input().atEnd();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new NodeException("Interrupted", e);
+            }
         }
     }
 

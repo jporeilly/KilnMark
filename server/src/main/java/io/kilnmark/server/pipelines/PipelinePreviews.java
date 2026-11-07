@@ -286,7 +286,8 @@ public class PipelinePreviews {
             RunResult result = o.result();
             if (result.status() != RunResult.Status.SUCCEEDED) {
                 String at = result.nodes().stream().filter(s -> s.outcome() == RunResult.Outcome.FAILED)
-                    .map(RunResult.NodeResult::name).filter(s -> !NodePreview.COLLECTOR.equals(s)).findFirst()
+                    .map(RunResult.NodeResult::name).filter(s -> !NodePreview.COLLECTOR.equals(s) && !NodePreview.isDrain(s))
+                    .findFirst()
                     .orElse(null);
                 // Its words may quote values from the rows: held back as a run's are.
                 throw PreviewFailed.of(marked ? "The preview stopped" + (at == null ? "" : " at node " + at) + ". "
@@ -325,7 +326,7 @@ public class PipelinePreviews {
             }
             try {
                 job.done.complete(NodePreview.run(graph, p.plan().node(), p.port(), rows, masks, limits.memoryBytes(),
-                    limits.rowSetCapacity(), limits.timeout(), limits.stopWait(), job.runner));
+                    limits.rowSetCapacity(), limits.timeout(), limits.stopWait(), job.runner, p.plan().drains()));
             } catch (IllegalArgumentException e) {
                 PipelineExecution.closeNodes(graph); // refused before its nodes started
                 job.done.completeExceptionally(PreviewFailed.of(context.scrub("The preview could not start: "

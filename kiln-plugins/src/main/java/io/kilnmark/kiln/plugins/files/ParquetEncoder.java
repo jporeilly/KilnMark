@@ -451,7 +451,7 @@ final class ParquetEncoder implements RowEncoder {
                     } else {
                         byte[] b = unscaled.toByteArray();
                         if (b.length > fixedLength) {
-                            throw new ArithmeticException("the value " + value + " has more digits than decimal("
+                            throw new ArithmeticException("a value has more digits than decimal("
                                 + column.precision() + "," + column.scale() + ") holds");
                         }
                         byte pad = (byte) (unscaled.signum() < 0 ? 0xFF : 0);

@@ -29,7 +29,7 @@ import io.kilnmark.kiln.nodes.WhichRow;
 import io.kilnmark.server.auth.AccessRole;
 
 /** An upsert write's rule for which row of a repeated key wins, in front of the source's writer. */
-class UpsertWinnersTest {
+class WriteGuardTest {
 
     static final Schema ROWS = new Schema(List.of(Field.nullable("id", new ArrowType.Int(64, true)),
         Field.nullable("version", new ArrowType.Int(64, true)), Field.nullable("note", ArrowType.Utf8.INSTANCE)));
@@ -58,7 +58,7 @@ class UpsertWinnersTest {
         assertInstanceOf(MemoryConnector.Counter.class, create(last));
         last.put("duplicates", "latest");
         last.put("duplicates_by", "version");
-        assertInstanceOf(UpsertWinners.class, create(last));
+        assertInstanceOf(WriteGuard.class, create(last));
     }
 
     @Test
@@ -75,12 +75,18 @@ class UpsertWinnersTest {
                 "duplicates", "newest", "duplicates_by", "version")), "one problem, not a second about the column");
         assertEquals(List.of("duplicates: only upsert has a key whose rows can repeat; append writes every row"),
             write.check(Map.of("source", "warehouse", "table", "a.b", "mode", "append", "duplicates", "latest")));
+        // a write's share is judged at the end, so it cannot commit along the way
+        assertEquals(List.of(), write.check(Map.of("source", "warehouse", "table", "a.b", "mode", "append",
+            "max_error_share", 0.01, "max_errors", 5)));
+        assertTrue(write.check(Map.of("source", "warehouse", "table", "a.b", "mode", "append", "max_error_share", 0.01,
+            "commit_every", 1000L)).contains("max_error_share: the share is judged when the input ends, but "
+            + "commit_every commits rows before that, and they would stay; leave out commit_every, or use max_errors"));
     }
 
     /** Runs the rule over two batches in front of a writer that keeps what it is sent. */
     private static Run run(String rule, String by) throws NodeException {
         Recorder writer = new Recorder();
-        UpsertWinners node = new UpsertWinners(writer, new WhichRow.Settings(WhichRow.Rule.valueOf(rule), by),
+        WriteGuard node = new WriteGuard(writer, new WhichRow.Settings(WhichRow.Rule.valueOf(rule), by),
             List.of("id"), 16);
         try (RootAllocator root = new RootAllocator(Long.MAX_VALUE)) {
             BufferAllocator mine = root.newChildAllocator("node", 0, Long.MAX_VALUE);
@@ -127,7 +133,7 @@ class UpsertWinnersTest {
     @Test
     void aBatchOfNoRowsStillReachesTheWriter() throws Exception {
         Recorder writer = new Recorder();
-        UpsertWinners node = new UpsertWinners(writer, new WhichRow.Settings(WhichRow.Rule.FIRST, null), List.of("id"),
+        WriteGuard node = new WriteGuard(writer, new WhichRow.Settings(WhichRow.Rule.FIRST, null), List.of("id"),
             16);
         try (RootAllocator root = new RootAllocator(Long.MAX_VALUE)) {
             RowSet in = new RowSet("in", 2);
@@ -142,6 +148,102 @@ class UpsertWinnersTest {
         }
         assertEquals(1, writer.batches, "the writer learns the columns, and checks the table against them");
         assertTrue(writer.ended);
+    }
+
+    /** A writer that sends every row noted "bad" to its errors port and keeps the rest. */
+    static final class Refuser implements Node {
+        final List<String> kept = new ArrayList<>();
+        boolean ended;
+
+        @Override
+        public String type() {
+            return "refuser";
+        }
+
+        @Override
+        public void init(NodeContext context) {
+            // nothing to prepare
+        }
+
+        @Override
+        public boolean process(NodeContext context) throws NodeException {
+            try (VectorSchemaRoot b = context.input().take(context.allocator())) {
+                if (b == null) {
+                    ended = true;
+                    return false;
+                }
+                VarCharVector note = (VarCharVector) b.getVector("note");
+                List<Integer> bad = new ArrayList<>();
+                for (int i = 0; i < b.getRowCount(); i++) {
+                    String n = new String(note.get(i), StandardCharsets.UTF_8);
+                    if (n.startsWith("bad")) {
+                        bad.add(i);
+                    } else {
+                        kept.add(n);
+                    }
+                }
+                if (!bad.isEmpty()) {
+                    int[] rows = bad.stream().mapToInt(Integer::intValue).toArray();
+                    io.kilnmark.kiln.RowErrors.Failure[] why = new io.kilnmark.kiln.RowErrors.Failure[rows.length];
+                    java.util.Arrays.fill(why, new io.kilnmark.kiln.RowErrors.Failure("note", "too_long", "too long"));
+                    context.emit("errors", io.kilnmark.kiln.RowErrors.batch(b, rows, why, rows.length, "w",
+                        context.allocator()));
+                }
+                return true;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new NodeException("interrupted", e);
+            }
+        }
+    }
+
+    /** Runs a refusing writer behind a guard with this tolerance; the error rows are counted. */
+    private static Refuser tolerate(Long maxErrors, Double maxShare, Object[][]... batches) throws NodeException {
+        Refuser writer = new Refuser();
+        WriteGuard node = new WriteGuard(writer, null, List.of("id"), 16,
+            new io.kilnmark.kiln.RowErrors.Tally(maxErrors, maxShare));
+        try (RootAllocator root = new RootAllocator(Long.MAX_VALUE)) {
+            BufferAllocator mine = root.newChildAllocator("node", 0, Long.MAX_VALUE);
+            RowSet in = new RowSet("in", batches.length + 1);
+            RowSet errors = new RowSet("errors", 100);
+            Context ctx = new Context(in, mine, errors);
+            try {
+                for (Object[][] b : batches) {
+                    in.put(batch(mine, b));
+                }
+                in.finish();
+                node.init(ctx);
+                while (node.process(ctx)) {
+                    // next batch
+                }
+            } catch (InterruptedException e) {
+                throw new IllegalStateException(e);
+            } finally {
+                node.close();
+                in.cancel();
+                errors.cancel();
+                assertEquals(0, mine.getAllocatedMemory(), "the rows are all given up");
+                mine.close();
+            }
+        }
+        return writer;
+    }
+
+    @Test
+    void aWritesToleranceIsJudgedBeforeTheWriterCommits() throws Exception {
+        Object[][] one = {{1L, 1L, "a"}, {2L, 1L, "bad 1"}, {3L, 1L, "b"}};
+        Object[][] two = {{4L, 1L, "bad 2"}, {5L, 1L, "c"}};
+        Refuser fine = tolerate(2L, 0.5, one, two);
+        assertTrue(fine.ended);
+        assertEquals(List.of("a", "b", "c"), fine.kept);
+        NodeException count = assertThrows(NodeException.class, () -> tolerate(1L, null, one, two));
+        assertTrue(count.getMessage().startsWith("2 of the 5 rows so far failed, more than its max_errors of 1"),
+            count.getMessage());
+        // 2 of 5 is 40%: past 30%, judged when the input ends, before the writer hears of it and commits
+        Refuser[] seen = new Refuser[1];
+        NodeException share = assertThrows(NodeException.class, () -> seen[0] = tolerate(null, 0.3, one, two));
+        assertTrue(share.getMessage().startsWith("2 of 5 rows (40.00%) failed, more than its max_error_share of 30.00%"),
+            share.getMessage());
     }
 
     @Test
@@ -206,11 +308,30 @@ class UpsertWinnersTest {
     static final class Context implements NodeContext {
         private final RowSet in;
         private final BufferAllocator allocator;
+        private final RowSet errors;
         final List<String> notes = new ArrayList<>();
 
         Context(RowSet in, BufferAllocator allocator) {
+            this(in, allocator, null);
+        }
+
+        Context(RowSet in, BufferAllocator allocator, RowSet errors) {
             this.in = in;
             this.allocator = allocator;
+            this.errors = errors;
+        }
+
+        @Override
+        public java.util.Set<String> outputPorts() {
+            return errors == null ? java.util.Set.of() : java.util.Set.of("errors");
+        }
+
+        @Override
+        public RowSet output(String port) throws NodeException {
+            if ("errors".equals(port) && errors != null) {
+                return errors;
+            }
+            return NodeContext.super.output(port);
         }
 
         @Override

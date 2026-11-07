@@ -236,14 +236,14 @@ final class MySqlWriteSql extends WriteSql {
             return null; // a column the node created holds what it was made for
         }
         if (t.typeName().equals("year") && v instanceof Long y && (y < 1901 || y > 2155)) {
-            return "the year " + y + " is outside what a YEAR column holds (1901 to 2155)";
+            return "the year is outside what a YEAR column holds (1901 to 2155)";
         }
         if (t.typeName().equals("time") && v instanceof String text && t.scale() < 6) {
             int dot = text.lastIndexOf('.');
             if (dot > text.lastIndexOf(':') && dot >= 0) {
                 String fraction = text.substring(dot + 1).strip().replaceAll("0+$", "");
                 if (fraction.length() > t.scale()) {
-                    return "the value " + text + " has more digits of a second than the column keeps (" + t.scale()
+                    return "the value has more digits of a second than the column keeps (" + t.scale()
                         + "), and is never rounded. Truncate it with a compute node, or ask for the column to keep more";
                 }
             }
@@ -466,11 +466,11 @@ final class MySqlWriteSql extends WriteSql {
     @Override
     String valueProblem(Kind kind, Object v) {
         return switch (v) {
-            case Double d when d.isNaN() || d.isInfinite() -> "MySQL cannot store " + d + " in a number column";
-            case Float f when f.isNaN() || f.isInfinite() -> "MySQL cannot store " + f + " in a number column";
-            case LocalDate d when d.getYear() < 0 || d.getYear() > 9999 -> yearProblem(d.getYear());
-            case LocalDateTime t when t.getYear() < 0 || t.getYear() > 9999 -> yearProblem(t.getYear());
-            case Instant t when year(t) < 0 || year(t) > 9999 -> yearProblem(year(t));
+            case Double d when d.isNaN() || d.isInfinite() -> "MySQL cannot store NaN or infinity in a number column";
+            case Float f when f.isNaN() || f.isInfinite() -> "MySQL cannot store NaN or infinity in a number column";
+            case LocalDate d when d.getYear() < 0 || d.getYear() > 9999 -> YEAR_PROBLEM;
+            case LocalDateTime t when t.getYear() < 0 || t.getYear() > 9999 -> YEAR_PROBLEM;
+            case Instant t when year(t) < 0 || year(t) > 9999 -> YEAR_PROBLEM;
             case null, default -> null;
         };
     }
@@ -479,9 +479,7 @@ final class MySqlWriteSql extends WriteSql {
         return LocalDateTime.ofInstant(t, ZoneOffset.UTC).getYear();
     }
 
-    private static String yearProblem(int year) {
-        return "the year " + year + " is outside what MySQL dates hold (0 to 9999)";
-    }
+    private static final String YEAR_PROBLEM = "the year is outside what MySQL dates hold (0 to 9999)";
 
     /**
      * {@code 2025-01-31}, {@code 09:30:00.123456}, {@code 2025-01-31 09:30:00.123456} (a timestamp

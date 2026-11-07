@@ -141,7 +141,7 @@ public final class ArrowIO {
             return v;
         } catch (ArithmeticException e) {
             v.close();
-            throw new ExprException("a date or timestamp is too far from today for " + field.getType(), 0);
+            throw ExprException.row("out_of_range", "a date or timestamp is too far from today for " + field.getType(), 0);
         } catch (ExprException | RuntimeException e) {
             v.close();
             throw e;
@@ -183,7 +183,7 @@ public final class ArrowIO {
     static BigDecimal fit(BigDecimal value, int precision, int scale) throws ExprException {
         BigDecimal v = value.setScale(scale, RoundingMode.HALF_UP);
         if (v.precision() > precision) {
-            throw new ExprException("a decimal value has more digits than decimal(" + precision + "," + scale
+            throw ExprException.row("out_of_range", "a decimal value has more digits than decimal(" + precision + "," + scale
                 + ") holds", 0);
         }
         return v;

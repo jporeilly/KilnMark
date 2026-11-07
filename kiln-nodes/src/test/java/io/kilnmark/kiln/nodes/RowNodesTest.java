@@ -229,7 +229,7 @@ class RowNodesTest {
         routes.put("some", "amount > 0");
         routes.put("inactive", "not active");
         RouteFactory f = new RouteFactory();
-        assertEquals(List.of("big", "some", "inactive", "out"), f.outputPorts(config("routes", routes)));
+        assertEquals(List.of("big", "some", "inactive", "out", "errors"), f.outputPorts(config("routes", routes)));
         try (Harness h = people(new Harness()).connect("big", "some", "out")) {
             h.run(f, config("routes", routes));
             assertEquals(List.of(1L), h.column("big", "id"));

@@ -176,11 +176,11 @@ class PostgresWriteTest {
         RunResult rounds = write(source, options("billing.ledger", "append", List.of(), Map.of()), wide,
             Rows.list(new Object[] {4L, new BigDecimal("1.0000")}, new Object[] {5L, new BigDecimal("1.2345")}), 10,
             -1, Rows.events());
-        assertTrue(rounds.error().contains("Row 2: the value 1.2345 in column amount has more decimal places than the "
+        assertTrue(rounds.error().contains("Row 2: the value in column amount has more decimal places than the "
             + "column's 2"), rounds.error());
         RunResult large = write(source, options("billing.ledger", "append", List.of(), Map.of()), wide,
             Rows.list(new Object[] {6L, new BigDecimal("123456789.0000")}), 10, -1, Rows.events());
-        assertTrue(large.error().contains("Row 1: the value 123456789.0000 in column amount has more digits before the "
+        assertTrue(large.error().contains("Row 1: the value in column amount has more digits before the "
             + "point than the column's 8"), large.error());
         assertEquals(List.of(List.of(3L)), query("SELECT count(*) FROM billing.ledger"), "only the row that fits");
 
@@ -189,7 +189,7 @@ class PostgresWriteTest {
             "CREATE TABLE billing.hundreds (id bigint, amount numeric(5,-2))");
         RunResult wider = write(source, options("billing.wide", "append", List.of(), Map.of()), wide,
             Rows.list(new Object[] {1L, new BigDecimal("1.2345")}), 10, -1, Rows.events());
-        assertTrue(wider.error().contains("Row 1: the value 1.2345 in column amount has more decimal places than the "
+        assertTrue(wider.error().contains("Row 1: the value in column amount has more decimal places than the "
             + "column's 2"), wider.error());
         assertEquals(List.of(List.of(0L)), query("SELECT count(*) FROM billing.wide"));
         Schema whole = new Schema(List.of(field("id", Rows.INT64), field("amount", Rows.decimal(10, 0))));
@@ -205,6 +205,47 @@ class PostgresWriteTest {
         RunResult missing = write(source, options("billing.no_such", "append", List.of(), Map.of()), schema,
             Rows.list(new Object[] {1, null, null, null}), 10, -1, Rows.events());
         assertTrue(missing.error().contains("billing.no_such does not exist in warehouse"), missing.error());
+    }
+
+    /**
+     * Rows the table would refuse go to the errors port, never to the database, with the row as it
+     * arrived and a reason that never holds the value; the rest are written (ADR 0054).
+     */
+    @Test
+    void rowsTheTableWouldRefuseGoToTheErrorsPort() throws Exception {
+        sql("CREATE TABLE billing.payments (customer_id bigint PRIMARY KEY, total numeric(6,2), note varchar(8))");
+        Schema fine = new Schema(List.of(field("customer_id", Rows.INT64), field("total", Rows.decimal(12, 4)),
+            field("note", Rows.TEXT)));
+        List<Object[]> rows = new ArrayList<>();
+        for (long i = 0; i < 6; i++) {
+            rows.add(new Object[] {i, new BigDecimal("2.5000"), "ok"});
+        }
+        rows.set(1, new Object[] {1L, new BigDecimal("1.2340"), "ok"});
+        rows.set(3, new Object[] {3L, new BigDecimal("1.0000"), "much too long a note"});
+        rows.set(4, new Object[] {null, new BigDecimal("1.0000"), "no key"});
+        Rows.Collected errors = new Rows.Collected();
+        RunResult r = Rows.runWithErrors(Rows.source(fine, rows, 2),
+            CONNECTOR.writer(source, options("billing.payments", "upsert", List.of("customer_id"), Map.of())), errors,
+            Rows.events());
+        assertTrue(r.succeeded(), r.error());
+        assertEquals(List.of(List.of(0L), List.of(2L), List.of(5L)),
+            query("SELECT customer_id FROM billing.payments ORDER BY 1"));
+        assertEquals(List.of("customer_id", "total", "note", "error_node", "error_column", "error_code",
+            "error_message"), errors.columns.stream().map(c -> c.name()).toList());
+        assertEquals(3, errors.rows.size());
+        assertEquals(List.of("second", "total", "too_precise"), errors.rows.get(0).subList(3, 6));
+        assertEquals(List.of("note", "too_long"), errors.rows.get(1).subList(4, 6));
+        assertEquals(List.of("customer_id", "key_missing"), errors.rows.get(2).subList(4, 6));
+        assertEquals("much too long a note", errors.rows.get(1).get(2), "the value stays in its own column");
+        for (List<Object> e : errors.rows) {
+            String why = String.valueOf(e.get(6));
+            assertTrue(!why.contains("1.234") && !why.contains("much too long"), why);
+        }
+        // without the errors port connected, the first refusal stops the write as before
+        RunResult stops = write(source, options("billing.payments", "upsert", List.of("customer_id"), Map.of()),
+            fine, rows, 2, -1, Rows.events());
+        assertTrue(stops.error().contains("Row 2: the value in column total has more decimal places than the "
+            + "column's 2"), stops.error());
     }
 
     @Test

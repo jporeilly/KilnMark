@@ -191,7 +191,7 @@ abstract class Ev {
     }
 
     static ExprException overflow(int pos) {
-        return new ExprException("a whole number is too large for int64", pos,
+        return ExprException.row("out_of_range", "a whole number is too large for int64", pos,
             "cast to decimal first, like cast(x as decimal(38,0))");
     }
 
@@ -288,7 +288,7 @@ abstract class Ev {
         }
 
         private ExprException divideByZero() {
-            return new ExprException("division by zero", pos, "guard it with nullif, like x / nullif(y, 0)");
+            return ExprException.row("division_by_zero", "division by zero", pos, "guard it with nullif, like x / nullif(y, 0)");
         }
     }
 
@@ -322,7 +322,7 @@ abstract class Ev {
                     throw overflow(pos);
                 }
                 if (type.kind() == Kind.DATE && !Temporal.inRange(out.longs[i])) {
-                    throw new ExprException("a date is out of range (years -9999 to 9999)", pos);
+                    throw ExprException.row("out_of_range", "a date is out of range (years -9999 to 9999)", pos);
                 }
             }
             return out;

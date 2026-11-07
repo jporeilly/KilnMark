@@ -14,6 +14,7 @@ import io.kilnmark.kiln.NodeContext;
 import io.kilnmark.kiln.NodeException;
 import io.kilnmark.kiln.NodeFactory;
 import io.kilnmark.kiln.NodeKind;
+import io.kilnmark.kiln.RowErrors;
 import io.kilnmark.kiln.nodes.expr.Batch;
 import io.kilnmark.kiln.nodes.expr.ExprException;
 import io.kilnmark.kiln.nodes.expr.Expression;
@@ -49,7 +50,7 @@ public final class RouteFactory implements NodeFactory {
     @Override
     public String help() {
         return "Sends each row to the first route whose condition it meets, in order. Rows that meet none go to "
-            + "the out port.";
+            + "the out port; rows where a condition fails go to the errors port, if something is connected to it.";
     }
 
     @Override
@@ -59,7 +60,7 @@ public final class RouteFactory implements NodeFactory {
 
     @Override
     public List<String> outputPorts() {
-        return List.of("out");
+        return List.of("out", RowErrors.PORT);
     }
 
     @Override
@@ -71,13 +72,14 @@ public final class RouteFactory implements NodeFactory {
             ports.addAll(routes.keySet());
         }
         ports.add("out");
+        ports.add(RowErrors.PORT);
         return ports;
     }
 
     @Override
     public List<SettingSpec> settings() {
-        return List.of(SettingSpec.required("routes", "Routes", SettingSpec.Kind.CONDITIONS,
-            "Each route's port name and its condition, checked in order, for example large: amount > 1000."));
+        return Failing.withTolerance(List.of(SettingSpec.required("routes", "Routes", SettingSpec.Kind.CONDITIONS,
+            "Each route's port name and its condition, checked in order, for example large: amount > 1000.")));
     }
 
     private static LinkedHashMap<String, Expression> routes(Config c) {
@@ -91,7 +93,7 @@ public final class RouteFactory implements NodeFactory {
                     + "digits, - and _");
                 return null;
             }
-            if (port.equals("out") || port.equals("in")) {
+            if (port.equals("out") || port.equals("in") || port.equals(RowErrors.PORT)) {
                 c.problem("routes." + port, "'" + port + "' is taken; choose another port name");
                 return null;
             }
@@ -103,15 +105,16 @@ public final class RouteFactory implements NodeFactory {
     public List<String> check(Map<String, Object> config) {
         Config c = new Config(config);
         routes(c);
-        return c.problems();
+        return Failing.withTolerance(c.problems(), config);
     }
 
     @Override
     public Node create(Map<String, Object> config) throws NodeException {
         Config c = new Config(config);
         LinkedHashMap<String, Expression> routes = routes(c);
+        c.problems().addAll(RowErrors.check(config));
         c.orThrow(TYPE);
-        return new RouteNode(routes);
+        return new RouteNode(routes, RowErrors.Tally.of(config));
     }
 
     @Override
@@ -120,7 +123,7 @@ public final class RouteFactory implements NodeFactory {
         Config c = new Config(config);
         LinkedHashMap<String, Expression> routes = routes(c);
         c.orThrow(TYPE);
-        if (!port.equals("out") && !routes.containsKey(port)) {
+        if (!port.equals("out") && !port.equals(RowErrors.PORT) && !routes.containsKey(port)) {
             throw new NodeException("This route node has no output port '" + port + "'");
         }
         Schema in = inputs.get("in");
@@ -134,19 +137,21 @@ public final class RouteFactory implements NodeFactory {
                 throw new NodeException("route " + e.getKey() + ": " + ex.getMessage(), ex);
             }
         }
-        return in;
+        return port.equals(RowErrors.PORT) ? RowErrors.schema(in) : in;
     }
 
     /** The running node. */
     static final class RouteNode extends BaseNode {
         private final LinkedHashMap<String, Expression> routes;
         private final List<String> ports;
+        private final RowErrors.Tally tally;
         private Schema boundTo;
         private List<Expression.Compiled> compiled;
 
-        RouteNode(LinkedHashMap<String, Expression> routes) {
+        RouteNode(LinkedHashMap<String, Expression> routes, RowErrors.Tally tally) {
             super(TYPE);
             this.routes = routes;
+            this.tally = tally;
             this.ports = new ArrayList<>(routes.keySet());
             this.ports.add("out");
         }
@@ -155,40 +160,53 @@ public final class RouteFactory implements NodeFactory {
         public boolean process(NodeContext ctx) throws NodeException {
             VectorSchemaRoot batch = take(ctx, "in");
             if (batch == null) {
+                Failing.finish(tally, ctx);
                 return false;
             }
-            int[] target;
+            tally.arrived(batch.getRowCount());
+            Failing.Done<int[]> done;
             try {
                 if (!batch.getSchema().equals(boundTo)) {
                     compiled = bind(batch.getSchema());
                     boundTo = batch.getSchema();
                 }
-                int n = batch.getRowCount();
-                target = new int[n];
-                boolean[] left = new boolean[n];
-                java.util.Arrays.fill(left, true);
-                java.util.Arrays.fill(target, ports.size() - 1);
-                Batch rows = Batch.of(batch, now);
-                for (int r = 0; r < compiled.size(); r++) {
-                    boolean[] hit;
-                    try {
-                        hit = compiled.get(r).test(rows, left);
-                    } catch (ExprException e) {
-                        throw fail("route " + ports.get(r), e);
-                    }
-                    for (int i = 0; i < n; i++) {
-                        if (hit[i]) {
-                            target[i] = r;
-                            left[i] = false;
-                        }
-                    }
-                }
+                done = Failing.work(batch, this::targets, tally, ctx, name);
             } catch (NodeException | RuntimeException e) {
                 batch.close();
                 throw e;
             }
-            distribute(ctx, batch, target, ports);
+            if (done == null || done.fresh()) {
+                batch.close();
+            }
+            if (done != null) {
+                distribute(ctx, done.rows(), done.result(), ports);
+            }
             return true;
+        }
+
+        /** Where each row goes: the first route it meets, else out (the last of the ports). */
+        private int[] targets(VectorSchemaRoot batch) throws Failing.RowFailure {
+            int n = batch.getRowCount();
+            int[] target = new int[n];
+            boolean[] left = new boolean[n];
+            java.util.Arrays.fill(left, true);
+            java.util.Arrays.fill(target, ports.size() - 1);
+            Batch rows = Batch.of(batch, now);
+            for (int r = 0; r < compiled.size(); r++) {
+                boolean[] hit;
+                try {
+                    hit = compiled.get(r).test(rows, left);
+                } catch (ExprException e) {
+                    throw new Failing.RowFailure("route " + ports.get(r), "routes." + ports.get(r), e);
+                }
+                for (int i = 0; i < n; i++) {
+                    if (hit[i]) {
+                        target[i] = r;
+                        left[i] = false;
+                    }
+                }
+            }
+            return target;
         }
 
         private List<Expression.Compiled> bind(Schema schema) throws NodeException {

@@ -472,12 +472,12 @@ final class OracleWriteSql extends WriteSql {
         if (v instanceof BigDecimal d && d.signum() != 0) {
             BigDecimal exact = d.stripTrailingZeros();
             if (exact.precision() > MAX_DIGITS) {
-                return "the value " + d.toPlainString() + " has more than " + MAX_DIGITS + " significant digits, which "
+                return "the value has more than " + MAX_DIGITS + " significant digits, which "
                     + "Oracle would round, and it is never rounded";
             }
             int exponent = exact.precision() - exact.scale() - 1;
             if (exponent < MIN_EXPONENT || exponent > MAX_EXPONENT) {
-                return "the value " + exact.toString() + " is outside what an Oracle NUMBER holds (from 1E-130 up to, "
+                return "the value is outside what an Oracle NUMBER holds (from 1E-130 up to, "
                     + "not including, 1E126 either side of zero)";
             }
         }
@@ -512,9 +512,8 @@ final class OracleWriteSql extends WriteSql {
         }
         if (v instanceof BigDecimal d && t != null && t.typeName().equals("FLOAT") && t.scale() > 0
             && d.signum() != 0 && d.stripTrailingZeros().precision() > t.scale()) {
-            return "the value " + d.toPlainString() + " has " + d.stripTrailingZeros().precision() + " significant "
-                + "digits, but the FLOAT column keeps " + t.scale() + ", so Oracle would round it, and it is never "
-                + "rounded";
+            return "the value has more significant digits than the FLOAT column keeps (" + t.scale() + "), so Oracle "
+                + "would round it, and it is never rounded";
         }
         return null;
     }

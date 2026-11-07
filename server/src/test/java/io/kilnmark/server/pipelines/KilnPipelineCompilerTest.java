@@ -144,7 +144,8 @@ class KilnPipelineCompilerTest {
             new PipelineCompilerPort.Column("email", "text")), emails.columns().get("out"));
         assertEquals(List.of("customer_id", "email", "joined"), c.nodes().get(0).columns().get("out").stream()
             .map(PipelineCompilerPort.Column::name).toList());
-        assertEquals(Map.of(), c.nodes().get(2).columns(), "a write has no output ports");
+        assertEquals(java.util.Set.of("errors"), c.nodes().get(2).columns().keySet(),
+            "a write's only output is its errors port (ADR 0054)");
         assertEquals("replace", c.configs().get("out").get("mode"));
         assertNull(c.graph(), "checking creates no nodes");
     }

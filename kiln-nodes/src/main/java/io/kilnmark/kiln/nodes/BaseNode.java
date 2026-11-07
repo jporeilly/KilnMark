@@ -142,23 +142,7 @@ abstract class BaseNode implements Node {
 
     /** A new batch holding rows {@code rows[0..count)} of {@code in}, allocated from {@code allocator}. */
     static VectorSchemaRoot copy(VectorSchemaRoot in, int[] rows, int count, BufferAllocator allocator) {
-        List<FieldVector> out = new ArrayList<>();
-        try {
-            for (FieldVector v : in.getFieldVectors()) {
-                FieldVector o = v.getField().createVector(allocator);
-                out.add(o);
-                o.setInitialCapacity(count);
-                o.allocateNew();
-                for (int j = 0; j < count; j++) {
-                    o.copyFromSafe(rows[j], j, v);
-                }
-                o.setValueCount(count);
-            }
-            return new VectorSchemaRoot(in.getSchema(), out, count);
-        } catch (RuntimeException e) {
-            out.forEach(FieldVector::close);
-            throw e;
-        }
+        return io.kilnmark.kiln.RowErrors.rows(in, rows, count, allocator);
     }
 
     /** Moves a vector's buffers into a new vector described by {@code field} (same type, perhaps renamed). */

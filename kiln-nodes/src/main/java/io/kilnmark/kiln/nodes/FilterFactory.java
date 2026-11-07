@@ -12,6 +12,7 @@ import io.kilnmark.kiln.NodeContext;
 import io.kilnmark.kiln.NodeException;
 import io.kilnmark.kiln.NodeFactory;
 import io.kilnmark.kiln.NodeKind;
+import io.kilnmark.kiln.RowErrors;
 import io.kilnmark.kiln.nodes.expr.Batch;
 import io.kilnmark.kiln.nodes.expr.ExprException;
 import io.kilnmark.kiln.nodes.expr.Expression;
@@ -45,7 +46,7 @@ public final class FilterFactory implements NodeFactory {
     @Override
     public String help() {
         return "Keeps the rows where a condition is true. Rows where it is false or empty (null) go to the "
-            + "rejected port, if something is connected to it.";
+            + "rejected port, and rows where it fails go to the errors port, if something is connected to them.";
     }
 
     @Override
@@ -55,28 +56,29 @@ public final class FilterFactory implements NodeFactory {
 
     @Override
     public List<String> outputPorts() {
-        return List.of("out", "rejected");
+        return List.of("out", "rejected", RowErrors.PORT);
     }
 
     @Override
     public List<SettingSpec> settings() {
-        return List.of(SettingSpec.required("condition", "Condition", SettingSpec.Kind.EXPRESSION,
-            "The rows to keep, for example status = 'active' and amount > 0."));
+        return Failing.withTolerance(List.of(SettingSpec.required("condition", "Condition", SettingSpec.Kind.EXPRESSION,
+            "The rows to keep, for example status = 'active' and amount > 0.")));
     }
 
     @Override
     public List<String> check(Map<String, Object> config) {
         Config c = new Config(config);
         c.expression("condition", true);
-        return c.problems();
+        return Failing.withTolerance(c.problems(), config);
     }
 
     @Override
     public Node create(Map<String, Object> config) throws NodeException {
         Config c = new Config(config);
         Expression condition = c.expression("condition", true);
+        c.problems().addAll(RowErrors.check(config));
         c.orThrow(TYPE);
-        return new FilterNode(condition);
+        return new FilterNode(condition, RowErrors.Tally.of(config));
     }
 
     @Override
@@ -97,19 +99,21 @@ public final class FilterFactory implements NodeFactory {
         } catch (ExprException e) {
             throw new NodeException("condition: " + e.getMessage(), e);
         }
-        return in;
+        return port.equals(RowErrors.PORT) ? RowErrors.schema(in) : in;
     }
 
     /** The running node. */
     static final class FilterNode extends BaseNode {
         private static final List<String> PORTS = List.of("out", "rejected");
         private final Expression condition;
+        private final RowErrors.Tally tally;
         private Schema boundTo;
         private Expression.Compiled compiled;
 
-        FilterNode(Expression condition) {
+        FilterNode(Expression condition, RowErrors.Tally tally) {
             super(TYPE);
             this.condition = condition;
+            this.tally = tally;
         }
 
         static void checkCondition(Expression.Compiled c) throws ExprException {
@@ -123,29 +127,47 @@ public final class FilterFactory implements NodeFactory {
         public boolean process(NodeContext ctx) throws NodeException {
             VectorSchemaRoot batch = take(ctx, "in");
             if (batch == null) {
+                Failing.finish(tally, ctx);
                 return false;
             }
-            int[] target;
+            tally.arrived(batch.getRowCount());
+            Failing.Done<int[]> done;
             try {
                 if (!batch.getSchema().equals(boundTo)) {
                     compiled = condition.compile(batch.getSchema());
                     checkCondition(compiled);
                     boundTo = batch.getSchema();
                 }
-                boolean[] keep = compiled.test(Batch.of(batch, now), null);
-                target = new int[keep.length];
-                for (int i = 0; i < keep.length; i++) {
-                    target[i] = keep[i] ? 0 : 1;
-                }
+                done = Failing.work(batch, this::targets, tally, ctx, name);
             } catch (ExprException e) {
                 batch.close();
                 throw fail("condition", e);
-            } catch (RuntimeException e) {
+            } catch (NodeException | RuntimeException e) {
                 batch.close();
                 throw e;
             }
-            distribute(ctx, batch, target, PORTS);
+            if (done == null || done.fresh()) {
+                batch.close();
+            }
+            if (done != null) {
+                distribute(ctx, done.rows(), done.result(), PORTS);
+            }
             return true;
+        }
+
+        /** Where each row goes: 0 (out) where the condition is true, 1 (rejected) where not. */
+        private int[] targets(VectorSchemaRoot rows) throws Failing.RowFailure {
+            boolean[] keep;
+            try {
+                keep = compiled.test(Batch.of(rows, now), null);
+            } catch (ExprException e) {
+                throw new Failing.RowFailure("condition", "condition", e);
+            }
+            int[] target = new int[keep.length];
+            for (int i = 0; i < keep.length; i++) {
+                target[i] = keep[i] ? 0 : 1;
+            }
+            return target;
         }
     }
 }
