@@ -140,17 +140,26 @@ clean.status = 'failed' or (clean.rows_written = 0 and region != 'APAC')
 
 1. A flow run is queued as a job of kind `flow`, tried once. The worker holds the job's own advisory
    lock and **no worker slot**: it only watches, and the pipeline runs it queues need the slots
-   (ADR 0026). Because each watching flow holds a database connection for its lock, one worker
-   watches at most `kilnmark.worker.flows` (8) flows at a time (ADR 0040); further flow jobs wait in
-   the queue.
-2. About twice a second it asks the engine what is ready and starts it (with `max_parallel`, only
+   (ADR 0026). The locks of every flow a worker watches are on **one connection**
+   (`JobQueue.FlowLeases`), opened for the first and given back when the last ends, and so are their
+   sql nodes' places on sources; a place one flow holds is never granted to another on the same
+   connection. Before, each watched flow held a connection of its own for its lock (efficiency
+   review, 6 November 2026; `FlowLeasesTest` and `RunLifecycleTest` find one backend holding every
+   flow's lock). So if that connection is lost, every flow on the worker loses its lock and stops as
+   a flow does when its worker stops (item 5), where before only the flow on that connection did; the
+   next flow opens a new one. One worker still watches at most `kilnmark.worker.flows` (8) flows at a time
+   (ADR 0040): each takes connections now and then while it looks, and the pipeline runs they wait
+   for need the rest. Further flow jobs wait in the queue.
+2. About twice a second, at each look of the process's run watcher (docs/design/pipelines.md, "One
+   run lifecycle"), it asks the engine what is ready and starts it (with `max_parallel`, only
    while fewer than that many nodes run; section 8). A `run-pipeline` node queues
    an ordinary pipeline run with the flow starter's name and role, linked to the flow run and node
    (`pipeline_run.flow_run_id`, `flow_node`; unique, so a node never starts its pipeline twice). If
    the pipeline already has a run queued or running the node waits ("Waiting for p to finish its
    current run") and asks again, giving up after `queue_timeout`.
 3. It reads the finished pipeline run's status and measures (`PipelineStore.flowReport`) and tells
-   the engine. A failed node's message says that the pipeline failed (or could not be run) and where
+   the engine. The pipeline runs it watches are read by the run watcher, for every flow on the
+   process in one query a look; whether the flow run is asked to stop, from its signal there. A failed node's message says that the pipeline failed (or could not be run) and where
    to look, never why: why can quote data and name sources and fields, and the pipeline's own page
    shows it to those who may see it.
 4. A cancel (`FlowService.cancel`) stops starting, cancels the pipeline runs still going, and the

@@ -186,9 +186,13 @@ final class PipelineExecution {
         return seen;
     }
 
+    /** How often a running pipeline looks whether it is asked to stop: a read in memory, not a query. */
+    static final long WATCH_EVERY_MS = 100;
+
     /**
      * Runs {@code graph}. {@code cancelled} is someone asking the run to stop; {@code shutdown} the
-     * worker stopping. Either interrupts the run within about half a second.
+     * worker stopping. Either interrupts the run within about half a second. Both are read in memory
+     * ({@code cancelled} through the run watcher's signal), so they are looked at ten times a second.
      */
     Outcome run(GraphRunner runner, PipelineGraph graph, List<WriteTarget> writes, RunContext context,
                 BooleanSupplier cancelled, BooleanSupplier shutdown) {
@@ -216,7 +220,7 @@ final class PipelineExecution {
                     return;
                 }
                 try {
-                    Thread.sleep(500);
+                    Thread.sleep(WATCH_EVERY_MS);
                 } catch (InterruptedException e) {
                     return;
                 }

@@ -90,9 +90,14 @@ after `after`.
    UPDATE SKIP LOCKED`; for each row, works out the next fire after now, or after its last fire if
    that is later, and writes it with `last_at = now`, the last run cleared, and `starting` as the
    outcome; then commits.
-2. **Queues** each claimed run, outside that transaction.
-3. **Records** the outcome and the run it started (`ScheduleStore.recordOutcome`), only while the
-   row still runs the same pipeline or flow and still says `starting`.
+2. **Checks** each claimed run as Run now checks it (`PipelineService.starter()`,
+   `FlowService.starter()`: a version compiled, a flow's pipelines read), with no lock held, on the
+   schedule as it is now.
+3. **Queues** the checked run and **records** the outcome and the run it started
+   (`ScheduleStore.fire`), under the schedule's row lock, only while the row is still on, still says
+   `starting` and still runs the same pipeline or flow. If what the run was checked for (what it
+   runs, its values, its role) changed between the check and the lock, the lock is let go and the
+   run checked again; after two such changes the check is made under the lock, as before.
 
 A tick that claims a full batch of 100 is followed at once by another. Tests call
 `tick(Instant)` to fix the clock.
@@ -206,7 +211,13 @@ hold at least its `run_as`.
 
 **Under the row lock.** `ScheduleStore.fire` locks the schedule's row (`FOR UPDATE`) only while
 it is still on, still `starting` and runs the same pipeline or flow, and holds it from the check
-to the outcome, queueing the run in between. A token revoked, or a schedule paused or changed,
+of its setter to the outcome, queueing the run in between. The run's own checks, which compile its
+version and read the catalogue and can take seconds, are made before, with no lock held
+(efficiency review, 6 November 2026): before, the fire held the row, and a connection, through
+them, so a save, a pause or a delete of the schedule waited on a compile. What the lock covers is
+what the guarantees need: the claim, earlier, is what fires a schedule at most once across
+schedulers, and the lock from the setter's check to the outcome is what orders a pause against
+the run (`ScheduleApiTest` holds a fire in its check and takes the row with `NOWAIT` meanwhile). A token revoked, or a schedule paused or changed,
 meanwhile either comes first (the check fails, or the row is no longer as claimed and says
 `skipped: the schedule was changed while it was starting`) or waits until the run is queued and
 recorded. A run already queued or running is never cancelled by a pause. Deleting a pipeline or
