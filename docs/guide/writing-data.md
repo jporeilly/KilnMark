@@ -136,6 +136,48 @@ It is for upsert only: the other modes write every row.
   arrived.
 - `dedupe` and `lookup` take the same rule ([Which row wins](pipeline-nodes.md#which-row-wins)).
 
+### Rows the table would refuse
+
+Before a row is sent, Kilnmark converts and checks each value against the table's column. A row
+whose value the table would refuse goes to the write's `errors` port when something is connected to
+it, and is never sent; the other rows are written. With nothing connected, the first such row
+stops the write, as before.
+
+| `error_code` | The value |
+| --- | --- |
+| `key_missing`, `key_empty` | An upsert's key column is empty. |
+| `too_long` | Text longer than the column holds. |
+| `too_precise` | A decimal with more digits than the column keeps, or a time with more digits of a second; Kilnmark never rounds. |
+| `does_not_fit`, `not_storable` | A value the column's type or size cannot hold. |
+
+Error rows are the row as it arrived, with `error_node`, `error_column`, `error_code` and
+`error_message`, as for [rows that fail](pipeline-nodes.md#rows-that-fail) at other nodes; the
+message never holds the value. `max_errors` and `max_error_share` stop the write past a count or a
+share, and the share is judged before anything is committed. With `commit_every`, rows are
+committed before the share can be judged, so a write cannot have both; with `max_errors`, rows
+committed before the limit is passed stay, as with any failure of such a write.
+
+```yaml
+  - id: load
+    type: write
+    input: tidy
+    source: warehouse
+    table: billing.payments
+    mode: append
+    max_errors: 100
+
+  - id: refused
+    type: write
+    input: load.errors
+    source: files
+    path: quarantine/payments-refused.csv
+    mode: replace
+```
+
+A refusal by the database itself (a unique index, a foreign key, a check constraint) is found only
+when a batch is sent, and still stops the write: the whole write is rolled back, as before. Setting
+those rows aside too, row by row, is planned. A write to a file refuses no rows.
+
 ### What replace keeps
 
 `replace` creates the new table under a temporary name (`kiln_new_…`), fills it, and then, in the

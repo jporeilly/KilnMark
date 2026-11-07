@@ -19,6 +19,7 @@ import io.kilnmark.kiln.NodeContext;
 import io.kilnmark.kiln.NodeException;
 import io.kilnmark.kiln.NodeFactory;
 import io.kilnmark.kiln.NodeKind;
+import io.kilnmark.kiln.RowErrors;
 import io.kilnmark.kiln.nodes.expr.ArrowIO;
 import io.kilnmark.kiln.nodes.expr.Col;
 import io.kilnmark.kiln.nodes.expr.ExprException;
@@ -55,7 +56,8 @@ public final class SelectFactory implements NodeFactory {
     @Override
     public String help() {
         return "Keeps or drops columns, and renames, reorders and changes the type of the columns kept. "
-            + "Every setting names columns as they arrive.";
+            + "Every setting names columns as they arrive. Rows whose cast fails go to the errors port, if something "
+            + "is connected to it.";
     }
 
     @Override
@@ -65,12 +67,12 @@ public final class SelectFactory implements NodeFactory {
 
     @Override
     public List<String> outputPorts() {
-        return List.of("out");
+        return List.of("out", RowErrors.PORT);
     }
 
     @Override
     public List<SettingSpec> settings() {
-        return List.of(
+        return Failing.withTolerance(List.of(
             SettingSpec.optional("keep", "Keep", SettingSpec.Kind.COLUMNS, null,
                 "Only these columns, in this order. Leave empty to keep them all."),
             SettingSpec.optional("drop", "Drop", SettingSpec.Kind.COLUMNS, null,
@@ -83,7 +85,7 @@ public final class SelectFactory implements NodeFactory {
             // for column-to-type maps would let the canvas offer the types; that needs a kiln-core addition.
             SettingSpec.optional("cast", "Change types", SettingSpec.Kind.EXPRESSIONS, null,
                 "Columns to convert, and the type for each: boolean, int64, float64, decimal(p,s), utf8, date or "
-                    + "timestamp."));
+                    + "timestamp.")));
     }
 
     /** The settings, read. */
@@ -127,21 +129,22 @@ public final class SelectFactory implements NodeFactory {
     public List<String> check(Map<String, Object> config) {
         Config c = new Config(config);
         read(c);
-        return c.problems();
+        return Failing.withTolerance(c.problems(), config);
     }
 
     @Override
     public Node create(Map<String, Object> config) throws NodeException {
         Config c = new Config(config);
         Settings s = read(c);
+        c.problems().addAll(RowErrors.check(config));
         c.orThrow(TYPE);
-        return new SelectNode(s);
+        return new SelectNode(s, RowErrors.Tally.of(config));
     }
 
     @Override
     public Schema outputSchema(String port, Map<String, Schema> inputs, Map<String, Object> config)
         throws NodeException {
-        if (!port.equals("out")) {
+        if (!port.equals("out") && !port.equals(RowErrors.PORT)) {
             throw new NodeException("A select node has no output port '" + port + "'");
         }
         Schema in = inputs.get("in");
@@ -151,7 +154,8 @@ public final class SelectFactory implements NodeFactory {
         Config c = new Config(config);
         Settings s = read(c);
         c.orThrow(TYPE);
-        return plan(in, s).schema();
+        Schema out = plan(in, s).schema();
+        return port.equals(RowErrors.PORT) ? RowErrors.schema(in) : out;
     }
 
     /** One output column: where it comes from, and the type to cast it to (or null). */
@@ -252,55 +256,71 @@ public final class SelectFactory implements NodeFactory {
     /** The running node. */
     static final class SelectNode extends BaseNode {
         private final Settings settings;
+        private final RowErrors.Tally tally;
         private Schema boundTo;
         private Plan plan;
 
-        SelectNode(Settings settings) {
+        SelectNode(Settings settings, RowErrors.Tally tally) {
             super(TYPE);
             this.settings = settings;
+            this.tally = tally;
         }
 
         @Override
         public boolean process(NodeContext ctx) throws NodeException {
             VectorSchemaRoot batch = take(ctx, "in");
             if (batch == null) {
+                Failing.finish(tally, ctx);
                 return false;
             }
-            VectorSchemaRoot out;
+            tally.arrived(batch.getRowCount());
+            Failing.Done<VectorSchemaRoot> done;
             try {
                 if (!batch.getSchema().equals(boundTo)) {
                     plan = plan(batch.getSchema(), settings);
                     boundTo = batch.getSchema();
                 }
-                out = select(batch, ctx);
+                done = Failing.work(batch, rows -> select(rows, ctx), tally, ctx, name);
             } finally {
                 batch.close();
             }
-            put(ctx, "out", out);
+            if (done != null) {
+                if (done.fresh()) {
+                    done.rows().close();
+                }
+                put(ctx, "out", done.result());
+            }
             return true;
         }
 
-        private VectorSchemaRoot select(VectorSchemaRoot batch, NodeContext ctx) throws NodeException {
-            List<FieldVector> vectors = new ArrayList<>();
+        /**
+         * The batch with its columns chosen and cast. Every cast is made before any column is moved
+         * out of the input, so a row that fails leaves it whole for finding the rows that fail.
+         */
+        private VectorSchemaRoot select(VectorSchemaRoot batch, NodeContext ctx) throws Failing.RowFailure {
+            List<FieldVector> cast = new ArrayList<>();
             try {
                 for (Out o : plan.columns()) {
-                    FieldVector v = batch.getVector(o.source());
-                    if (o.cast() == null) {
-                        vectors.add(move(v, o.field(), ctx.allocator()));
-                    } else {
+                    if (o.cast() != null) {
                         try {
-                            Col c = ArrowIO.read(v).castTo(o.cast());
-                            vectors.add(ArrowIO.write(c, o.field(), ctx.allocator()));
+                            Col c = ArrowIO.read(batch.getVector(o.source())).castTo(o.cast());
+                            cast.add(ArrowIO.write(c, o.field(), ctx.allocator()));
                         } catch (ExprException e) {
-                            throw fail("cast." + o.source(), e);
+                            throw new Failing.RowFailure("cast." + o.source(), o.source(), e);
                         }
                     }
                 }
-                return new VectorSchemaRoot(plan.schema(), vectors, batch.getRowCount());
-            } catch (NodeException | RuntimeException e) {
-                vectors.forEach(FieldVector::close);
+            } catch (Failing.RowFailure | RuntimeException e) {
+                cast.forEach(FieldVector::close);
                 throw e;
             }
+            List<FieldVector> vectors = new ArrayList<>();
+            int next = 0;
+            for (Out o : plan.columns()) {
+                vectors.add(o.cast() != null ? cast.get(next++)
+                    : move(batch.getVector(o.source()), o.field(), ctx.allocator()));
+            }
+            return new VectorSchemaRoot(plan.schema(), vectors, batch.getRowCount());
         }
     }
 }

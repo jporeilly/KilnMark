@@ -421,7 +421,7 @@ final class Regexes {
 
     private Budgeted guard(Rx rx, String text, int pos) throws ExprException {
         if (text.length() > rx.maxInput()) {
-            throw new ExprException("a value is longer than " + String.format(Locale.UK, "%,d", rx.maxInput())
+            throw ExprException.row("too_long", "a value is longer than " + String.format(Locale.UK, "%,d", rx.maxInput())
                 + " characters, the most this regular expression is run on", pos,
                 rx.maxInput() < MAX_INPUT ? "patterns that repeat a group are limited further; a character class, "
                     + "like [ab]* for (a|b)*, avoids the limit" : null);
@@ -439,12 +439,12 @@ final class Regexes {
     }
 
     private static ExprException tooSlow(int pos) {
-        return new ExprException("the regular expression took too long on a value", pos,
+        return ExprException.row("too_slow", "the regular expression took too long on a value", pos,
             "simplify the pattern, or anchor it with ^ and $");
     }
 
     private static ExprException tooDeep(int pos) {
-        return new ExprException("the regular expression needs too much memory on a value", pos,
+        return ExprException.row("too_complex", "the regular expression needs too much memory on a value", pos,
             "use a character class, like [ab]* instead of (a|b)*");
     }
 

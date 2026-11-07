@@ -85,8 +85,7 @@ record OracleCharset(String name, Charset java, boolean unicode) {
             int c = s.codePointAt(i);
             String one = new String(Character.toChars(c));
             if (!encoder.canEncode(one)) {
-                return "the character '" + one + "' (U+" + String.format(Locale.ROOT, "%04X", c) + ") cannot be stored "
-                    + "in the database's character set " + name + (JAVA.containsKey(name) ? "" : " (which Kilnmark "
+                return "a character cannot be stored in the database's character set " + name + (JAVA.containsKey(name) ? "" : " (which Kilnmark "
                     + "does not know, so it writes plain ASCII only)") + ": Oracle would store a ? instead";
             }
             i += Character.charCount(c);

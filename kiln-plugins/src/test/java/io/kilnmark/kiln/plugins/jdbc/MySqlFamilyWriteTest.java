@@ -204,7 +204,7 @@ abstract class MySqlFamilyWriteTest {
         Schema floats = new Schema(List.of(field("x", Rows.FLOAT64)));
         RunResult nan = write(source, options("kt_billing.nan", "create", List.of(), Map.of()), floats,
             Rows.list(new Object[] {Double.NaN}), 4, -1);
-        assertTrue(nan.error().contains("Row 1, column x: MySQL cannot store NaN"), nan.error());
+        assertTrue(nan.error().contains("Row 1, column x: MySQL cannot store NaN or infinity"), nan.error());
         db.sql("CREATE TABLE kt_billing.narrow (customer_id BIGINT NOT NULL, total DECIMAL(4,2), note VARCHAR(20))");
         RunResult tooBig = write(source, options("kt_billing.narrow", "append", List.of(), Map.of()),
             new Schema(List.of(field("customer_id", Rows.INT64), field("total", Rows.decimal(4, 2)))),
@@ -435,12 +435,13 @@ abstract class MySqlFamilyWriteTest {
         assertTrue(ok.succeeded(), ok.error());
         RunResult at = write(source, options("kt_billing.stamps", "append", List.of(), Map.of()), stamps,
             Rows.list(new Object[] {2L, LocalDateTime.parse("2025-01-31T09:30:00.999999"), null, null}), 4, -1);
-        assertTrue(at.error().contains("Row 1: the value 2025-01-31T09:30:00.999999 in column at has more digits of a "
+        assertTrue(at.error().contains("Row 1: the value in column at has more digits of a "
             + "second than the column keeps (0)"), at.error());
         RunResult took = write(source, options("kt_billing.stamps", "append", List.of(), Map.of()), stamps,
             Rows.list(new Object[] {3L, null, LocalTime.parse("09:30:00.5"), null}), 4, -1);
-        assertTrue(took.error().contains("Row 1, column took: the value 09:30:00.5")
-            && took.error().contains("keeps (0)"), took.error());
+        // The message names the column and what it keeps, never the value (CLAUDE.md, "Writing").
+        assertTrue(took.error().contains("Row 1, column took: the value has more digits of a second")
+            && took.error().contains("keeps (0)") && !took.error().contains("09:30"), took.error());
         RunResult at3 = write(source, options("kt_billing.stamps", "append", List.of(), Map.of()), stamps,
             Rows.list(new Object[] {4L, null, null, LocalDateTime.parse("2025-01-31T09:30:00.1234")}), 4, -1);
         assertTrue(at3.error().contains("keeps (3)"), at3.error());
@@ -463,7 +464,7 @@ abstract class MySqlFamilyWriteTest {
             field("season", Rows.INT16)));
         RunResult years = write(source, options("kt_billing.shifts", "append", List.of(), Map.of()), seasons,
             Rows.list(new Object[] {1L, "10:15:00", 1999L}, new Object[] {2L, "10:15:00", 1800L}), 4, -1);
-        assertTrue(years.error().contains("Row 2, column season: the year 1800 is outside what a YEAR column holds "
+        assertTrue(years.error().contains("Row 2, column season: the year is outside what a YEAR column holds "
             + "(1901 to 2155)"), years.error());
         assertEquals(List.of(List.of(0L)), query("SELECT COUNT(*) FROM kt_billing.shifts"));
         RunResult fine = write(source, options("kt_billing.shifts", "append", List.of(), Map.of()), seasons,

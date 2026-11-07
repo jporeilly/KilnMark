@@ -579,10 +579,10 @@ final class GenericWriteSql extends WriteSql {
         if (v instanceof Long n) {
             boolean unsigned = type.contains("UNSIGNED") || unsignedTypes.contains(type);
             if (unsigned && n < 0) {
-                return "the value " + n + " is negative, and the column " + t.typeName() + " holds none";
+                return "the value is negative, and the column " + t.typeName() + " holds none";
             }
             if (type.equals("TINYINT") && (unsigned ? n > 255 : n < -128 || n > 127)) {
-                return "the value " + n + " is outside " + (unsigned ? "0 to 255" : "-128 to 127") + ", what the "
+                return "the value is outside " + (unsigned ? "0 to 255" : "-128 to 127") + ", what the "
                     + "column's TINYINT holds";
             }
         }
@@ -595,7 +595,7 @@ final class GenericWriteSql extends WriteSql {
                 default -> 0;
             };
             if (nanos != 0) {
-                return "the value " + v + " has fractions of a second, and the driver does not say how many digits of "
+                return "the value has fractions of a second, and the driver does not say how many digits of "
                     + "a second the column keeps, so they could be cut. Truncate them with a compute node first";
             }
         }

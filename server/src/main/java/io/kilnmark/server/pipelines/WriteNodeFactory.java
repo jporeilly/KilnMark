@@ -7,12 +7,15 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
+import org.apache.arrow.vector.types.pojo.Schema;
+
 import io.kilnmark.graph.store.Records;
 import io.kilnmark.kiln.SettingSpec;
 import io.kilnmark.kiln.Node;
 import io.kilnmark.kiln.NodeException;
 import io.kilnmark.kiln.NodeFactory;
 import io.kilnmark.kiln.NodeKind;
+import io.kilnmark.kiln.RowErrors;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
 import io.kilnmark.kiln.nodes.WhichRow;
@@ -30,7 +33,12 @@ import io.kilnmark.server.sources.CommonSettings;
  *
  * <p>An upsert states which row wins when its input repeats a key ({@code duplicates},
  * {@link WhichRow}): {@code last} by default, which is what an upsert does by itself, so the
- * source's writer is used as it is; any other rule puts {@link UpsertWinners} in front of it.
+ * source's writer is used as it is; any other rule puts {@link WriteGuard} in front of it.
+ *
+ * <p>A row a database's table would refuse (a value too long, too precise, of the wrong kind, or an
+ * empty key) goes to the {@code errors} port when something is connected to it (ADR 0054), and the
+ * write's tolerance ({@code max_errors}, {@code max_error_share}) is judged by {@link WriteGuard}
+ * before the writer commits.
  */
 public final class WriteNodeFactory implements NodeFactory {
 
@@ -73,7 +81,8 @@ public final class WriteNodeFactory implements NodeFactory {
     @Override
     public String help() {
         return "Writes rows to a database table or a file in a saved source. The source must allow writing, which a "
-            + "designer or an admin sets; what is written is registered in the catalogue with its lineage.";
+            + "designer or an admin sets; what is written is registered in the catalogue with its lineage. Rows a "
+            + "table would refuse go to the errors port, if something is connected to it.";
     }
 
     @Override
@@ -83,7 +92,7 @@ public final class WriteNodeFactory implements NodeFactory {
 
     @Override
     public List<String> outputPorts() {
-        return List.of();
+        return List.of(RowErrors.PORT);
     }
 
     /** The node's own settings: where and how to write. */
@@ -105,10 +114,11 @@ public final class WriteNodeFactory implements NodeFactory {
             + "run"),
         WhichRow.bySetting(null),
         SettingSpec.choice("format", "File format", false, null,
-            "For files: csv or parquet. Taken from the path's extension when left out", FORMATS));
+            "For files: csv or parquet. Taken from the path's extension when left out", FORMATS),
+        RowErrors.settings().get(0), RowErrors.settings().get(1));
 
     private static final java.util.Set<String> BASE_KEYS = java.util.Set.of("source", "target", "table", "path",
-        "mode", "key", "format", WhichRow.KEY, WhichRow.BY);
+        "mode", "key", "format", WhichRow.KEY, WhichRow.BY, RowErrors.MAX_ERRORS, RowErrors.MAX_SHARE);
 
     /** The most memory an upsert's keys may take while it chooses which row wins, in MB. */
     static final long WINNERS_MB = 512;
@@ -211,6 +221,11 @@ public final class WriteNodeFactory implements NodeFactory {
             problems.add((config.get(WhichRow.KEY) != null ? WhichRow.KEY : WhichRow.BY) + ": only upsert has a key "
                 + "whose rows can repeat; " + mode + " writes every row");
         }
+        problems.addAll(RowErrors.check(config));
+        if (config.get(RowErrors.MAX_SHARE) != null && commitsAlong(config)) {
+            problems.add(RowErrors.MAX_SHARE + ": the share is judged when the input ends, but commit_every commits "
+                + "rows before that, and they would stay; leave out commit_every, or use max_errors");
+        }
         Object format = config.get("format");
         if (format != null && (!(format instanceof String f) || !FORMATS.contains(f.strip().toLowerCase(Locale.ROOT)))) {
             problems.add("format: csv or parquet");
@@ -265,6 +280,48 @@ public final class WriteNodeFactory implements NodeFactory {
             }
         }
         return null;
+    }
+
+    /**
+     * The errors port's columns: the arriving rows' with the four error columns (ADR 0054). Checks
+     * an upsert's deciding column against the arriving columns too, since a sink's are not otherwise
+     * given to its factory.
+     */
+    @Override
+    public Schema outputSchema(String port, Map<String, Schema> inputs, Map<String, Object> config)
+        throws NodeException {
+        if (!RowErrors.PORT.equals(port)) {
+            throw new NodeException("A write node has no output port '" + port + "'");
+        }
+        Schema in = inputs.get("in");
+        if (in == null) {
+            return null;
+        }
+        if ("upsert".equals(mode(config))) {
+            List<String> problems = new ArrayList<>();
+            WhichRow.Settings rule = WhichRow.read(config, "last", problems);
+            if (problems.isEmpty()) {
+                WhichRow.checkBy(in, rule, "");
+            }
+        }
+        return RowErrors.schema(in);
+    }
+
+    /**
+     * Whether rows are committed to the target as the write goes ({@code commit_every} above 0, read
+     * as the writer reads it, text included), so they stay when the run fails later. A replace fills
+     * a new table that only takes the target's place at the end.
+     */
+    static boolean commitsAlong(Map<String, Object> config) {
+        Object v = config.get("commit_every");
+        if (v == null || "replace".equals(mode(config))) {
+            return false;
+        }
+        try {
+            return Long.parseLong(v.toString().strip().replace("_", "")) > 0;
+        } catch (NumberFormatException e) {
+            return false; // not a whole number: the writer refuses it, saying so
+        }
     }
 
     /** Why a target is not acceptable, or null: it must stay inside the source. */
@@ -406,8 +463,10 @@ public final class WriteNodeFactory implements NodeFactory {
         run.wrote(source, target, write.assetUrn());
         try {
             Node writer = r.connector().writer(r.config(), write);
-            return mode.equals("upsert") && winners.rule() != WhichRow.Rule.LAST
-                ? new UpsertWinners(writer, winners, key, WINNERS_MB) : writer;
+            WhichRow.Settings rule = mode.equals("upsert") && winners.rule() != WhichRow.Rule.LAST ? winners : null;
+            RowErrors.Tally tally = config.get(RowErrors.MAX_ERRORS) != null || config.get(RowErrors.MAX_SHARE) != null
+                ? RowErrors.Tally.of(config) : null;
+            return rule == null && tally == null ? writer : new WriteGuard(writer, rule, key, WINNERS_MB, tally);
         } catch (ConnectorException e) {
             throw new NodeException("Cannot write " + target + " to " + source + ": " + run.scrub(e.getMessage()));
         } catch (RuntimeException e) {

@@ -166,7 +166,7 @@ class OracleWriteTest {
         assertTrue(ok.succeeded(), ok.error());
         RunResult decimals = write(source, options("kt_billing.narrow", "append", List.of(), Map.of()), s,
             Rows.list(new Object[] {2L, new BigDecimal("1.2345"), whole, whole}), 4, -1);
-        assertTrue(decimals.error().contains("the value 1.2345 in column TOTAL") && decimals.error().contains(
+        assertTrue(decimals.error().contains("the value in column TOTAL") && decimals.error().contains(
             "never rounded"), decimals.error());
         RunResult seconds = write(source, options("kt_billing.narrow", "append", List.of(), Map.of()), s,
             Rows.list(new Object[] {3L, BigDecimal.ONE, whole.plusNanos(500_000_000), whole}), 4, -1);
@@ -346,7 +346,7 @@ class OracleWriteTest {
             + "AL32UTF8, but the column holds at most 4 bytes"), bytes.error());
         RunResult digits = write(source, options("kt_billing.sized", "append", List.of(), Map.of()), s,
             Rows.list(new Object[] {3L, null, new BigDecimal("0.1234567890123456789100"), null, null}), 4, -1);
-        assertTrue(digits.error().contains("has 20 significant digits, but the FLOAT column keeps 19"), digits.error());
+        assertTrue(digits.error().contains("has more significant digits than the FLOAT column keeps (19)"), digits.error());
         RunResult empty = write(source, options("kt_billing.sized", "append", List.of(), Map.of()), s,
             Rows.list(new Object[] {4L, null, null, new byte[0], null}), 4, -1);
         assertTrue(empty.error().contains("it is empty (no bytes), which Oracle stores as null"), empty.error());

@@ -479,6 +479,114 @@ class NodePreviewTest {
         assertEquals(256L, p.definition().nodes().get(1).config().get("memory_limit_mb"), "a window holds rows");
     }
 
+    /**
+     * Rows that fail keep their columns, and so their marks (ADR 0054, ADR 0027): a preview of the
+     * errors port masks a sensitive column, the reason never holds a value, and a write of the error
+     * rows carries the mark on.
+     */
+    @Test
+    void errorRowsKeepTheirMarks() {
+        String y = yaml("""
+              - {id: people, type: read, source: small, asset: lab.people}
+              - {id: x, type: compute, input: people, columns: {share: "100 / (id - 3)"}}
+            """);
+        PipelinePreviews.Viewer nameHidden = new PipelinePreviews.Viewer() {
+            @Override
+            public boolean mayUnmask() {
+                return false;
+            }
+
+            @Override
+            public Set<String> marks(String urn) {
+                return urn.equals("urn:kilnmark:small:lab.people") ? Set.of("name") : Set.of();
+            }
+        };
+        PipelineViews.NodePreviewView v = previews().preview(y, "x", "errors", 5, "jo", AccessRole.STEWARD, nameHidden,
+            () -> false);
+        assertEquals(1, v.rows().size(), v.rows().toString());
+        assertEquals(List.of("name"), v.masked(), "the sensitive column of a failing row is masked");
+        assertTrue(v.rows().get(0).contains("division_by_zero"), v.rows().toString());
+        assertFalse(v.rows().get(0).stream().anyMatch(cell -> cell != null && cell.contains("Person")),
+            v.rows().toString());
+
+        sources.asset("urn:kilnmark:small:lab.people", "id:int64", "name:text");
+        PipelineCompilerPort.Compilation c = KilnPipelineCompiler.compile(NodePreview.plan(y, "x").definition(),
+            factories, false);
+        assertEquals(List.of(), c.problems());
+        // what a write of x.errors records about the columns it wrote: the marks arriving at it
+        NodePreview.Hidden marks = NodePreview.marked(c, Map.of("people", Set.of("name")), "x");
+        assertTrue(marks.hides("name"), "the errors port carries the read's mark on");
+        assertFalse(marks.hides("error_message") || marks.hides("error_code"),
+            "a failure worked out from an unmarked column says nothing about a marked one");
+        String byName = yaml("""
+              - {id: people, type: read, source: small, asset: lab.people}
+              - {id: x, type: compute, input: people, columns: {n: "cast(name as int64)"}}
+            """);
+        PipelineCompilerPort.Compilation named = KilnPipelineCompiler.compile(NodePreview.plan(byName, "x").definition(),
+            factories, false);
+        NodePreview.Hidden fromName = NodePreview.marked(named, Map.of("people", Set.of("name")), "x");
+        assertTrue(fromName.hides("error_code") && fromName.hides("error_message") && fromName.hides("error_column"),
+            "which value of a marked column failed, and how, is marked");
+        assertFalse(fromName.hides("error_node"));
+        // a column worked out from an earlier marked column of the same compute is marked too
+        String chained = yaml("""
+              - {id: people, type: read, source: small, asset: lab.people}
+              - {id: x, type: compute, input: people, columns: {a: "upper(name)", b: "a || 'x'", c: "id + 1"}}
+            """);
+        PipelineCompilerPort.Compilation ch = KilnPipelineCompiler.compile(NodePreview.plan(chained, "x").definition(),
+            factories, false);
+        NodePreview.Hidden carried = NodePreview.marked(ch, Map.of("people", Set.of("name")), "x");
+        assertTrue(carried.hides("a") && carried.hides("b"), "b is worked out from a, which is from name");
+        assertFalse(carried.hides("c"));
+
+        // a write checks every value it is given, so the error rows it sets aside say something about a
+        // marked one: their error columns are marked on its errors edges, not on what it writes itself
+        String writes = yaml("""
+              - {id: people, type: read, source: small, asset: lab.people}
+              - {id: w, type: write, input: people, source: warehouse, table: lab.people_copy, mode: replace}
+              - {id: refused, type: limit, input: w.errors, rows: 10}
+            """);
+        PipelineCompilerPort.Compilation wc = KilnPipelineCompiler.compile(
+            io.kilnmark.kiln.yaml.PipelineDefinition.parse(writes).definition(), factories, false);
+        assertFalse(NodePreview.marked(wc, Map.of("people", Set.of("name")), "w").hides("error_code"));
+        NodePreview.Hidden refused = NodePreview.marked(wc, Map.of("people", Set.of("name")), "refused");
+        assertTrue(refused.hides("name") && refused.hides("error_code") && refused.hides("error_message"));
+
+        // A preview of a node whose errors port the pipeline reads sets failing rows aside, as the run does;
+        // one whose errors port nothing reads fails, as the run does.
+        String drained = yaml("""
+              - {id: people, type: read, source: small, asset: lab.people}
+              - {id: x, type: compute, input: people, columns: {share: "100 / (id - 3)"}}
+              - {id: y, type: limit, input: x, rows: 100}
+              - {id: aside, type: limit, input: x.errors, rows: 100}
+            """);
+        PipelineViews.NodePreviewView out = previews().preview(drained, "y", null, 100, "jo", AccessRole.STEWARD,
+            nameHidden, () -> false);
+        assertEquals(39, out.rows().size(), "every person but id 3");
+        assertThrows(RuntimeException.class, () -> previews().preview(y, "x", null, 100, "jo", AccessRole.STEWARD,
+            nameHidden, () -> false), "nothing reads x.errors: the first failure stops it, as in a run");
+    }
+
+    /** A drained errors port ends with the preview: the nodes before it end early, never reading on. */
+    @Test
+    void aDrainedErrorsPortLetsThePreviewEndEarly() {
+        String y = yaml("""
+              - {id: people, type: read, source: lab-db, asset: lab.people}
+              - {id: x, type: compute, input: people, columns: {share: "100 / (id - 3)"}}
+              - {id: y, type: limit, input: x, rows: 1000}
+              - {id: aside, type: limit, input: x.errors, rows: 1000}
+            """);
+        long started = System.nanoTime();
+        PipelineViews.NodePreviewView v = previews().preview(y, "y", null, 5, "jo", AccessRole.STEWARD,
+            viewer(false, "name"), () -> false);
+        assertEquals(5, v.rows().size());
+        assertTrue(System.nanoTime() - started < java.time.Duration.ofSeconds(20).toNanos(),
+            "a billion rows were not read to the end");
+        assertEquals(List.of("x"), NodePreview.plan(y, "y", new NodePreview.Caps(50, 10, 256)).drains());
+        assertEquals(List.of(), NodePreview.plan(y.replace("type: compute", "type: limit"), "y",
+            new NodePreview.Caps(50, 10, 256)).drains(), "only a node with an errors port is drained");
+    }
+
     @Test
     void aHashOfAMarkedColumnIsMarked() {
         sources.asset("urn:kilnmark:small:lab.people", "id:int64", "name:text");

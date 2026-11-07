@@ -542,20 +542,20 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
 | Type | Ports | What it does |
 | --- | --- | --- |
 | `read` | → `out` | Reads a table, view or file from a saved source (existing readers) |
-| `filter` | `in` → `out`, `rejected` | Keeps rows where the condition is true; others to `rejected` if connected |
-| `compute` | `in` → `out` | Adds or replaces columns from expressions |
-| `select` | `in` → `out` | Keeps, drops, renames, reorders and casts columns |
+| `filter` | `in` → `out`, `rejected`, `errors` | Keeps rows where the condition is true; others to `rejected` if connected |
+| `compute` | `in` → `out`, `errors` | Adds or replaces columns from expressions |
+| `select` | `in` → `out`, `errors` | Keeps, drops, renames, reorders and casts columns |
 | `lookup` | `main`, `lookup` → `out`, `rejected` | Adds columns from the lookup side by key; unmatched rows kept (left), dropped (inner) or sent to `rejected` |
 | `aggregate` | `in` → `out` | Groups and summarises |
 | `union` | `in` (many) → `out` | Appends inputs, matching columns by name |
 | `dedupe` | `in` → `out`, `rejected` | Keeps one row per key, by a stated rule (the first by default) |
-| `route` | `in` → named outputs, `out` | Sends each row to the first matching condition's port, others to `out` |
+| `route` | `in` → named outputs, `out`, `errors` | Sends each row to the first matching condition's port, others to `out` |
 | `limit` | `in` → `out` | First N rows, for trying a pipeline out |
 | `sort` | `in` → `out` | Orders rows by columns, spilling to disk past its memory limit |
 | `join` | `left`, `right` → `out` | Inner, left, right or full join of two inputs of any size (sort-merge, spilling) |
 | `window` | `in` → `out` | Row numbers, ranks, running totals, lag and lead by partition and order, spilling to disk |
 | `gate` | `in` → `out`, `quarantine` | Checks rows against the asset's rules and its own in the stream; stops the run, quarantines failing rows or warns (docs/design/data-quality.md section 7) |
-| `write` | `in` → | Writes to a database table or a file in a saved source |
+| `write` | `in` → `errors` | Writes to a database table or a file in a saved source |
 
 The row nodes live in the `kiln-nodes` module (`io.kilnmark.kiln.nodes`), one `NodeFactory` each,
 found through `ServiceLoader`. Settings, with defaults:
@@ -623,7 +623,7 @@ for an upsert.
 - `lookup` decides while it loads its lookup side: a hash table from key to the winning row, with
   the deciding value beside it. Rows that lose stay in the stored batches unused.
 - An upsert keeps the last row it is sent, so `last` uses the source's writer as it is. Any other
-  rule puts `UpsertWinners` in front of the writer: it reads the node's input, keeps a map from
+  rule puts `WriteGuard` in front of the writer: it reads the node's input, keeps a map from
   key to the deciding value (up to 512 MB), and hands the writer, through a row set of its own and
   one batch a call as the node contract says, only rows that leave each key's winner in the table:
   under `first` the first row of a key; under `latest` and `earliest` each row that beats every
@@ -635,6 +635,57 @@ for an upsert.
   stored row; the guide says so.
 - A preview is refused, for all who cannot unmask, when `duplicates_by` names a column marked
   sensitive, as for a sort: which row wins shows how its values compare.
+
+### Rows that fail (ADR 0054)
+
+`compute`, `select`, `filter`, `route` and `write` have an `errors` port. With something connected
+to it, a row that fails goes there instead of stopping the run; with nothing connected, the node
+behaves as before (the same first failure, the same message).
+
+- **Finding the rows** (`Failing`, kiln-nodes). Expressions run on whole batches, so an
+  `ExprException` from `eval` says only that some row failed. `Failing.work` runs the node's work on
+  the batch; on a `RowFailure` it splits the batch in halves (copies), tries each, and recurses into
+  the halves that fail until single rows remain, then works out the passing rows in one go. A batch
+  that works costs nothing; `k` failing rows of `n` cost about `k × log₂(n)` tries. When no single
+  row fails, the original failure stops the run. Compute and select make every new vector before
+  moving any input vector into the output, so a failed try leaves the input whole.
+- **What is a row failure.** Only exceptions from evaluating rows, never from compiling against a
+  schema. The sites that throw for one row's value carry a code (`ExprException.row`):
+  `cast_failed`, `division_by_zero`, `out_of_range`, `too_long`, `too_slow`, `too_complex`;
+  their problem and hint are fixed wordings. A single row failing without a
+  code stops the run (`Failing.single`), so text built from a value can never reach an error row,
+  and a wrong argument (field 0 of `split_part`, a regular expression that is not valid) stops the
+  run rather than sending every row to `errors`. A coded failure on every row (`x / 0`) still sends
+  every row there: set a tolerance to stop such a run.
+- **Error rows** (`RowErrors`, kiln-core): the input's columns, less any `error_*` columns already
+  there, then `error_node`, `error_column`, `error_code`, `error_message` (utf8, nullable). The
+  errors port's columns are the input's, so marks follow by name: `NodePreview.marked` and `hidden`
+  give a node one set for all its ports, which covers `errors`. `marked` adds `error_column`,
+  `error_code` and `error_message` (`FAILED_ON`) when the node's expressions, casts or conditions
+  touch a marked column (a column computed earlier in the same compute from a marked one counts),
+  and for a write given any marked column, on the edges leaving its errors port (not on what it
+  writes itself): which value failed says something about it. A preview drains (`NodePreview.drained`,
+  `NodePreview.Drain`) each errors port of a compute, select, filter or route in its cut that the
+  pipeline reads from outside it, so it fails no sooner than the run; a drain stops when the
+  collector has its rows, so the nodes before it still end early. `RowErrors.schema` drops input
+  columns named like the error columns in any case.
+- **Tolerance** (`RowErrors.Tally`): `max_errors` is checked as rows fail, `max_error_share` when the
+  input ends, against the rows that arrived at the node. The node's line in the run's log comes from
+  the tally. With nothing on `errors` nothing is counted.
+- **Write.** `JdbcTableOutput` converts and checks every bound value of a row before the row is
+  handed to the loader (`rowValues`); a `Refused` (a `NodeException` with a code and a fixed wording)
+  goes to `errors` when it is connected, and the row is never sent. The loaders now take the
+  checked values. The database's own refusals (constraints) are found per batch and still roll the
+  whole write back; splitting a failed batch needs a savepoint per batch and differs per database
+  (a `COPY` cannot be split once sent), so it is left for later. The write's tolerance is judged by
+  `WriteGuard`, which counts what the writer emits on `errors` and judges the share *before* it
+  tells the writer the input has ended, so a write past its share never commits. A write's
+  `rowsOut` stays empty in the run record; its `errors` count is in its ports.
+- **Messages without values.** The write's decimal and time-precision refusals, and the dialects'
+  value checks (`valueProblem`, `targetValueProblem`: TINYINT and unsigned ranges, MySQL years and
+  NaN, Oracle digits and characters), no longer quote the value, in run failures as in error rows.
+  A write with `commit_every` may not set `max_error_share` (it would commit before the share is
+  judged).
 
 ### Sorting, and spilling to disk (ADR 0049)
 
