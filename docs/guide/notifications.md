@@ -18,6 +18,22 @@ up email, and what an email contains.
 | **Pipeline quality below threshold** | A pipeline run succeeds, but what it wrote scores below the pipeline's quality threshold | Medium |
 | **Flow run failed** | A flow run fails | High |
 | **Flow notice** | A flow's `notify` node sends its message ([Building and running a flow](flows.md)) | The node's own `severity` |
+| **Pipeline run recovered** | A pipeline run succeeds after a failed run that was told | The failure's severity by email; shown as information in the app |
+| **Flow run recovered** | A flow run succeeds after a failed run that was told | The failure's severity by email; shown as information in the app |
+| **Run taking longer than expected** | A pipeline or flow run is still going past its `run: warn_after` | Medium |
+
+**Runs tried again.** A pipeline or flow with `run: retries` is tried again after a failure
+([Trying a run again](pipelines.md#trying-a-run-again)). Nobody is told about a try that will be
+tried again: **Pipeline run failed** and **Flow run failed** come once, after the last try, and say
+how many tries were made and why there were no more. A run that succeeds on a later try tells
+nobody.
+
+**Owners are always told.** A pipeline's or flow's owners
+([Owners](pipelines.md#owners)) get its **run failed**, **run recovered** and **taking longer than
+expected** notifications in the app, and by email when their email is on and their address
+confirmed, even if their own choices leave the kind out; the hourly limit and the digest still
+apply. Each sees what their role may see, and a team address what a viewer sees. When no owner can
+be told, admins are told in their place. Everyone else gets them as their own choices say.
 
 A pipeline has a quality threshold when its YAML sets one, such as `quality: {min_score: 0.95}`
 (see [Building and running a pipeline](pipelines.md#quality-of-what-a-run-writes)). Each run
@@ -29,7 +45,7 @@ failing. You hear again only if it gets worse, for example when a warning become
 once more when it recovers. A failed scan is told once until a scan of that source succeeds again.
 A failed connection test is told once until a connection test or a scan of that source succeeds.
 A failed pipeline run is told once until a run of that pipeline succeeds, and a failed flow run
-once until a run of that flow succeeds. Drift, new issues, pipeline runs below their quality
+once until a run of that flow succeeds; that success is told as **recovered**. Drift, new issues, pipeline runs below their quality
 threshold and flow notices are told each time they happen, once per run.
 
 ![How an event reaches you: told once per problem, to everyone whose choices include it, in the app, and by email when it is on, confirmed and the severity is reached](images/notifications-flow.svg)

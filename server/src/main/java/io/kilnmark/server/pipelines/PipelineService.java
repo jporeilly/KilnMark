@@ -1574,8 +1574,9 @@ public class PipelineService {
 
         /** Whether the try may be tried again now; a lost one is decided without its wait (it has waited). */
         private RunRetries.Decision decide(PipelineStore.Run now, RunRetries.Ending ending) {
-            String unsafe = store.version(run.pipeline(), run.version())
-                .map(v -> unsafeToRepeat(PipelineDefinition.parse(v.yaml()).definition())).orElse("its version is gone");
+            Optional<PipelineStore.Version> v = store.version(run.pipeline(), run.version());
+            String unsafe = v.isEmpty() ? "its version is gone"
+                : unsafeToRepeat(PipelineDefinition.parse(v.get().yaml()).definition());
             return RunRetries.decide(options, now.tries(), now.runTry(), ending, unsafe, store.nextFire(run.id()),
                 Instant.now(), java.util.concurrent.ThreadLocalRandom.current());
         }

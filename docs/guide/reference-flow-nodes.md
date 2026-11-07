@@ -16,7 +16,45 @@ from the server's own definitions, so they are always those of this version. Eve
 A flow's own keys are `kilnmark` (always `flow/v1`), `name`, `description`, `parameters`,
 `queue_timeout` (how long a node waits for a pipeline that is already running before it fails; 30m
 when left out, 24h at most), `max_parallel` (how many of its nodes run at once, 1 to 50; no limit
-when left out), `nodes`, `connections` and `layout` (where the diagram draws each node).
+when left out), `run` (how the flow's runs are tried, below), `nodes`, `connections` and `layout`
+(where the diagram draws each node).
+
+### The run block
+
+`run:` says how each run of the flow is tried ([Trying a whole run again](flows.md#trying-a-whole-run-again)):
+
+| Key | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `retries` | whole number | `0` | How many more tries a failed run gets, 0 to 5, before it fails and its owners are told. The server may allow fewer (`kilnmark.runs.max-retries`). |
+| `retry_delay` | time | `1m` | The wait before the second try, `10s` to `1h`, doubled before each later try. Each wait is at most an hour, and up to a tenth more is added at random. Needs `retries`. |
+| `retry_on` | choice | `any` | `any`: any failure a second try could change. `lost`: only a try lost with its worker or its connection to Kilnmark's database. Needs `retries`. |
+| `timeout` | time | no limit | How long each try may take, `90s` to `7d`. Past it the try is stopped and fails; it may be tried again. |
+| `warn_after` | time | none | How long a run may go before its owners are told it is taking longer than expected, `1m` to `7d`, less than `timeout`. It does not stop the run. |
+
+A flow tried again carries on from where it failed: nodes that succeeded keep what they did, the
+rest run again, and a for-each node runs only its items that did not succeed. A node with
+`retries` of its own is never run again by the flow's retries (its own take their place), and with
+`retries` above 0 and `retry_on: any`, every pipeline the flow runs again must replace or upsert
+what it writes, or the flow is refused when saved. A cancel, a `stop` node, a quality gate that
+stopped a pipeline and a try that would start after the schedule's next fire are never tried again.
+
+```yaml
+kilnmark: flow/v1
+name: nightly-orders-retried
+description: Load the orders; a failed run is tried twice more, carrying on from where it failed.
+
+run:
+  retries: 2
+  retry_delay: 5m
+  timeout: 4h
+  warn_after: 2h
+
+nodes:
+  - id: load
+    type: run-pipeline
+    pipeline: orders-by-country
+    with: { country: GB }
+```
 
 A connection has `from`, `to` and `when`: `success` (the default), `failure`, `always`, or a
 condition on what earlier nodes reported, such as `"load.score >= good"`. The condition language,
@@ -57,7 +95,7 @@ Runs a saved pipeline, by name, and waits for its run to end. The node succeeds 
 | `timeout` | time | no | no limit | How long the run may take once a worker takes it: `90s`, `30m`, `2h` or `1d`, at most `7d`. Past it the run is cancelled and the node fails. |
 | `priority` | choice | no | `normal` | `high`, `normal` or `low`: which waiting runs a free worker takes first. |
 | `retries` | whole number | no | `0` | How many more times to try after a failure, 0 to 5. Only for a pipeline whose writes replace or upsert. |
-| `retry_delay` | time | no | `1m` | The wait before the first try again, doubled before each one after: `10s` to `1h`. |
+| `retry_delay` | time | no | `1m` | The wait before the first try again, doubled before each one after, each wait at most an hour: `10s` to `1h`. |
 
 **What to know.** The run is an ordinary pipeline run, started as the person (or schedule) who
 started the flow, with their role, so a write still needs a steward and a source that allows

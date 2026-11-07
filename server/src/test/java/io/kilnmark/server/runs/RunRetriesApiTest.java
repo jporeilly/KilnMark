@@ -96,6 +96,7 @@ class RunRetriesApiTest {
     void release() {
         HoldingGraphRunner.hold = false;
         HoldingGraphRunner.failWith = null;
+        HoldingGraphRunner.failNext = null;
     }
 
     private static RequestSpecification as(String token) {
@@ -382,11 +383,9 @@ class RunRetriesApiTest {
         """;
 
     /** Starts a flow whose first node succeeds and whose second fails, once. */
-    private long startFailingSecond(String flow) throws InterruptedException {
-        long id = flows.queueRun(flow, null, Map.of(), "tester", AccessRole.STEWARD).id();
-        await("first to succeed", () -> node(id, "first"), n -> n != null && "succeeded".equals(n.status()));
-        HoldingGraphRunner.failWith = "second fails on purpose (rr)";
-        return id;
+    private long startFailingSecond(String flow) {
+        HoldingGraphRunner.failNext = "rr-plain2";
+        return flows.queueRun(flow, null, Map.of(), "tester", AccessRole.STEWARD).id();
     }
 
     @Test

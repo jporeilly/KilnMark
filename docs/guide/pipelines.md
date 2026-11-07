@@ -792,6 +792,66 @@ A run that has waited goes before runs queued after it: when a place is freed, t
 are looked at again at once, oldest first. This is not a strict queue: a run queued at the moment a
 place frees can still take it first.
 
+## Trying a run again
+
+A pipeline's `run:` block tries a failed run again, from its beginning. Use it for failures that
+pass on their own: a database restarting, a network drop, a target another run was writing.
+
+```yaml
+run:
+  retries: 2          # 2 more tries after a failed one; 0 to 5
+  retry_delay: 5m     # wait 5m, then 10m; 10s to 1h, each wait at most 1h
+  retry_on: any       # any (the default), or lost: only a run lost with its worker
+  timeout: 2h         # each try; 90s to 7d
+  warn_after: 1h      # tell the owners once if it is still going; less than timeout
+```
+
+- **Every write must replace or upsert.** A try again writes again from the beginning, so saving
+  refuses `retries` on a pipeline with a `write` that appends or creates its target ("every write
+  must replace or upsert: out appends"), whatever `retry_on` says: a worker that stopped may have
+  written too.
+- **A retry is a new try of the same run.** While it waits the run shows **Retrying** in the
+  History tab, and its page says "Retrying: try 2 of 3, next at 14:05". It holds no worker. A
+  schedule never fires twice for it; `kilnmark-run` waits across the tries and ends with the last
+  one's outcome. Each wait doubles, is at most an hour, and has a little added at random, so runs
+  that failed together do not all come back at the same moment.
+- **What is never tried again**: a cancel; a version that cannot run, or a run refused as it is set
+  up; a quality gate that stopped the run, which would stop it the same way; and a try that would
+  start after the schedule's next fire. Tried again: an error, a lost worker or connection, a
+  timeout, a source that could not be reached.
+- **Nobody is told about a try that is tried again.** After the last try, one **Pipeline run
+  failed** goes to the pipeline's owners and to those who chose it, saying how many tries were made
+  and why no more. When a run then succeeds, **Pipeline run recovered** is told. See
+  [Owners](#owners).
+- The run's page lists each try under **Tries**, and the History tab says "Succeeded on try 2". A
+  later try's nodes, quality and charts replace the earlier try's; the log keeps every try.
+- A run that a flow node starts never uses these: the node's own `retries` decide
+  ([Building and running a flow](flows.md#trying-a-whole-run-again)).
+- A pipeline starts again in full: there is no Run again from the failure for one. To carry on
+  part-way, make its stages the nodes of a flow.
+
+## Owners
+
+Each pipeline has **owners**: the people, or team addresses, who answer for it. They are told when
+its run fails after its last try, when it runs again successfully after a failure that was told,
+and when a run takes longer than its `run: warn_after`.
+
+- The pipeline's page shows them under **Owners**. Designers and admins choose **Change owners** and give up
+  to 10 sign-in names (as Kilnmark shows who did something) or team addresses, one a line. A team
+  address must be one an admin added under **Settings**, **Email**. Others see a team address as
+  "A team address".
+- **By default the owner is whoever first saved it.** Owners are kept apart from the YAML, so
+  changing them makes no new version. Each change is in the [audit log](audit-log.md).
+- **Owners are always told**, in Kilnmark and by email when they have email on with a confirmed
+  address, even if their own choices leave that kind out. Each sees what their role may see, as
+  anyone does. Everyone else is told as their own choices say.
+- **Owning gives no rights.** An owner who is a viewer still cannot run or change the pipeline, and a
+  run never acts as its owner: it acts as whoever, or whichever schedule, started it.
+- **With no owner**, the page says so, and admins are told in their place. The same holds when no
+  owner can be told (a person whose token no longer works, or who has not used Kilnmark lately).
+  People who sign in through your identity provider get no notifications yet, so name a team
+  address too.
+
 ## Reading a run
 
 ![A run's page: its summary (status, version, times, rows written, quality) and where each node spent its time](images/pipeline-run-page.png)

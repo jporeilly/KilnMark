@@ -857,7 +857,8 @@ asset's previous profile.
 - **Queueing.** `POST .../runs` checks the version again (a source may have stopped allowing
   writes since it was saved) and queues a job of kind `pipeline` with the run, in one
   transaction. A pipeline has at most one run queued or running: asking again while one is gets a
-  409. A pipeline job is tried once, never repeated on its own: its writes may have begun.
+  409. A pipeline job is tried once, never repeated on its own, unless its `run: retries` allow it
+  and every write replaces or upserts (ADR 0053, "Run retries and owners" below).
   It holds an advisory lock of its own (keyed by the job), not a source lock, so runs may overlap
   scans of the sources they read; recovery leaves a job alone while its lock is held, and marks
   the run failed when the job is given up.
@@ -1032,6 +1033,82 @@ every half a second (`RunWatch.EVERY`), and asks the database only for what is w
   read a thousand times is none, ten flows watching fifty runs are one. `RunLifecycleTest` writes a
   cancel straight into a running pipeline's and flow's rows, as another process would, and sees each
   stop within seconds.
+
+### Run retries and owners (decisions, ADR 0053)
+
+What the lifecycle above does when a try fails, and who is told. Pipelines and flows share it, in
+`io.kilnmark.server.runs`; the flow's own part (carrying on) is in docs/design/flows.md.
+
+![How a run is tried again: a try that fails is tried again only when it may be (never a cancel, a refusal, a quality gate, a sql commit in doubt or writes that would repeat, never past the schedule's next fire, and only while tries are left); it waits retry_delay, doubled each time and at most an hour, holding no worker; a flow's next try keeps the nodes that succeeded and runs the rest; after the last try one notice goes to the owners](../guide/images/run-retries.svg)
+
+- **The options.** `RunOptions` (kiln-core) reads the top-level `run:` block of a pipeline and a
+  flow: `retries` 0-5, `retry_delay` 10s-1h (1m), `retry_on` `any`|`lost`, `timeout` 90s-7d,
+  `warn_after` 1m-7d and less than `timeout`. `RunOptions.wait` is the doubled delay, each wait at
+  most an hour (node retries' `FlowDefinition.Retry.before` uses it too, which had no cap), and
+  `waitWithJitter` adds up to a tenth at random. The server's `kilnmark.runs.max-retries` (5; 0
+  turns run retries off) caps `retries`; `RunSettings` refuses to start with it, or
+  `kilnmark.runs.lost-after` (2m, 30s-30m), out of range.
+- **Saving.** `PipelineService.runProblems`: with `retries` above 0, every write must replace or
+  upsert (`unsafeToRepeat`, the rule node retries use), whatever `retry_on` says, since a lost run may
+  have written too; checked again when a run is queued (409). A flow: with `retries` above 0 and
+  `retry_on: any`, every pipeline a node without retries of its own runs must be safe
+  (`FlowService.pipelineProblems`); with `retry_on: lost` it need not, as a takeover never starts a
+  pipeline run again.
+- **The tries (V39).** `pipeline_run` and `flow_run` get `run_try` (from 0), `tries` (1 + retries
+  after the cap; 1 for a run a flow node starts), `retry_at` and `warned_at`; a pipeline run gets
+  `failed_as` (refused, gate, timed_out, lost, error, cancelled), so a flow knows whether running its
+  node again could change anything. `pipeline_run_try` and `flow_run_try` hold each ended try: its
+  number, status (`lost` too), start and end, error, `next` (tried again, or why not) and `asked_by`.
+  `RunTables.finishRun` records the try that ends with the run; `failOrphanedRuns` records the lost
+  ones.
+- **One job a run, tried as many times as the run.** `RunTables.addJob` gives the job
+  `max_attempts` = `tries`. A worker that ends a failed try decides with `RunRetries.decide` (pure,
+  `RunRetriesTest`): never a cancel, a refusal, a gate, a commit in doubt, a flow a stop node ended,
+  writes that would repeat (checked against the version the run used), a try past
+  `schedule.next_at` of the schedule whose last fire started it, or one past its tries; `retry_on:
+  lost` only a lost try. To try again, `RunTables.retry` does in one transaction what a new try needs:
+  the try's row, the run queued again with `run_try + 1`, `retry_at` and "Try 1 of 3 failed; trying
+  again at 14:05" as its message, and the job (still this worker's) queued again for then, the
+  attempt counted. So a schedule's fire is never repeated, one run at a time holds while it waits
+  (a fire then is skipped), `?wait=` and `kilnmark-run` keep waiting, and a request key gives back
+  the same run. A cancel while it waits cancels it at once and takes the job off the queue.
+- **A later try of a pipeline** starts from its beginning: `clearTry` removes the earlier try's node
+  runs, quality, points, progress and result; the log carries on after its last event
+  (`RunLog(..., after)`), "Try 2 of 3 started".
+- **Lost runs.** `JobQueue.recoverStale(staleAfter, lostAfter)` takes pipeline and flow jobs whose
+  heartbeat is older than `kilnmark.runs.lost-after` and whose lock nobody holds, and queues them
+  again while attempts remain. The next worker finds the run still **running**: that is a takeover.
+  It decides as above with the ending `lost` (the lost-after wait is its wait); a pipeline is queued
+  again as its next try (`RunTables.takeOver(..., requeue)`) and starts from its beginning; a flow
+  carries on, still running. A worker that is shutting down, or whose lease was lost, ends its try as
+  lost and decides then.
+- **Timeout and warn_after** are watched by the process's run watcher: `RunWatch.Signal.limits`
+  holds the try's start, its timeout and its warning; each look turns `timedOut()` past the timeout
+  (the run stops as a cancel stops it, and the try fails "Took longer than 2h and was stopped") and
+  calls the warning once past `warn_after`, which marks `warned_at` (once a run, whatever the
+  process) and tells `run_taking_long`. `RunWatchTest` drives both with a clock of its own.
+- **Owners** are `owners text[]` on `pipeline` and `flow`, outside the YAML (0-10; `Owners.check`:
+  a sign-in name, or a team address an admin added, lower-cased), set to the first saver when
+  created (and by V39 for those that existed), changed with `PUT .../owners` by designers and admins,
+  each change `pipeline.owners_set` or `flow.owners_set` with the list before and after. They give no
+  rights and are never what a run acts as. `GET .../owners` shows team addresses to designers and
+  admins only.
+- **Notifications** (docs/design/notifications.md): none for a try that is tried again; the failure
+  after the last try says ", after 3 tries. Not tried again: ..."; `pipeline_recovered` and
+  `flow_recovered` close the problem a failure opened; `run_taking_long` once a run. Each carries the
+  pipeline or flow it is about (`NotificationEvent.ownedBy`), whose owners are told by right.
+- **API.** A run's summary has `tryNumber` (from 1), `tries` and `retryAt`; its detail `tries` (each
+  ended try; a pipeline's messages held back from viewers as its error is). `POST
+  /api/v1/flow-runs/{id}/run-again` (docs/design/flows.md). Pages: "Retrying: try 2 of 4, next at
+  14:05" on the run page, **Tries**, "Succeeded on try 3" in the history, and **Owners** on the
+  pipeline and flow pages.
+- **Tests.** `RunOptionsTest` (ranges, the cap, the spread), `RunRetriesTest` (every rule, a retry
+  storm, the server settings, owners), `CarryOnTest` (the flow's plan), `RunWatchTest` (timeout and
+  warning), and `RunRetriesApiTest` on PostgreSQL: a try again of the same run that tells nobody, one
+  notice after the last try to an owner who unticked the kind, recovered, an appending pipeline
+  refused, a cancel never tried again, a scheduled run not tried past its next fire, a flow carrying
+  on, node retries not multiplied, a for-each node trying only its failed items, Run again from the
+  failure kept and refused, a takeover, owners and the long-run notice.
 
 
 - `GET/POST /api/v1/pipelines`, `GET/PUT/DELETE /api/v1/pipelines/{name}` (PUT saves a new

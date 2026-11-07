@@ -191,6 +191,18 @@ Kilnmark processes look at once, a schedule runs at most once for each time. If 
 exactly the wrong moment, that one run is lost rather than run twice, and its outcome says so: for loads of data, a missing
 run you can see is safer than a doubled one.
 
+### When a scheduled run is tried again
+
+A pipeline or flow with a `run: retries` block tries a failed run again
+([Trying a run again](pipelines.md#trying-a-run-again)). That is a new try of the same run, never a
+new fire: the schedule still fires at most once for each time, and its outcome stays **Started**
+with the same run. While the run waits for its next try, it is still going, so a time that comes
+meanwhile is **Skipped**.
+
+No try starts after the schedule's next time: a daily run never runs into the next day's. A try
+that would is not made, and the run fails, saying "Not tried again: the next scheduled run is due
+first". A try acts as the first did, as the schedule, with the schedule's role.
+
 ## What happened last time
 
 Each schedule shows, under **Last time it was due**, when that was and what happened, as a word

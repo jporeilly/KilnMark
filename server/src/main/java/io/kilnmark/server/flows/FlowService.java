@@ -2666,11 +2666,12 @@ public class FlowService {
         return new CarryOn.Facts() {
             @Override
             public String unsafe(FlowDefinition.Node s) {
-                return pipelineStore.pipeline(s.pipeline())
+                // Not Optional.map: a safe pipeline's answer is null, which map would read as no pipeline at all.
+                Optional<PipelineStore.Version> v = pipelineStore.pipeline(s.pipeline())
                     .flatMap(p -> pipelineStore.version(s.pipeline(), s.version() == null ? p.latestVersion()
-                        : s.version()))
-                    .map(v -> unsafeWrite(PipelineDefinition.parse(v.yaml()).definition()))
-                    .orElse("its pipeline is gone");
+                        : s.version()));
+                return v.isEmpty() ? "its pipeline is gone" : unsafeWrite(PipelineDefinition.parse(v.get().yaml())
+                    .definition());
             }
 
             @Override

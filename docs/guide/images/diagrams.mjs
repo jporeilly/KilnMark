@@ -942,3 +942,36 @@ function svg(name, height, title, sub, body) {
     foot(y3 + 112, "eye", "The answer names the records it used; a model's answer alone never acts on equipment.");
   svg("ai-diagnose", y3 + 162, "Inferring a fault from history", "The ai node's diagnose task, with the closest past records as context", b);
 }
+
+// ---- How a run is tried again, and a flow carries on (ADR 0053) ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 196, y3 = 336;
+  const cy1 = y1 + 58, cy2 = y2 + 58, cy3 = y3 + 58;
+  const b =
+    lane(y1, 96, "A try ends", C.blue) +
+    card(X[0], y1 + 30, W, { icon: "play", color: C.blue, title: "A try runs", sub: "its timeout is per try" }) +
+    arrow([[248, cy1], [274, cy1]], C.blue) +
+    card(X[1], y1 + 30, W, { icon: "cross", color: C.bad, title: "It fails, or is lost", sub: "its worker stopped" }) +
+    arrow([[484, cy1], [510, cy1]], C.blue) +
+    card(X[2], y1 + 30, W, { icon: "shield", color: C.warn, strong: true, title: "May it try again?", sub: "tries left, safe, before next fire" }) +
+    arrow([[616, y1 + 86], [616, y2 + 28]], C.good) +
+    label(624, y1 + 104, "yes", C.good, "start") +
+    arrow([[720, cy1], [728, cy1], [728, cy3], [722, cy3]], C.bad, { dash: "4 3" }) +
+    label(722, y1 + 104, "no", C.bad, "end") +
+    lane(y2, 110, "The same run, a new try", C.good) +
+    card(X[2], y2 + 30, W, { icon: "clock", color: C.good, title: "Queued, waiting", sub: "the delay doubled, at most 1h" }) +
+    arrow([[512, cy2], [486, cy2]], C.good) +
+    card(X[1], y2 + 30, W, { icon: "check", color: C.good, strong: true, title: "A flow carries on", sub: "succeeded nodes kept" }) +
+    arrow([[276, cy2], [250, cy2]], C.good) +
+    card(X[0], y2 + 30, W, { icon: "play", color: C.good, title: "The next try", sub: "nobody is told" }) +
+    arrow([[226, y2 + 30], [226, y1 + 88]], C.quiet, { dash: "4 3" }) +
+    lane(y3, 96, "After the last try", C.bad) +
+    card(X[2], y3 + 30, W, { icon: "bell", color: C.bad, strong: true, title: "One notice", sub: "to the owners, with the tries" }) +
+    arrow([[512, cy3], [486, cy3]], C.quiet) +
+    card(X[1], y3 + 30, W, { icon: "person", color: C.violet, title: "Run again by hand", sub: "a flow, from the failure" }) +
+    arrow([[276, cy3], [250, cy3]], C.quiet) +
+    card(X[0], y3 + 30, W, { icon: "check", color: C.good, title: "A later success", sub: "told as recovered" }) +
+    foot(y3 + 112, "gear", "Never tried again: a cancel, a refusal, a gate, writes that repeat. Node retries replace the run's.");
+  svg("run-retries", y3 + 162, "How a run is tried again", "A failed try of a pipeline or flow run, tried again only when it may be; a flow carries on from where it failed", b);
+}

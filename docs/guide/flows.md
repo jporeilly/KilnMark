@@ -236,7 +236,7 @@ nodes:
 ```
 
 - **A try that fails or takes longer than its timeout is tried again**, after `retry_delay`, which
-  doubles before each try after. The node shows **Running** while it waits, with a message such as
+  doubles before each try after, each wait at most an hour. The node shows **Running** while it waits, with a message such as
   "Try 1 of 4 failed; trying again in 2m". Only once its last try fails does the node fail, saying
   "..., after 4 tries", and its `failure` connection is taken.
 - **A cancel is never tried again**: a pipeline run cancelled on its page, or a flow cancelled or
@@ -259,6 +259,90 @@ nodes:
   again waits for too).
 - On the diagram, choose the node and set **Tries again** and **Wait before trying again** on its
   Settings tab.
+
+## Trying a whole run again
+
+A flow's `run:` block tries a failed run again, carrying on from where it failed. Use it for a
+flow whose failures pass on their own, and for a worker that stops while it runs.
+
+![How a run is tried again: a try that fails is tried again only when it may be: never a cancel, a refusal, a quality gate, a sql commit in doubt or writes that would repeat, never past the schedule's next fire, and only while tries are left; it waits retry_delay, doubled each time and at most an hour, holding no worker; a flow's next try keeps the nodes that succeeded and runs the rest; after the last try, one notice goes to the owners](images/run-retries.svg)
+
+```yaml
+run:
+  retries: 2          # 2 more tries after a failed one; 0 to 5
+  retry_delay: 5m     # wait 5m, then 10m; 10s to 1h, each wait at most 1h
+  retry_on: any       # any (the default), or lost: only a run lost with its worker
+  timeout: 4h         # each try; 90s to 7d
+  warn_after: 2h      # tell the owners once if a run is still going; less than timeout
+```
+
+- **A retry is a new try of the same run.** While it waits the run shows **Queued**, and its page
+  says "Retrying: try 2 of 3, next at 14:05". It holds no worker. A schedule never fires twice for
+  it, and a fire that comes while it waits is skipped, as one that comes while a run is going is.
+  `kilnmark-run` waits across the tries and ends with the last one's outcome.
+- **It carries on from where it failed.** Nodes that succeeded keep what they did, and later nodes
+  read their values as before. The rest run again, as their connections fall this time, so
+  parallel branches carry on each from where it was. A for-each node runs only its items that did
+  not succeed. Each node's pipeline run on a later try is a pipeline run of its own.
+- **What is never tried again**: a cancel; a flow a `stop` node ended; a node whose pipeline a
+  quality gate stopped, or whose run was refused; a `sql` node whose commit failed or that
+  committed; a node whose pipeline would write twice. With `retries` above 0 and `retry_on: any`,
+  saving refuses a flow whose pipelines append ("... every write in orders-load must replace or
+  upsert: out appends"), unless the node has retries of its own. And never a try that would start
+  after the schedule's next fire: the run fails, saying "the next scheduled run is due first".
+- **Node retries take the place of the flow's.** A node with `retries` of its own is never run
+  again by the flow's retries: it used its tries. If such a node failed and nothing handled it, the
+  flow is not tried again. So a node is tried at most 1 + its own retries, never that times the
+  flow's.
+- **A worker that stops**, or loses its connection to Kilnmark's database, leaves its run. After
+  `kilnmark.runs.lost-after` (2 minutes), another worker takes it over while it has tries left:
+  nodes that had ended stay as they ended, and the pipeline runs still going are watched to their
+  end, never started again. With `retry_on: lost`, only such a run is tried again, so a flow whose
+  pipelines append may use it.
+- **Nobody is told about a try that is tried again.** After the last try, one **Flow run failed**
+  goes to the flow's owners and to those who chose it, saying how many tries were made and why no
+  more. When a run then succeeds, **Flow run recovered** is told. See [Owners](#owners).
+- `timeout` is for each try: past it the try is stopped, as a cancel would stop it, and fails; it
+  may be tried again. `warn_after` tells the owners once, a run, and stops nothing.
+- The run's page lists every try under **Tries**: how it ended, when, and what came next.
+
+## Run again from the failure
+
+A failed flow run can be run again by hand from where it failed: open it and choose **Run again
+from the failure** (stewards and above, never someone whose role is below the run's own).
+
+- It is one more try of the same run, with the same version, values and server variables, acting
+  as the run did. Nodes that succeeded keep what they did; the rest run again, and a for-each node
+  runs only its items that did not succeed. A node with retries of its own runs again with them.
+- It is refused, saying which node and why, when a node that would run again is not safe to: its
+  pipeline appends, or a `sql` node committed or its commit is in doubt. It is refused too while
+  another run of the flow is queued or running.
+- It is recorded against the run (**Tries** says who asked) and in the [audit log](audit-log.md).
+  A try started by hand is not tried again by itself.
+- A pipeline has no Run again from the failure: it starts again from its beginning. To carry on
+  part-way, make its stages the nodes of a flow.
+
+## Owners
+
+Each flow has **owners**: the people, or team addresses, who answer for it. They are told when
+its run fails after its last try, when it runs again successfully after a failure that was told,
+and when a run takes longer than its `run: warn_after`.
+
+- The flow's page shows them under **Owners**. Designers and admins choose **Change owners** and give up
+  to 10 sign-in names (as Kilnmark shows who did something) or team addresses, one a line. A team
+  address must be one an admin added under **Settings**, **Email**. Others see a team address as
+  "A team address".
+- **By default the owner is whoever first saved it.** Owners are kept apart from the YAML, so
+  changing them makes no new version. Each change is in the [audit log](audit-log.md).
+- **Owners are always told**, in Kilnmark and by email when they have email on with a confirmed
+  address, even if their own choices leave that kind out. Each sees what their role may see, as
+  anyone does. Everyone else is told as their own choices say.
+- **Owning gives no rights.** An owner who is a viewer still cannot run or change the flow, and a
+  run never acts as its owner: it acts as whoever, or whichever schedule, started it.
+- **With no owner**, the page says so, and admins are told in their place. The same holds when no
+  owner can be told (a person whose token no longer works, or who has not used Kilnmark lately).
+  People who sign in through your identity provider get no notifications yet, so name a team
+  address too.
 
 ## Choosing which runs start first
 
