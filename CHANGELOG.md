@@ -28,6 +28,10 @@ details.
 
 ### Details
 
+- **Dependencies updated** (Dependabot's npm and GitHub Actions groups, redone on an owner branch,
+  since Dependabot's own branches get no runner): `@xyflow/react` 12.12.1, `marked` 18.1.3,
+  `@vitejs/plugin-react` 6.2.1, `vitest` 5.1.0, and `gradle/actions/wrapper-validation` 6.4.1,
+  pinned by commit as before. mime4j stays at 0.8.12, which the Quarkus BOM holds.
 - **One run lifecycle for pipelines and flows** (backlog 22.1; docs/design/pipelines.md, "One run
   lifecycle"). Checking, queueing, cancelling, a run's first steps on a worker and deleting, written
   twice before, in `PipelineService` and `FlowService` and their stores, are now in
