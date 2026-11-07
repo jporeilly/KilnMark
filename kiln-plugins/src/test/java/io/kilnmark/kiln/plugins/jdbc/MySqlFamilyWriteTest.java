@@ -439,8 +439,9 @@ abstract class MySqlFamilyWriteTest {
             + "second than the column keeps (0)"), at.error());
         RunResult took = write(source, options("kt_billing.stamps", "append", List.of(), Map.of()), stamps,
             Rows.list(new Object[] {3L, null, LocalTime.parse("09:30:00.5"), null}), 4, -1);
-        assertTrue(took.error().contains("Row 1, column took: the value 09:30:00.5")
-            && took.error().contains("keeps (0)"), took.error());
+        // The message names the column and what it keeps, never the value (CLAUDE.md, "Writing").
+        assertTrue(took.error().contains("Row 1, column took: the value has more digits of a second")
+            && took.error().contains("keeps (0)") && !took.error().contains("09:30"), took.error());
         RunResult at3 = write(source, options("kt_billing.stamps", "append", List.of(), Map.of()), stamps,
             Rows.list(new Object[] {4L, null, null, LocalDateTime.parse("2025-01-31T09:30:00.1234")}), 4, -1);
         assertTrue(at3.error().contains("keeps (3)"), at3.error());
