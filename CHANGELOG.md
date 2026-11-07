@@ -57,6 +57,12 @@ details.
 
 ### Details
 
+- **Research: what other tools offer** (docs/design/research): the settings about twenty data
+  integration and orchestration tools give their nodes and their runs, from their own
+  documentation, the 15 gaps that matter most for banks, and a migration map. The backlog takes
+  it: run retries, owners and Run again from the failure (item 1), the gaps in nodes (item 9),
+  audit reporting tables, and dashboards and reports about Kilnmark itself (item 18). flow-controls.md now says that no worker takes a flow over
+  until run retries exist.
 - **Deployment modes** ([ADR 0051](docs/adr/0051-starter-pack.md)): `KILNMARK_MODE`
   (`kilnmark.mode`) is `production` or `starter-pack`, in ASCII lower case; the server and the
   control scripts refuse anything else. The control scripts write it at install (`--starter` for a
