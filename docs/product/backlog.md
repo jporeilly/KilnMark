@@ -71,8 +71,9 @@ audit reporting tables and dashboards about Kilnmark itself under item 18, from 
    [docs/design/database-tools.md](../design/database-tools.md).
 9. **More nodes** (owner, 6 November 2026; [ADR 0049](../adr/0049-more-nodes-and-how-coarse-they-are.md)).
    `sort` and `join` (two inputs of any size, spilling to disk) are done (#137, #140), and
-   `window` (row numbers, ranks, running totals, lag and lead, spilling to disk); next more
-   expression functions; then web calls (a REST connector, an `http`
+   `window` (row numbers, ranks, running totals, lag and lead, spilling to disk), and more
+   expression functions (`if`, padding, splitting, date arithmetic, `sha256` and others); next web
+   calls (a REST connector, an `http`
    node and an `http` flow node, behind the allowed hosts an admin sets), JSON and XML, `pivot`
    and `unpivot`, change detection and dimension history, `sequence`, `mask`, generated rows, and
    file actions in flows. Nodes stay coarse: one per shape of work, single-value operations as

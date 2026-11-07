@@ -158,6 +158,56 @@ final class Temporal {
         return micros(r);
     }
 
+    /** The units {@code date_add} and {@code date_diff} take. */
+    static final Set<String> STEP_UNITS = Set.of("year", "quarter", "month", "week", "day", "hour", "minute", "second");
+
+    private static ChronoUnit chrono(String unit) {
+        return switch (unit) {
+            case "year" -> ChronoUnit.YEARS;
+            case "month", "quarter" -> ChronoUnit.MONTHS;
+            case "week" -> ChronoUnit.WEEKS;
+            case "day" -> ChronoUnit.DAYS;
+            case "hour" -> ChronoUnit.HOURS;
+            case "minute" -> ChronoUnit.MINUTES;
+            default -> ChronoUnit.SECONDS;
+        };
+    }
+
+    /**
+     * A day moved by {@code n} of {@code unit} (year to day): a month or year on from 31 January is the
+     * last day of February, as a calendar has it.
+     */
+    static long addDate(String unit, long days, long n, int pos) throws ExprException {
+        long steps = unit.equals("quarter") ? Math.multiplyExact(n, 3L) : n;
+        long out = date(days).plus(steps, chrono(unit)).toEpochDay();
+        if (!inRange(out)) {
+            throw new ExprException("a date is out of range (years -9999 to 9999)", pos);
+        }
+        return out;
+    }
+
+    /** An instant moved by {@code n} of {@code unit}, in UTC. */
+    static long addTimestamp(String unit, long micros, long n, int pos) throws ExprException {
+        long steps = unit.equals("quarter") ? Math.multiplyExact(n, 3L) : n;
+        long out = micros(dateTime(micros).plus(steps, chrono(unit)));
+        if (rangedMicros(out) == null) {
+            throw new ExprException("a timestamp is out of range (years -9999 to 9999)", pos);
+        }
+        return out;
+    }
+
+    /** Whole units from day {@code a} to day {@code b}: negative when {@code b} is earlier. */
+    static long diffDate(String unit, long a, long b) {
+        long n = chrono(unit).between(date(a), date(b));
+        return unit.equals("quarter") ? n / 3 : n;
+    }
+
+    /** Whole units from instant {@code a} to instant {@code b}, in UTC: negative when {@code b} is earlier. */
+    static long diffTimestamp(String unit, long a, long b) {
+        long n = chrono(unit).between(dateTime(a), dateTime(b));
+        return unit.equals("quarter") ? n / 3 : n;
+    }
+
     /** One part of a day; weeks are ISO weeks, day_of_week runs from 1 (Monday) to 7 (Sunday). */
     static long partDate(String unit, long days) {
         LocalDate d = date(days);

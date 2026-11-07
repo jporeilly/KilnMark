@@ -519,12 +519,15 @@ From loosest to tightest:
 Choices:
 
 ```sql
+if(amount >= 1000, 'large', 'small')
 case when amount >= 1000 then 'large' when amount >= 100 then 'medium' else 'small' end
 case status when 'A' then 'active' when 'C' then 'closed' end
 ```
 
-A `case` without `else` gives empty when nothing matches. Only the branch a row takes is worked
-out, so `case when qty <> 0 then total / qty end` never divides by zero.
+`if(condition, a, b)` gives `a` where the condition is true and `b` where it is false or empty; for
+more than two choices, use `case`. A `case` without `else` gives empty when nothing matches. Both
+work out only the branch a row takes, so `if(qty <> 0, total / qty, null)` never divides by zero.
+The results must be of one kind of value: numbers widen to one type, as in arithmetic.
 
 ### Empty values (null)
 
@@ -566,14 +569,20 @@ Whole numbers that overflow, and division by zero, stop the run. Guard a divisio
 
 | Function | Gives |
 | --- | --- |
+| `if(condition, a, b)` | `a` where the condition is true, otherwise `b` (see [Operators](#operators)). |
 | `trim(s)` | `s` without spaces, tabs, line breaks or other whitespace at either end (a no-break space is kept). |
 | `lower(s)`, `upper(s)` | `s` in small or capital letters. |
 | `length(s)` | The number of characters. |
 | `substring(s, start)`, `substring(s, start, length)` | Part of `s`, counting characters from 1. |
 | `replace(s, from, to)` | `s` with every `from` replaced by `to`. |
+| `lpad(s, n)`, `lpad(s, n, fill)`, `rpad(s, n)`, `rpad(s, n, fill)` | `s` filled on the left or right with `fill` (a space unless given) to `n` characters: `lpad('42', 5, '0')` is `00042`. Longer text is cut to its first `n` characters; an empty `fill` leaves `s` as it is. |
+| `left(s, n)`, `right(s, n)` | The first or last `n` characters; with a negative `n`, all but the last or first `-n`. |
+| `split_part(s, separator, n)` | Field `n` of `s` split at each `separator`, counting from 1, or from the end with -1 for the last; empty text when there is no such field. `split_part(email, '@', 2)` is the domain. 0 stops the run. |
+| `starts_with(s, x)`, `ends_with(s, x)`, `contains(s, x)` | Whether `s` starts with, ends with or holds `x`. Case matters. |
 | `concat(a, b, ...)` | The values joined as text, of any type, skipping empty ones. |
 | `coalesce(a, b, ...)` | The first value that is not empty. |
 | `nullif(a, b)` | Empty when `a` equals `b`, otherwise `a`. |
+| `greatest(a, b, ...)`, `least(a, b, ...)` | The largest or smallest value, widened to one type as in arithmetic; empty values are skipped, and the result is empty only when all are. |
 | `abs(x)` | `x` without its sign. |
 | `round(x)`, `round(x, digits)` | `x` rounded half away from zero; `digits` may be negative (`round(1234, -2)` is 1200). |
 | `floor(x)`, `ceil(x)` | `x` rounded down or up to a whole number. |
@@ -586,11 +595,20 @@ Whole numbers that overflow, and division by zero, stop the run. Guard a divisio
 | `parse_date(s)`, `parse_date(s, 'pattern')` | Text read as a date, or empty when it does not fit. |
 | `parse_timestamp(s)`, `parse_timestamp(s, 'pattern')` | Text read as a timestamp (UTC unless the text has an offset), or empty. |
 | `format_date(d, 'pattern')` | A date or timestamp as text, in UTC. |
+| `date_add(d, n, 'unit')` | `d` moved by `n` (negative to go back) years, quarters, months, weeks, days, hours, minutes or seconds, as a calendar moves: `date_add(date '2024-01-31', 1, 'month')` is 29 February. A date takes year to day; cast it to a timestamp for hours. Leaving years -9999 to 9999 stops the run. |
+| `date_diff('unit', a, b)` | How many whole units from `a` to `b` (negative when `b` is earlier), in the same units: `date_diff('month', date '2024-01-31', date '2024-02-29')` is 0, and `date_diff('day', ...)` 29. A date counts from its midnight beside a timestamp. |
+| `sha256(s)` | The SHA-256 hash of the text (its UTF-8 bytes) as 64 small hexadecimal digits, for comparing values or spotting changes without keeping the text. Cast other values first: `sha256(cast(id as utf8))`. A hash of a column marked sensitive is marked too. |
+
+Functions take empty (null) values as operators do: an empty argument gives an empty result, except
+`if`, `coalesce`, `nullif`, `concat`, `greatest` and `least`, which say what they do with them.
+Function names are not case-sensitive (`IF` and `if` are one). There is no `md5`: it is not safe
+for anything that matters, so `sha256` is the hash to use.
 
 Date patterns use letters such as `yyyy` (year), `MM` (month), `MMM` (Jan), `dd` (day), `HH`
 (hour), `mm` (minute), `ss` (second) and `XXX` (offset); put other words in single quotes, as in
-`'dd/MM/yyyy'` or `'yyyy-MM-dd''T''HH:mm'`. Patterns and units must be written out in quotes, so
-mistakes are found before the pipeline runs. Dates are read strictly: 31 February is empty, not
+`'dd/MM/yyyy'` or `'yyyy-MM-dd''T''HH:mm'`. Patterns and units (for `date_trunc`, `date_part`,
+`date_add` and `date_diff`) must be written out in quotes, so mistakes are found before the
+pipeline runs. Dates are read strictly: 31 February is empty, not
 3 March.
 
 ### Regular expressions are kept safe
@@ -619,8 +637,8 @@ running:
   as one operation inside the next.
 - Comparisons do not chain: write `a = b and b = c`, or use brackets.
 - A text value may grow to at most 1,000,000 characters (`||`, `concat`, `replace`,
-  `regex_replace`), and each of them may produce at most 64,000,000 characters for one batch of
-  rows.
+  `regex_replace`, `lpad`, `rpad`), and each of them may produce at most 64,000,000 characters for
+  one batch of rows.
 - Dates and timestamps run from year -9999 to 9999.
 
 For longer logic, split it over several `compute` columns.

@@ -149,7 +149,7 @@ language, much like SQL. Its values, operators, types, functions and limits are 
 
 [generated: index functions]: #
 
-- [Functions](pipeline-nodes.md#functions), for text, numbers, dates and regular expressions: `abs`, `ceil`, `coalesce`, `concat`, `date_part`, `date_trunc`, `floor`, `format_date`, `length`, `lower`, `now`, `nullif`, `parse_date`, `parse_timestamp`, `regex_match`, `regex_replace`, `replace`, `round`, `substring`, `today`, `trim` and `upper`.
+- [Functions](pipeline-nodes.md#functions), for text, numbers, dates and regular expressions: `abs`, `ceil`, `coalesce`, `concat`, `contains`, `date_add`, `date_diff`, `date_part`, `date_trunc`, `ends_with`, `floor`, `format_date`, `greatest`, `if`, `least`, `left`, `length`, `lower`, `lpad`, `now`, `nullif`, `parse_date`, `parse_timestamp`, `regex_match`, `regex_replace`, `replace`, `right`, `round`, `rpad`, `sha256`, `split_part`, `starts_with`, `substring`, `today`, `trim` and `upper`.
 - [Aggregate functions](pipeline-nodes.md#aggregate), for an aggregate node's values: `avg`, `count`, `count_distinct`, `max`, `min` and `sum`.
 - [Window functions](pipeline-nodes.md#window), for a window node's columns: `avg`, `count`, `dense_rank`, `lag`, `lead`, `max`, `min`, `rank`, `row_number` and `sum`.
 

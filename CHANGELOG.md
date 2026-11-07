@@ -29,6 +29,12 @@ details.
   memory limit it carries on on disk, as a sort does, and the run's log says how much it wrote. In
   the Transform folder of the canvas, with a sample, `sample-window`.
   ([window](docs/guide/pipeline-nodes.md#window))
+- **More expression functions** (ADR 0049): `if(condition, a, b)`; padding with `lpad` and `rpad`;
+  `left` and `right`; `split_part` to take one field of a text; `starts_with`, `ends_with` and
+  `contains`; `greatest` and `least`; `date_add` to move a date or time by years, quarters, months,
+  weeks, days, hours, minutes or seconds, and `date_diff` to count the whole units between two; and
+  `sha256` to hash a text. A hash of a column marked sensitive stays marked. Each is checked when a
+  pipeline is saved: its arguments' types, and units and other values that must be written out. ([Functions](docs/guide/pipeline-nodes.md#functions))
 - **Signing in through your organisation's provider no longer ends after a few minutes.** A sign-in
   now renews itself while the person works, and lasts until 8 hours after they signed in at the
   provider, until the provider's own session ends, or until they sign out. With the bundled
@@ -114,6 +120,16 @@ details.
   passes rows through and leaves the new columns unestimated. The canvas shows a Function for each
   new column and "balance, n · per account_id" on the node. The function index of the components
   reference lists the window functions, and the build checks the guide's tables name them all.
+- **The new functions** (docs/design/pipelines.md, "The functions of ADR 0049, 6.3"): `if` compiles
+  to the same lazy `case`, so only the branch taken is worked out; the text functions count code
+  points and follow PostgreSQL's rules for padding, negative counts and `split_part`; `lpad` and
+  `rpad` keep to the text limits; `date_add` moves by calendar units and `date_diff` counts whole
+  units elapsed, with units written out; `greatest` and `least` skip empty values; `sha256` gives
+  lower-case hex of the UTF-8 bytes. `contains` and `split_part` search in time linear in the
+  lengths of the text and what they look for, so two long values made to be slow cannot hold a run
+  up. `md5` is left out. Marks follow a hash as any computed column,
+  and a preview refuses to hash a hidden column. The guide's function table lists each, with its
+  types and what it does with empty values, and the build checks it names every function.
 - **A node can say how much it wrote to disk.** `NodeContext.spilled(bytes)` adds to the run's
   `NodeResult.spilledBytes` (not yet stored in the database), and `NodeContext.note(text)` adds a
   line in the node's own words to the run's log (`node_note`, through `RunListener.nodeNote`).

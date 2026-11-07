@@ -362,6 +362,10 @@ class NodePreviewTest {
         for (String node : List.of("""
               - {id: x, type: compute, input: people, columns: {shout: "upper(name)"}}
             """, """
+              - {id: x, type: compute, input: people, columns: {h: "sha256(name)"}}
+            """, """
+              - {id: x, type: filter, input: people, condition: "if(starts_with(name, 'Person 1'), true, false)"}
+            """, """
               - {id: x, type: compute, input: people, columns: {n: "cast(name as int64)"}}
             """, """
               - {id: x, type: select, input: people, cast: {name: int64}}
@@ -468,6 +472,21 @@ class NodePreviewTest {
             + "before it was read."), v.waits());
         NodePreview.Plan p = NodePreview.plan(y, "x", new NodePreview.Caps(50, 10, 256));
         assertEquals(256L, p.definition().nodes().get(1).config().get("memory_limit_mb"), "a window holds rows");
+    }
+
+    @Test
+    void aHashOfAMarkedColumnIsMarked() {
+        sources.asset("urn:kilnmark:small:lab.people", "id:int64", "name:text");
+        String y = yaml("""
+              - {id: people, type: read, source: small, asset: lab.people}
+              - {id: c, type: compute, input: people, columns: {name_hash: "sha256(name)", id_hash: "sha256(cast(id as utf8))", initial: "left(name, 1)"}}
+            """);
+        PipelineCompilerPort.Compilation c = KilnPipelineCompiler.compile(NodePreview.plan(y, "c").definition(),
+            factories, false);
+        assertEquals(List.of(), c.problems());
+        NodePreview.Hidden h = NodePreview.marked(c, Map.of("people", Set.of("name")), "c");
+        assertTrue(h.hides("name_hash") && h.hides("initial"), "a hash, or part, of a sensitive value is sensitive");
+        assertFalse(h.hides("id_hash"));
     }
 
     @Test
