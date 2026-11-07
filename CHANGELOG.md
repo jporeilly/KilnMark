@@ -111,12 +111,12 @@ details.
   rather than failing it; a worker that lost its job never ends or queues again another worker's
   try; a source's place given back never cuts a retry's wait short; and a pipeline run lost on its
   last try is told.
-- **Research: what other tools offer** (docs/design/research): the settings about twenty data
-  integration and orchestration tools give their nodes and their runs, from their own
-  documentation, the 15 gaps that matter most for banks, and a migration map. The backlog takes
-  it: run retries, owners and Run again from the failure (item 1), the gaps in nodes (item 9),
-  audit reporting tables, and dashboards and reports about Kilnmark itself (item 18). flow-controls.md now says that no worker takes a flow over
-  until run retries exist.
+- **flow-controls.md now says that no worker takes a flow over** until run retries exist (they
+  now do: ADR 0053).
+- **The backlog, the plan and scope, the positioning notes and the research into other tools**
+  moved out of this repository, to be kept with the owner's other business documents. ADR 0049
+  is revised for about 55 nodes by shape of work, and ADR 0050 makes each AI task a node of its
+  own.
 - **Dependencies updated** (Dependabot's npm and GitHub Actions groups, redone on an owner branch,
   since Dependabot's own branches get no runner): `@xyflow/react` 12.12.1, `marked` 18.1.3,
   `@vitejs/plugin-react` 6.2.1, `vitest` 5.1.0, and `gradle/actions/wrapper-validation` 6.4.1,
@@ -415,7 +415,7 @@ details.
   say designers and admins turn writing on, as the server enforces. A diagram of the component
   families joins the guides.
 
-- **Noted for later** (docs/product/backlog.md, "Later, not scheduled"): OCR for scanned
+- **Noted for later** (the backlog, "Later, not scheduled"): OCR for scanned
   documents, with a trial of Tesseract against a local vision model, and Apache OpenNLP's name
   finder as a fallback for finding personal data with AI off, once its models' licences are
   checked. Low priority.

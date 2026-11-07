@@ -2,7 +2,7 @@
 
 **Status: planned.** Nothing here is built yet. This note says how Kilnmark will measure how much
 data it moves and how fast, so the numbers can be trusted, repeated and compared. The work is on
-the [backlog](../product/backlog.md), first in the Optimise item; the first builds follow the
+the backlog, first in the Optimise item; the first builds follow the
 steps in section 11.
 
 The only figures today come from the engine spike
