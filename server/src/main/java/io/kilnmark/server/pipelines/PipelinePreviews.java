@@ -286,7 +286,8 @@ public class PipelinePreviews {
             RunResult result = o.result();
             if (result.status() != RunResult.Status.SUCCEEDED) {
                 String at = result.nodes().stream().filter(s -> s.outcome() == RunResult.Outcome.FAILED)
-                    .map(RunResult.NodeResult::name).filter(s -> !NodePreview.COLLECTOR.equals(s)).findFirst()
+                    .map(RunResult.NodeResult::name).filter(s -> !NodePreview.COLLECTOR.equals(s) && !NodePreview.isDrain(s))
+                    .findFirst()
                     .orElse(null);
                 // Its words may quote values from the rows: held back as a run's are.
                 throw PreviewFailed.of(marked ? "The preview stopped" + (at == null ? "" : " at node " + at) + ". "

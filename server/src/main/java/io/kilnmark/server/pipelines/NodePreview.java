@@ -51,6 +51,13 @@ final class NodePreview {
     static final int MAX_ROWS = Preview.MAX_ROWS;
     /** The collector's id: it starts with a capital letter, so it can never be one of the pipeline's own. */
     static final String COLLECTOR = "Preview";
+    /** The start of a preview's own drain nodes' names ({@link Drain}); capitalised, so no pipeline node has one. */
+    static final String DRAIN = "Drain";
+
+    /** Whether a node of a preview's run is one of its own drains, never named to people. */
+    static boolean isDrain(String name) {
+        return name != null && name.startsWith(DRAIN) && name.substring(DRAIN.length()).chars().allMatch(Character::isDigit);
+    }
 
     /**
      * The node types a preview may run: reads and the nodes that work on rows in memory. Anything
@@ -889,7 +896,7 @@ final class NodePreview {
                 continue; // the collector reads it
             }
             // capitalised, as COLLECTOR is: no pipeline's node id can take the name
-            String id = "Drain" + ++k;
+            String id = DRAIN + ++k;
             nodes.add(new GraphNode(id, new Drain(collector), Map.of()));
             edges.add(new Edge(new PortRef(from, io.kilnmark.kiln.RowErrors.PORT), new PortRef(id, "in")));
         }

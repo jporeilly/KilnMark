@@ -320,7 +320,7 @@ public final class WriteNodeFactory implements NodeFactory {
         try {
             return Long.parseLong(v.toString().strip().replace("_", "")) > 0;
         } catch (NumberFormatException e) {
-            return v instanceof Number n && n.doubleValue() > 0;
+            return false; // not a whole number: the writer refuses it, saying so
         }
     }
 
