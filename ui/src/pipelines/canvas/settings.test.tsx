@@ -235,6 +235,7 @@ describe("what the canvas says about nodes", () => {
       "key id · latest by updated_at kept",
     );
     expect(nodeSummary(node({ type: "lookup", settings: { on: { a: "b" }, duplicates: "error" } }))).toBe("on a = b · error on a repeated key");
+    expect(nodeSummary(node({ type: "dedupe", settings: { duplicates: "latest" } }))).toBe("whole rows · latest kept");
     expect(nodeSummary(node({ type: "read", settings: { source: "db", asset: 2024.1 }, texts: { asset: "2024.10" } }))).toBe("db · 2024.10");
   });
 

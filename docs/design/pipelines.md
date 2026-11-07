@@ -609,8 +609,10 @@ for an upsert.
 - `first` and `last` go by arrival. `latest` and `earliest` go by the value of `duplicates_by`,
   compared as `sort` compares (numbers by value across types, dates and timestamps in time, text
   by code point, `false` before `true`); a tie keeps the first of the tied rows, and a null never
-  beats a value. The column must be one an expression can read; a binary or list column is a
-  problem when the pipeline is checked.
+  beats a value. The column must be one an expression can read; for dedupe and lookup a binary or
+  list column is a problem when the pipeline is checked, and for an upsert (a sink, whose arriving
+  columns the check does not hand to its factory) when the first batch arrives, before any row is
+  written.
 - `error` stops the run at the first repeated key with "... more than one row with the same key
   (account_id) ...": the key's column names, never the value. (Before, a lookup's error quoted
   the key's value; it no longer does.)
@@ -627,8 +629,10 @@ for an upsert.
   under `first` the first row of a key; under `latest` and `earliest` each row that beats every
   earlier one, which the upsert's later write puts over the earlier. Nothing is held but the keys,
   at the cost of writing a key more than once when a better row comes later; the run's log says how
-  many rows were left out and how many were written again. Rows with an empty key column pass to
-  the writer, which refuses them as before.
+  many rows were left out and how many were written again. Rows with an empty key column, and
+  batches of no rows (a read's batch that says its columns), pass to the writer as before. Keys
+  compare by value, not by the target's collation, and only the run's input is compared, never the
+  stored row; the guide says so.
 - A preview is refused, for all who cannot unmask, when `duplicates_by` names a column marked
   sensitive, as for a sort: which row wins shows how its values compare.
 

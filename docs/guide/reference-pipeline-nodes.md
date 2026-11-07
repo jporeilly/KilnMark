@@ -662,7 +662,8 @@ Related: [union](pipeline-nodes.md#union).
 
 ## dedupe
 
-Keeps the first row for each key; later rows with the same key go to `rejected`.
+Keeps one row for each key, the first to arrive unless you say otherwise; the other rows with the
+same key go to `rejected`.
 
 [generated: node dedupe]: #
 

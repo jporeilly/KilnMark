@@ -121,8 +121,19 @@ It is for upsert only: the other modes write every row.
   `earliest`, a row is written only when it beats every earlier row of its key, and replaces the
   one written before it, so the table ends with each key's winner. Until the commit nobody sees
   the rows; with `commit_every`, a reader between commits can see a row that is replaced later.
+- The rule compares the rows of this run's input only, never the row already in the table: an
+  input row with an older `updated_at` than the stored row still replaces it.
+- Keys are compared by value, exactly, as a dedupe compares them. A database whose collation
+  ignores case or trailing spaces (SQL Server's and MySQL's defaults) treats `ABC` and `abc` as one
+  key where the rule sees two, and the table keeps whichever was written last. Make such keys
+  alike first (`upper`, `trim` in a compute) or choose the rows with a `dedupe` before the write.
+- The column is checked against the arriving rows when the first batch arrives, before anything is
+  written. Under `error` with `commit_every` set, rows committed before the repeated key arrived
+  stay in the table.
 - The run's log says how many rows the rule left out, and how many were written over an earlier
-  row of their key.
+  row of their key; the rows written, and the write's profile, count each row sent, those written
+  over too. A row number in a message from the database counts the rows sent, not those that
+  arrived.
 - `dedupe` and `lookup` take the same rule ([Which row wins](pipeline-nodes.md#which-row-wins)).
 
 ### What replace keeps

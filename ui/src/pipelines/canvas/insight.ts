@@ -58,7 +58,8 @@ export function whichRowWords(node: Pick<GraphNode, "type" | "settings" | "texts
   if (node.type === "write" && text(s.mode) !== "upsert") return "";
   const rule = s.duplicates != null && text(s.duplicates) !== "" ? (node.texts.duplicates ?? text(s.duplicates)) : fallback;
   if (rule === "error") return "error on a repeated key";
-  const by = rule === "latest" || rule === "earliest" ? ` by ${node.texts.duplicates_by ?? text(s.duplicates_by)}` : "";
+  const column = node.texts.duplicates_by ?? text(s.duplicates_by);
+  const by = (rule === "latest" || rule === "earliest") && column !== "" ? ` by ${column}` : "";
   return node.type === "lookup" ? `${rule}${by} match` : `${rule}${by} kept`;
 }
 

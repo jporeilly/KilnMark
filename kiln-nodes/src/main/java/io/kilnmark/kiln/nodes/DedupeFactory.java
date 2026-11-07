@@ -238,15 +238,17 @@ public final class DedupeFactory implements NodeFactory {
                 targets.get((int) (ref >>> 32))[(int) ref] = 0;
             }
             winners.clear();
-            while (!held.isEmpty()) {
-                // distribute gives the batch up, whatever happens
-                distribute(ctx, held.removeFirst(), targets.removeFirst(), PORTS);
+            for (int b = 0; b < held.size(); b++) {
+                VectorSchemaRoot batch = held.get(b);
+                held.set(b, null); // distribute gives the batch up, whatever happens
+                distribute(ctx, batch, targets.get(b), PORTS);
             }
+            held.clear();
         }
 
         @Override
         public void close() {
-            held.forEach(VectorSchemaRoot::close);
+            held.stream().filter(java.util.Objects::nonNull).forEach(VectorSchemaRoot::close);
             held.clear();
             winners.clear();
             seen.clear();

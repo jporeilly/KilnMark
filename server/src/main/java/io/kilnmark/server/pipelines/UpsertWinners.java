@@ -70,17 +70,9 @@ final class UpsertWinners implements Node {
                 note(context);
                 return writer.process(inner);
             }
-            VectorSchemaRoot chosen;
-            try {
-                chosen = upserts.choose(batch, context.allocator());
-            } catch (NodeException e) {
-                throw new NodeException("Node " + context.nodeName() + ": " + e.getMessage(), e);
-            }
-            if (chosen.getRowCount() == 0) {
-                chosen.close();
-                return true;
-            }
-            feed.put(chosen);
+            // A batch of no rows is handed on too, as it would be without a rule: a read sends one to
+            // say its columns, and the writer checks the table against them.
+            feed.put(upserts.choose(batch, context.allocator()));
             return writer.process(inner);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

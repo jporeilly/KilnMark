@@ -1,7 +1,6 @@
 package io.kilnmark.server.pipelines;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -73,7 +72,9 @@ class UpsertWinnersTest {
             write.check(Map.of("source", "warehouse", "table", "a.b", "mode", "append", "duplicates", "first")));
         assertEquals(List.of("duplicates: one of first, last, latest, earliest, error"),
             write.check(Map.of("source", "warehouse", "table", "a.b", "mode", "upsert", "key", List.of("id"),
-                "duplicates", "newest")));
+                "duplicates", "newest", "duplicates_by", "version")), "one problem, not a second about the column");
+        assertEquals(List.of("duplicates: only upsert has a key whose rows can repeat; append writes every row"),
+            write.check(Map.of("source", "warehouse", "table", "a.b", "mode", "append", "duplicates", "latest")));
     }
 
     /** Runs the rule over two batches in front of a writer that keeps what it is sent. */
@@ -124,11 +125,30 @@ class UpsertWinnersTest {
     }
 
     @Test
+    void aBatchOfNoRowsStillReachesTheWriter() throws Exception {
+        Recorder writer = new Recorder();
+        UpsertWinners node = new UpsertWinners(writer, new WhichRow.Settings(WhichRow.Rule.FIRST, null), List.of("id"),
+            16);
+        try (RootAllocator root = new RootAllocator(Long.MAX_VALUE)) {
+            RowSet in = new RowSet("in", 2);
+            in.put(batch(root, new Object[0][]));
+            in.finish();
+            Context ctx = new Context(in, root);
+            node.init(ctx);
+            while (node.process(ctx)) {
+                // next batch
+            }
+            node.close();
+        }
+        assertEquals(1, writer.batches, "the writer learns the columns, and checks the table against them");
+        assertTrue(writer.ended);
+    }
+
+    @Test
     void errorStopsTheRunNamingTheKeyColumnsOnly() {
         NodeException e = assertThrows(NodeException.class, () -> run("ERROR", null));
-        assertEquals("Node w: the input has more than one row with the same key (id); set duplicates to first, last, "
-            + "latest or earliest to choose which row is kept", e.getMessage());
-        assertFalse(e.getMessage().contains("\"a\""));
+        assertEquals("the input has more than one row with the same key (id); set duplicates to first, last, "
+            + "latest or earliest to choose which row is kept", e.getMessage(), "the runner adds the node's name");
     }
 
     private static VectorSchemaRoot batch(BufferAllocator a, Object[][] rows) {
@@ -149,6 +169,7 @@ class UpsertWinnersTest {
     /** A writer that keeps the notes of the rows it is sent, one batch a call, as the node contract says. */
     static final class Recorder implements Node {
         final List<String> notes = new ArrayList<>();
+        int batches;
         boolean ended;
 
         @Override
@@ -168,6 +189,7 @@ class UpsertWinnersTest {
                     ended = true;
                     return false;
                 }
+                batches++;
                 VarCharVector note = (VarCharVector) b.getVector("note");
                 for (int i = 0; i < b.getRowCount(); i++) {
                     notes.add(new String(note.get(i), StandardCharsets.UTF_8));

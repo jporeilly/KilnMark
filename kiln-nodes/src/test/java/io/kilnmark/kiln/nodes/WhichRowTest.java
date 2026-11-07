@@ -146,6 +146,8 @@ class WhichRowTest {
             f.check(config("duplicates_by", "as_of")));
         assertEquals(List.of("duplicates: one of first, last, latest, earliest, error"),
             f.check(config("duplicates", "newest")));
+        assertEquals(List.of("duplicates: one of first, last, latest, earliest, error"),
+            f.check(config("duplicates", "newest", "duplicates_by", "as_of")), "one problem, not two");
         assertEquals(List.of("duplicates_by: one column name"),
             f.check(config("duplicates", "latest", "duplicates_by", List.of("a", "b"))));
         NodeException unknown = assertThrows(NodeException.class, () -> f.outputSchema("out", Map.of("in", BALANCES),

@@ -108,6 +108,7 @@ public final class WhichRow {
             String word = raw instanceof String s ? s.strip().toLowerCase(Locale.ROOT) : null;
             if (word == null || !CHOICES.contains(word)) {
                 problems.add(KEY + ": one of " + String.join(", ", CHOICES));
+                return new Settings(rule, null);
             } else {
                 rule = Rule.of(word);
             }
@@ -316,8 +317,10 @@ public final class WhichRow {
                     switch (settings.rule()) {
                         case ERROR -> throw new NodeException(repeated("the input has", key));
                         case LATEST, EARLIEST -> {
-                            if (beats(settings.rule(), value, best.get(k))) {
+                            Object before = best.get(k);
+                            if (beats(settings.rule(), value, before)) {
                                 best.put(k, value);
+                                bytes += Keys.size(value) - Keys.size(before);
                                 replacing++;
                                 rows[count++] = i;
                             } else {
@@ -329,8 +332,8 @@ public final class WhichRow {
                 }
                 if (bytes > limitBytes) {
                     throw new NodeException("the keys seen so far take more than " + limitMb + " MB ("
-                        + BaseNode.count(best.size()) + " keys), to choose which row wins; raise memory_limit_mb, "
-                        + "or set " + KEY + ": last");
+                        + BaseNode.count(best.size()) + " keys), to choose which row wins; set " + KEY + ": last, or "
+                        + "choose the rows with a dedupe node before the write, which can be given more memory");
                 }
             } catch (NodeException | RuntimeException e) {
                 batch.close();
@@ -390,7 +393,7 @@ public final class WhichRow {
             long before = held[0];
             held[0] = ref;
             if (settings.rule().byColumn()) {
-                values.put(key, value);
+                bytes += Keys.size(value) - Keys.size(values.put(key, value));
             }
             return before;
         }

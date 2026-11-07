@@ -205,9 +205,9 @@ public final class WriteNodeFactory implements NodeFactory {
         } else if ("upsert".equals(mode) && key.isEmpty()) {
             problems.add("key: upsert needs the key columns that identify a row");
         }
-        WhichRow.read(config, "last", problems);
-        if (mode != null && !"upsert".equals(mode) && (config.get(WhichRow.KEY) != null
-            || config.get(WhichRow.BY) != null)) {
+        if ("upsert".equals(mode)) {
+            WhichRow.read(config, "last", problems);
+        } else if (mode != null && (config.get(WhichRow.KEY) != null || config.get(WhichRow.BY) != null)) {
             problems.add((config.get(WhichRow.KEY) != null ? WhichRow.KEY : WhichRow.BY) + ": only upsert has a key "
                 + "whose rows can repeat; " + mode + " writes every row");
         }
