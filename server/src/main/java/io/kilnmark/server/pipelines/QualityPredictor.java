@@ -453,6 +453,7 @@ final class QualityPredictor {
             case "route" -> route(s, in);
             case "limit" -> Map.of("out", limit(s, in));
             case "sort" -> Map.of("out", in); // the same rows, in another order
+            case "window" -> Map.of("out", window(s, in));
             case "gate" -> gate(plan, s, in, predicted);
             case "write" -> {
                 predicted.add(write(s, in));
@@ -1201,6 +1202,32 @@ final class QualityPredictor {
     }
 
     // ---- compute and select ----
+
+    /**
+     * A window node: the same rows, in another order, with new columns whose values depend on the
+     * rows around them, so they are not estimated.
+     */
+    private static Est window(PlanNode s, Est in) {
+        Est e = in.copy();
+        Object columns = s.config().get("columns");
+        if (e.cols == null) {
+            e.unknown.add("the columns arriving at " + s.id());
+            return e;
+        }
+        if (columns instanceof Map<?, ?> m) {
+            Map<String, String> kinds = new LinkedHashMap<>();
+            List<PipelineCompilerPort.Column> outline = s.columns().get("out");
+            if (outline != null) {
+                outline.forEach(c -> kinds.put(c.name(), c.type()));
+            }
+            for (Object key : m.keySet()) {
+                String name = String.valueOf(key);
+                e.cols.put(name, Col.unknown(name, kinds.getOrDefault(name, "text")));
+                e.unknown.add(name + " as " + s.id() + " works it out");
+            }
+        }
+        return e;
+    }
 
     private Est compute(PlanNode s, Est in) {
         Est e = in.copy();
