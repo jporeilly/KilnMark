@@ -43,6 +43,26 @@ const text = (v: Value | undefined): string => {
 
 const keysOf = (v: Value | undefined) => (v && typeof v === "object" && !Array.isArray(v) ? Object.keys(v) : []);
 
+/** Each node's rule for which row of a repeated key wins, when `duplicates` is left out. */
+export const WHICH_ROW_DEFAULT: Record<string, string> = { dedupe: "first", lookup: "first", write: "last" };
+
+/**
+ * Which row of a repeated key wins, in words for a node's summary, so the rule is always in sight,
+ * the default too: "first kept", "latest by updated_at kept", "error on a repeated key". Empty for
+ * a node without the rule, and for a write that is not an upsert.
+ */
+export function whichRowWords(node: Pick<GraphNode, "type" | "settings" | "texts">): string {
+  const fallback = node.type ? WHICH_ROW_DEFAULT[node.type] : undefined;
+  if (!fallback) return "";
+  const s = node.settings;
+  if (node.type === "write" && text(s.mode) !== "upsert") return "";
+  const rule = s.duplicates != null && text(s.duplicates) !== "" ? (node.texts.duplicates ?? text(s.duplicates)) : fallback;
+  if (rule === "error") return "error on a repeated key";
+  const column = node.texts.duplicates_by ?? text(s.duplicates_by);
+  const by = (rule === "latest" || rule === "earliest") && column !== "" ? ` by ${column}` : "";
+  return node.type === "lookup" ? `${rule}${by} match` : `${rule}${by} kept`;
+}
+
 /** One line saying what the node does with its settings; empty when it has none yet. */
 export function nodeSummary(node: GraphNode): string {
   const s = node.settings;
@@ -52,7 +72,7 @@ export function nodeSummary(node: GraphNode): string {
       return [t("source"), t("asset")].filter(Boolean).join(" · ");
     case "write": {
       const where = t("target") || t("table") || t("path");
-      return [t("source"), where, s.mode != null ? t("mode") : ""].filter(Boolean).join(" · ");
+      return [t("source"), where, s.mode != null ? t("mode") : "", whichRowWords(node)].filter(Boolean).join(" · ");
     }
     case "filter":
       return t("condition");
@@ -65,7 +85,7 @@ export function nodeSummary(node: GraphNode): string {
     }
     case "lookup": {
       const on = s.on && typeof s.on === "object" && !Array.isArray(s.on) ? Object.entries(s.on).map(([a, b]) => `${a} = ${text(b)}`) : [];
-      return on.length ? `on ${on.join(", ")}` : "";
+      return on.length ? `on ${on.join(", ")} · ${whichRowWords(node)}` : "";
     }
     case "join": {
       const on = s.on && typeof s.on === "object" && !Array.isArray(s.on) ? Object.entries(s.on).map(([a, b]) => `${a} = ${text(b)}`) : [];
@@ -83,7 +103,7 @@ export function nodeSummary(node: GraphNode): string {
     case "union":
       return `${node.inputs.length} ${node.inputs.length === 1 ? "input" : "inputs"}`;
     case "dedupe":
-      return s.key != null ? `key ${text(s.key)}` : "whole rows";
+      return `${s.key != null ? `key ${text(s.key)}` : "whole rows"} · ${whichRowWords(node)}`;
     case "route":
       return keysOf(s.routes).join(", ");
     case "limit":
@@ -130,7 +150,7 @@ export function arrivingColumns(check: PipelineValidation | null, nodeId: string
 
 /** Which input's columns a setting names: the lookup side for a lookup's keep, else the first input. */
 export function columnSide(nodeType: string | null, key: string): "main" | "lookup" | null {
-  if (nodeType === "lookup") return key === "keep" ? "lookup" : "main";
+  if (nodeType === "lookup") return key === "keep" || key === "duplicates_by" ? "lookup" : "main";
   return null;
 }
 
@@ -168,8 +188,10 @@ const KEY_OF_TARGET = new Set(["table", "path"]);
 /**
  * The settings the panel shows for a node: the type's own, less the writer settings a write's
  * source does not take (those its source's kind declares are shown once a source is chosen), less
- * `table` and `path` (other names for `target`) unless the YAML uses them. A setting the YAML has
- * that the type does not list is still shown, so it can be seen and removed.
+ * `table` and `path` (other names for `target`) unless the YAML uses them, less which row wins on a
+ * write that is not an upsert, and less the column that decides unless the rule is latest or
+ * earliest. A setting the YAML has that the type does not list is still shown, so it can be seen
+ * and removed.
  */
 export function shownSettings(
   type: NodeType | undefined,
@@ -187,6 +209,9 @@ export function shownSettings(
     if (type.type === "write" && spec.key === "target" && !set && [...KEY_OF_TARGET].some((k) => k in node.settings)) {
       return false;
     }
+    // Which row wins applies to an upsert only, and its column to latest and earliest only.
+    if (type.type === "write" && spec.key === "duplicates" && !set && text(node.settings.mode) !== "upsert") return false;
+    if (spec.key === "duplicates_by" && !set && !["latest", "earliest"].includes(text(node.settings.duplicates))) return false;
     if (writerKeys.has(spec.key) && !allowed.has(spec.key) && !set) {
       writerHidden++;
       return false;

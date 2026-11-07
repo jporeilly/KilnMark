@@ -29,6 +29,11 @@ final class Config {
         return problems;
     }
 
+    /** The settings as written. */
+    Map<String, Object> raw() {
+        return raw;
+    }
+
     void problem(String key, String message) {
         problems.add(key + ": " + message);
     }

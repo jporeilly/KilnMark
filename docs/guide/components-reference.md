@@ -58,7 +58,7 @@ in [Building and running a pipeline](pipelines.md).
 | [`read`](reference-pipeline-nodes.md#read) | source | Read a table or file, in Read | Reads a table, view or file from a saved source. |
 | [`aggregate`](reference-pipeline-nodes.md#aggregate) | transform | Aggregate, in Aggregate | Groups rows that share values and summarises each group with count, sum, min, max, avg or count_distinct. |
 | [`compute`](reference-pipeline-nodes.md#compute) | transform | Compute columns, in Transform | Adds or replaces columns, each worked out from an expression. |
-| [`dedupe`](reference-pipeline-nodes.md#dedupe) | transform | Remove duplicates, in Filter and route | Keeps the first row for each key. |
+| [`dedupe`](reference-pipeline-nodes.md#dedupe) | transform | Remove duplicates, in Filter and route | Keeps one row for each key: the first to arrive, unless Which row wins says otherwise. |
 | [`filter`](reference-pipeline-nodes.md#filter) | transform | Filter rows, in Filter and route | Keeps the rows where a condition is true. |
 | [`join`](reference-pipeline-nodes.md#join) | transform | Join, in Combine | Joins rows of the left and right inputs whose key columns are equal: inner, left, right or full. |
 | [`limit`](reference-pipeline-nodes.md#limit) | transform | Limit rows, in Filter and route | Passes on only the first rows, for trying a pipeline out on a little data. |

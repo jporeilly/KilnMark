@@ -115,7 +115,8 @@ join. The lookup input is read in full and held in memory first; then main rows 
 | `keep` | Lookup columns to add. | Every lookup column except the keys |
 | `join` | `left` keeps main rows with no match; `inner` drops them. | `left` |
 | `unmatched` | What happens to main rows with no match: `keep` (with the added columns empty), `drop`, or `rejected` (sent unchanged to the `rejected` port). Overrides `join`. | From `join` |
-| `duplicates` | When the lookup input has a key more than once: `first` uses the first row; `error` stops the run, naming the key. | `first` |
+| `duplicates` | When the lookup input has a key more than once, which of its rows is used: `first`, `last`, `latest`, `earliest` or `error` (see [Which row wins](#which-row-wins)). | `first` |
+| `duplicates_by` | For `latest` and `earliest`: the lookup column that decides. It need not be among the columns kept. | |
 | `memory_limit_mb` | The most memory the lookup input may take. | 256 |
 
 Good to know:
@@ -184,7 +185,7 @@ Good to know:
 
 **join or lookup?** A `lookup` reads its lookup input into memory and streams the main input past
 it, keeping the main rows' order: quickest when one side is small, such as a table of codes.
-It uses the first row of a repeated key (or stops), and sends main rows with no match to
+It uses one row of a repeated key, by a rule you state (or stops), and sends main rows with no match to
 `rejected` if you like. A `join` sorts both sides, so either may be larger than memory, keeps
 every pair when keys repeat, can keep the rows of either side with no match, and passes both
 sides' columns on.
@@ -256,8 +257,8 @@ Good to know:
 
 ## dedupe
 
-Keeps the first row for each key. Later rows with the same key go to `rejected`. Empty values
-count as equal to each other.
+Keeps one row for each key: the first to arrive, unless `duplicates` says otherwise. The other
+rows with the same key go to `rejected`. Empty values count as equal to each other.
 
 ```yaml
 - id: one_per_email
@@ -269,7 +270,43 @@ count as equal to each other.
 | Setting | What it does | Default |
 | --- | --- | --- |
 | `key` | The columns that make rows duplicates. | Whole rows |
-| `memory_limit_mb` | The most memory the keys seen so far may take. | 256 |
+| `duplicates` | Which row of a key is kept: `first`, `last`, `latest`, `earliest` or `error` (see [Which row wins](#which-row-wins)). | `first` |
+| `duplicates_by` | For `latest` and `earliest`: the column that decides. | |
+| `memory_limit_mb` | The most memory the keys seen so far may take, with the rows held under `last`, `latest` and `earliest`. | 256 |
+
+Under `first` and `error`, rows pass on as they arrive. Under `last`, `latest` and `earliest` a
+row's fate is known only once every row has arrived, so the rows are held until the input ends and
+then sent on in the order they came: the winners to `out`, the rest to `rejected`.
+
+```yaml
+- id: latest_balance
+  type: dedupe
+  input: balances
+  key: [account_id]
+  duplicates: latest
+  duplicates_by: as_of
+```
+
+### Which row wins
+
+The rule for which row wins, `duplicates`, is the same on `dedupe`, `lookup` (its lookup side) and an
+upsert `write`:
+
+| `duplicates` | Which row of a key is kept |
+| --- | --- |
+| `first` | The first to arrive. The default for `dedupe` and `lookup`. |
+| `last` | The last to arrive. The default for an upsert. |
+| `latest` | The one with the largest value in the column `duplicates_by` names. |
+| `earliest` | The one with the smallest value in that column. |
+| `error` | None: the run stops when a key repeats. The message names the key's columns, never its value. |
+
+Under `latest` and `earliest`, a tie goes to the first of the tied rows to arrive, and an empty
+value never beats a value. Values order as `sort` orders them: numbers by value, dates and times
+in time, text by Unicode code point, `false` before `true`. The canvas shows each node's rule on
+its card ("first kept", "latest by updated_at kept"), the default too, so the rule is always in
+sight.
+
+Upsert writes are in [Writing data](writing-data.md#which-row-an-upsert-keeps).
 
 ## route
 

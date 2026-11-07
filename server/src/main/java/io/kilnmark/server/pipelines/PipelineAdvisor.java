@@ -548,7 +548,10 @@ final class PipelineAdvisor {
                     }
                 }
                 case "filter" -> named.addAll(Expression.parse(String.valueOf(s.get("condition"))).columns());
-                case "dedupe" -> named.addAll(nonNull(QualityPredictor.list(s.get("key"))));
+                case "dedupe" -> {
+                    named.addAll(nonNull(QualityPredictor.list(s.get("key"))));
+                    named.addAll(nonNull(QualityPredictor.list(s.get("duplicates_by"))));
+                }
                 case "select" -> {
                     named.addAll(nonNull(QualityPredictor.list(s.get("keep"))));
                     named.addAll(nonNull(QualityPredictor.list(s.get("drop"))));
@@ -899,7 +902,10 @@ final class PipelineAdvisor {
                         }
                     }
                 }
-                case "dedupe" -> out.addAll(nonNull(QualityPredictor.list(s.get("key"))));
+                case "dedupe" -> {
+                    out.addAll(nonNull(QualityPredictor.list(s.get("key"))));
+                    out.addAll(nonNull(QualityPredictor.list(s.get("duplicates_by"))));
+                }
                 case "lookup" -> {
                     if (s.get("on") instanceof Map<?, ?> m) {
                         m.keySet().forEach(k -> out.add(String.valueOf(k)));

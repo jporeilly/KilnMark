@@ -57,6 +57,16 @@ details.
   provider, until the provider's own session ends, or until they sign out. With the bundled
   Keycloak it ended after 5 minutes. Microsoft Entra ID and Okta need
   `KILNMARK_OIDC_SCOPES=offline_access` for it. ([Signing in](docs/guide/signing-in.md#signing-in-with-your-organisation))
+- **Which row wins, stated** (backlog item 9, point 2): `dedupe`, `lookup` and an upsert `write`
+  take `duplicates`, the rule for which of several rows with the same key is kept: `first` or
+  `last` to arrive, `latest` or `earliest` by the column `duplicates_by` names (a tie goes to the
+  first of the tied rows, and an empty value never wins), or `error`, which stops the run naming
+  the key's columns, never its value. Each node keeps what it did before: dedupe and lookup the
+  first row, an upsert the last, so no pipeline changes. The canvas shows each node's rule on its
+  card, the default too, and the settings panel offers the deciding column only for `latest` and
+  `earliest`. A lookup's error for a repeated key no longer quotes the key's value. A preview is
+  refused for those who cannot unmask when `duplicates_by` names a column marked sensitive.
+  ([Which row wins](docs/guide/pipeline-nodes.md#which-row-wins))
 
 ### Details
 

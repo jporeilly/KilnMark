@@ -374,6 +374,11 @@ class NodePreviewTest {
             """, """
               - {id: x, type: dedupe, input: people}
             """, """
+              - {id: x, type: dedupe, input: people, key: [id], duplicates: latest, duplicates_by: name}
+            """, """
+              - {id: y, type: read, source: small, asset: lab.other}
+              - {id: x, type: lookup, inputs: {main: y, lookup: people}, on: {id: id}, keep: [], duplicates: earliest, duplicates_by: name}
+            """, """
               - {id: x, type: route, input: people, routes: {p: "length(name) > 8"}}
             """, """
               - {id: x, type: aggregate, input: people, group_by: [name], values: {n: "count(*)"}}
