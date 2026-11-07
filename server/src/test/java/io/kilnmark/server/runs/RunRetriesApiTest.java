@@ -368,6 +368,8 @@ class RunRetriesApiTest {
         assertEquals("failed", done.status());
         assertTrue(done.error().contains("Not tried again: the next scheduled run is due first"), done.error());
         assertEquals(0, done.runTry(), "the fire happens once, and its run is tried once");
+        // It falls due in seconds: gone before any other test's scheduler looks for due schedules.
+        update("DELETE FROM kilnmark.schedule WHERE pipeline = 'rr-sched'");
     }
 
     // ---- flows ----
