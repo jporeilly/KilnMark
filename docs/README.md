@@ -52,6 +52,7 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 - [The assistant](design/assistant.md): a chat window that answers from knowledge domains, starting with the documentation
 - [Notifications](design/notifications.md): one event type, dedupe, masking per recipient, the email worker and the in-app feed's contract
 - [Supply chain](design/supply-chain.md): the SBOMs every release carries, vulnerability scanning in CI, and how releases are signed
+- [What other tools offer](design/research/README.md): research of nodes and runs in about twenty tools, the gaps that matter most for banks, and a migration map
 - [Lessons from earlier work](design/prior-work.md): ideas taken from an earlier Trusted Data Operations example, and the release each lands in
 
 ## Engineering
