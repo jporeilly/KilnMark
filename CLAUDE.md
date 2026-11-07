@@ -2,8 +2,9 @@
 
 Kilnmark is a pipeline-first data integration and quality platform (Java 25, Quarkus, Arrow; React
 UI), meant to run inside banks and other regulated organisations. Start with
-[docs/README.md](docs/README.md); the work, in order, is in
-[docs/product/backlog.md](docs/product/backlog.md), and the controls regulators expect are in
+[docs/README.md](docs/README.md); the work, in order, is in the owner's backlog, kept outside this
+repository with the plan and other business documents (ask the owner, or see your brief), and the
+controls regulators expect are in
 [docs/product/compliance.md](docs/product/compliance.md).
 
 ## How work is done
