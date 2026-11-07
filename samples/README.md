@@ -47,8 +47,8 @@ to a source you have saved:
 
 | Placeholder | Stands for | Used by |
 | --- | --- | --- |
-| `crm-db` | A database with schemas `crm` (customers, customers_archive_2023, accounts) and `billing` (transactions, invoices) | read and write, read with a query (PostgreSQL with Allow SQL on), limit, compute, dedupe, window, union, quarantine gate |
-| `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed) | filter, route, select, sort, lookup, join, both aggregates, warn and stop gates, both parameter samples |
+| `crm-db` | A database with schemas `crm` (customers, customers_archive_2023, accounts) and `billing` (transactions, invoices) | read and write, Parquet, read some columns and rows, read with a query (PostgreSQL with Allow SQL on), limit, compute, functions, dedupe, which row wins, window, union, quarantine gate; the flow that checks a source |
+| `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed) | filter, route, select, sort, lookup, join, which row wins, both aggregates, warn and stop gates, both parameter samples; the sql flow |
 | `files` | File storage the samples write to, under `samples/`; it must allow writing | every pipeline |
 
 A placeholder you do not map skips the samples that use it. Each sample is checked against what
@@ -81,8 +81,8 @@ opens in the editor as a new pipeline or flow of your own. `GET /api/v1/template
   `shop-db` to `lab-mariadb` and `files` to `lab-warehouse`.
 
 Either way, a sample already there is left as it is, so your changes are kept. The flows in
-`08-flows` are skipped until the flows API comes; read them, and run them through the API once it
-does.
+`08-flows` are added after the pipelines they run; a flow whose pipelines were not all added is
+skipped, saying which it needs.
 
 For `07-parameters/server-variable.yaml`, set the server variable it reads (as a steward or admin;
 the starter pack does this for you):
@@ -94,39 +94,84 @@ preview a node, and choose **Run now**.
 
 ## The samples
 
-| Folder | Sample | What it shows |
-| --- | --- | --- |
-| `01-read-and-write` | `sample-read-write-csv` | Read a table, write a CSV file (`mode: replace`) |
-| | `sample-write-parquet` | Write Parquet (`format: parquet`) |
-| | `sample-read-columns-where` | Read only some columns and rows: `columns`, `where`, and who applies it |
-| | `sample-read-query` | Read with one `SELECT` (`query`); needs a PostgreSQL `crm-db` with Allow SQL on |
-| `02-filter-and-route` | `sample-filter` | Keep rows meeting a condition; the rest through `rejected` |
-| | `sample-route` | Send rows different ways, the first route that fits winning |
-| | `sample-limit` | Pass on the first rows only, and stop reading early |
-| `03-transform` | `sample-compute` | New and tidied columns with expressions |
-| | `sample-select` | Keep, retype, rename and order columns |
-| | `sample-dedupe` | One row per key; the repeats through `rejected` |
-| | `sample-sort` | Rows in order: several columns, largest first, empty values last |
-| | `sample-window` | A running balance per account, and each account's latest row: row number 1, then a filter |
-| `04-combine` | `sample-lookup` | Add columns from another input, like a join; no match through `rejected` |
-| | `sample-union` | The rows of several inputs together |
-| | `sample-join` | Two inputs side by side by key: a full join, with the rows that have no partner |
-| `05-aggregate` | `sample-aggregate` | One row per group: counts, sums and distinct counts |
-| | `sample-catalogue-summary` | A summary per category, with an expression over the group |
-| `06-quality` | `sample-gate-quarantine` | A quality gate setting failing rows aside, with a threshold |
-| | `sample-gate-warn` | A gate that only records what failed |
-| | `sample-gate-stop` | A gate that stops the run before anything is written (it is meant to) |
-| `07-parameters` | `sample-orders-by-status` | Parameters: a text list in the read node's `where: status in ${statuses}`, a number, a label in the file name |
-| | `sample-server-variable` | A server variable (`${vars.sample_region}`) as a parameter's default |
-| `08-flows` | `sample-quality-decides` | A flow: a condition on what a gate set aside decides what runs next; notify and stop |
-| | `sample-passing-values` | A flow passing values on: inheritance by name, `with:`, a node's value, wait and notify |
-| | `sample-sql-before-and-after` | A flow's `sql` nodes before and after a pipeline, one transaction each, with `rows_affected` in a condition (needs `shop-db` with Allow SQL and Allow writing) |
-| | `sample-for-each-region` | A `for-each` node: `sample-server-variable` once for each of three regions, two at once, each writing its own file; a condition on `regions.failed` |
-| `09-volume` | `sample-volume` | Four million rows through a compute, a lookup, a route and an aggregate, long enough to see where a run's time goes: the run's page shows each node's time, rows per second and which node held the others up |
+**Who they are for:** data engineers learning how Kilnmark builds pipelines and flows, data stewards
+seeing how quality checks and their evidence work, and anyone evaluating Kilnmark for banking or
+other regulated work. Each sample's **Why it matters** says, in a few words, the real need it meets;
+the full text is in each file and in the Library. The data is made up: no row comes from a real
+bank or person.
 
-Each file starts with what it shows and what to look for. The
-[pipelines guide](../docs/guide/pipelines.md) and
-[Pipeline nodes and expressions](../docs/guide/pipeline-nodes.md) describe every setting.
+| Folder | Sample | What it shows | Why it matters |
+| --- | --- | --- | --- |
+| `01-read-and-write` | `sample-read-write-csv` | Read a table, write a CSV file (`mode: replace`) | Handing a table to another team as a file, with the rows counted |
+| | `sample-write-parquet` | Write Parquet (`format: parquet`) | A typed, compressed file for a data lake or analytics platform |
+| | `sample-read-columns-where` | Read only some columns and rows: `columns`, `where`, and who applies it | Data minimisation (GDPR; HIPAA's minimum necessary in US healthcare): unused personal data stays at the source |
+| | `sample-read-query` | Read with one `SELECT` (`query`); needs a PostgreSQL `crm-db` with Allow SQL on | Letting the database join and count, without a way round masking |
+| `02-filter-and-route` | `sample-filter` | Keep rows meeting a condition; the rest through `rejected` | Picking out a segment, with nothing lost without trace |
+| | `sample-route` | Send rows different ways, the first route that fits winning | Different handling by size or kind, such as large payments looked at twice |
+| | `sample-limit` | Pass on the first rows only, and stop reading early | A cheap first run on a few rows |
+| `03-transform` | `sample-compute` | New and tidied columns with expressions | Untidy names and emails made alike once, for every match after |
+| | `sample-select` | Keep, retype, rename and order columns | A file or table in the layout another system expects |
+| | `sample-dedupe` | One row per key; the repeats through `rejected` | Duplicate customers (or patients) break single-customer views that KYC reporting often relies on |
+| | `sample-sort` | Rows in order: several columns, largest first, empty values last | Statements and reports in a set order, the same on every run |
+| | `sample-functions` | Tidy values and work out new ones: `lpad`, `split_part`, `left` and `right`, `date_add` and `date_diff`, `greatest` and `least`, `if`, `contains` and `starts_with`, and a `sha256` of the email as a key, which stays marked sensitive | A hashed email or patient identifier as a join key: records matched without showing it |
+| | `sample-which-row` | Which row of a key wins: `duplicates: latest` with `duplicates_by` on a dedupe (the latest customer per email) and on a lookup (each product's latest delivery price) | The current version of a record, such as a customer's latest address |
+| | `sample-window` | A running balance per account, and each account's latest row: row number 1, then a filter | Each account's latest and running balance, for statements and end-of-day positions |
+| `04-combine` | `sample-lookup` | Add columns from another input, like a join; no match through `rejected` | Reference data added, with a missing reference shown, not left empty |
+| | `sample-union` | The rows of several inputs together | Current and archived records together, for a review or remediation |
+| | `sample-join` | Two inputs side by side by key: a full join, with the rows that have no partner | Reconciling two systems: what is on one side and missing on the other |
+| `05-aggregate` | `sample-aggregate` | One row per group: counts, sums and distinct counts | Totals that add up to the detail, as aggregation reviews check |
+| | `sample-catalogue-summary` | A summary per category, with an expression over the group | A first look at a dataset, and a check that a load looks right |
+| `06-quality` | `sample-gate-quarantine` | A quality gate setting failing rows aside, with a threshold | Bad rows kept for review, so data-quality controls have evidence |
+| | `sample-gate-warn` | A gate that only records what failed | A faulty feed loaded anyway, with a list to send back |
+| | `sample-gate-stop` | A gate that stops the run before anything is written (it is meant to) | Data that must never be loaded wrong, such as fees customers are charged |
+| `07-parameters` | `sample-orders-by-status` | Parameters: a text list in the read node's `where: status in ${statuses}`, a number, a label in the file name | One pipeline instead of many near-copies, so a change is reviewed once |
+| | `sample-server-variable` | A server variable (`${vars.sample_region}`) as a parameter's default | One version for development, test and production |
+| `08-flows` | `sample-quality-decides` | A flow: a condition on what a gate set aside decides what runs next; notify and stop | Reports wait when their inputs fail their checks |
+| | `sample-passing-values` | A flow passing values on: inheritance by name, `with:`, a node's value, wait and notify | Every pipeline in a batch on the same business date or batch name |
+| | `sample-sql-before-and-after` | A flow's `sql` nodes before and after a pipeline, one transaction each, with `rows_affected` in a condition (needs `shop-db` with Allow SQL and Allow writing) | A warehouse table emptied and refreshed around a load, repeatably |
+| | `sample-retries` | Trying again only where it is safe: a `run:` block (`retries`, `retry_delay`, `retry_on: lost`, `timeout`, `warn_after`) and a node's own `timeout` and `retries`, which never multiply with the flow's | Overnight batches through brief outages, never loading anything twice |
+| | `sample-checks-and-waits` | A `check-source` node before the work, a `wait-for` node waiting for a file, and `priority` on two pipelines | A clear notice at the start when what a batch needs has not arrived |
+| | `sample-for-each-region` | A `for-each` node: `sample-server-variable` once for each of three regions, two at once, each writing its own file; a condition on `regions.failed` | The same load for each region, legal entity, branch or area |
+| `09-volume` | `sample-volume` | Four million rows through a compute, a lookup, a route and an aggregate, long enough to see where a run's time goes: the run's page shows each node's time, rows per second and which node held the others up | Trying the platform on volumes like your own, for example when moving from another ETL tool |
+
+The [pipelines guide](../docs/guide/pipelines.md),
+[Pipeline nodes and expressions](../docs/guide/pipeline-nodes.md) and
+[Reference: flow nodes](../docs/guide/reference-flow-nodes.md) describe every setting.
+
+## How each sample explains itself
+
+Each sample and template starts with a comment in four parts, and the **Library** shows them on
+the sample's row (**About this sample**) and on the template's card:
+
+```yaml
+# Filter: keep some rows, set the rest aside (a Kilnmark sample).
+# Keeps the active gold and platinum shop customers in one file. Every other customer goes to a
+# second file through the filter's rejected output, so no row is dropped without trace.
+# Why it matters: Picking out a segment, such as active premium customers for a campaign or a
+# review, is everyday work. Keeping the rest in their own file means nothing is lost without trace,
+# which reviewers often ask to see.
+# Look for: the filter's two outputs, out and rejected, and how many rows each received.
+# Needs: shop-db (the shop schema) and files.
+kilnmark: pipeline/v1
+```
+
+- The first line is the title.
+- **What it shows** (for a template, what it is for): the lines after the title, two or three
+  plain sentences.
+- **Why it matters**: the real need it meets and who typically has it, starting
+  `# Why it matters:`, one to three sentences. Lead with banking and other regulated work. Say
+  "often", "typically" or "for example": never state a purpose as fact for an organisation. Name a
+  regulation only where the link is direct and well known (BCBS 239 for aggregating risk data,
+  GDPR for keeping personal data to a minimum, SOX for evidence of changes), and never a clause. For
+  a template, say who typically starts from it, and why.
+- **Look for**: what to notice when it runs, starting `# Look for:`.
+- **Needs**: the placeholders, settings and rights it relies on, starting `# Needs:`.
+
+A part runs until the next one starts, and its lines are joined into sentences. A line indented
+under the `#` (such as an API call to copy) keeps a line of its own. The comment is the one place an
+explanation is written: `GET /api/v1/samples` and `GET /api/v1/templates` give each one's
+`explanation` as read from it, and `SamplesExplainedTest` fails the build if a sample or template
+lacks any of the four parts.
 
 ## Try it with other values
 
@@ -144,9 +189,9 @@ It writes `samples/parameters/orders_both.csv`. A value only ever fills a value:
 ## Adding a sample
 
 Put a file in the folder for what it shows, name it `sample-...`, read only from `crm-db` and
-`shop-db` and write only to `files` under `samples/`, and start it with what it shows and what to
-look for. The samples ship, so they never name the lab or a lab source; if a sample needs a new
-placeholder, add it to `Samples.PLACEHOLDERS` (server) and to `lab/sample-sources.csv`. Read only
+`shop-db` and write only to `files` under `samples/`, and start it with its title, what it shows,
+`# Why it matters:`, `# Look for:` and `# Needs:` (above), and add it to the table above. The
+samples ship, so they never name the lab or a lab source; if a sample needs a new placeholder, add it to `Samples.PLACEHOLDERS` (server) and to `lab/sample-sources.csv`. Read only
 the tables in `data/`; if a sample needs rows of a new shape, or a new table, change
 `data/generate.py` and run it (a new table also goes in `Samples.TABLES`).
 `LabPipelinesTest` (server tests) checks every sample, mapped to the lab's sources, against the

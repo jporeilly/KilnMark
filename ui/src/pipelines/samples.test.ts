@@ -31,7 +31,7 @@ describe("Add samples", () => {
 
   test("counts only the samples whose every placeholder has a source", () => {
     const sample = (name: string, sources: string[], type: SampleInfo["type"] = "pipeline"): SampleInfo => ({
-      file: `${name}.yaml`, name, type, description: null, sources, exists: false,
+      file: `${name}.yaml`, name, type, description: null, sources, exists: false, explanation: null,
     });
     const all = [sample("a", ["crm-db", "files"]), sample("b", ["shop-db", "files"]), sample("f", [], "flow")];
     expect(addable(all, { "crm-db": "pg" })).toEqual([]);

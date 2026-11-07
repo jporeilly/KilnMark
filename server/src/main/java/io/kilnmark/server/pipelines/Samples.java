@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import org.jboss.logging.Logger;
 
@@ -65,9 +66,76 @@ public class Samples {
             "File storage the samples write to, under samples/; a designer or an admin must turn on Allow "
                 + "writing for it"));
 
-    /** One bundled sample: its file under samples/, what it is, and the placeholders it reads or writes. */
+    /**
+     * One bundled sample: its file under samples/, what it is, the placeholders it reads or writes,
+     * and its explanation, read from the comment it starts with.
+     */
     public record Sample(String file, String name, String type, String description, List<String> sources,
-                         String yaml) {
+                         String yaml, Explanation explanation) {
+    }
+
+    /**
+     * What a sample or template explains about itself, read from the comment at the top of its file,
+     * which stays the one place it is written: a title, what it shows (or, for a template, what it
+     * is for), why it matters (the need it meets and who typically has it), what to look for when it
+     * runs, and what it needs (sources, settings, rights). A part the comment leaves out is null.
+     * Lines are joined into sentences; a line indented under the {@code #} (an example to copy) keeps
+     * a line of its own.
+     */
+    public record Explanation(String title, String shows, String why, String lookFor, String needs) {
+
+        /** Whether every part is there and not blank. */
+        public boolean complete() {
+            return Stream.of(title, shows, why, lookFor, needs).allMatch(p -> p != null && !p.isBlank());
+        }
+    }
+
+    /** {@code Why it matters:}, {@code Look for:} and {@code Needs:}, each starting a part of the explanation. */
+    private static final Pattern PART = Pattern.compile("^(Why it matters|Look for|Needs):\\s*(.*)$");
+    /** The first line's tail, saying what the file is. */
+    private static final Pattern KIND_TAIL = Pattern.compile("\\s*\\(a Kilnmark (sample|template)\\)\\.?$");
+
+    /** The explanation in the comment {@code yaml} starts with; every part null when it starts with none. */
+    public static Explanation explanation(String yaml) {
+        List<String> comment = new ArrayList<>();
+        for (String line : yaml.split("\r?\n", -1)) {
+            if (!line.startsWith("#")) {
+                break;
+            }
+            comment.add(line.substring(1).startsWith(" ") ? line.substring(2) : line.substring(1));
+        }
+        if (comment.isEmpty()) {
+            return new Explanation(null, null, null, null, null);
+        }
+        String title = KIND_TAIL.matcher(comment.get(0).strip()).replaceFirst("").replaceFirst("\\.$", "");
+        Map<String, StringBuilder> parts = new LinkedHashMap<>();
+        StringBuilder current = parts.computeIfAbsent("shows", k -> new StringBuilder());
+        for (String line : comment.subList(1, comment.size())) {
+            Matcher m = PART.matcher(line.strip());
+            String text;
+            if (m.matches() && !line.startsWith(" ")) {
+                current = parts.computeIfAbsent(m.group(1), k -> new StringBuilder());
+                text = m.group(2);
+            } else {
+                text = line;
+            }
+            if (text.isBlank()) {
+                continue;
+            }
+            boolean newLine = current.isEmpty() || current.charAt(current.length() - 1) == '\n';
+            if (text.startsWith(" ")) {
+                // an example to copy: a line of its own
+                current.append(newLine ? "" : "\n").append(text.strip()).append('\n');
+            } else {
+                current.append(newLine ? "" : " ").append(text.strip());
+            }
+        }
+        return new Explanation(title.isBlank() ? null : title, part(parts.get("shows")),
+            part(parts.get("Why it matters")), part(parts.get("Look for")), part(parts.get("Needs")));
+    }
+
+    private static String part(StringBuilder b) {
+        return b == null || b.toString().isBlank() ? null : b.toString().strip();
     }
 
     /** {@code source: <name>} as a node's setting, the name in group 3, optionally quoted (group 2). */
@@ -151,7 +219,8 @@ public class Samples {
     /** A sample from its file and YAML: its name, type and description from the top-level keys. */
     public static Sample sample(String file, String yaml) {
         String type = Pattern.compile("(?m)^kilnmark:\\s*flow/").matcher(yaml).find() ? "flow" : "pipeline";
-        return new Sample(file, topLevel(yaml, "name"), type, topLevel(yaml, "description"), sourcesOf(yaml), yaml);
+        return new Sample(file, topLevel(yaml, "name"), type, topLevel(yaml, "description"), sourcesOf(yaml), yaml,
+            explanation(yaml));
     }
 
     /** The placeholders a sample's nodes name, in the order of {@link #PLACEHOLDERS}. */
@@ -190,13 +259,32 @@ public class Samples {
 
     /** The YAML with each sample table it reads ({@code crm.customers}) as created in {@code schema}. */
     public static String withTables(String yaml, String schema) {
-        Matcher m = ASSET_LINE.matcher(queriesWithTables(yaml, schema));
+        Matcher m = ASSET_LINE.matcher(checkedTablesIn(queriesWithTables(yaml, schema), schema));
         StringBuilder out = new StringBuilder();
         while (m.find()) {
             String table = m.group(3) + "." + m.group(4);
             String line = TABLES.contains(table)
                 ? m.group(1) + m.group(2) + tableIn(schema, table) + m.group(2) + m.group(5) : m.group();
             m.appendReplacement(out, Matcher.quoteReplacement(line));
+        }
+        m.appendTail(out);
+        return out.toString();
+    }
+
+    /** A check-source node's {@code tables: [...]}, written on one line: the names in group 2. */
+    private static final Pattern TABLES_LINE = Pattern.compile("(?m)^(\\s*tables:\\s*\\[)([^\\]\\n]*)(\\].*)$");
+
+    /** Each check-source {@code tables: [...]} with the sample tables it names as created in {@code schema}. */
+    private static String checkedTablesIn(String yaml, String schema) {
+        Matcher m = TABLES_LINE.matcher(yaml);
+        StringBuilder out = new StringBuilder();
+        while (m.find()) {
+            List<String> names = new ArrayList<>();
+            for (String t : m.group(2).split(",", -1)) {
+                String name = t.strip();
+                names.add(TABLES.contains(name) ? tableIn(schema, name) : name);
+            }
+            m.appendReplacement(out, Matcher.quoteReplacement(m.group(1) + String.join(", ", names) + m.group(3)));
         }
         m.appendTail(out);
         return out.toString();
@@ -269,10 +357,8 @@ public class Samples {
      */
     private String queryProblem(Sample s, Map<String, String> mapping) {
         boolean flow = "flow".equals(s.type());
-        if (!readsWithQuery(s.yaml()) && !(flow && !s.sources().isEmpty())) {
-            return null;
-        }
-        for (String p : s.sources()) {
+        List<String> sql = flow ? sqlSources(s.yaml()) : readsWithQuery(s.yaml()) ? s.sources() : List.of();
+        for (String p : sql) {
             boolean database = PLACEHOLDERS.stream().anyMatch(x -> x.name().equals(p) && "databases".equals(x.category()));
             if (!database) {
                 continue;
@@ -285,6 +371,26 @@ public class Samples {
             }
         }
         return null;
+    }
+
+    /**
+     * The placeholders a flow sample runs SQL on: those its sql nodes and its wait-for nodes with a
+     * query name. A check-source node, or a wait-for node waiting for a file, runs none.
+     */
+    static List<String> sqlSources(String yaml) {
+        io.kilnmark.kiln.yaml.FlowDefinition def = io.kilnmark.kiln.yaml.FlowDefinition.parse(yaml).definition();
+        if (def == null) {
+            return List.of();
+        }
+        Set<String> named = new LinkedHashSet<>();
+        for (io.kilnmark.kiln.yaml.FlowDefinition.Node n : def.nodes()) {
+            boolean sql = io.kilnmark.kiln.yaml.FlowDefinition.SQL.equals(n.type())
+                || (io.kilnmark.kiln.yaml.FlowDefinition.WAIT_FOR.equals(n.type()) && n.keys().containsKey("query"));
+            if (sql && n.source() != null) {
+                named.add(n.source());
+            }
+        }
+        return PLACEHOLDERS.stream().map(Placeholder::name).filter(named::contains).toList();
     }
 
     /** Where one of {@link #TABLES} is created: {@code <schema>.<group>_<table>}. */
@@ -325,9 +431,12 @@ public class Samples {
 
     // ---- what the API shows and does ----
 
-    /** A sample as the API lists it: without its YAML, with whether a pipeline of its name exists. */
+    /**
+     * A sample as the API lists it: without its YAML, with its explanation and whether a pipeline or
+     * flow of its name exists.
+     */
     public record SampleView(String file, String name, String type, String description, List<String> sources,
-                             boolean exists) {
+                             boolean exists, Explanation explanation) {
     }
 
     /** Where the sample tables were last created (the {@value #SETUP} pipeline's target), and its last run. */
@@ -367,7 +476,7 @@ public class Samples {
         flowStore.summaries().forEach(f -> existingFlows.add(f.flow().name()));
         return new Catalogue(PLACEHOLDERS, bundled().stream().map(s -> new SampleView(s.file(), s.name(), s.type(),
             s.description(), s.sources(), "flow".equals(s.type()) ? existingFlows.contains(s.name())
-                : existing.contains(s.name()))).toList(),
+                : existing.contains(s.name()), s.explanation())).toList(),
             existing.contains(SETUP) ? tables(sights) : null);
     }
 
@@ -563,7 +672,9 @@ public class Samples {
             try {
                 String yaml = withSources(s.yaml(), mapping);
                 if ("flow".equals(s.type())) {
-                    flows.createInLibrary(yaml, "Added from the samples (" + s.file() + ")", by, role,
+                    // A check-source node's tables, like a pipeline's assets, are the sample tables' names.
+                    flows.createInLibrary(schema == null ? yaml : withTables(yaml, schema),
+                        "Added from the samples (" + s.file() + ")", by, role,
                         sights != null && sights.mayUnmask(), LIBRARY);
                     Boolean valid = flowStore.summaries().stream().filter(f -> f.flow().name().equals(s.name()))
                         .map(FlowStore.Summary::valid).findFirst().orElse(null);

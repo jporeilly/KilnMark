@@ -1,7 +1,12 @@
 # Route: send rows different ways (a Kilnmark sample).
-# Each order line goes to the first route it meets: large lines, bulk lines, or (meeting none) the
-# out output.
-# Look for: each route's name is an output port; the order the routes are written in decides.
+# Sends each shop order line to the first route it meets: large lines (worth 200 or more), bulk
+# lines (5 items or more) or, meeting neither, the out output. Each kind goes to a file of its own.
+# Why it matters: Rows often need different handling by size or kind: for example, large payments
+# sent for a second look while the rest go straight through. The first route that fits wins, so each
+# row is handled once.
+# Look for: each route's name is an output of the node. The order the routes are written in
+# decides, so a line that is both large and bulk counts as large.
+# Needs: shop-db (the shop schema) and files.
 kilnmark: pipeline/v1
 name: sample-route
 description: Order lines by size.

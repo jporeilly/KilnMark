@@ -20,15 +20,50 @@ const catalogue: SampleCatalogue = {
   placeholders: [],
   tables: null,
   samples: [
-    { file: "01-read-and-write/read-query.yaml", name: "sample-read-query", type: "pipeline", description: "A query", sources: [], exists: true },
-    { file: "02-filter-and-route/filter.yaml", name: "sample-filter", type: "pipeline", description: "Filter", sources: [], exists: false },
-    { file: "08-flows/passing-values.yaml", name: "sample-passing-values", type: "flow", description: "Values", sources: [], exists: false },
+    {
+      file: "01-read-and-write/read-query.yaml",
+      name: "sample-read-query",
+      type: "pipeline",
+      description: "A query",
+      sources: [],
+      exists: true,
+      explanation: {
+        title: "Read with a query",
+        shows: "Runs one SELECT.",
+        why: "Banks often count in the database.",
+        lookFor: "The run's reads.",
+        needs: "A PostgreSQL crm-db with Allow SQL on.\nPOST /api/v1/samples",
+      },
+    },
+    { file: "02-filter-and-route/filter.yaml", name: "sample-filter", type: "pipeline", description: "Filter", sources: [], exists: false, explanation: null },
+    {
+      file: "08-flows/passing-values.yaml",
+      name: "sample-passing-values",
+      type: "flow",
+      description: "Values",
+      sources: [],
+      exists: false,
+      explanation: { title: "Values", shows: "Passes values on.", why: null, lookFor: null, needs: null },
+    },
   ],
 };
 
 const templates: Template[] = [
-  { file: "templates/copy-table.yaml", name: "template-copy-table", type: "pipeline", description: "Copy a table.", yaml: "name: x\n" },
-  { file: "templates/run-in-order.yaml", name: "template-run-in-order", type: "flow", description: "In order.", yaml: "name: y\n" },
+  {
+    file: "templates/copy-table.yaml",
+    name: "template-copy-table",
+    type: "pipeline",
+    description: "Copy a table.",
+    yaml: "name: x\n",
+    explanation: {
+      title: "Template: copy a table",
+      shows: "Copies one table.",
+      why: "Data engineers often start here.",
+      lookFor: "The mode.",
+      needs: "A database.",
+    },
+  },
+  { file: "templates/run-in-order.yaml", name: "template-run-in-order", type: "flow", description: "In order.", yaml: "name: y\n", explanation: null },
 ];
 
 vi.mock("../api", async (original) => {
@@ -84,6 +119,34 @@ describe("the library", () => {
     expect(link?.getAttribute("href")).toBe("#/pipelines/sample-read-query");
     expect(host.textContent).toContain("Not added");
     expect(host.textContent).toContain("Add samples");
+  });
+
+  test("shows what each sample shows, why it matters, what to look for and what it needs", async () => {
+    await act(async () => root.render(<LibraryPage role="viewer" tab="samples" />));
+    await settle();
+    const about = [...host.querySelectorAll("details.lib-about")];
+    expect(about.map((d) => d.querySelector("summary")?.textContent)).toEqual([
+      "About this sample: sample-read-query",
+      "About this sample: sample-passing-values",
+    ]);
+    const parts = (d: Element) => [...d.querySelectorAll("dt")].map((dt) => [dt.textContent, dt.nextElementSibling?.textContent]);
+    expect(parts(about[0]!)).toEqual([
+      ["What it shows", "Runs one SELECT."],
+      ["Why it matters", "Banks often count in the database."],
+      ["Look for when it runs", "The run's reads."],
+      ["Needs", "A PostgreSQL crm-db with Allow SQL on.\nPOST /api/v1/samples"],
+    ]);
+    // a part the comment leaves out is not shown
+    expect(parts(about[1]!)).toEqual([["What it shows", "Passes values on."]]);
+  });
+
+  test("a template's card says what it is for, what to look for and what it needs", async () => {
+    await act(async () => root.render(<LibraryPage role="viewer" tab="templates" />));
+    await settle();
+    const cards = [...host.querySelectorAll(".lib-card")];
+    expect([...cards[0]!.querySelectorAll("dt")].map((dt) => dt.textContent)).toEqual(["What it is for", "Why it matters", "Look for", "Needs"]);
+    expect(cards[0]!.textContent).toContain("Copies one table.");
+    expect(cards[1]!.querySelector("dl")).toBeNull();
   });
 
   test("opens a template as a new pipeline or flow, for designers only", async () => {

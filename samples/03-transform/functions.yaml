@@ -1,0 +1,69 @@
+# Functions: tidy values and work out new ones (a Kilnmark sample).
+# Gives each billing invoice a padded invoice number, the customer number split out of its
+# reference, a due date 30 days after it was issued and the days it is overdue. It puts each
+# invoice in a band with if, and adds a hash of the customer's email: a key two teams can join on
+# without either keeping the email.
+# Why it matters: Hashing an email gives a join key that never shows the address, so two teams can
+# match customers without sharing personal data. Hospitals and health insurers typically do the same
+# with a patient identifier, to match a patient across systems. Padding numbers, splitting
+# references and counting days overdue are everyday tidying for account numbers and arrears reports.
+# Look for: lpad, split_part, left and right, date_add and date_diff, greatest and least, if,
+# contains and starts_with, and sha256. A hash of a column marked sensitive stays marked sensitive,
+# so email_hash is masked wherever the email would be: anyone who knows an email can hash it and
+# find the person.
+# Needs: crm-db (the crm and billing schemas) and files.
+kilnmark: pipeline/v1
+name: sample-functions
+description: Billing invoices tidied with functions, each with its customer's hashed email as a key.
+
+nodes:
+  - id: invoices
+    type: read
+    source: crm-db
+    asset: billing.invoices
+
+  - id: customers
+    type: read
+    source: crm-db
+    asset: crm.customers
+    columns: [customer_id, email, postcode]
+
+  - id: keyed
+    type: compute
+    input: customers
+    columns:
+      cust_ref: "'C-' || lpad(cast(customer_id as utf8), 5, '0')"   # 170 becomes C-00170, as invoices write it
+      email_hash: "sha256(lower(trim(email)))"                       # tidied first, so case and spaces do not change it
+      email_has_spaces: "contains(email, ' ')"
+      in_bristol: "starts_with(upper(trim(postcode)), 'BS')"
+
+  - id: tidied
+    type: compute
+    input: invoices
+    columns:
+      invoice_no: "lpad(cast(invoice_id as utf8), 10, '0')"          # 7001 becomes 0000007001
+      ref_letter: "left(cust_ref, 1)"
+      customer_number: "cast(split_part(cust_ref, '-', 2) as int64)" # C-00170 becomes 170
+      due_on: "date_add(issued_on, 30, 'day')"
+      band: "if(total >= 1000, 'large', 'standard')"
+      counted_total: "least(total, 2000)"                            # at most 2,000 of an invoice counts
+
+  - id: overdue
+    type: compute
+    input: tidied
+    columns:
+      short_no: "right(invoice_no, 4)"
+      days_overdue: "if(paid, 0, greatest(date_diff('day', due_on, today()), 0))"
+
+  - id: with_key
+    type: lookup
+    inputs: { main: overdue, lookup: keyed }
+    on: { cust_ref: cust_ref }
+    keep: [email_hash, email_has_spaces, in_bristol]
+
+  - id: out
+    type: write
+    input: with_key
+    source: files
+    path: samples/transform/invoices_with_functions.csv
+    mode: replace

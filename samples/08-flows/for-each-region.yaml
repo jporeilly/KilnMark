@@ -1,10 +1,13 @@
 # Flow: one pipeline for each region, several at once (a Kilnmark sample).
-# Runs sample-server-variable once for each region, giving it the region as its parameter, so each
-# run writes its own file (gold_customers_EMEA.csv, ...). Two run at once; the third starts when one
-# ends. Each region's run may take 30 minutes before it is stopped and counts as failed. Then a
-# notice says how many succeeded, if none failed.
-# Look for: a for-each node (items, as, max_parallel, timeout), the flow's own max_parallel, and a
-# condition on what the for-each node reports (regions.failed).
+# Runs sample-server-variable once for each of three regions, giving it the region as its
+# parameter, so each run writes its own file (gold_customers_EMEA.csv and so on). Two run at once,
+# and the third starts when one ends. A notice then says how many succeeded, if none failed.
+# Why it matters: Banks and insurers often run the same load for each region, legal entity or
+# branch, and utilities and public bodies for each area. One flow over a list keeps the loads alike,
+# runs a few at once, and says which failed.
+# Look for: the for-each node (items, as, max_parallel, and timeout: each region's run is stopped,
+# and fails, after 30 minutes), the flow's own max_parallel, and the condition on regions.failed.
+# Needs: sample-server-variable, so shop-db and files. Running it needs a steward or above.
 kilnmark: flow/v1
 name: sample-for-each-region
 description: Gold customers, one file for each region.

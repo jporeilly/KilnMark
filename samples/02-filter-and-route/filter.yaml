@@ -1,7 +1,11 @@
 # Filter: keep some rows, set the rest aside (a Kilnmark sample).
-# Keeps active gold and platinum shop customers; the others go to a second file through the
-# filter's rejected output.
-# Look for: the two outputs (out and rejected) and how many rows each received.
+# Keeps the active gold and platinum shop customers in one file. Every other customer goes to a
+# second file through the filter's rejected output, so no row is dropped without trace.
+# Why it matters: Picking out a segment, such as active premium customers for a campaign or a
+# review, is everyday work. Keeping the rest in their own file means nothing is lost without trace,
+# which reviewers often ask to see.
+# Look for: the filter's two outputs, out and rejected, and how many rows each received.
+# Needs: shop-db (the shop schema) and files.
 kilnmark: pipeline/v1
 name: sample-filter
 description: Active gold and platinum customers, and everyone else.

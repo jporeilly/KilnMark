@@ -119,3 +119,34 @@
     text-align: left;
   }
 }
+
+/* What a sample or template explains about itself: what it shows, what to look for, what it needs. */
+.lib-about {
+  margin-top: 6px;
+  max-width: 80ch;
+}
+
+.lib-about summary {
+  cursor: pointer;
+  font-size: var(--km-text-sm);
+}
+
+.lib-explain {
+  margin: 6px 0 0;
+}
+
+.lib-explain div + div {
+  margin-top: 6px;
+}
+
+.lib-explain dt {
+  font-weight: 600;
+  font-size: var(--km-text-sm);
+}
+
+.lib-explain dd {
+  margin: 0;
+  /* an example to copy keeps a line of its own */
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}

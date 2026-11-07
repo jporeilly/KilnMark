@@ -190,6 +190,10 @@ def stock():
     # What the gate that warns finds: a repeated SKU, prices that are not positive, SKUs of the wrong shape.
     feed.append(list(feed[4]))
     feed.append(list(feed[20]))
+    # Each repeat is a later delivery at a new price, so which row wins matters (sample-which-row).
+    for repeat, weeks in ((feed[-2], 2), (feed[-1], 3)):
+        repeat[2] = f"{float(repeat[2]) * 1.1:.2f}"
+        repeat[5] = (dt.date.fromisoformat(repeat[5]) + dt.timedelta(weeks=weeks)).isoformat()
     feed[7][2] = "0.00"
     feed[30][2] = "-2.50"
     feed[12][0] = "kit1013"

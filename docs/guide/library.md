@@ -17,9 +17,29 @@ work so the two never mix:
 ![The Library's Samples tab: the samples grouped by what they show, each a pipeline or a flow, with the last run of those added](images/library-samples.png)
 
 The **Samples** tab lists every sample by what it shows: reading and writing, filtering and
-routing, transforming, combining, totals, quality gates, parameters, flows and volume. Each is
-named `sample-...` and starts with comments on what it shows and what to look for. Those added
-here link to their own page and show their last run; the rest say **Not added**.
+routing, transforming, combining, totals, quality gates, parameters, flows and volume. Each row
+shows:
+
+- whether it is a **Pipeline** or a **Flow**, and its name, `sample-...`. Once added, the name
+  links to its own page;
+- one line on what it does;
+- **About this sample**, which opens its explanation in four parts:
+  - **What it shows**: what it does, in two or three sentences;
+  - **Why it matters**: the real need it meets and who typically has it, such as banks reporting
+    each account's latest balance;
+  - **Look for when it runs**: what to notice on the canvas or on the run's page;
+  - **Needs**: the sources it reads and writes (`crm-db`, `shop-db`, `files`), and any setting or
+    right it relies on, such as Allow SQL or a server variable;
+- on the right, its last run once added, or **Not added**.
+
+The explanation is the comment at the top of the sample's file, so it reads the same in the app, in
+the YAML and in the release's `samples` folder.
+
+Among them: `sample-functions` tidies values and works out new ones with the expression functions,
+including a `sha256` of an email as a key that stays marked sensitive; `sample-which-row` keeps the
+latest row of each key with `duplicates: latest`; `sample-retries` tries a flow and a node again
+only where it is safe; and `sample-checks-and-waits` checks a source and waits for a file before the
+work.
 
 A sample you change stays a sample, in the Library. To build real work from one, copy its YAML
 into a **New pipeline** or **New flow** under a name of your own, or start from a template.
@@ -81,8 +101,12 @@ PostgreSQL source with **Allow SQL** on, by a designer who may see unmasked valu
 
 ![The Library's Templates tab: each template as a card, a pipeline or a flow, with what it does, its YAML to look at, and Use this template](images/library-templates.png)
 
-The **Templates** tab shows each template with what it does. **Show the YAML** shows it in full,
-with comments on what to change. Designers choose **Use this template**:
+The **Templates** tab shows each template as a card: whether it is a pipeline or a flow, what it
+does and its name, then its explanation: **What it is for**, **Why it matters** (who typically starts from it, and
+why), **Look for** (what to notice or change
+once it is yours) and **Needs** (the sources it needs, such as a database that allows writing).
+**Show the YAML** shows it in full, with comments on what to change. Designers choose **Use this
+template**:
 
 1. The template opens in the editor as a new pipeline or flow, named `my-pipeline` or `my-flow`.
 2. Give it a **Name** of your own.
@@ -108,6 +132,8 @@ On the **Pipelines** and **Flows** pages, **From a template** opens this tab.
   them; `POST /api/v1/samples/tables` with `{"source": "my-database", "schema": "public"}` creates
   the sample tables, and `"schema": "public"` added to the first points the samples at them.
 - `GET /api/v1/templates` lists the templates with their YAML.
+- Both give each sample's and template's `explanation`: its `title`, `shows`, `why`, `lookFor`
+  and `needs`, read from the comment its file starts with.
 - `GET /api/v1/pipelines` and `GET /api/v1/flows` give each one's `library`: `sample` for one added
   from the samples, empty for your own.
 

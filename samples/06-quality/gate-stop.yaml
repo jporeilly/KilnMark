@@ -1,7 +1,12 @@
 # Quality gate: stop the run (a Kilnmark sample).
-# Stops before anything is written if any order has a shipping fee above 50: the write after the
-# gate never starts. Raise max to 100 and run it again to see it pass.
-# Look for: on_fail: stop (the default) and how the failed run names the rule.
+# Stops the run before anything is written if any shop order has a shipping fee above 50. Two orders
+# do, so this sample is meant to fail. Raise max to 100 and run it again to see it pass.
+# Why it matters: Some data must never be loaded when it is wrong, for example fees, rates or
+# tariffs that customers are charged. Stopping before anything is written leaves the target as it
+# was, for someone to look at.
+# Look for: on_fail: stop (the default). The write after the gate never starts, and the failed run
+# names the rule.
+# Needs: shop-db (the shop schema) and files.
 kilnmark: pipeline/v1
 name: sample-gate-stop
 description: Orders with sane shipping fees, or nothing.

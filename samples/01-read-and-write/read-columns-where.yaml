@@ -1,9 +1,14 @@
-# Read only the columns and rows wanted (a Kilnmark sample).
-# Reads five columns of the CRM customers, only Premier and Business customers who opted in to
-# marketing and whose last name starts with S, and writes them to a CSV file.
-# Look for: the note under the read node. The database applies the segment and opt-in part while
-# reading, with each value bound rather than written into the SQL; Kilnmark applies lower(...), a
-# function the database is not asked to run, as the rows arrive. The rows are the same either way.
+# Read only the columns and rows you need (a Kilnmark sample).
+# Reads five columns of the CRM customers, and only the Premier and Business customers who opted in
+# to marketing and whose last name starts with S. Writes them to a CSV file. Reading less makes the
+# run quicker, and keeps the columns you do not need out of the file.
+# Why it matters: Reading only the columns and rows a job needs is a typical data-minimisation step
+# under GDPR, and in US healthcare under HIPAA's minimum necessary standard: personal data a report
+# does not use never leaves the source. It also keeps extracts small and quick.
+# Look for: the note under the read node. It says who applies each part of the where: the database
+# applies the segment and opt-in part as it reads, with each value bound rather than written into
+# the SQL, and Kilnmark applies lower(...) as the rows arrive. The rows are the same either way.
+# Needs: crm-db (the crm schema) and files.
 kilnmark: pipeline/v1
 name: sample-read-columns-where
 description: Premier and Business customers who opted in, five columns.
