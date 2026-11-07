@@ -23,9 +23,10 @@ class NodeCategoriesTest {
             got.put(f.type(), f.category());
             assertTrue(NodeCategories.ALL.contains(f.category()), f.type() + ": " + f.category());
         }
-        assertEquals(Map.of("aggregate", "Aggregate", "compute", "Transform", "dedupe", "Filter and route",
-            "filter", "Filter and route", "limit", "Filter and route", "lookup", "Combine", "route",
-            "Filter and route", "select", "Transform", "sort", "Transform", "union", "Combine"), got);
+        assertEquals(Map.ofEntries(Map.entry("aggregate", "Aggregate"), Map.entry("compute", "Transform"),
+            Map.entry("dedupe", "Filter and route"), Map.entry("filter", "Filter and route"), Map.entry("join", "Combine"),
+            Map.entry("limit", "Filter and route"), Map.entry("lookup", "Combine"), Map.entry("route", "Filter and route"),
+            Map.entry("select", "Transform"), Map.entry("sort", "Transform"), Map.entry("union", "Combine")), got);
     }
 
     @Test

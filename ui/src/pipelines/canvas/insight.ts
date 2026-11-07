@@ -67,6 +67,11 @@ export function nodeSummary(node: GraphNode): string {
       const on = s.on && typeof s.on === "object" && !Array.isArray(s.on) ? Object.entries(s.on).map(([a, b]) => `${a} = ${text(b)}`) : [];
       return on.length ? `on ${on.join(", ")}` : "";
     }
+    case "join": {
+      const on = s.on && typeof s.on === "object" && !Array.isArray(s.on) ? Object.entries(s.on).map(([a, b]) => `${a} = ${text(b)}`) : [];
+      const how = s.how != null ? t("how") : "inner";
+      return on.length ? `${how} on ${on.join(", ")}` : how;
+    }
     case "select": {
       const parts = [];
       if (s.keep != null) parts.push(`keep ${text(s.keep)}`);

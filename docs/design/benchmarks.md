@@ -28,6 +28,16 @@ name of 10-14 characters and a decimal amount. Rerun them with
 | sort, by the key | 1 million | 16 (spilling) | 2.5 | 0.4 million | 61 MB | 12 MB |
 | sort, by the key | 10 million | 8,192 (in memory) | 11.8 | 0.85 million | none | 840 MB |
 | sort, by the key | 10 million | 256 (spilling) | 15.1 | 0.66 million | 606 MB | 182 MB |
+| left join, 1 + 1 million | 2 million in | 4,096 (in memory) | 6.5 | 0.31 million | none | 172 MB |
+| left join, 1 + 1 million | 2 million in | 32 (spilling) | 20.6 | 0.10 million | 132 MB | 22 MB |
+| left join, 10 + 10 million | 20 million in | 8,192 (in memory) | 113.4 | 0.18 million | none | 1,682 MB |
+| left join, 10 + 10 million | 20 million in | 256 (spilling) | 71.6 | 0.28 million | 1,323 MB | 173 MB |
+
+The joins used random keys drawn from as many values as rows, so about a third of the left rows
+found no match and some keys repeated (13.7 million rows out of the 10 million join). Joining is
+several times slower than sorting the same rows: its merge copies rows one at a time, value by
+value, into the output, and the in-memory run at 10 million was slower than the spilling one,
+which points at garbage collection with 8 GB of heap. Both are where to optimise first.
 
 ## 1. What we want to know
 

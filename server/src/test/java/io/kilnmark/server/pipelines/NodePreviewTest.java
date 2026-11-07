@@ -379,6 +379,12 @@ class NodePreviewTest {
               - {id: y, type: read, source: small, asset: lab.other}
               - {id: x, type: lookup, inputs: {main: people, lookup: y}, on: {name: name}}
             """, """
+              - {id: y, type: read, source: small, asset: lab.other}
+              - {id: x, type: join, inputs: {left: people, right: y}, on: {name: name}}
+            """, """
+              - {id: y, type: read, source: small, asset: lab.other}
+              - {id: x, type: join, inputs: {left: y, right: people}, on: {id: id, name: name}, how: full}
+            """, """
               - {id: x, type: sort, input: people, by: [id, name desc]}
             """, """
               - {id: x, type: sort, input: people, by: [name nulls first]}
@@ -420,6 +426,48 @@ class NodePreviewTest {
             + "before it was read."), v.waits());
         NodePreview.Plan p = NodePreview.plan(y, "x", new NodePreview.Caps(50, 10, 256));
         assertEquals(256L, p.definition().nodes().get(1).config().get("memory_limit_mb"), "a sort holds rows");
+    }
+
+    @Test
+    void aJoinKeepsAHiddenRightColumnHiddenUnderTheNameItLeavesBy() {
+        String y = yaml("""
+              - {id: people, type: read, source: small, asset: lab.people}
+              - {id: others, type: read, source: small, asset: lab.others}
+              - {id: x, type: join, inputs: {left: people, right: others}, on: {id: id}}
+            """);
+        PipelinePreviews.Viewer othersHidden = new PipelinePreviews.Viewer() {
+            @Override
+            public boolean mayUnmask() {
+                return false;
+            }
+
+            @Override
+            public Set<String> marks(String urn) {
+                return urn.equals("urn:kilnmark:small:lab.others") ? Set.of("name") : Set.of();
+            }
+        };
+        PipelineViews.NodePreviewView v = previews().preview(y, "x", null, 3, "jo", AccessRole.STEWARD, othersHidden,
+            () -> false);
+        assertEquals(List.of("id", "name", "right_id", "right_name"), v.columns().stream()
+            .map(PipelineViews.PreviewColumn::name).toList());
+        // the left's columns are not known before the run here, so the right's name is hidden under both names
+        assertEquals(List.of("name", "right_name"), v.masked());
+        // known, only under the name it leaves by
+        NodePreview.Hidden right = NodePreview.Hidden.of(Set.of("name", "email"));
+        assertEquals(Set.of("right_name", "email"),
+            NodePreview.joinRight(right, Map.of(), List.of("id", "NAME"), List.of("id", "name", "email")).names());
+        assertEquals(Set.of("r_name", "email"),
+            NodePreview.joinRight(right, Map.of("right_prefix", "r_"), List.of("name"), List.of("name", "email")).names());
+        // two right columns differing only in case: the second leaves as right_name, so a hidden
+        // "name" (any case) is hidden under both names it leaves by
+        assertEquals(Set.of("name", "right_name"), NodePreview.joinRight(NodePreview.Hidden.of(Set.of("name")),
+            Map.of(), List.of("id"), List.of("Name", "name")).names());
+        assertEquals(Set.of("name", "right_name", "email", "right_email"),
+            NodePreview.joinRight(right, Map.of(), null, List.of("name", "email")).names());
+        assertTrue(NodePreview.joinRight(NodePreview.Hidden.ALL, Map.of(), List.of(), List.of()).all());
+        assertEquals(List.of("1", "1"), List.of(v.rows().get(0).get(0), v.rows().get(0).get(2)));
+        assertEquals(List.of("Node x (join) reads every row of both its inputs before it passes any on, so every row "
+            + "before it was read."), v.waits());
     }
 
     /** The review's oracle: a gate's success or failure must not tell a hidden value, whatever it does. */

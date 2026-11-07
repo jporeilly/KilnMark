@@ -23,6 +23,13 @@ details.
   disk, in a temporary folder only the server can read, encrypted and deleted when the node ends,
   and the run's log says how much it wrote. In the Transform folder of the canvas, with a sample,
   `sample-sort`. ([sort](docs/guide/pipeline-nodes.md#sort))
+- **Join two inputs** (a new `join` node, ADR 0049): `inner`, `left`, `right` or `full`, on one or
+  more pairs of key columns, with every pair kept when a key repeats on both sides. Either input
+  may be larger than memory: both are sorted by their keys, on disk past the node's memory limit.
+  Keys match by value as a lookup's do, and an empty key never matches. Every column of both
+  sides comes out with its type; a right column whose name the left already has is renamed
+  `right_...`. In the Combine folder of the canvas, with a sample, `sample-join`. A `lookup` is
+  still the quicker choice for a small table. ([join](docs/guide/pipeline-nodes.md#join))
 - **Signing in through your organisation's provider no longer ends after a few minutes.** A sign-in
   now renews itself while the person works, and lasts until 8 hours after they signed in at the
   provider, until the provider's own session ends, or until they sign out. With the bundled
@@ -94,6 +101,21 @@ details.
   first]`), with its own control on the canvas: each column with Smallest first or Largest first,
   Empty last or Empty first, and Up. A preview runs a sort with its share of the preview's memory,
   and refuses one that orders by a column hidden from the caller.
+- **`join` is a sort-merge join** on `sort`'s `ExternalSorter` (docs/design/pipelines.md, "Joining
+  two inputs of any size"): both inputs read at once and sorted by their keys within one
+  `memory_limit_mb`, the larger spilling first; then merged, rows out in key order with null keys
+  last. Join keys are encoded by family (numbers by exact value, unsigned ones as unsigned, floats
+  by their shortest decimal; dates and timestamps as the instant to the nanosecond, a date at its
+  midnight), so each side is encoded without the other's types. A key's right rows are joined
+  from the batch at hand, pointed at while the right side's sorter holds them, or copied into a
+  group that goes to disk past a quarter of the limit (in bytes, checked row by row), with its
+  rows and digest checked when read back. A join that can give no rows (an `inner` join with an
+  empty input) stops reading at once. Right columns' new names come from one walk the node and
+  the preview's masking share. Settings `on`, `how`
+  (`inner` by default), `right_prefix` (`right_`), `memory_limit_mb` (256). A preview runs it,
+  refuses one matching on a hidden column, and masks a hidden right column under its new name;
+  marks follow the rename to what a write writes. The canvas shows Left column and Right column
+  for its keys.
 - **A node can say how much it wrote to disk.** `NodeContext.spilled(bytes)` adds to the run's
   `NodeResult.spilledBytes` (not yet stored in the database), and `NodeContext.note(text)` adds a
   line in the node's own words to the run's log (`node_note`, through `RunListener.nodeNote`).
@@ -311,6 +333,47 @@ details.
   say designers and admins turn writing on, as the server enforces. A diagram of the component
   families joins the guides.
 
+- **Noted for later** (docs/product/backlog.md, "Later, not scheduled"): OCR for scanned
+  documents, with a trial of Tesseract against a local vision model, and Apache OpenNLP's name
+  finder as a fallback for finding personal data with AI off, once its models' licences are
+  checked. Low priority.
+- **Agents are decided** ([ADR 0052](docs/adr/0052-agents.md)): agents work at design time and in
+  operations, never inside a run; in flows a model chooses only between fixed branches, through an
+  `ai` node's `classify` and a `route` or `gate`, with low-confidence rows sent to a person. Each
+  agent acts as its own token (`agent:`), with the least role, never admin or the unmask grant, and
+  with the lesser of its role and the person's who started it. Every change it would make is a
+  proposal a person approves; database operations, SQL text, tokens and settings are never an
+  agent's. Its tools are Kilnmark's own API through `Sights`; what it reads is data, never orders;
+  each task has limits, a record of every step, and an off switch. The order: failed runs, drafting
+  a pipeline, stewardship overnight, outside agents through MCP, agents people build. A diagram,
+  `agents.svg`, drawn by `diagrams.mjs`. Nothing is built yet.
+- **AI in pipelines is decided** ([ADR 0050](docs/adr/0050-ai-in-pipelines.md)): an `ai` node
+  with the tasks classify, extract (each value with where in the text it was found, from a
+  schema and worked examples, long text read in overlapping pieces), filter, score, summarise,
+  translate, ask (a designer's own question to a schema), diagnose (the likely cause of a fault,
+  with a confidence and its evidence) and find personal data; an `embed` node; and `ai-summary`
+  in `aggregate`, one text per group. Any task can take context: other records chosen by keys
+  and time, by meaning from an embedded table, or both, at most 20, read through `Sights`,
+  marked as data, and named by key beside the answer. An answer that cannot be read is asked
+  for once more, then flagged with confidence 0, never filled with a made-up default. The
+  canvas suggests filters before the `ai` node and the preview estimates calls, tokens and
+  time. A customer's own model or agent service is called with the `http` node under the same
+  rules. A model's answer is data and
+  never acts on its own; a `route` on its confidence sends the rest to a person, and confirmed
+  findings come back as history and as a measure of accuracy on the customer's data. A worked
+  example, a valve's fault, with a diagram, `ai-diagnose.svg`. All of it under the model rules of ADR 0012 (local by default, a model per feature, JSON answers,
+  scored before release); a model never sees a sensitive value unmasked, so such a column is
+  masked first or refused; each answer carries its model, prompt version and confidence; rows,
+  tokens and time are limited per run and answers cached. Nothing is built yet.
+- **More nodes are decided** ([ADR 0049](docs/adr/0049-more-nodes-and-how-coarse-they-are.md)):
+  nodes stay coarse, one per shape of work, with operations on single values as expression
+  functions; a node is added only for work that changes the number of rows, needs order or state
+  across rows, combines inputs, reaches a web service or matters for governance. Web calls come
+  as a REST connector, an `http` node and an `http` flow node, behind the allowed hosts an admin
+  sets, with TLS, stored credentials, and time, size and rate limits; no script node. The order,
+  after 0.1.1: `sort` and `join`, `window`, more functions, web calls, JSON and XML, `pivot`,
+  change detection and dimension history, `sequence`, `mask`, generated rows and file actions in
+  flows. Backlog item 9.
 - **Error Prone checks the flow files too** (ADR 0042, decision 5). `FlowDefinition`, its test,
   `FlowService` and `JobQueue` are no longer left out. What it found is fixed: case changes now
   name `Locale.ROOT`, so a server in a Turkish locale reads `PRIORITY: HIGH` and the like as

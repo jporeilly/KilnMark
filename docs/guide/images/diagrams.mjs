@@ -869,3 +869,100 @@ function svg(name, height, title, sub, body) {
     foot(y2 + 112, "lock", "Runs are encrypted with a key only the node holds, in its own temporary folder, deleted when it ends, fails or stops.");
   svg("sort-spill", y2 + 162, "How a sort carries on on disk", "In memory while the rows fit; past the limit, sorted runs on disk, merged at the end", b);
 }
+
+// ---- The four kinds of join ----
+{
+  // Two overlapping circles per kind: the parts a join keeps are filled, the rest outlined.
+  const kinds = [
+    ["inner", "Pairs that match", [false, true, false]],
+    ["left", "Plus left rows with none", [true, true, false]],
+    ["right", "Plus right rows with none", [false, true, true]],
+    ["full", "Every row of both", [true, true, true]],
+  ];
+  const W = 160, X = [40, 214, 388, 562], y = 76;
+  let b = "";
+  kinds.forEach(([name, sub, keep], i) => {
+    const x = X[i];
+    const cx1 = x + 58, cx2 = x + 102, cy = y + 74, r = 34;
+    const id = `j${i}`;
+    b += rect(x, y, W, 190, { fill: C.tint, stroke: C.axis });
+    b += `<defs><clipPath id="${id}l"><circle cx="${cx1}" cy="${cy}" r="${r}"/></clipPath><clipPath id="${id}r"><circle cx="${cx2}" cy="${cy}" r="${r}"/></clipPath></defs>`;
+    // left only, then right only, then the overlap, each filled when kept
+    if (keep[0]) b += `<circle cx="${cx1}" cy="${cy}" r="${r}" fill="${C.blue}" fill-opacity="0.35"/><circle cx="${cx2}" cy="${cy}" r="${r}" fill="${C.tint}" clip-path="url(#${id}l)"/>`;
+    if (keep[2]) b += `<circle cx="${cx2}" cy="${cy}" r="${r}" fill="${C.orange}" fill-opacity="0.35"/><circle cx="${cx1}" cy="${cy}" r="${r}" fill="${C.tint}" clip-path="url(#${id}r)"/>`;
+    if (keep[1]) b += `<circle cx="${cx2}" cy="${cy}" r="${r}" fill="${C.green}" fill-opacity="0.55" clip-path="url(#${id}l)"/>`;
+    b += `<circle cx="${cx1}" cy="${cy}" r="${r}" fill="none" stroke="${C.blue}" stroke-width="1.5"/>`;
+    b += `<circle cx="${cx2}" cy="${cy}" r="${r}" fill="none" stroke="${C.orange}" stroke-width="1.5"/>`;
+    b += text(cx1 - 20, cy + 4, "L", { size: 12, weight: 700, fill: C.blue, anchor: "middle" });
+    b += text(cx2 + 20, cy + 4, "R", { size: 12, weight: 700, fill: C.orange, anchor: "middle" });
+    b += text(x + W / 2, y + 140, `how: ${name}`, { weight: 600, anchor: "middle" });
+    b += text(x + W / 2, y + 160, sub, { size: 11.5, fill: C.quiet, anchor: "middle" });
+  });
+  const y2 = y + 214;
+  b +=
+    lane(y2, 96, "Where there is no match", C.navy) +
+    card(40, y2 + 30, 330, { icon: "log", color: C.navy, title: "The other side's columns are empty", sub: "and every column keeps its type" }) +
+    card(392, y2 + 30, 330, { icon: "key", color: C.navy, title: "An empty key matches nothing", sub: "not even another empty key" }) +
+    foot(y2 + 112, "file", "Rows come out in order of their keys; a key on 3 left rows and 2 right rows gives 6 pairs.");
+  svg("join-kinds", y2 + 162, "The four kinds of join", "Which rows a join keeps: the pairs whose keys are equal, and the rows of either side with no match", b);
+}
+
+// ---- How an agent works: it proposes, a person decides ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 188, y3 = 316;
+  const cy1 = y1 + 58, cy2 = y2 + 58;
+  const b =
+    lane(y1, 96, "The agent works", C.violet) +
+    card(X[0], y1 + 30, W, { icon: "play", color: C.violet, title: "A task starts", sub: "by a person or an event" }) +
+    arrow([[248, cy1], [274, cy1]], C.violet) +
+    card(X[1], y1 + 30, W, { icon: "chip", color: C.violet, title: "It reads and tries", sub: "with its own token's role" }) +
+    arrow([[484, cy1], [510, cy1]], C.violet) +
+    card(X[2], y1 + 30, W, { icon: "pencil", color: C.violet, strong: true, title: "A proposal", sub: "a diff with its reasons" }) +
+    arrow([[616, y1 + 86], [616, y2 + 28]], C.violet) +
+    lane(y2, 110, "A person decides", C.good) +
+    card(X[2], y2 + 30, W, { icon: "person", color: C.good, strong: true, title: "A person reviews", sub: "in the proposals inbox" }) +
+    arrow([[512, cy2], [486, cy2]], C.good) +
+    card(X[1], y2 + 30, W, { icon: "check", color: C.good, title: "Approved", sub: "made as that person" }) +
+    arrow([[616, y2 + 86], [616, y2 + 98], [144, y2 + 98], [144, y2 + 88]], C.quiet, { dash: "4 3" }) +
+    card(X[0], y2 + 30, W, { icon: "cross", color: C.axis, title: "Rejected or edited", sub: "the reason kept with it" }) +
+    lane(y3, 96, "Never an agent's", C.bad) +
+    card(X[0], y3 + 30, W, { icon: "eye", color: C.bad, dash: "4 3", title: "Unmasked values", sub: "a model never sees them" }) +
+    card(X[1], y3 + 30, W, { icon: "lock", color: C.bad, dash: "4 3", title: "Admin powers", sub: "no unmask, SQL or DB tools" }) +
+    card(X[2], y3 + 30, W, { icon: "shield", color: C.bad, dash: "4 3", title: "Orders found in data", sub: "read as data, not obeyed" }) +
+    foot(y3 + 112, "log", "Every step and model call is kept; a task stops at its limits; an admin can switch any agent off.");
+  svg("agents", y3 + 162, "How an agent works", "An agent proposes and a person decides; some things are never an agent's", b);
+}
+
+// ---- Inferring a fault from history: the ai node's diagnose task with context ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 196, y3 = 336;
+  const cy1 = y1 + 58, cy2 = y2 + 58, cy3 = y3 + 58;
+  const b =
+    lane(y1, 96, "Once, then as findings arrive", C.navy) +
+    card(X[0], y1 + 30, W, { icon: "book", color: C.navy, title: "Notes and incidents", sub: "what engineers found before" }) +
+    arrow([[248, cy1], [274, cy1]], C.navy) +
+    card(X[1], y1 + 30, W, { icon: "chip", color: C.navy, title: "embed", sub: "text into vectors" }) +
+    arrow([[484, cy1], [510, cy1]], C.navy) +
+    card(X[2], y1 + 30, W, { icon: "db", color: C.navy, title: "The history", sub: "a table with vectors" }) +
+    arrow([[616, y1 + 86], [616, y1 + 104], [380, y1 + 104], [380, y2 + 28]], C.navy) +
+    lane(y2, 110, "For each error", C.violet) +
+    card(X[0], y2 + 30, W, { icon: "bell", color: C.violet, title: "A valve error", sub: "code, reading, asset, time" }) +
+    arrow([[248, cy2], [274, cy2]], C.violet) +
+    card(X[1], y2 + 30, W, { icon: "funnel", color: C.violet, title: "The closest records", sub: "5, for that valve type" }) +
+    arrow([[484, cy2], [510, cy2]], C.violet) +
+    card(X[2], y2 + 30, W, { icon: "chip", color: C.violet, strong: true, title: "ai: diagnose", sub: "cause, confidence, evidence" }) +
+    arrow([[616, y2 + 86], [616, y3 + 28]], C.good) +
+    label(624, y2 + 104, "0.8 or more", C.good, "start") +
+    arrow([[616, y2 + 98], [380, y2 + 98], [380, y3 + 28]], C.warn) +
+    label(388, y2 + 116, "below, or critical", C.warn, "start") +
+    lane(y3, 96, "Then", C.good) +
+    card(X[2], y3 + 30, W, { icon: "file", color: C.good, title: "Draft a work order", sub: "with the evidence" }) +
+    card(X[1], y3 + 30, W, { icon: "person", color: C.warn, strong: true, title: "An engineer checks", sub: "the cause and the records" }) +
+    arrow([[276, cy3], [250, cy3]], C.good) +
+    card(X[0], y3 + 30, W, { icon: "save", color: C.good, title: "The finding is kept", sub: "it joins the history" }) +
+    arrow([[40, cy3], [30, cy3], [30, cy1], [38, cy1]], C.quiet, { dash: "4 3" }) +
+    foot(y3 + 112, "eye", "The answer names the records it used; a model's answer alone never acts on equipment.");
+  svg("ai-diagnose", y3 + 162, "Inferring a fault from history", "The ai node's diagnose task, with the closest past records as context", b);
+}
