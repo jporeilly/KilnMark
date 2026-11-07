@@ -435,7 +435,7 @@ abstract class MySqlFamilyWriteTest {
         assertTrue(ok.succeeded(), ok.error());
         RunResult at = write(source, options("kt_billing.stamps", "append", List.of(), Map.of()), stamps,
             Rows.list(new Object[] {2L, LocalDateTime.parse("2025-01-31T09:30:00.999999"), null, null}), 4, -1);
-        assertTrue(at.error().contains("Row 1: the value 2025-01-31T09:30:00.999999 in column at has more digits of a "
+        assertTrue(at.error().contains("Row 1: the value in column at has more digits of a "
             + "second than the column keeps (0)"), at.error());
         RunResult took = write(source, options("kt_billing.stamps", "append", List.of(), Map.of()), stamps,
             Rows.list(new Object[] {3L, null, LocalTime.parse("09:30:00.5"), null}), 4, -1);

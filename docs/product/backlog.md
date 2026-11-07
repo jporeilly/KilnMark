@@ -92,6 +92,10 @@ audit reporting tables and dashboards about Kilnmark itself under item 18, from 
    1. **Rows that fail are kept**: an expression, cast or write that fails on a row sends it to an
       error port with its error code, column and reason, instead of stopping the run; and an
       **error tolerance** on the node (fail past N rows or a share), recorded with the run.
+      **Built** (branch `row-errors`, ADR 0054): `errors` on compute, select, filter, route and
+      write, with `max_errors` and `max_error_share`. Still to do: a write's rows the database
+      itself refuses (a savepoint per batch, split to find the row), then lookup, join, window and
+      aggregate.
    2. **Which row wins, stated**: upsert, lookup and dedupe say which of two rows with the same key
       is kept (the latest by a column, the first, or an error), never arrival order unsaid.
       **Built** (branch `which-row-wins`): `duplicates` and `duplicates_by` on all three.

@@ -16,7 +16,7 @@ final class Casts {
     }
 
     static ExprException tooLong(int pos) {
-        return new ExprException("a text value would be longer than 1,000,000 characters", pos);
+        return ExprException.row("too_long", "a text value would be longer than 1,000,000 characters", pos);
     }
 
     /** {@code s} with every {@code from} replaced by {@code to}, refusing results over {@link #MAX_TEXT}. */
@@ -105,7 +105,7 @@ final class Casts {
                     case UTF8 -> {
                         Long d = Temporal.parseDateLiteral((String) col.objects[i]);
                         if (d == null) {
-                            throw new ExprException("cannot cast a text value to date: it is not in the form yyyy-mm-dd",
+                            throw ExprException.row("cast_failed", "cannot cast a text value to date: it is not in the form yyyy-mm-dd",
                                 pos, "use parse_date(text, 'pattern') for other forms; it gives null when a value does not match");
                         }
                         yield d;
@@ -117,13 +117,13 @@ final class Casts {
                         try {
                             yield Math.multiplyExact(col.longs[i], Temporal.MICROS_PER_DAY);
                         } catch (ArithmeticException e) {
-                            throw new ExprException("a date is too far from today to be a timestamp", pos);
+                            throw ExprException.row("out_of_range", "a date is too far from today to be a timestamp", pos);
                         }
                     }
                     case UTF8 -> {
                         Long t = Temporal.parseTimestamp((String) col.objects[i]);
                         if (t == null) {
-                            throw new ExprException("cannot cast a text value to timestamp: it is not in the form "
+                            throw ExprException.row("cast_failed", "cannot cast a text value to timestamp: it is not in the form "
                                 + "yyyy-mm-dd hh:mm:ss", pos,
                                 "use parse_timestamp(text, 'pattern') for other forms; it gives null when a value does not match");
                         }
@@ -143,7 +143,7 @@ final class Casts {
             case FLOAT64 -> {
                 double d = col.doubles[i];
                 if (Double.isNaN(d) || Double.isInfinite(d)) {
-                    throw new ExprException("cannot turn " + d + " into a decimal", pos);
+                    throw ExprException.row("cast_failed", "cannot turn a floating-point value that is not a number, or is infinite, into a decimal", pos);
                 }
                 yield BigDecimal.valueOf(d);
             }
@@ -157,18 +157,18 @@ final class Casts {
     /** A decimal rounded to the type's scale, checked against its precision. */
     static BigDecimal fit(BigDecimal v, Type to, int pos) throws ExprException {
         if (v.precision() - v.scale() > to.precision() - to.scale()) {
-            throw new ExprException("a value is too large for " + to, pos);
+            throw ExprException.row("out_of_range", "a value is too large for " + to, pos);
         }
         BigDecimal r = v.setScale(to.scale(), RoundingMode.HALF_UP);
         if (r.precision() > to.precision()) {
-            throw new ExprException("a value is too large for " + to, pos);
+            throw ExprException.row("out_of_range", "a value is too large for " + to, pos);
         }
         return r;
     }
 
     private static long floatToLong(double d, int pos) throws ExprException {
         if (Double.isNaN(d) || Double.isInfinite(d) || d >= 0x1p63 || d < -0x1p63) {
-            throw new ExprException("cannot turn a floating-point value into int64: it is not a number or too large", pos);
+            throw ExprException.row("cast_failed", "cannot turn a floating-point value into int64: it is not a number or too large", pos);
         }
         return (long) (d < 0 ? Math.ceil(d - 0.5) : Math.floor(d + 0.5));
     }
@@ -177,7 +177,7 @@ final class Casts {
         try {
             return v.setScale(0, RoundingMode.HALF_UP).longValueExact();
         } catch (ArithmeticException e) {
-            throw new ExprException("a decimal value is too large for int64", pos);
+            throw ExprException.row("out_of_range", "a decimal value is too large for int64", pos);
         }
     }
 
@@ -190,7 +190,7 @@ final class Casts {
                 // fall through to the error
             }
         }
-        throw new ExprException("cannot cast a text value to int64: it is not a whole number", pos,
+        throw ExprException.row("cast_failed", "cannot cast a text value to int64: it is not a whole number", pos,
             "guard it, for example case when regex_match(x, '^-?[0-9]+$') then cast(x as int64) end");
     }
 
@@ -214,9 +214,9 @@ final class Casts {
             if (!Double.isInfinite(d)) {
                 return d;
             }
-            throw new ExprException("cannot cast a text value to float64: it is too large", pos);
+            throw ExprException.row("cast_failed", "cannot cast a text value to float64: it is too large", pos);
         }
-        throw new ExprException("cannot cast a text value to float64: it is not a number", pos);
+        throw ExprException.row("cast_failed", "cannot cast a text value to float64: it is not a number", pos);
     }
 
     private static BigDecimal textToDecimal(String s, int pos) throws ExprException {
@@ -227,7 +227,7 @@ final class Casts {
                 return v;
             }
         }
-        throw new ExprException("cannot cast a text value to decimal: it is not a number, or it is too large", pos);
+        throw ExprException.row("cast_failed", "cannot cast a text value to decimal: it is not a number, or it is too large", pos);
     }
 
     /** Digits with an optional sign, point and (if allowed) exponent: no hexadecimal, NaN or suffixes. */
@@ -273,7 +273,7 @@ final class Casts {
         return switch (s.trim().toLowerCase(Locale.ROOT)) {
             case "true", "t", "yes", "y", "1" -> true;
             case "false", "f", "no", "n", "0" -> false;
-            default -> throw new ExprException("cannot cast a text value to boolean: use true or false (also yes/no, 1/0)",
+            default -> throw ExprException.row("cast_failed", "cannot cast a text value to boolean: use true or false (also yes/no, 1/0)",
                 pos);
         };
     }

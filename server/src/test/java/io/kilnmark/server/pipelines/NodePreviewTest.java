@@ -479,6 +479,46 @@ class NodePreviewTest {
         assertEquals(256L, p.definition().nodes().get(1).config().get("memory_limit_mb"), "a window holds rows");
     }
 
+    /**
+     * Rows that fail keep their columns, and so their marks (ADR 0054, ADR 0027): a preview of the
+     * errors port masks a sensitive column, the reason never holds a value, and a write of the error
+     * rows carries the mark on.
+     */
+    @Test
+    void errorRowsKeepTheirMarks() {
+        String y = yaml("""
+              - {id: people, type: read, source: small, asset: lab.people}
+              - {id: x, type: compute, input: people, columns: {share: "100 / (id - 3)"}}
+            """);
+        PipelinePreviews.Viewer nameHidden = new PipelinePreviews.Viewer() {
+            @Override
+            public boolean mayUnmask() {
+                return false;
+            }
+
+            @Override
+            public Set<String> marks(String urn) {
+                return urn.equals("urn:kilnmark:small:lab.people") ? Set.of("name") : Set.of();
+            }
+        };
+        PipelineViews.NodePreviewView v = previews().preview(y, "x", "errors", 5, "jo", AccessRole.STEWARD, nameHidden,
+            () -> false);
+        assertEquals(1, v.rows().size(), v.rows().toString());
+        assertEquals(List.of("name"), v.masked(), "the sensitive column of a failing row is masked");
+        assertTrue(v.rows().get(0).contains("division_by_zero"), v.rows().toString());
+        assertFalse(v.rows().get(0).stream().anyMatch(cell -> cell != null && cell.contains("Person")),
+            v.rows().toString());
+
+        sources.asset("urn:kilnmark:small:lab.people", "id:int64", "name:text");
+        PipelineCompilerPort.Compilation c = KilnPipelineCompiler.compile(NodePreview.plan(y, "x").definition(),
+            factories, false);
+        assertEquals(List.of(), c.problems());
+        // what a write of x.errors records about the columns it wrote: the marks arriving at it
+        NodePreview.Hidden marks = NodePreview.marked(c, Map.of("people", Set.of("name")), "x");
+        assertTrue(marks.hides("name"), "the errors port carries the read's mark on");
+        assertFalse(marks.hides("error_message") || marks.hides("error_code"), "the reasons hold no value");
+    }
+
     @Test
     void aHashOfAMarkedColumnIsMarked() {
         sources.asset("urn:kilnmark:small:lab.people", "id:int64", "name:text");

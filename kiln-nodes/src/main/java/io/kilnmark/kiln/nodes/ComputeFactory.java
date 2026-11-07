@@ -17,6 +17,7 @@ import io.kilnmark.kiln.NodeContext;
 import io.kilnmark.kiln.NodeException;
 import io.kilnmark.kiln.NodeFactory;
 import io.kilnmark.kiln.NodeKind;
+import io.kilnmark.kiln.RowErrors;
 import io.kilnmark.kiln.nodes.expr.ArrowIO;
 import io.kilnmark.kiln.nodes.expr.Batch;
 import io.kilnmark.kiln.nodes.expr.Col;
@@ -26,7 +27,8 @@ import io.kilnmark.kiln.nodes.expr.Expression;
 /**
  * {@code compute}: adds or replaces columns from expressions. A name that is already a column
  * replaces it where it stands; a new name is added at the end. Expressions are worked out in the
- * order written, and each can use the columns computed before it.
+ * order written, and each can use the columns computed before it. A row whose expression fails goes
+ * to {@code errors} when something is connected to it (ADR 0054, {@link Failing}).
  */
 public final class ComputeFactory implements NodeFactory {
 
@@ -55,7 +57,8 @@ public final class ComputeFactory implements NodeFactory {
     @Override
     public String help() {
         return "Adds or replaces columns, each worked out from an expression. Later expressions can use "
-            + "columns computed earlier in the list.";
+            + "columns computed earlier in the list. Rows whose expressions fail go to the errors port, if something "
+            + "is connected to it.";
     }
 
     @Override
@@ -65,35 +68,36 @@ public final class ComputeFactory implements NodeFactory {
 
     @Override
     public List<String> outputPorts() {
-        return List.of("out");
+        return List.of("out", RowErrors.PORT);
     }
 
     @Override
     public List<SettingSpec> settings() {
-        return List.of(SettingSpec.required("columns", "Columns", SettingSpec.Kind.EXPRESSIONS,
+        return Failing.withTolerance(List.of(SettingSpec.required("columns", "Columns", SettingSpec.Kind.EXPRESSIONS,
             "Each column's name and the expression that works it out, for example full_name: "
-                + "trim(first_name) || ' ' || trim(last_name)."));
+                + "trim(first_name) || ' ' || trim(last_name).")));
     }
 
     @Override
     public List<String> check(Map<String, Object> config) {
         Config c = new Config(config);
         c.expressions("columns", true);
-        return c.problems();
+        return Failing.withTolerance(c.problems(), config);
     }
 
     @Override
     public Node create(Map<String, Object> config) throws NodeException {
         Config c = new Config(config);
         LinkedHashMap<String, Expression> columns = c.expressions("columns", true);
+        c.problems().addAll(RowErrors.check(config));
         c.orThrow(TYPE);
-        return new ComputeNode(columns);
+        return new ComputeNode(columns, RowErrors.Tally.of(config));
     }
 
     @Override
     public Schema outputSchema(String port, Map<String, Schema> inputs, Map<String, Object> config)
         throws NodeException {
-        if (!port.equals("out")) {
+        if (!port.equals("out") && !port.equals(RowErrors.PORT)) {
             throw new NodeException("A compute node has no output port '" + port + "'");
         }
         Schema in = inputs.get("in");
@@ -105,7 +109,8 @@ public final class ComputeFactory implements NodeFactory {
         c.orThrow(TYPE);
         Plan plan = new Plan();
         try {
-            return plan.bind(in, columns);
+            Schema out = plan.bind(in, columns);
+            return port.equals(RowErrors.PORT) ? RowErrors.schema(in) : out;
         } catch (ExprException e) {
             throw new NodeException("column " + plan.current + ": " + e.getMessage(), e);
         }
@@ -149,32 +154,46 @@ public final class ComputeFactory implements NodeFactory {
     /** The running node. */
     static final class ComputeNode extends BaseNode {
         private final LinkedHashMap<String, Expression> columns;
+        private final RowErrors.Tally tally;
         private Schema boundTo;
         private Plan plan;
         private Schema outSchema;
 
-        ComputeNode(LinkedHashMap<String, Expression> columns) {
+        ComputeNode(LinkedHashMap<String, Expression> columns, RowErrors.Tally tally) {
             super(TYPE);
             this.columns = columns;
+            this.tally = tally;
         }
 
         @Override
         public boolean process(NodeContext ctx) throws NodeException {
             VectorSchemaRoot batch = take(ctx, "in");
             if (batch == null) {
+                Failing.finish(tally, ctx);
                 return false;
             }
-            VectorSchemaRoot out;
+            tally.arrived(batch.getRowCount());
+            Failing.Done<VectorSchemaRoot> done;
             try {
-                out = compute(batch, ctx);
+                done = Failing.work(batch, rows -> compute(rows, ctx), tally, ctx, name);
             } finally {
                 batch.close();
             }
-            put(ctx, "out", out);
+            if (done != null) {
+                if (done.fresh()) {
+                    done.rows().close();
+                }
+                put(ctx, "out", done.result());
+            }
             return true;
         }
 
-        private VectorSchemaRoot compute(VectorSchemaRoot batch, NodeContext ctx) throws NodeException {
+        /**
+         * The batch with its columns worked out. The input is read, never changed, until every new
+         * column is made, so a row that fails leaves it whole for finding the rows that fail.
+         */
+        private VectorSchemaRoot compute(VectorSchemaRoot batch, NodeContext ctx)
+            throws NodeException, Failing.RowFailure {
             Plan p = plan;
             if (!batch.getSchema().equals(boundTo)) {
                 p = new Plan();
@@ -195,28 +214,31 @@ public final class ComputeFactory implements NodeFactory {
                     rows.put(column, c);
                     computed.put(column, c);
                 } catch (ExprException e) {
-                    throw fail("column " + column, e);
+                    throw new Failing.RowFailure("column " + column, column, e);
                 }
             }
-            List<FieldVector> vectors = new ArrayList<>();
+            Map<String, FieldVector> made = new HashMap<>();
             try {
                 for (Field f : outSchema.getFields()) {
                     Col c = computed.get(f.getName());
                     if (c != null) {
                         try {
-                            vectors.add(ArrowIO.write(c, f, ctx.allocator()));
+                            made.put(f.getName(), ArrowIO.write(c, f, ctx.allocator()));
                         } catch (ExprException e) {
-                            throw fail("column " + f.getName(), e);
+                            throw new Failing.RowFailure("column " + f.getName(), f.getName(), e);
                         }
-                    } else {
-                        vectors.add(move(batch.getVector(f.getName()), f, ctx.allocator()));
                     }
                 }
-                return new VectorSchemaRoot(outSchema, vectors, batch.getRowCount());
-            } catch (NodeException | RuntimeException e) {
-                vectors.forEach(FieldVector::close);
+            } catch (Failing.RowFailure | RuntimeException e) {
+                made.values().forEach(FieldVector::close);
                 throw e;
             }
+            List<FieldVector> vectors = new ArrayList<>();
+            for (Field f : outSchema.getFields()) {
+                FieldVector v = made.get(f.getName());
+                vectors.add(v != null ? v : move(batch.getVector(f.getName()), f, ctx.allocator()));
+            }
+            return new VectorSchemaRoot(outSchema, vectors, batch.getRowCount());
         }
     }
 }

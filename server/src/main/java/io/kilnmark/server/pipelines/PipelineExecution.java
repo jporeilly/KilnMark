@@ -263,7 +263,9 @@ final class PipelineExecution {
                 + "writes had written first.", none, Map.of(), List.of());
         }
         Map<String, Long> rowsIn = new HashMap<>();
-        List<PipelineStore.NodeRun> nodes = nodes(graph, result, context, rowsIn);
+        Set<String> writeNodes = new HashSet<>();
+        writes.forEach(w -> writeNodes.add(w.node()));
+        List<PipelineStore.NodeRun> nodes = nodes(graph, result, context, rowsIn, writeNodes);
         String error = result.succeeded() ? null : context.scrub(result.error());
         return new Outcome(result.succeeded() ? "succeeded" : "failed", error, nodes, rowsIn, List.copyOf(events));
     }
@@ -317,7 +319,7 @@ final class PipelineExecution {
     }
 
     private List<PipelineStore.NodeRun> nodes(PipelineGraph graph, RunResult result, RunContext context,
-                                              Map<String, Long> rowsIn) {
+                                              Map<String, Long> rowsIn, Set<String> writeNodes) {
         Map<String, RunResult.NodeResult> byName = new HashMap<>();
         result.nodes().forEach(s -> byName.put(s.name(), s));
         Map<Edge, Long> edgeRows = rowsByEdge(graph, result);
@@ -343,8 +345,10 @@ final class PipelineExecution {
             }
             Long rowsInTotal = in.isEmpty() ? null : in.values().stream().anyMatch(v -> v < 0) ? null
                 : in.values().stream().mapToLong(Long::longValue).sum();
-            // A node with nothing connected after it (a write) has no rows out: what it wrote is its target.
-            Long rowsOut = r == null || graph.outOf(id).isEmpty() ? null : r.rowsOut();
+            // A node with nothing connected after it, and a write, has no rows out: what a write wrote is its
+            // target, and the rows it set aside on its errors port are in its ports (ADR 0054).
+            Long rowsOut = r == null || graph.outOf(id).isEmpty() || writeNodes.contains(id)
+                ? null : r.rowsOut();
             String error = r == null ? null : r.error();
             long peak = r == null ? 0 : r.peakMemoryBytes();
             if (rowsInTotal != null) {

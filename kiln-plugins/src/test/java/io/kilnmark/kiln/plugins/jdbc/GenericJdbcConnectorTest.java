@@ -628,7 +628,7 @@ class GenericJdbcConnectorTest {
             Rows.events());
         assertTrue(ok.succeeded(), ok.error());
         String[][] cases = {
-            {"decimal", "the value 1.2345 in column TOTAL"},
+            {"decimal", "the value in column TOTAL has more decimal places"},
             {"text", "the value in column NOTE is 8 characters long, but the column holds at most 5"},
             {"seconds", "column AT_S has more digits of a second than the column keeps (0)"},
             {"tiny", "the value 300 is outside -128 to 127"},

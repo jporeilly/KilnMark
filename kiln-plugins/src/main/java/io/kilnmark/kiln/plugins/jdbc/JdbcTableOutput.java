@@ -22,6 +22,7 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import io.kilnmark.kiln.Node;
 import io.kilnmark.kiln.NodeContext;
 import io.kilnmark.kiln.NodeException;
+import io.kilnmark.kiln.RowErrors;
 import io.kilnmark.kiln.connect.ConnectorException;
 import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.kiln.plugins.jdbc.JdbcColumn.Kind;
@@ -56,6 +57,12 @@ import io.kilnmark.kiln.plugins.write.WriteSettings;
  * prepared statements for upsert; to SQL Server as batches of prepared statements, through the
  * driver's bulk copy for tables this node creates. Nothing is reported until the commit; see
  * {@link WriteReport}.
+ *
+ * <p>Each value is converted and checked before it is sent ({@link #value}). A row with a value the
+ * table would refuse goes to the {@code errors} port when something is connected to it (ADR 0054),
+ * with a fixed wording that never holds the value, and is never sent; otherwise it stops the write,
+ * as before. A refusal by the database itself (a unique index, a foreign key, a check) still stops
+ * the write: it is found only when a batch is sent.
  */
 final class JdbcTableOutput implements Node {
 
@@ -99,6 +106,10 @@ final class JdbcTableOutput implements Node {
     private List<String> writtenTypes;
     private Loader loader;
     private long sinceCommit;
+    /** Rows that have arrived, those set aside included, for the row numbers in messages. */
+    private long arrived;
+    /** Rows that arrived and rows sent to the errors port, for the run's log. */
+    private final RowErrors.Tally setAside = new RowErrors.Tally(null, null);
     private long committedRows;
     private boolean committed;
     /** Whether this node created {@link #loadInto}. */
@@ -397,9 +408,41 @@ final class JdbcTableOutput implements Node {
             if (bindings == null) {
                 start(batch);
             }
-            report.accept(batch);
-            loader.write(batch, report.rows() - batch.getRowCount());
-            sinceCommit += batch.getRowCount();
+            int n = batch.getRowCount();
+            boolean aside = context.outputPorts().contains(RowErrors.PORT);
+            Object[][] values = new Object[n][];
+            int[] good = new int[n];
+            int[] bad = new int[n];
+            RowErrors.Failure[] why = new RowErrors.Failure[n];
+            int g = 0;
+            int b = 0;
+            for (int row = 0; row < n; row++) {
+                try {
+                    values[g] = rowValues(batch, row, arrived + row + 1);
+                    good[g++] = row;
+                } catch (Refused r) {
+                    if (!aside) {
+                        throw r;
+                    }
+                    why[b] = r.failure();
+                    bad[b++] = row;
+                }
+            }
+            arrived += n;
+            setAside.arrived(n);
+            if (b > 0) {
+                setAside(context, batch, bad, why, b);
+                setAside.failed(b);
+                if (g > 0) {
+                    try (VectorSchemaRoot kept = RowErrors.rows(batch, good, g, context.allocator())) {
+                        report.accept(kept);
+                    }
+                }
+            } else {
+                report.accept(batch);
+            }
+            loader.write(g == n ? values : java.util.Arrays.copyOf(values, g));
+            sinceCommit += g;
             if (commitEvery > 0 && sinceCommit >= commitEvery) {
                 loader.flush();
                 connection.commit();
@@ -414,6 +457,51 @@ final class JdbcTableOutput implements Node {
             batch.close();
         }
         return true;
+    }
+
+    /** Every bound value of one row, converted and checked; {@link Refused} names the first that fails. */
+    private Object[] rowValues(VectorSchemaRoot batch, int row, long rowNumber) throws NodeException {
+        Object[] out = new Object[bindings.size()];
+        for (int c = 0; c < out.length; c++) {
+            out[c] = value(bindings.get(c), batch, row, rowNumber);
+        }
+        return out;
+    }
+
+    /** Sends rows the table would refuse to the errors port. */
+    private static void setAside(NodeContext context, VectorSchemaRoot batch, int[] rows, RowErrors.Failure[] why,
+                                 int count) throws NodeException {
+        try {
+            context.emit(RowErrors.PORT, RowErrors.batch(batch, rows, why, count, context.nodeName(),
+                context.allocator()));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new NodeException("Interrupted", e);
+        }
+    }
+
+    /**
+     * A value the table would refuse, found before it is sent. Its message says which row (counting
+     * every row that arrived) and column, for a run that stops; {@link #failure()} is the fixed wording
+     * an error row carries, which never holds the value.
+     */
+    static final class Refused extends NodeException {
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+        private final String column;
+        private final String code;
+        private final String wording;
+
+        Refused(String message, String column, String code, String wording) {
+            super(message);
+            this.column = column;
+            this.code = code;
+            this.wording = wording;
+        }
+
+        RowErrors.Failure failure() {
+            return new RowErrors.Failure(column, code, wording);
+        }
     }
 
     /** On the first batch: creates the table (create, replace) or matches the input to it (append, upsert). */
@@ -550,6 +638,10 @@ final class JdbcTableOutput implements Node {
     }
 
     private void finish(NodeContext context) throws NodeException {
+        String aside = setAside.note();
+        if (aside != null) {
+            context.note(aside);
+        }
         try {
             if (bindings == null) {
                 if (mode.equals("create") || mode.equals("replace")) {
@@ -739,31 +831,37 @@ final class JdbcTableOutput implements Node {
     private Object value(Binding binding, VectorSchemaRoot batch, int row, long rowNumber) throws NodeException {
         Object v = WritePlan.convert(binding.input().value(batch.getVector(binding.index()), row),
             binding.input().kind(), binding.kind());
+        String column = binding.input().name();
         if (v == null) {
             if (binding.key()) {
-                throw new NodeException("Row " + rowNumber + " has no value in the key column " + binding.target()
-                    + "; upsert needs every key column filled");
+                throw new Refused("Row " + rowNumber + " has no value in the key column " + binding.target()
+                    + "; upsert needs every key column filled", column, "key_missing",
+                    "the key column is empty; upsert needs every key column filled");
             }
             return null;
         }
         if (binding.key() && sql.emptyMeansNull()
             && ((v instanceof String text && text.isEmpty()) || (v instanceof byte[] bytes && bytes.length == 0))) {
             // whatever empty_text_as_null says: as null, the key would match no row and add one each time
-            throw new NodeException("Row " + rowNumber + " has an empty value in the key column " + binding.target()
+            throw new Refused("Row " + rowNumber + " has an empty value in the key column " + binding.target()
                 + ", which the database stores as null, so it could never match a row; upsert needs every key "
-                + "column filled");
+                + "column filled", column, "key_empty", "the key column holds empty text, which the database stores "
+                + "as null, so it could never match a row; upsert needs every key column filled");
         }
         String problem = sql.valueProblem(binding.kind(), v);
         if (problem != null) {
-            throw new NodeException("Row " + rowNumber + ", column " + binding.target() + ": " + problem);
+            throw new Refused("Row " + rowNumber + ", column " + binding.target() + ": " + problem, column,
+                "not_storable", "the database cannot store this value in the column's type");
         }
         if (v instanceof java.math.BigDecimal d && binding.precision() > 0) {
             java.math.BigDecimal exact = WritePlan.fitDecimal(d, binding.precision(), binding.scale());
             if (exact == null) {
-                throw new NodeException("Row " + rowNumber + ": the value " + d.toPlainString() + " in column "
-                    + binding.target() + " " + WritePlan.decimalProblem(d, binding.precision(), binding.scale())
-                    + " (decimal(" + binding.precision() + "," + binding.scale() + ")), and is never rounded. Round "
-                    + "or filter it with a compute node, or ask for the column to be widened");
+                String kept = "decimal(" + binding.precision() + "," + binding.scale() + ")";
+                throw new Refused("Row " + rowNumber + ": the value in column " + binding.target() + " "
+                    + WritePlan.decimalProblem(d, binding.precision(), binding.scale()) + " (" + kept + "), and is "
+                    + "never rounded. Round or filter it with a compute node, or ask for the column to be widened",
+                    column, "too_precise", "the value has more digits than the column keeps (" + kept + ") and is "
+                    + "never rounded; round or filter it with a compute node, or ask for the column to be widened");
             }
             return exact;
         }
@@ -776,21 +874,26 @@ final class JdbcTableOutput implements Node {
                 default -> 0;
             };
             if (nanos % (int) Math.pow(10, 9 - digits) != 0) {
-                throw new NodeException("Row " + rowNumber + ": the value " + v + " in column " + binding.target()
+                throw new Refused("Row " + rowNumber + ": the value in column " + binding.target()
                     + " has more digits of a second than the column keeps (" + digits + "), and is never rounded. "
-                    + "Truncate it with a compute node, or ask for the column to keep more");
+                    + "Truncate it with a compute node, or ask for the column to keep more", column, "too_precise",
+                    "the value has more digits of a second than the column keeps (" + digits + ") and is never "
+                    + "rounded; truncate it with a compute node, or ask for the column to keep more");
             }
         }
         TargetColumn into = targets.get(binding.target());
         String misfit = sql.targetValueProblem(into, v);
         if (misfit != null) {
-            throw new NodeException("Row " + rowNumber + ", column " + binding.target() + ": " + misfit);
+            throw new Refused("Row " + rowNumber + ", column " + binding.target() + ": " + misfit, column,
+                "does_not_fit", "the value does not fit what the column holds (its type or size)");
         }
         if (v instanceof String s) {
             if (binding.maxLength() > 0 && sql.length(s) > binding.maxLength()) {
-                throw new NodeException("Row " + rowNumber + ": the value in column " + binding.target() + " is "
+                throw new Refused("Row " + rowNumber + ": the value in column " + binding.target() + " is "
                     + sql.length(s) + " characters long, but the column holds at most " + binding.maxLength()
-                    + ". Shorten the values with a compute node, or ask for the column to be widened");
+                    + ". Shorten the values with a compute node, or ask for the column to be widened", column,
+                    "too_long", "the value is longer than the column holds (at most " + binding.maxLength()
+                    + " characters); shorten such values with a compute node, or ask for the column to be widened");
             }
         }
         return v;
@@ -801,8 +904,8 @@ final class JdbcTableOutput implements Node {
     /** Sends rows to the table. */
     private interface Loader {
 
-        /** Sends a batch; {@code before} rows were sent before it. */
-        void write(VectorSchemaRoot batch, long before) throws SQLException, NodeException;
+        /** Sends rows, each its bound values, converted and checked ({@link #rowValues}). */
+        void write(Object[][] rows) throws SQLException, NodeException;
 
         /** Sends what is buffered, so a commit includes it. */
         void flush() throws SQLException;
@@ -822,19 +925,18 @@ final class JdbcTableOutput implements Node {
         }
 
         @Override
-        public void write(VectorSchemaRoot batch, long before) throws SQLException, NodeException {
-            int n = batch.getRowCount();
+        public void write(Object[][] values) throws SQLException, NodeException {
+            int n = values.length;
             if (n == 0) {
                 return;
             }
             StringBuilder b = new StringBuilder(n * 32);
-            for (int row = 0; row < n; row++) {
+            for (Object[] row : values) {
                 for (int c = 0; c < bindings.size(); c++) {
                     if (c > 0) {
                         b.append(',');
                     }
-                    Binding binding = bindings.get(c);
-                    WriteSql.Postgres.copyValue(b, binding.kind(), value(binding, batch, row, before + row + 1));
+                    WriteSql.Postgres.copyValue(b, bindings.get(c).kind(), row[c]);
                 }
                 b.append('\n');
             }
@@ -886,15 +988,13 @@ final class JdbcTableOutput implements Node {
         }
 
         @Override
-        public void write(VectorSchemaRoot batch, long before) throws SQLException, NodeException {
-            int n = batch.getRowCount();
-            for (int row = 0; row < n; row++) {
+        public void write(Object[][] values) throws SQLException, NodeException {
+            for (Object[] row : values) {
                 for (int c = 0; c < bindings.size(); c++) {
                     if (c > 0) {
                         rows.append(',');
                     }
-                    Binding binding = bindings.get(c);
-                    my.loadField(rows, binding.kind(), value(binding, batch, row, before + row + 1));
+                    my.loadField(rows, bindings.get(c).kind(), row[c]);
                 }
                 rows.append('\n');
                 if (++pending >= batchSize || rows.length() >= MySqlWriteSql.LOAD_CHARS) {
@@ -954,16 +1054,14 @@ final class JdbcTableOutput implements Node {
         }
 
         @Override
-        public void write(VectorSchemaRoot batch, long before) throws SQLException, NodeException {
+        public void write(Object[][] values) throws SQLException, NodeException {
             if (ps == null) {
                 ps = connection.prepareStatement(statement);
             }
-            int n = batch.getRowCount();
-            for (int row = 0; row < n; row++) {
+            for (Object[] row : values) {
                 for (int c = 0; c < bindings.size(); c++) {
                     Binding binding = bindings.get(c);
-                    sql.bind(ps, c + 1, binding.kind(), value(binding, batch, row, before + row + 1), bulk,
-                        targets.get(binding.target()));
+                    sql.bind(ps, c + 1, binding.kind(), row[c], bulk, targets.get(binding.target()));
                 }
                 ps.addBatch();
                 if (++pending >= batchSize) {

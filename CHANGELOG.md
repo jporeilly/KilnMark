@@ -67,6 +67,19 @@ details.
   `earliest`. A lookup's error for a repeated key no longer quotes the key's value. A preview is
   refused for those who cannot unmask when `duplicates_by` names a column marked sensitive.
   ([Which row wins](docs/guide/pipeline-nodes.md#which-row-wins))
+- **Rows that fail are set aside, not fatal** (ADR 0054; backlog item 9, point 1): `compute`,
+  `select`, `filter`, `route` and `write` have an `errors` port. Connect something to it, such as a
+  write to a quarantine file, and a row whose expression, cast or condition fails, or whose value a
+  table would refuse (too long, too precise, the wrong kind, an empty key), goes there instead of
+  stopping the run. The row comes as it arrived, with `error_node`, `error_column`, `error_code` and
+  an `error_message` that never holds the value; its columns keep their marks, so a sensitive value
+  stays masked. `max_errors` and `max_error_share` stop the run past a count or a share of failing
+  rows, judged over the whole run (a write's before it commits). The run records each node's rows
+  per port and logs how many failed. With nothing on the `errors` port, the first failure stops the
+  run, as before. A refusal by the database itself (a unique index, a foreign key) still stops the
+  write. A route can no longer be called `errors`. A write's messages about a decimal or a time too
+  precise for its column no longer quote the value. A sample, `sample-rows-that-fail`, sets bad
+  SKUs aside into a quarantine file. ([Rows that fail](docs/guide/pipeline-nodes.md#rows-that-fail))
 
 ### Details
 

@@ -130,9 +130,9 @@ class SampleTablesApiTest {
         JsonPath added = as(designer).body(Map.of("sources", Map.of("crm-db", "e2e-db", "shop-db", "e2e-db",
             "files", "e2e-files"), "schema", SCHEMA)).post("/api/v1/samples").then().statusCode(200)
             .extract().jsonPath();
-        // 22 pipelines, then the sample flows that run them (ADR 0043). The one with sql nodes needs a
+        // 23 pipelines, then the sample flows that run them (ADR 0043). The one with sql nodes needs a
         // source with Allow SQL on, which e2e-db does not have: skipped, saying so, never a draft.
-        assertEquals(25, added.getInt("added"), added.prettify());
+        assertEquals(26, added.getInt("added"), added.prettify());
         assertEquals(List.of("sample-for-each-region", "sample-passing-values", "sample-quality-decides"),
             added.getList("samples.findAll { it.outcome == 'added' && it.file.startsWith('08-flows/') }.name"),
             added.prettify());
@@ -184,6 +184,19 @@ class SampleTablesApiTest {
         assertTrue(latest.size() > 1 && latest.size() < balances.size(), "one row per account: " + latest.size());
         assertEquals(latest.size() - 1, latest.stream().skip(1).map(l -> l.split(",")[1]).distinct().count(),
             "each account once");
+
+        // Rows that fail (ADR 0054): the badly shaped SKU is set aside with why, and the rest are written.
+        JsonPath failing = waitForRun(designer, as(designer).body(Map.of())
+            .post("/api/v1/pipelines/sample-rows-that-fail/runs").then().statusCode(202).extract().jsonPath()
+            .getLong("id"));
+        assertEquals("succeeded", failing.getString("run.status"), failing.prettify());
+        List<String> aside = Files.readAllLines(out.resolve("samples/quality/supplier_feed_errors.csv"));
+        List<String> numbered = Files.readAllLines(out.resolve("samples/quality/supplier_feed_numbered.csv"));
+        assertEquals(2, aside.size(), aside.toString());
+        assertTrue(aside.get(0).endsWith("error_node,error_column,error_code,error_message"), aside.toString());
+        assertTrue(aside.get(1).contains("numbered,sku_number,cast_failed,"), aside.toString());
+        assertEquals(count(Samples.tableIn(SCHEMA, "stock.supplier_feed")), numbered.size() - 1 + aside.size() - 1,
+            "every row read is written or set aside");
 
         // The volume sample: four million rows from the sample data itself, totalled and the large lines set
         // apart, in one run.

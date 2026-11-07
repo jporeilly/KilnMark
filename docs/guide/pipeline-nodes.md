@@ -13,15 +13,15 @@ Every node has named **ports**. Most nodes read from `in` and write to `out`; so
 
 | Node | Reads from | Writes to |
 | --- | --- | --- |
-| `filter` | `in` | `out`, `rejected` |
-| `compute` | `in` | `out` |
-| `select` | `in` | `out` |
+| `filter` | `in` | `out`, `rejected`, `errors` |
+| `compute` | `in` | `out`, `errors` |
+| `select` | `in` | `out`, `errors` |
 | `lookup` | `main`, `lookup` | `out`, `rejected` |
 | `join` | `left`, `right` | `out` |
 | `aggregate` | `in` | `out` |
 | `union` | `in` (any number of inputs) | `out` |
 | `dedupe` | `in` | `out`, `rejected` |
-| `route` | `in` | one port per route, and `out` |
+| `route` | `in` | one port per route, `out`, and `errors` |
 | `limit` | `in` | `out` |
 | `sort` | `in` | `out` |
 | `window` | `in` | `out` |
@@ -32,7 +32,71 @@ reads its `rejected` port. A node with two inputs names them: `inputs: { main: s
 tidy }`, or `inputs: { left: orders, right: customers }` for a join. A union lists its inputs: `input: [north, south]`.
 
 Rows sent to a port that nothing reads are dropped. For example, a filter whose `rejected` port is
-not connected simply drops the rows it does not keep.
+not connected simply drops the rows it does not keep. The `errors` port is the exception: with
+nothing connected to it, a row that fails stops the run, as it always has ([Rows that
+fail](#rows-that-fail)). A `write` to a database has an `errors` port too
+([Writing data](writing-data.md#rows-the-table-would-refuse)).
+
+## Rows that fail
+
+A row *fails* when a node cannot work it out: a cast of `'12a'` to a number, a division by zero, a
+number too large for its type, a date out of range. Without an `errors` port connected, the first
+such row stops the run. Connect something to the node's `errors` port (a write to a quarantine
+file, say) and failing rows go there instead, while the others carry on:
+
+```yaml
+- id: amounts
+  type: compute
+  input: feed
+  columns:
+    amount_pence: "cast(amount as int64) * 100"
+  max_error_share: 0.01
+
+- id: aside
+  type: write
+  input: amounts.errors
+  source: files
+  path: quarantine/feed-errors.csv
+  mode: replace
+```
+
+| Node | A row fails when |
+| --- | --- |
+| `compute` | an expression fails on it |
+| `select` | a `cast` fails on it |
+| `filter` | the condition fails on it (a condition that is false or empty still sends the row to `rejected`) |
+| `route` | a route's condition fails on it |
+
+**An error row** is the row as it arrived at the node, with four columns added at the end:
+
+| Column | What it holds |
+| --- | --- |
+| `error_node` | The node's id. |
+| `error_column` | The column being worked out (compute) or cast (select); for a condition, `condition` or `routes.<name>`. |
+| `error_code` | `cast_failed`, `division_by_zero`, `out_of_range`, `too_long`, `too_slow`, `invalid_argument`, or `expression_failed` for anything else. |
+| `error_message` | What went wrong and what to do. It never holds the value: the value is in the row's own column. |
+
+The row keeps its columns' names, so a column marked sensitive stays marked in the error rows: it
+is masked wherever they are shown, and a write of them carries the mark to what it writes. A row
+that already has the four columns (it failed at an earlier node and was routed on) takes the latest
+failure.
+
+**The error tolerance** stops the run when too many rows fail, judged over the whole run:
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `max_errors` | Stop the run when more than this many rows fail. | No limit |
+| `max_error_share` | Stop the run when more than this share of the rows fail, from 0 to 1, judged when the input ends. | No limit |
+
+The tolerance counts the rows sent to `errors`, so it applies only with the port connected. The
+run page shows each node's rows in and out per port, `errors` among them, and each node with
+failing rows adds a line to the run's log, such as "12 rows of 48,000 failed and went to the errors
+port (limits: max_error_share 1.00%)", so rows read, written and set aside can be reconciled.
+
+How the rows are found: a node works on a batch of rows at once, so when a batch fails the node
+splits it in halves, and each failing half again, until it has the single rows that fail. A batch
+that works costs nothing extra. A failure that is not about one row (a setting that is wrong for
+every row) still stops the run.
 
 ## filter
 
@@ -310,7 +374,8 @@ Upsert writes are in [Writing data](writing-data.md#which-row-an-upsert-keeps).
 
 ## route
 
-Sends each row to the first route whose condition it meets, in the order written. Rows that meet
+Sends each row to the first route whose condition it meets, in the order written. A route may not
+be called `errors`: that is the port for [rows that fail](#rows-that-fail). Rows that meet
 none go to `out`. Each route's name is an output port that other nodes can read.
 
 ```yaml

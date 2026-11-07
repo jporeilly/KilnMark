@@ -29,7 +29,7 @@ invoices, orders, order lines, products and a supplier feed, as CSV files in a f
 (`python samples/data/generate.py`) after changing it. The rows are shaped for the samples: a few
 messy and repeated emails, missing emails and unknown segments for the quarantine gate (under 5%),
 orders whose customer is not there, two shipping fees out of range for the gate that stops, and
-repeated or badly shaped SKUs for the gate that warns.
+repeated or badly shaped SKUs for the gate that warns and for the rows that fail.
 
 One table is large: `volume/sales.csv`, four million made-up till sales (about 216 MB of CSV). It is
 not stored: Kilnmark writes it as it is read, from a fixed seed, so it is the same on every read and
@@ -48,7 +48,7 @@ to a source you have saved:
 | Placeholder | Stands for | Used by |
 | --- | --- | --- |
 | `crm-db` | A database with schemas `crm` (customers, customers_archive_2023, accounts) and `billing` (transactions, invoices) | read and write, read with a query (PostgreSQL with Allow SQL on), limit, compute, dedupe, window, union, quarantine gate |
-| `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed) | filter, route, select, sort, lookup, join, both aggregates, warn and stop gates, both parameter samples |
+| `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed) | filter, route, select, sort, lookup, join, both aggregates, warn and stop gates, rows that fail, both parameter samples |
 | `files` | File storage the samples write to, under `samples/`; it must allow writing | every pipeline |
 
 A placeholder you do not map skips the samples that use it. Each sample is checked against what
@@ -116,6 +116,7 @@ preview a node, and choose **Run now**.
 | `06-quality` | `sample-gate-quarantine` | A quality gate setting failing rows aside, with a threshold |
 | | `sample-gate-warn` | A gate that only records what failed |
 | | `sample-gate-stop` | A gate that stops the run before anything is written (it is meant to) |
+| | `sample-rows-that-fail` | Rows whose cast fails set aside on the `errors` port, into a quarantine file, with a tolerance |
 | `07-parameters` | `sample-orders-by-status` | Parameters: a text list in the read node's `where: status in ${statuses}`, a number, a label in the file name |
 | | `sample-server-variable` | A server variable (`${vars.sample_region}`) as a parameter's default |
 | `08-flows` | `sample-quality-decides` | A flow: a condition on what a gate set aside decides what runs next; notify and stop |

@@ -271,6 +271,23 @@ public final class Rows {
         return new Runner(256L << 20, 2).run(new Pipeline("test", List.of(first, second)), events::add);
     }
 
+    /**
+     * Runs {@code source} into {@code writer} as a graph, with the writer's errors port (ADR 0054)
+     * read by a collector into {@code errors}.
+     */
+    public static RunResult runWithErrors(Node source, Node writer, Collected errors, List<MetadataEvent> events)
+        throws InterruptedException {
+        io.kilnmark.kiln.graph.PipelineGraph g = new io.kilnmark.kiln.graph.PipelineGraph("test", List.of(
+            new io.kilnmark.kiln.graph.GraphNode("first", source, Map.of()),
+            new io.kilnmark.kiln.graph.GraphNode("second", writer, Map.of()),
+            new io.kilnmark.kiln.graph.GraphNode("aside", collector(errors), Map.of())), List.of(
+            new io.kilnmark.kiln.graph.Edge(new io.kilnmark.kiln.graph.PortRef("first", "out"),
+                new io.kilnmark.kiln.graph.PortRef("second", "in")),
+            new io.kilnmark.kiln.graph.Edge(new io.kilnmark.kiln.graph.PortRef("second", "errors"),
+                new io.kilnmark.kiln.graph.PortRef("aside", "in"))));
+        return new io.kilnmark.kiln.graph.KilnGraphRunner(256L << 20, 2).run(g, events::add);
+    }
+
     public static List<MetadataEvent> events() {
         return new CopyOnWriteArrayList<>();
     }

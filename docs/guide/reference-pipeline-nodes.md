@@ -151,10 +151,10 @@ Writes the rows it receives to a table or a file in a saved source.
 
 [generated: node write]: #
 
-**Write to a table or file**: a sink node, in the palette's Write folder. Writes rows to a database table or a file in a saved source. The source must allow writing, which a designer or an admin sets; what is written is registered in the catalogue with its lineage.
+**Write to a table or file**: a sink node, in the palette's Write folder. Writes rows to a database table or a file in a saved source. The source must allow writing, which a designer or an admin sets; what is written is registered in the catalogue with its lineage. Rows a table would refuse go to the errors port, if something is connected to it.
 
 - Reads from: `in`
-- Writes to: nothing
+- Writes to: `errors`
 
 | Setting | Type | Required | Default | Parameters | What it does |
 | --- | --- | --- | --- | --- | --- |
@@ -167,6 +167,8 @@ Writes the rows it receives to a table or a file in a saved source.
 | `duplicates` | choice | no | `last` | no | For upsert, when the input has a key more than once: which of its rows the table keeps. The first or last to arrive, the latest or earliest by a column, or error to stop the run. One of `first`, `last`, `latest`, `earliest`, `error`. |
 | `duplicates_by` | column | no |  | no | For latest or earliest: the column whose largest (latest) or smallest (earliest) value wins. On a tie the first of the tied rows to arrive wins, and an empty value never beats a value. |
 | `format` | choice | no |  | no | For files: csv or parquet. Taken from the path's extension when left out. One of `csv`, `parquet`. |
+| `max_errors` | number | no |  | whole value | With the errors port connected: stop the run when more than this many rows fail. Leave empty for no limit. |
+| `max_error_share` | number | no |  | whole value | With the errors port connected: stop the run when more than this share of the rows fail, from 0 to 1, judged when the input ends. Leave empty for no limit. |
 
 The writer settings, which only some kinds of source take:
 
@@ -328,14 +330,16 @@ Keeps the rows where a condition is true.
 
 [generated: node filter]: #
 
-**Filter rows**: a transform node, in the palette's Filter and route folder. Keeps the rows where a condition is true. Rows where it is false or empty (null) go to the rejected port, if something is connected to it.
+**Filter rows**: a transform node, in the palette's Filter and route folder. Keeps the rows where a condition is true. Rows where it is false or empty (null) go to the rejected port, and rows where it fails go to the errors port, if something is connected to them.
 
 - Reads from: `in`
-- Writes to: `out`, `rejected`
+- Writes to: `out`, `rejected`, `errors`
 
 | Setting | Type | Required | Default | Parameters | What it does |
 | --- | --- | --- | --- | --- | --- |
 | `condition` | expression | yes |  | yes | The rows to keep, for example status = 'active' and amount > 0. |
+| `max_errors` | number | no |  | whole value | With the errors port connected: stop the run when more than this many rows fail. Leave empty for no limit. |
+| `max_error_share` | number | no |  | whole value | With the errors port connected: stop the run when more than this share of the rows fail, from 0 to 1, judged when the input ends. Leave empty for no limit. |
 
 [end: node filter]: #
 
@@ -382,14 +386,16 @@ Adds or replaces columns, each worked out from an expression.
 
 [generated: node compute]: #
 
-**Compute columns**: a transform node, in the palette's Transform folder. Adds or replaces columns, each worked out from an expression. Later expressions can use columns computed earlier in the list.
+**Compute columns**: a transform node, in the palette's Transform folder. Adds or replaces columns, each worked out from an expression. Later expressions can use columns computed earlier in the list. Rows whose expressions fail go to the errors port, if something is connected to it.
 
 - Reads from: `in`
-- Writes to: `out`
+- Writes to: `out`, `errors`
 
 | Setting | Type | Required | Default | Parameters | What it does |
 | --- | --- | --- | --- | --- | --- |
 | `columns` | names and expressions | yes |  | yes | Each column's name and the expression that works it out, for example full_name: trim(first_name) \|\| ' ' \|\| trim(last_name). |
+| `max_errors` | number | no |  | whole value | With the errors port connected: stop the run when more than this many rows fail. Leave empty for no limit. |
+| `max_error_share` | number | no |  | whole value | With the errors port connected: stop the run when more than this share of the rows fail, from 0 to 1, judged when the input ends. Leave empty for no limit. |
 
 [end: node compute]: #
 
@@ -432,10 +438,10 @@ Keeps or drops columns, renames them, puts them in order and changes their type.
 
 [generated: node select]: #
 
-**Select columns**: a transform node, in the palette's Transform folder. Keeps or drops columns, and renames, reorders and changes the type of the columns kept. Every setting names columns as they arrive.
+**Select columns**: a transform node, in the palette's Transform folder. Keeps or drops columns, and renames, reorders and changes the type of the columns kept. Every setting names columns as they arrive. Rows whose cast fails go to the errors port, if something is connected to it.
 
 - Reads from: `in`
-- Writes to: `out`
+- Writes to: `out`, `errors`
 
 | Setting | Type | Required | Default | Parameters | What it does |
 | --- | --- | --- | --- | --- | --- |
@@ -444,6 +450,8 @@ Keeps or drops columns, renames them, puts them in order and changes their type.
 | `rename` | column to column | no |  | no | New names: each column as it arrives, and its new name. |
 | `order` | list of columns | no |  | no | Columns to put first, in this order; the rest follow as they were. |
 | `cast` | names and expressions | no |  | yes | Columns to convert, and the type for each: boolean, int64, float64, decimal(p,s), utf8, date or timestamp. |
+| `max_errors` | number | no |  | whole value | With the errors port connected: stop the run when more than this many rows fail. Leave empty for no limit. |
+| `max_error_share` | number | no |  | whole value | With the errors port connected: stop the run when more than this share of the rows fail, from 0 to 1, judged when the input ends. Leave empty for no limit. |
 
 [end: node select]: #
 
@@ -728,14 +736,16 @@ Sends each row to the first route whose condition it meets; rows that meet none 
 
 [generated: node route]: #
 
-**Route rows**: a transform node, in the palette's Filter and route folder. Sends each row to the first route whose condition it meets, in order. Rows that meet none go to the out port.
+**Route rows**: a transform node, in the palette's Filter and route folder. Sends each row to the first route whose condition it meets, in order. Rows that meet none go to the out port; rows where a condition fails go to the errors port, if something is connected to it.
 
 - Reads from: `in`
-- Writes to: `out`
+- Writes to: `out`, `errors`
 
 | Setting | Type | Required | Default | Parameters | What it does |
 | --- | --- | --- | --- | --- | --- |
 | `routes` | names and conditions | yes |  | yes | Each route's port name and its condition, checked in order, for example large: amount > 1000. |
+| `max_errors` | number | no |  | whole value | With the errors port connected: stop the run when more than this many rows fail. Leave empty for no limit. |
+| `max_error_share` | number | no |  | whole value | With the errors port connected: stop the run when more than this share of the rows fail, from 0 to 1, judged when the input ends. Leave empty for no limit. |
 
 [end: node route]: #
 
