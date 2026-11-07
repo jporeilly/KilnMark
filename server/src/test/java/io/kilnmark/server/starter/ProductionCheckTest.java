@@ -26,7 +26,8 @@ class ProductionCheckTest {
             assertNull(ProductionCheck.problem(ok), ok);
         }
         // values the configuration alone would take as true, or as false: the server refuses them
-        for (String refused : List.of("1", "0", "yes", "no", "on", "off", "Y", "", " true", "true ")) {
+        for (String refused : List.of("1", "0", "yes", "no", "on", "off", "Y", "", " true", "true ",
+            "fal\u017Fe", "tru\u0435")) {   // a long s, a Cyrillic e: not false, not true
             String problem = ProductionCheck.problem(refused);
             assertNotNull(problem, "[" + refused + "]");
             assertEquals(-1, problem.indexOf("[" + refused + "]"), "never echoes the value");

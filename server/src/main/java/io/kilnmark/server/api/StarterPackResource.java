@@ -43,13 +43,14 @@ public class StarterPackResource {
 
     @GET
     @Operation(summary = "Whether the Starter Pack is on", description = "Whether the Starter Pack (example data and "
-        + "accounts, not for production) is on, since when and who turned it on. The app shows a banner while it is. "
-        + "Role: viewer.")
+        + "accounts, not for production) is on, and since when. The app shows a banner while it is. Who turned it on "
+        + "is under details, for admins (by is always null here). Role: viewer.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "Whether it is on"),
         @APIResponse(responseCode = "401", description = "Not signed in")})
     public StarterPack.State state() {
-        return pack.state();
+        StarterPack.State s = pack.state();
+        return new StarterPack.State(s.on(), s.since(), null); // who: an admin's sign-in or a token, for admins only
     }
 
     @GET

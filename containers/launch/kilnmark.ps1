@@ -594,7 +594,13 @@ function Invoke-Install([string[]]$Options) {
         Invoke-Up @('-NoBrowser')
         if ($script:WithStarter) {
             Invoke-StarterOn
-            if ($script:WithAuth) { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:Root 'kilnmark.ps1') starter people }
+            if ($script:WithAuth) {
+                # Not under this install's transcript: while one runs, Windows PowerShell takes a child's
+                # output into it, and the people's password is printed there. The child logs on its own.
+                Stop-Log
+                & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:Root 'kilnmark.ps1') starter people
+                Start-Log 'install'
+            }
         }
     }
     $envFile = Join-Path $script:Root 'config\.env'
@@ -778,6 +784,13 @@ function Invoke-Starter([string[]]$Options) {
         return
     }
     # Straight to the console, past the transcript: what this script says otherwise goes to logs\ too.
+    # Never when the output goes elsewhere (a file, or a parent's transcript): it would be kept there.
+    if ([Console]::IsOutputRedirected) {
+        $password = $null
+        Write-Host 'There is no console to show the password on (it is never written anywhere else): run'
+        Write-Host 'kilnmark.cmd starter people -NewPassword in a console window.'
+        return
+    }
     if ($action -eq 'new-password') { [Console]::WriteLine('The example people now all sign in with this password,') }
     else { [Console]::WriteLine('The example people added just now sign in with this password,') }
     [Console]::WriteLine('shown only now and kept nowhere, not even in logs\: ' + $password)

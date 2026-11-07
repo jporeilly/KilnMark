@@ -195,8 +195,8 @@ them as `kilnmark-<version>-images.tar.gz`; `build` makes the same locally. Opti
 reaches it inside the stack), `KILNMARK_SOURCES_HOST_MAP` and `KILNMARK_VAR_<NAME>`, which sets the
 server variable `<name>` as text when the server starts, unless it is set already (see the guide's
 "Parameters and server variables"). Nothing is scanned until a source is added. For folder sources,
-`/srv/files` is the writable `files` volume, or the customer's own folder when `KILNMARK_FILES_DIR`
-names it. The AI profiles work as described in [AI models](#ai-models).
+`/srv/files` is the writable `files` volume, and `/srv/share` the customer's own folder, read-only,
+when `KILNMARK_FILES_DIR` names it (else an empty volume). The AI profiles work as described in [AI models](#ai-models).
 
 **The Starter Pack** (ADR 0051; INSTALL.md, "Try Kilnmark with the Starter Pack"). The release's
 compose also runs `samples-db` at every start: a one-off in the `kilnmark-postgres` image that runs

@@ -16,7 +16,8 @@ details.
   (`KILNMARK_PRODUCTION=true`).
 - **A writable files folder on every install**: `/srv/files` is now a volume Kilnmark can write
   to, so file sources with **Allow writing** work out of the box. Put your own folder there with
-  `KILNMARK_FILES_DIR` in `config/.env`.
+  `KILNMARK_FILES_DIR` in `config/.env`, which Kilnmark sees read-only at `/srv/share`; the
+  samples and the pack write only in their own `files` volume.
 - **Sort rows** (a new `sort` node, ADR 0049): orders rows by one or more columns, each smallest or
   largest first, with empty values last unless a column says `nulls first`. Rows with equal values
   keep their order. Any number of rows can be sorted: past the node's memory limit it carries on on
@@ -83,8 +84,13 @@ details.
   setting's name with its case exactly, as compose does. A run asked for by a token names it
   `token <id> (<name>)`, and only the id ever says which token: an example token named like a real
   one stops none of the real one's work. A schedule an example person set does not fire on
-  production. The pack marks the folder it makes and never adopts or deletes a `starter-pack`
-  folder of the site's own. `keycloak-setup` finds groups by
+  production. The pack makes its folder new, marks it, and never adopts or deletes a
+  `starter-pack` folder of the site's own. A schedule a token sets names it by id too.
+  `KILNMARK_PRODUCTION` is compared in ASCII (`falſe` is not false). `keycloak-setup` removes every
+  member of the pack's group, whatever their user name now is. Turning off keeps `sample-data`
+  while a pipeline or flow names it in JSON-style YAML too. Only admins see who turned the pack on.
+  On Windows, `install -Auth -Starter` stops its transcript while the people are made, so their
+  password never lands in `logs\`, and `starter people` never prints it to redirected output. `keycloak-setup` finds groups by
   path, so a subgroup named like one of its groups is never taken for it. A source the pack deletes
   says in the audit log whether it had columns marked sensitive. A step's failure on the page
   never names a host: what a called service said goes to the server's log.

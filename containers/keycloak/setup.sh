@@ -222,25 +222,19 @@ set_password() {
   printf '{"type":"password","temporary":false,"value":%s}' "$(json "$PEOPLE_PASSWORD")" \
     | kc update "users/$1/reset-password" -r "$REALM" -f -
 }
-# The people the pack made (members of the group) are deleted; anyone else is left as they are. The
-# group goes too once it is empty.
+# The people the pack made are the members of its group, whatever their user name is now (a realm
+# can let people change it): each is deleted, then the group. Anyone else is left as they are.
 remove_people() {
-  local email first last groups uid gid
+  local gid members id username
   gid="$(group_id "$STARTER_GROUP")"
   [ -n "$gid" ] || return 0
-  while IFS=: read -r email first last groups; do
-    uid="$(user_id "$email")"
-    [ -n "$uid" ] || continue
-    if in_group "$uid" "$gid"; then
-      kc delete "users/$uid" -r "$REALM"
-      say "removed $email (a Starter Pack example person)"
-    else
-      say "left $email as they are: not made by the Starter Pack"
-    fi
-  done <<< "$PEOPLE"
-  if [ -z "$(kc get "groups/$gid/members" -r "$REALM" --fields id --format csv --noquotes | one)" ]; then
-    kc delete "groups/$gid" -r "$REALM"
-  fi
+  members="$(kc get "groups/$gid/members" -r "$REALM" -q first=0 -q max=1000 --fields id,username --format csv --noquotes)"
+  while IFS=, read -r id username; do
+    [ -n "$id" ] || continue
+    kc delete "users/$id" -r "$REALM"
+    say "removed $username (a Starter Pack example person)"
+  done <<< "$members"
+  kc delete "groups/$gid" -r "$REALM"
 }
 
 if [ "$STARTER_ALLOWED" = true ]; then

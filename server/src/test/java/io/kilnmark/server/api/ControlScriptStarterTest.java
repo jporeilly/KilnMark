@@ -87,8 +87,12 @@ class ControlScriptStarterTest {
     @Test
     void composeGivesEveryInstallAWritableFilesFolderAndTheSamplesDatabaseWithNoDefaultSecrets() throws IOException {
         String c = Files.readString(COMPOSE);
-        assertTrue(c.contains("- ${KILNMARK_FILES_DIR:-files}:/srv/files:Z"), "a writable files folder, the files volume by default");
+        assertTrue(c.contains("      - files:/srv/files:Z\n"), "Kilnmark's own files folder, writable: the files volume");
         assertFalse(c.contains("/srv/files:ro"), "never read-only");
+        // a site's own folder only ever read-only, apart from Kilnmark's own
+        assertTrue(c.contains("      - ${KILNMARK_FILES_DIR:-share}:/srv/share:ro,Z\n"), "the site's folder, read-only");
+        assertEquals(1, c.split("KILNMARK_FILES_DIR:", -1).length - 1, "mounted once, read-only");
+        assertTrue(c.contains("KILNMARK_FILES_ROOTS: /srv/files,/srv/share\n"));
         assertTrue(c.contains("  samples-db:\n") && c.contains("entrypoint: [\"/usr/local/bin/kilnmark-samples-db.sh\"]"));
         assertTrue(c.contains("KILNMARK_SAMPLES_DB_PASSWORD: ${KILNMARK_SAMPLES_DB_PASSWORD}\n"), "no default");
         String image = Files.readString(Path.of("../containers/postgres/Containerfile"));
@@ -154,6 +158,13 @@ class ControlScriptStarterTest {
         for (String text : List.of(sh, ps)) {
             assertFalse(text.contains("STARTER_PEOPLE_PASSWORD"), "never in an environment");
         }
+        // Windows PowerShell writes a child's console output into a running transcript: install stops
+        // its own around the child that makes the people, and starts it again after
+        assertTrue(ps.contains("                Stop-Log\n                & powershell.exe -NoProfile -ExecutionPolicy Bypass "
+            + "-File (Join-Path $script:Root 'kilnmark.ps1') starter people\n                Start-Log 'install'\n"),
+            "install -Auth -Starter makes the people with no transcript running");
+        assertTrue(ps.indexOf("if ([Console]::IsOutputRedirected) {") < ps.indexOf("[Console]::WriteLine('shown only now"),
+            "never printed into redirected output");
         assertTrue(ps.contains("[Console]::WriteLine('shown only now and kept nowhere, not even in logs\\: ' + $password)"),
             "to the console, past the transcript");
         for (String text : List.of(sh, ps)) {
@@ -318,6 +329,13 @@ class ControlScriptStarterTest {
             c.addAll(command.equals("down") ? List.of("down") : List.of("starter", "people"));
             return run(c, root, engine.toString().replace('\\', '/'), outside);
         }, last);
+        Path works = fakeEngine(false, true);
+        redirectedRules((settings, outside, command, logs) -> {
+            Path root = installRoot(false);
+            writeEnv(root, settings);
+            return run(List.of(shell, LAUNCH.resolve("kilnmark.sh").toAbsolutePath().toString(), "starter", "people"),
+                root, works.toString().replace('\\', '/'), outside);
+        });
     }
 
     @Test
@@ -353,6 +371,14 @@ class ControlScriptStarterTest {
             c.addAll(command.equals("down") ? List.of("down") : List.of("starter", "people"));
             return run(c, root, engine.toString(), outside);
         }, last);
+        Path works = fakeEngine(true, true);
+        redirectedRules((settings, outside, command, logs) -> {
+            Path root = installRoot(true);
+            writeEnv(root, settings);
+            return run(List.of(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+                LAUNCH.resolve("kilnmark.ps1").toAbsolutePath().toString(), "starter", "people"), root, works.toString(),
+                outside);
+        });
     }
 
     /**
@@ -361,24 +387,31 @@ class ControlScriptStarterTest {
      * compose was handed, as keycloak-setup's line, and fails.
      */
     private static Path fakeEngine(boolean windows) throws IOException {
+        return fakeEngine(windows, false);
+    }
+
+    /** As {@link #fakeEngine(boolean)}; {@code ok}: every command but compose version also succeeds. */
+    private static Path fakeEngine(boolean windows, boolean ok) throws IOException {
         Path dir = Files.createTempDirectory("kilnmark-fake-engine");
+        String exit = ok ? "0" : "1";
+        String name = ok ? "engine-ok" : "engine";
         if (windows) {
-            Path f = dir.resolve("engine.cmd");
+            Path f = dir.resolve(name + ".cmd");
             Files.writeString(f, "@echo off\r\n"
                 + "if \"%1 %2\"==\"compose version\" exit /b 0\r\n"
                 + "echo podman run --name kilnmark_x -e KC_ADMIN_PASSWORD=" + LEAKED + " quay.io/keycloak/keycloak 1>&2\r\n"
                 + "echo ['podman', 'run', '-e', 'KILNMARK_OIDC_CLIENT_SECRET=" + LEAKED + "'] 1>&2\r\n"
                 + "echo keycloak-setup: seen [%KILNMARK_PRODUCTION%] [%KILNMARK_STARTER%]\r\n"
-                + "exit /b 1\r\n");
+                + "exit /b " + exit + "\r\n");
             return f;
         }
-        Path f = dir.resolve("engine.sh");
+        Path f = dir.resolve(name + ".sh");
         Files.writeString(f, "#!/bin/bash\n"
             + "if [ \"$1 $2\" = \"compose version\" ]; then exit 0; fi\n"
             + "echo \"podman run --name kilnmark_x -e KC_ADMIN_PASSWORD=" + LEAKED + " quay.io/keycloak/keycloak\" >&2\n"
             + "echo \"['podman', 'run', '-e', 'KILNMARK_OIDC_CLIENT_SECRET=" + LEAKED + "']\" >&2\n"
             + "echo \"keycloak-setup: seen [${KILNMARK_PRODUCTION-}] [${KILNMARK_STARTER-}]\"\n"
-            + "exit 1\n");
+            + "exit " + exit + "\n");
         try {
             Files.setPosixFilePermissions(f, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
         } catch (UnsupportedOperationException e) {
@@ -426,6 +459,17 @@ class ControlScriptStarterTest {
         assertTrue(out.contains("compose") && out.contains("does not work"), out);
     }
 
+    /**
+     * starter people with an engine that does what it is asked, its output redirected (as here, or
+     * to a file): the people are made, and their password is not printed, in either edition.
+     */
+    private static void redirectedRules(Scripted ok) throws Exception {
+        String out = ok.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed"), Map.of(), "starter", true);
+        assertTrue(out.contains("keycloak-setup: seen"), out);
+        assertFalse(out.contains("kept nowhere"), "the password was printed into redirected output: " + out);
+        assertTrue(out.contains("no console") || out.contains("no terminal"), out);
+    }
+
     /** Runs a command of the script with an engine that cannot start anything; it must fail. Its output. */
     private static String run(List<String> command, Path root, String engine) throws Exception {
         return run(command, root, engine, Map.of());
@@ -442,7 +486,7 @@ class ControlScriptStarterTest {
         Process p = pb.start();
         String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         assertTrue(p.waitFor(60, TimeUnit.SECONDS), "it stopped");
-        assertTrue(p.exitValue() != 0, "it cannot go on with no engine: " + out);
+        assertTrue(engine.contains("engine-ok") || p.exitValue() != 0, "it cannot go on with no engine: " + out);
         return out;
     }
 }

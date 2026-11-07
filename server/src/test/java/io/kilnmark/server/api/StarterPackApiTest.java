@@ -156,7 +156,7 @@ class StarterPackApiTest {
         assertEquals(null, r.getString("steps.find { it.step == 'example people' }"), "Kilnmark makes no people");
         assertFalse(r.prettify().contains("assword"), "and hands out no password");
         Tokens.as(Tokens.newToken("viewer", false)).get("/api/v1/starter-pack").then().statusCode(200)
-            .body("on", equalTo(true));
+            .body("on", equalTo(true)).body("by", org.hamcrest.Matchers.nullValue()); // who: details, admins only
         eventually(AuditLog.STARTER_PACK_ADDED, added + 1);
 
         JsonPath src = admin().get("/api/v1/sources/" + StarterPack.DATABASE_SOURCE).then().statusCode(200).extract().jsonPath();

@@ -97,7 +97,10 @@ public class ProductionCheck {
 
     /** What is wrong with the setting's value, or null: only true and false, in any case, or unset. */
     static String problem(String value) {
-        if (value == null || "true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
+        // ASCII case only: equalsIgnoreCase would take falſe (with U+017F) for false, which the
+        // scripts and keycloak-setup do not
+        String v = value == null ? null : value.toLowerCase(java.util.Locale.ROOT);
+        if (v == null || "true".equals(v) || "false".equals(v)) {
             return null;
         }
         return "kilnmark.production (KILNMARK_PRODUCTION) is true or false: the server does not start with any other "

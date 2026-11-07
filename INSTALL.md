@@ -390,17 +390,19 @@ Keycloak keeps compressed copies of its pages: after changing the theme in
 
 File sources read, and with **Allow writing** on write, the folder `/srv/files` inside Kilnmark's
 container (`KILNMARK_FILES_ROOTS`). Every install has one: the `files` volume (`kilnmark_files`),
-writable by Kilnmark. To use a folder of your own instead, such as a share, set its full path in
-`.env` and apply it with `kilnmark.sh up`:
+writable by Kilnmark; the samples and the Starter Pack write only there. To let file sources read a
+folder of your own, such as a share, set its full path in `.env` and apply it with
+`kilnmark.sh up`: Kilnmark sees it read-only at `/srv/share`, and never writes in it.
 
 ```
 KILNMARK_FILES_DIR=/srv/kilnmark-files
 ```
 
-Kilnmark's user in the container (uid 1001) must be able to write there: with rootless Podman,
-`podman unshare chown 1001:1001 /srv/kilnmark-files`; with Docker, `sudo chown 1001:1001
-/srv/kilnmark-files`. Never edit `versions/<version>/compose.yaml`: upgrades replace it. In
-Kilnmark, add a source of kind **files** with path `/srv/files`, or a folder inside it.
+Kilnmark's user in the container (uid 1001) must be able to read it. On a host with SELinux,
+Podman labels the folder for Kilnmark's container (`:Z`); if other services use the same folder,
+give Kilnmark a copy. Never edit `versions/<version>/compose.yaml`: upgrades replace it. In
+Kilnmark, add a source of kind **files** with path `/srv/share` (your folder) or `/srv/files`
+(Kilnmark's own), or a folder inside either.
 
 `kilnmark.sh backup` does not back the files folder up: back up your own folder, or the volume,
 as you back up other files.
@@ -449,7 +451,9 @@ only: after a restore, turn the pack off and on again to recreate the samples.
 all `@kilnmark.com`, which receives no mail from here, in the Keycloak group
 `kilnmark-starter-pack`, which marks them as the pack's. They share one new password, which the
 command shows **once**, on the terminal only: it is handed to `keycloak-setup` on its input, never
-in `.env`, a container's settings, `logs` or Kilnmark. Someone already in Keycloak with one of
+in `.env`, a container's settings, `logs` or Kilnmark. With its output redirected to a file, or
+inside a transcript or terminal recording of your own, it is not shown (Windows) or not kept safe:
+run it in a plain console. Someone already in Keycloak with one of
 those addresses is left as they are, never given the people's groups. Adding them again keeps the password of anyone already there. Each sets up a one-time
 code on first sign-in. Kilnmark holds no Keycloak credential, in any setting: its Settings page only
 shows these commands and which example accounts have signed in. Anyone who runs the command, or has

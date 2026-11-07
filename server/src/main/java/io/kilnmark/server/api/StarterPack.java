@@ -487,22 +487,26 @@ public class StarterPack {
 
     private String filesSource(AuditLog.Actor actor) {
         Path folder = folder();
-        if (Files.exists(folder, LinkOption.NOFOLLOW_LINKS)) {
-            // a site's own folder of that name (KILNMARK_FILES_DIR can be a real share) is never adopted
+        try {
+            // Made here in one step, which fails on anything already there, a folder or a link, so
+            // there is no moment between a check and the making; the marker is made new in it,
+            // never through a link.
+            Files.createDirectory(folder);
+            String mark = java.util.UUID.randomUUID().toString();
+            Files.write(folder.resolve(MARKER), (mark + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE,
+                LinkOption.NOFOLLOW_LINKS);
+            saveFolder(mark, actor.name());
+        } catch (java.nio.file.FileAlreadyExistsException e) {
+            // there already: the pack's own from an earlier turn-on, or a site's own folder of that
+            // name (KILNMARK_FILES_DIR can be a real share), which is never adopted
             if (!madeByThePack(folder)) {
                 throw new Problem("A folder " + FOLDER + " is in the files folder that the Starter Pack did not make: "
                     + "it was left as it is. Rename it, then turn the pack on again");
             }
-        } else {
-            try {
-                Files.createDirectories(folder);
-                String mark = java.util.UUID.randomUUID().toString();
-                Files.writeString(folder.resolve(MARKER), mark + "\n");
-                saveFolder(mark, actor.name());
-            } catch (IOException e) {
-                throw new Problem("Kilnmark could not make the folder " + FOLDER + " in the files folder: it "
-                    + "must be writable by Kilnmark (INSTALL.md, The files folder)");
-            }
+        } catch (IOException e) {
+            throw new Problem("Kilnmark could not make the folder " + FOLDER + " in the files folder: it "
+                + "must be writable by Kilnmark (INSTALL.md, The files folder)");
         }
         Map<String, String> s = new LinkedHashMap<>();
         s.put("path", folder.toString().replace('\\', '/'));
@@ -667,7 +671,8 @@ public class StarterPack {
     }
 
     /** {@code source: <name>}, on a line of its own or inside {@code { ... }}, as YAML allows both. */
-    private static final Pattern NAMES_SOURCE = Pattern.compile("(?m)(?:^|[\\s{,])source:\\s*[\"']?([A-Za-z0-9_.-]+)");
+    private static final Pattern NAMES_SOURCE = Pattern.compile(
+        "(?m)(?:^|[\\s{,])[\"']?source[\"']?\\s*:\\s*[\"']?([A-Za-z0-9_.-]+)");
 
     /** Whether a pipeline or flow outside the Library still names {@code source}. */
     private boolean stillRead(String source, Sights sights) {
@@ -696,7 +701,7 @@ public class StarterPack {
         return false;
     }
 
-    private static boolean names(String yaml, String source) {
+    static boolean names(String yaml, String source) {
         java.util.regex.Matcher m = NAMES_SOURCE.matcher(yaml == null ? "" : yaml);
         while (m.find()) {
             if (source.equals(m.group(1))) {

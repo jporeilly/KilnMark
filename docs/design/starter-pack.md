@@ -12,9 +12,9 @@ Kilnmark with the Starter Pack".
 | --- | --- | --- |
 | `kilnmark-samples-db.sh` | `containers/postgres`, in the `kilnmark-postgres` image | Run by the `samples-db` one-off at every start, as the server's superuser over TLS: makes or keeps the login and database `kilnmark_samples`, and revokes `CONNECT` and `TEMPORARY` from `PUBLIC` on every other database, and anything granted to the login there |
 | `samples-db` | `containers/compose.release.yaml` | The one-off: depends on `postgres` being healthy, `restart: "no"`. Unset `KILNMARK_SAMPLES_DB_PASSWORD`: makes nothing, exits 0 |
-| `files` volume | the same | `/srv/files`, writable; `KILNMARK_FILES_DIR` replaces it with the site's folder. The pack's folder in it, `starter-pack`, holds a marker, `.kilnmark-starter-pack`, with a value the pack keeps in its setting: a folder of that name without it is the site's, never adopted or deleted |
+| `files` volume | the same | `/srv/files`, Kilnmark's own, writable: the only folder the samples and the pack write in. A site's own folder (`KILNMARK_FILES_DIR`) is mounted apart, read-only, at `/srv/share` (`:ro,Z`). The pack's folder, `starter-pack`, is made new (`createDirectory`, never an existing folder or link) with a marker, `.kilnmark-starter-pack`, written new and never through a link, holding a value the pack keeps in its setting: a folder of that name without it is never adopted or deleted |
 | `StarterPack` | `server/.../api` | Turns the example data on and off: each step caught and reported, the state in the server setting `starter_pack` (JSON: on, since, by, and the ids of the sources it made) |
-| `StarterPackResource` | `/api/v1/starter-pack` | `GET` (viewer, for the banner), `GET details`, `POST` and `DELETE` (admin) |
+| `StarterPackResource` | `/api/v1/starter-pack` | `GET` (viewer, for the banner: on and since, never who), `GET details`, `POST` and `DELETE` (admin) |
 | `ExampleAccounts` | `server/.../starter` | Tells a kilnmark.com sign-in apart, for the access review, the page and production. Kilnmark holds no Keycloak credential and makes no Keycloak call |
 | `ProductionCheck` | `server/.../starter` | At every start: stops the server unless `kilnmark.production` is `true` or `false` (any case); on production, revokes the example accounts' tokens and pauses their schedules (below) |
 | `OidcAccess.decide` | `server/.../auth` | On production, refuses a kilnmark.com sign-in, renewal or session (`EXAMPLE_ON_PRODUCTION`) |
@@ -78,6 +78,11 @@ compose does. podman-compose 1.0.x prints each podman command it runs, every con
 it, joined with spaces or as a Python list; those lines never reach the screen or `logs`: both
 editions drop them from all they pass on from compose, whether or not they are logging.
 
+On Windows, `install -Auth -Starter` stops its transcript while it runs `starter people` in a
+child: Windows PowerShell writes a child's console output into a running transcript, even what the
+child writes past its own. `starter people` prints nothing when its output is redirected
+(`[Console]::IsOutputRedirected`), and says to run it again with `-NewPassword` in a console.
+
 `setup.sh` checks the same rules itself, before anything else, and refuses to add people otherwise.
 It finds groups by their path (`group-by-path`), never by search, which also answers with the parent
 of a subgroup of that name. Every reader of kcadm's output reads all of it (`one` drains its input;
@@ -88,8 +93,8 @@ role's groups, and deletes them again if the group did not take. Only members of
 ever changed or deleted: someone else with one of the addresses is left as they are, never given
 groups or a password, whatever attributes they set on themselves or the realm's user profile hides.
 It never resets a member's password unless the action is `new-password` (or a run stopped before
-giving one). On any run where the people are not allowed it deletes the members among the five, and
-the group once it is empty. It changes no realm setting but turning admin events on while allowed.
+giving one). On any run where the people are not allowed it deletes every member of the group,
+whatever their user name now is (a realm can let names change), and then the group. It changes no realm setting but turning admin events on while allowed.
 
 ## On production
 

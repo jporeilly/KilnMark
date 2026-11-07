@@ -16,7 +16,7 @@
 #   KILNMARK_CERTS_DIR     optional: the folder holding server.crt and server.key for HTTPS (./tls)
 #   KILNMARK_SAMPLES_DB_PASSWORD   password of the Starter Pack's database login (the control script
 #                          makes one); unset, that database is not made and the pack cannot be turned on
-#   KILNMARK_FILES_DIR     optional: your own folder for /srv/files instead of the files volume
+#   KILNMARK_FILES_DIR     optional: your own folder, read-only at /srv/share
 # The key that encrypts stored source passwords is generated on first start, in the keys volume.
 #
 # The project is always called kilnmark, whatever this folder is called, so its volumes keep their
@@ -81,9 +81,10 @@ services:
       QUARKUS_DATASOURCE_PASSWORD: ${KILNMARK_DB_PASSWORD:?Set KILNMARK_DB_PASSWORD to a strong password before starting Kilnmark (see .env.example)}
       # The admin API token: km_ followed by 43 or more letters, digits, - or _ (see .env.example).
       KILNMARK_ADMIN_TOKEN: ${KILNMARK_ADMIN_TOKEN:?Set KILNMARK_ADMIN_TOKEN to a new admin token before starting Kilnmark (see .env.example)}
-      # The folder file sources may read and, with Allow writing on, write: the files volume, or
-      # your own folder when KILNMARK_FILES_DIR names one (see volumes below).
-      KILNMARK_FILES_ROOTS: /srv/files
+      # The folders file sources may use: /srv/files, Kilnmark's own (the files volume), which they
+      # may write with Allow writing on, and /srv/share, your own folder (KILNMARK_FILES_DIR),
+      # read-only (see volumes below).
+      KILNMARK_FILES_ROOTS: /srv/files,/srv/share
       # The Starter Pack (ADR 0051; Settings, Starter Pack): the samples' database login, made by
       # samples-db above. No default, as for every secret.
       KILNMARK_SAMPLES_DB_PASSWORD: ${KILNMARK_SAMPLES_DB_PASSWORD}
@@ -132,11 +133,13 @@ services:
       - "host.docker.internal:host-gateway"   # reach databases on this machine (Podman also has host.containers.internal)
     volumes:
       - keys:/var/lib/kilnmark     # the key for stored source passwords, and drivers/ (Settings > Drivers): back it up apart from pgdata
-      # The files folder, writable: the files volume, or your own folder when config/.env sets
-      # KILNMARK_FILES_DIR to its full path (INSTALL.md, "The files folder"). Kilnmark's user
-      # (uid 1001 in the container) must be able to write there. In Kilnmark, add a source of kind
-      # files with path /srv/files, or a folder inside it.
-      - ${KILNMARK_FILES_DIR:-files}:/srv/files:Z
+      # Kilnmark's own files folder, writable: the files volume. The samples and the Starter Pack
+      # write here (ADR 0051), never in your folder.
+      - files:/srv/files:Z
+      # Your own folder, read-only, when config/.env sets KILNMARK_FILES_DIR to its full path
+      # (INSTALL.md, "The files folder"); else an empty volume. In Kilnmark, add a source of kind
+      # files with path /srv/share. Podman labels it for this container (:Z, on SELinux hosts).
+      - ${KILNMARK_FILES_DIR:-share}:/srv/share:ro,Z
       # Optional organisation branding: product name, logo and connector logos you are licensed to use
       # (Documentation, "Branding and appearance"). Kilnmark reads /etc/kilnmark/branding; without
       # it, Kilnmark's own name and letter tiles are shown.
@@ -347,6 +350,7 @@ services:
 volumes:
   pgdata:
   keys:
-  files:      # /srv/files, unless KILNMARK_FILES_DIR names a folder of your own
+  files:      # /srv/files, Kilnmark's own files folder
+  share:      # /srv/share when KILNMARK_FILES_DIR names no folder of your own: empty
   models:     # GGUF model files for the AI profiles
   keycloak-pgdata:   # Keycloak's own database, for the auth profile: back it up with pgdata

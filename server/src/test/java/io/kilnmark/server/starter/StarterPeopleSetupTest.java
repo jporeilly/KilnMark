@@ -241,10 +241,21 @@ class StarterPeopleSetupTest {
         p.remove("unmanagedAttributePolicy");
         assertEquals(200, call(admin(), "PUT", "/admin/realms/kilnmark/users/profile", p).statusCode());
 
+        // where the realm lets user names change, an example admin renamed out of kilnmark.com still goes
+        assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark", Map.of("editUsernameAllowed", true)).statusCode());
+        com.fasterxml.jackson.databind.node.ObjectNode alex = (com.fasterxml.jackson.databind.node.ObjectNode)
+            user("alex.morgan@kilnmark.com");
+        String alexId = alex.path("id").asText();
+        alex.put("username", "a.morgan@example.test");
+        assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark/users/" + alexId, alex).statusCode());
+        assertNotNull(user("a.morgan@example.test"), "renamed");
+
         ok(setup("allowed", "1", "", ""));   // marked production (1 is not false): they go at once
         for (String person : PEOPLE.subList(1, PEOPLE.size())) {
             assertNull(user(person), person + " removed once the install is marked production");
         }
+        assertEquals(404, call(admin(), "GET", "/admin/realms/kilnmark/users/" + alexId, null).statusCode(),
+            "the renamed example admin is removed too");
         assertNotNull(user("vera.lane@kilnmark.com"), "someone else stays");
 
         ok(setup("allowed", "false", "add", FIRST));

@@ -35,8 +35,9 @@ public class ExampleAccess {
         }
         Matcher s = SCHEDULED.matcher(who);
         if (s.matches()) {
-            // by the schedule itself: the token that set it (by id), or the person
-            return ExampleAccounts.isExample(s.group(2)) || schedules.find(Long.parseLong(s.group(1)))
+            // who set it as the run names them (a token by its id, so a deleted schedule is no hiding
+            // place), else as the schedule itself says: the token that set it (by id), or the person
+            return actsForExample(s.group(2)) || schedules.find(Long.parseLong(s.group(1)))
                 .map(x -> x.setByToken() != null ? tokens.madeByExample(x.setByToken())
                     : ExampleAccounts.isExample(x.updatedBy()))
                 .orElse(false);

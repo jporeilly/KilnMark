@@ -27,9 +27,11 @@ are (ADR 0043).
 
 1. **Every install gets a writable files folder.** The release compose file mounts a named volume,
    `files`, at `/srv/files` (which `KILNMARK_FILES_ROOTS` already names), writable by Kilnmark's
-   user; the server image makes the folder its user's, so a new volume starts out writable.
-   `KILNMARK_FILES_DIR` in `config/.env` puts the site's own folder there instead, without editing
-   `versions/<v>/compose.yaml`.
+   user; the server image makes the folder its user's, so a new volume starts out writable. The
+   samples and the pack write only there. A site's own folder, named by `KILNMARK_FILES_DIR` in
+   `config/.env` without editing `versions/<v>/compose.yaml`, is mounted apart, read-only, at
+   `/srv/share` (`:ro,Z`, the guidance before this decision): a security review asked that the pack
+   never be able to write in a share other systems use.
 
 2. **Every install gets an empty database `kilnmark_samples`, with a login of its own, at every
    start.** The `samples-db` service of compose (a one-off, in Kilnmark's own `kilnmark-postgres`
@@ -159,7 +161,9 @@ are (ADR 0043).
    token as `token <id> (<name>)`, and a scheduled run is traced through its schedule to the token
    or person who set it. So an example admin cannot stop a real token's work by giving a token of
    their own the same name. On an install not marked production these stay, as the trial's own; the
-   access review shows which accounts are examples.
+   access review shows which accounts are examples. A run or schedule recorded before
+   this version names a token by its name alone and cannot be traced to it: it is not cancelled.
+   The pack's example people did not exist then, so no such row was theirs.
 
 ## Consequences
 
@@ -182,7 +186,14 @@ are (ADR 0043).
   source, a setting or which tokens a local assistant uses, stays as any admin's change does: the
   audit log says who did it. Quality runs are not cancelled: they run with no one's role, whoever
   asked.
-- A run a token asks for now names it `token <id> (<name>)` where it named only `<name>`.
+- A run a token asks for, and a schedule a token sets, now name it `token <id> (<name>)` where they
+  named only `<name>`; the Starter Pack page's banner state no longer says who turned it on (the
+  details, for admins, do).
+- On Windows, `install -Auth -Starter` stops its own log while the people are made, as Windows
+  PowerShell writes a child's console output into a running transcript; and the password is never
+  printed when the output goes to a file. The people's passwords stay permanent rather than
+  temporary (Keycloak's update-password action): they are shared for demonstrations, and a person
+  needs a second factor, which each sets up at first sign-in, besides the password.
 - The pack writes a marker in the folder it makes, `starter-pack/.kilnmark-starter-pack`, holding a
   value it keeps in its own setting. A folder of that name without it, a site's own on a real share,
   is never written in or deleted: turning the pack on says so and turning it off leaves it.

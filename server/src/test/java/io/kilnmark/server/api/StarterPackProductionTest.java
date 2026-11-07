@@ -281,6 +281,9 @@ class StarterPackProductionTest {
             io.kilnmark.server.schedules.ScheduleService.requestedBy(exampleSchedule));
         long byRealSchedule = queuedWithoutJob("pipeline_run", "pr-pipe", "pipeline",
             io.kilnmark.server.schedules.ScheduleService.requestedBy(realSchedule));
+        // a schedule deleted since: its run still names the token that set it, by id
+        long byGoneSchedule = queuedWithoutJob("pipeline_run", "pr-pipe", "pipeline",
+            "schedule 987654 (set by token " + exampleAirflow + " (airflow))");
         io.kilnmark.server.starter.ProductionCheck.Swept swept = check.sweep();
         assertTrue(swept.runs().containsAll(List.of("flow run " + f2, "pipeline run " + p2)), swept.toString());
         assertTrue(status("flow_run", f2).startsWith("cancelled"));
@@ -288,6 +291,7 @@ class StarterPackProductionTest {
         assertTrue(status("flow_run", own).startsWith("queued"), "a real person's run is left");
         assertTrue(status("pipeline_run", byExampleToken).startsWith("cancelled"), "the example token's run");
         assertTrue(status("pipeline_run", byExampleSchedule).startsWith("cancelled"), "the example token's schedule's run");
+        assertTrue(status("pipeline_run", byGoneSchedule).startsWith("cancelled"), "a deleted schedule's run, by token id");
         for (long id : List.of(byRealToken, byName, byRealSchedule)) {
             assertTrue(status("pipeline_run", id).startsWith("queued"), "a name never stands for a token: run " + id);
             pipelineStore.requestCancel(id, "test");

@@ -10,6 +10,19 @@ import org.junit.jupiter.api.Test;
  */
 class StarterPackMessagesTest {
 
+    /** Whether a team's own pipeline or flow names a source, in any of YAML's styles (the pack keeps it then). */
+    @Test
+    void aSourceIsFoundInEveryStyle() {
+        for (String yaml : java.util.List.of("source: sample-data", "  - { id: r, type: read, source: sample-data }",
+            "{\"nodes\": [{\"id\": \"r\", \"source\": \"sample-data\"}]}", "source : 'sample-data'",
+            "{'source':'sample-data'}")) {
+            org.junit.jupiter.api.Assertions.assertTrue(StarterPack.names(yaml, "sample-data"), yaml);
+        }
+        for (String yaml : java.util.List.of("datasource: sample-data", "source: sample-data-2", "# sample-data")) {
+            org.junit.jupiter.api.Assertions.assertFalse(StarterPack.names(yaml, "sample-data"), yaml);
+        }
+    }
+
     @Test
     void onlyThePacksOwnWordsAreShown() {
         assertEquals("A source called x is here that the Starter Pack did not make",
