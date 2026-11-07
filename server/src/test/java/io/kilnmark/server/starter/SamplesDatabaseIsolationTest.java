@@ -89,10 +89,12 @@ class SamplesDatabaseIsolationTest {
      * recorded mode.
      */
     private static ExecResult provision(String samplesPassword) throws Exception {
-        // as compose reads .env: an export, spaces around =, quotes and comments, CR LF line ends
-        PG.copyFileToContainer(org.testcontainers.images.builder.Transferable.of("export KILNMARK_DB_PASSWORD = \""
-            + SUPER_PASSWORD + "\" # the database's\r\nKILNMARK_SAMPLES_DB_PASSWORD='" + samplesPassword
-            + "' # the samples login's\r\n"), "/run/kilnmark/env");
+        // as compose reads .env: an export, spaces around =, quotes and comments, CR LF line ends. The
+        // samples login's password is the one checked (it signs in below); the superuser's goes over
+        // the container's own loopback, which the image trusts.
+        PG.copyFileToContainer(org.testcontainers.images.builder.Transferable.of("export KILNMARK_DB_PASSWORD = '"
+            + SUPER_PASSWORD + "' # the database's\r\nKILNMARK_SAMPLES_DB_PASSWORD=\"" + samplesPassword
+            + "\" # the samples login's\r\n"), "/run/kilnmark/env");
         return PG.execInContainer("sh", "-c", "PGHOST=127.0.0.1 PGUSER=kilnmark PGSSLMODE=require KILNMARK_SAMPLES_DB_WAIT=4 sh "
             + SCRIPT);
     }
