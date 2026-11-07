@@ -139,7 +139,8 @@ public class SampleResource {
     public Samples.TablesResult tables(Samples.TablesRequest body) {
         requireOffered();
         AccessRole role = AccessRole.highest(identity::hasRole);
-        return samples.createTables(body, who(), role, sights);
+        // its run names who asked for it as runs do: a token by its id (ADR 0051)
+        return samples.createTables(body, io.kilnmark.server.audit.AuditLog.requester(identity), role, sights);
     }
 
     private String who() {

@@ -42,11 +42,13 @@ const AuditLogPage = page(() => import("./pages/AuditLogPage"), "AuditLogPage");
 const AccessReviewPage = page(() => import("./pages/AccessReviewPage"), "AccessReviewPage");
 const DriversPage = page(() => import("./pages/DriversPage"), "DriversPage");
 const JdbcDriversPage = page(() => import("./pages/JdbcDriversPage"), "JdbcDriversPage");
+const StarterPackPage = page(() => import("./pages/StarterPackPage"), "StarterPackPage");
 import { Icon } from "./components/icons";
 import { Card, EmptyState, PageHeader } from "./components/ui";
 import { NotificationBell } from "./notifications/NotificationBell";
 import { WHATS_NEW } from "./docs/links";
 import { Sidebar } from "./shell/Sidebar";
+import { StarterPackBanner } from "./shell/StarterPackBanner";
 import { AskButton, SearchForm, UserMenu } from "./shell/TopBar";
 
 /**
@@ -323,6 +325,7 @@ function Shell({ me }: { me: Me }) {
         />
         {drawerOpen && <div className="drawer-backdrop" aria-hidden="true" onClick={() => closeDrawer()} />}
         <div className="workspace" inert={covered || drawerOpen}>
+          <StarterPackBanner refresh={route} />
           <header className="topbar">
             <button
               type="button"
@@ -408,6 +411,12 @@ function Shell({ me }: { me: Me }) {
               <AccessReviewPage />
             ) : (
               <NotAllowed title="Access review">Only admins can review who has access.</NotAllowed>
+            ))}
+          {route.page === "starter-pack" &&
+            (allows(me.role, "admin") ? (
+              <StarterPackPage />
+            ) : (
+              <NotAllowed title="Starter Pack">Only admins can turn the Starter Pack on or off.</NotAllowed>
             ))}
           {route.page === "drivers" &&
             (allows(me.role, "admin") ? (

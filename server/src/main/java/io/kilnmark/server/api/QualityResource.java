@@ -377,7 +377,7 @@ public class QualityResource {
     @RolesAllowed(AccessRole.STEWARD_ROLE)
     public Response runAsset(@QueryParam("urn") String urn) {
         asset(urn);
-        long id = quality.queueManual(urn, null, who());
+        long id = quality.queueManual(urn, null, io.kilnmark.server.audit.AuditLog.requester(identity));
         return Response.accepted(store.run(id).orElseThrow()).location(URI.create("/api/v1/quality/runs/" + id)).build();
     }
 
@@ -587,7 +587,7 @@ public class QualityResource {
     public Response runRule(@PathParam("id") long id) {
         Rule r = findRule(id);
         unmaskForCustomSql(r.type());
-        long run = quality.queueManual(r.assetUrn(), id, who());
+        long run = quality.queueManual(r.assetUrn(), id, io.kilnmark.server.audit.AuditLog.requester(identity));
         return Response.accepted(store.run(run).orElseThrow()).location(URI.create("/api/v1/quality/runs/" + run))
             .build();
     }

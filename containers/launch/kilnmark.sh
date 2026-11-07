@@ -2,7 +2,7 @@
 # Kilnmark's control script for Linux (INSTALL.md, "A. Install a release"; ADR 0044). One script
 # installs, starts, stops, upgrades and backs up Kilnmark with Podman or Docker:
 #   sudo ./kilnmark.sh prepare [--user kilnmark]      once: the service account and /opt/kilnmark
-#   ./kilnmark.sh install [--root DIR] [--offline IMAGES] [--auth] [--skip-verify]   as that account
+#   ./kilnmark.sh install [--root DIR] [--offline IMAGES] [--auth] [--starter] [--skip-verify]   as that account
 #   ./kilnmark.sh up | down | restart | status | logs | check | backup | restore | upgrade | ...
 #   ./kilnmark.sh help
 # Run with no command, it starts Kilnmark (up), so a menu entry or a double-click starts it.
@@ -18,6 +18,11 @@ registry="ghcr.io/jporeilly"
 # machine, or a developer's machine whose source checkout already uses kilnmark).
 project="${KILNMARK_PROJECT:-kilnmark}"
 default_root="/opt/kilnmark"
+# Compose fills ${NAME} from this shell's environment before config/.env. These must mean what
+# config/.env says, as this script reads them (ADR 0051), so a value exported here never counts.
+unset KILNMARK_MODE KILNMARK_STARTER KILNMARK_STARTER_PEOPLE_ACTION KILNMARK_KEYCLOAK_DEMO_PASSWORD \
+  KILNMARK_PEOPLE_ACTION KILNMARK_PERSON_EMAIL KILNMARK_PERSON_FIRST_NAME KILNMARK_PERSON_LAST_NAME \
+  KILNMARK_PERSON_GROUPS
 
 # Rootless Podman needs the account's systemd session; sudo -iu and su do not set it up, but its
 # runtime folder exists once lingering is on (prepare turns it on).
@@ -36,8 +41,25 @@ Kilnmark control script.
   prepare [--user NAME] [--root DIR] [--engine podman|docker]
                        Once, with sudo: make the service account (kilnmark) that runs Kilnmark,
                        give it the container engine, and make the install root its own.
-  install [--root DIR] [--offline IMAGES.tar.gz] [--auth] [--build] [--skip-verify] [--no-start]
+  install [--root DIR] [--offline IMAGES.tar.gz] [--auth] [--starter] [--build] [--skip-verify] [--no-start]
                        First setup: checks, folders, settings with new secrets, images, start.
+                       A production install, unless --starter: a Starter Pack install, for
+                       training and development only, which never becomes a production one,
+                       always with the bundled Keycloak; the Starter Pack's example data is
+                       turned on, and starter people adds the example people. A production
+                       install asks how people sign in (--auth: the bundled Keycloak). With
+                       the bundled Keycloak, install offers to add Kilnmark's first admin.
+  people add | people import FILE | people list
+                       With the bundled Keycloak, in either mode: add one person of your own (any
+                       of Kilnmark's groups, admins included; install asks for the first admin
+                       this way), add people from a CSV file (no admins; the example is
+                       people.example.csv), or list who is there and who has not yet chosen their
+                       own password. Each gets a temporary password you type (or pipe in), never
+                       shown. Someone already there is left as they are.
+  starter people [--new-password | --remove]
+                       On a Starter Pack install, the five example people in the bundled Keycloak
+                       (with KILNMARK_STARTER=allowed): add them, give them all a new password, or
+                       remove them. You type the password (or pipe it in): it is never shown.
   up [--no-browser]    Start Kilnmark (and Keycloak when .env turns on the auth profile); wait
                        until it answers; open it in the browser. The default command.
   down                 Stop. Every volume, so all data, is kept.
@@ -98,11 +120,11 @@ pick_engine() {
     || die "'$engine compose' does not work. Install the compose plugin (Docker) or podman-compose (Podman)."
 }
 
-# A setting from config/.env as compose reads it; empty when it is not set.
+# A setting from config/.env as compose reads it (an export in front too); empty when it is not set.
 setting() {
   local line value file="$root/config/.env"
   [ -f "$file" ] || { printf ''; return; }
-  line="$( { grep -E "^[[:space:]]*$1[[:space:]]*=" "$file" || true; } | tail -n 1 | tr -d '\r')"
+  line="$( { grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" "$file" || true; } | tail -n 1 | tr -d '\r')"
   value="${line#*=}"
   value="$(sed -e 's/^[[:space:]]*//' <<< "$value")"
   case "$value" in
@@ -112,6 +134,19 @@ setting() {
   esac
   printf '%s' "$value"
 }
+
+# The deployment mode (ADR 0051): production, or starter-pack for training and development, in
+# ASCII lower case, as the server reads it. The server refuses anything else, and so does this.
+check_mode() {
+  case "$(setting KILNMARK_MODE)" in
+    production|starter-pack) ;;
+    *) die "KILNMARK_MODE in config/.env is production or starter-pack: Kilnmark does not start with anything else. Nothing was changed." ;;
+  esac
+}
+starter_mode() { [ "$(setting KILNMARK_MODE)" = starter-pack ]; }
+# Whether the Starter Pack's example data (its database) may be here: on a Starter Pack install.
+# Kept apart from the example people (starter_mode), which only a Starter Pack install has.
+samples_allowed() { starter_mode; }
 
 # compose, always the kilnmark project, with this site's .env and the current version's file.
 compose=()
@@ -126,6 +161,8 @@ set_compose() {
   # Some compose tools read COMPOSE_PROFILES from the env file and some do not: name each one.
   local p; IFS=',' read -r -a list <<< "$profiles"
   for p in "${list[@]:-}"; do [ -z "$p" ] || compose+=(--profile "$p"); done
+  # The Starter Pack's database is made only on a Starter Pack install (ADR 0051).
+  ! samples_allowed || compose+=(--profile starter-pack)
 }
 
 image_names() { echo "$registry/kilnmark-server:$1 $registry/kilnmark-postgres:$1"; }
@@ -137,10 +174,17 @@ images_present() {
 
 # --- logging -----------------------------------------------------------------------------------
 
+# podman-compose 1.0.x (Ubuntu 24.04's) prints each podman command it runs, with every setting of
+# the container on it (-e NAME=value: database passwords, Keycloak's admin password, the client
+# secret), joined with spaces or as a Python list. Those lines are never shown or kept in logs/:
+# filtered here for every compose call this script shows, whether or not it logs.
+compose_command_line="podman.*[[:space:]'\",[](-e|--env)([[:space:]=,'\"]|\$)"
+hide_compose_commands() { grep --line-buffered -v -E "$compose_command_line" || true; }
+
 start_log() {
   [ -n "$root" ] && [ -d "$root/logs" ] || return 0
   local log; log="$root/logs/$1-$(date -u +%Y%m%dT%H%M%SZ).log"
-  exec > >(tee -a "$log") 2>&1
+  exec > >(hide_compose_commands | tee -a "$log") 2>&1
 }
 
 # --- signatures --------------------------------------------------------------------------------
@@ -302,6 +346,14 @@ make_settings() {
   cp "$example" "$env" && chmod 600 "$env"
   set_line "$env" KILNMARK_DB_PASSWORD "$(random_value)"
   set_line "$env" KILNMARK_ADMIN_TOKEN "km_$(random_value)"
+  # The deployment mode (ADR 0051), fixed at the first start: --starter makes a Starter Pack install,
+  # for training and development, which never becomes a production one.
+  if [ "${with_starter:-false}" = true ]; then
+    set_line "$env" KILNMARK_MODE starter-pack
+    set_line "$env" KILNMARK_SAMPLES_DB_PASSWORD "$(random_value)"
+  else
+    set_line "$env" KILNMARK_MODE production
+  fi
   # Relative to compose.yaml in versions/<version>/, so the root can move.
   set_line "$env" KILNMARK_CERTS_DIR ../../certs/https
   # Other ports, when install was run with them set (KILNMARK_PORT=9780 ./kilnmark.sh install).
@@ -323,8 +375,66 @@ make_settings() {
     set_line "$env" KILNMARK_OIDC_DESIGNER_GROUPS kilnmark-designers
     set_line "$env" KILNMARK_OIDC_ADMIN_GROUPS kilnmark-admins
     set_line "$env" KILNMARK_OIDC_UNMASK_GROUPS kilnmark-sensitive-data
+    # Other ports: where browsers reach Keycloak and Kilnmark follows them, so sign-in never sends
+    # people to another install's Keycloak on the default port.
+    [ -z "${KILNMARK_KEYCLOAK_PORT:-}" ] || set_line "$env" KILNMARK_KEYCLOAK_URL "http://localhost:$KILNMARK_KEYCLOAK_PORT"
+    [ -z "${KILNMARK_PORT:-}" ] || set_line "$env" KILNMARK_URL "http://localhost:$KILNMARK_PORT"
+    # A trial install with Keycloak: the Starter Pack may add its example people (ADR 0051).
+    [ "${with_starter:-false}" = true ] && set_line "$env" KILNMARK_STARTER allowed
   fi
   echo "Wrote $env with new secrets (readable by you only)."
+}
+
+# Settings later versions added, as config/.env now asks: run before every start, so upgrade and up
+# keep them right. Each new secret is random.
+ensure_settings() {
+  local env="$root/config/.env" demo files
+  [ -f "$env" ] || return 0
+  demo="$(setting KILNMARK_KEYCLOAK_DEMO_PASSWORD)"
+  if [ -z "$(setting KILNMARK_MODE)" ]; then
+    # An install made before there were modes (ADR 0051). One that made the example people (an
+    # earlier version did, with KILNMARK_KEYCLOAK_DEMO_PASSWORD) may only be a Starter Pack install.
+    if [ -n "$demo" ]; then
+      set_line "$env" KILNMARK_MODE starter-pack
+      echo "Set KILNMARK_MODE=starter-pack in config/.env: this install has had the example people"
+      echo "(KILNMARK_KEYCLOAK_DEMO_PASSWORD), so it is a Starter Pack install, for training and development."
+      echo "It never becomes a production one: production needs a fresh install."
+    else
+      set_line "$env" KILNMARK_MODE production
+      echo "Set KILNMARK_MODE=production in config/.env (an install made before there were modes). Should it"
+      echo "have had the example people, Kilnmark says so when it starts: then set KILNMARK_MODE=starter-pack."
+    fi
+  fi
+  check_mode
+  # Each is for one run of keycloak-setup, set by this script only: in config/.env every start would take it.
+  for one_run in KILNMARK_STARTER_PEOPLE_ACTION KILNMARK_PEOPLE_ACTION KILNMARK_PERSON_EMAIL KILNMARK_PERSON_FIRST_NAME \
+    KILNMARK_PERSON_LAST_NAME KILNMARK_PERSON_GROUPS; do
+    [ -z "$(setting "$one_run")" ] || die "$one_run is for one run of the control script only: delete it from config/.env. Nothing was changed."
+  done
+  # A Starter Pack install signs in with the bundled Keycloak, where its example people are (ADR 0051).
+  if starter_mode && [[ ",$(setting COMPOSE_PROFILES | tr -d '[:space:]')," != *",auth,"* ]]; then
+    die "A Starter Pack install (KILNMARK_MODE=starter-pack) needs the bundled Keycloak, where its example people are: put auth in COMPOSE_PROFILES in config/.env, with the Keycloak settings install writes. Nothing was changed."
+  fi
+  # Retired (ADR 0051): the example people take a password typed at starter people now.
+  if [ -n "$demo" ]; then
+    starter_mode || die "KILNMARK_KEYCLOAK_DEMO_PASSWORD is set: this install has had the example people, so it may only be a Starter Pack install (KILNMARK_MODE=starter-pack). Production needs a fresh install. Nothing was changed."
+    echo "KILNMARK_KEYCLOAK_DEMO_PASSWORD is retired: delete it from config/.env. The example people take a password"
+    echo "you type at ./kilnmark.sh starter people --new-password."
+  fi
+  if samples_allowed && [ -z "$(setting KILNMARK_SAMPLES_DB_PASSWORD)" ]; then
+    set_line "$env" KILNMARK_SAMPLES_DB_PASSWORD "$(random_value)"
+    echo "Added KILNMARK_SAMPLES_DB_PASSWORD to config/.env: the Starter Pack's database login (ADR 0051)."
+  fi
+  # A folder of your own, by its full path: a bare name (keys, pgdata) would be a volume of Kilnmark's own.
+  files="$(setting KILNMARK_FILES_DIR)"
+  if [ -n "$files" ] && [ "${files#/}" = "$files" ]; then
+    die "KILNMARK_FILES_DIR in config/.env is the full path of your own folder, starting with /. Nothing was changed."
+  fi
+  # Upgrading: an earlier version's compose.yaml edited to mount a folder of your own at /srv/files.
+  if [ -z "$files" ] && grep -sqE '^[[:space:]]*-[[:space:]]*[^#[:space:]][^#]*:/srv/files:ro' "$root"/versions/*/compose.yaml; then
+    echo "Warning: an earlier version mounted a folder of your own at /srv/files. Now set KILNMARK_FILES_DIR in" >&2
+    echo "config/.env to its full path: Kilnmark sees it read-only at /srv/share, so point its file sources there." >&2
+  fi
 }
 
 # --- start, stop, health -----------------------------------------------------------------------
@@ -350,14 +460,14 @@ local_url() {
 compose_quietly() {
   local out
   if out="$("${compose[@]}" "$@" 2>&1)"; then return 0; fi
-  printf '%s\n' "$out" >&2
+  printf '%s\n' "$out" | hide_compose_commands >&2
   return 1
 }
 
 cmd_up() {
   local browser=true v url profiles
   for a in "$@"; do case "$a" in --no-browser) browser=false ;; *) die "Unknown option $a." ;; esac; done
-  v="$(current_version)"; set_compose
+  v="$(current_version)"; ensure_settings; set_compose
   images_present "$v" || die "The images of Kilnmark $v are not here. Get them with one of: ./kilnmark.sh pull, ./kilnmark.sh load-images FILE, ./kilnmark.sh build"
   echo "Starting Kilnmark $v ..."
   compose_quietly up -d || die "Kilnmark could not start. See why with: ./kilnmark.sh logs"
@@ -368,6 +478,7 @@ cmd_up() {
     local kc; kc="$(setting KILNMARK_KEYCLOAK_PORT)"
     wait_for Keycloak "http://localhost:${kc:-8180}/realms/kilnmark" 150 \
       || die "Keycloak did not answer within 5 minutes. See why with: ./kilnmark.sh logs keycloak"
+    people_after_up
   fi
   url="$(setting KILNMARK_URL)"; url="${url:-$(local_url)}"; url="${url%/}"
   echo "Kilnmark $v is ready at $url"
@@ -520,6 +631,28 @@ Put the offline images file, if you have one, in $root/downloads (owned by $user
 EOF
 }
 
+# How people sign in to a production install, asked at a terminal (without a terminal, or with
+# --auth, nothing is asked): the organisation's own identity provider, the bundled Keycloak, or API
+# tokens only. Only the bundled Keycloak changes what install writes; the others are config/.env's.
+own_provider=false
+ask_sign_in() {
+  local answer
+  [ -t 0 ] || return 0
+  cat <<'EOF'
+How will people sign in to Kilnmark?
+  1  Your organisation's own identity provider (recommended for banks and other regulated organisations)
+  2  The bundled Keycloak, which this install sets up, with Kilnmark's first admin
+  3  API tokens only, for now
+EOF
+  read -r -p "1, 2 or 3 [1]: " answer
+  case "${answer:-1}" in
+    1) own_provider=true ;;
+    2) with_auth=true ;;
+    3) ;;
+    *) die "Answer 1, 2 or 3. Nothing was installed." ;;
+  esac
+}
+
 cmd_install() {
   local start=true
   while [ $# -gt 0 ]; do
@@ -527,6 +660,7 @@ cmd_install() {
       --root) root="${2:?--root needs a folder}"; shift ;;
       --offline) offline="${2:?--offline needs the images file}"; shift ;;
       --auth) with_auth=true ;;
+      --starter) with_starter=true ;;
       --build) build=true ;;
       --skip-verify) skip_verify=true ;;
       --no-start) start=false ;;
@@ -543,14 +677,34 @@ cmd_install() {
   echo "Installing Kilnmark $v in $root"
   check_prerequisites
   report_checks || die "Fix the problems above, then run install again."
+  # A Starter Pack install always has the bundled Keycloak: its example people live there.
+  if [ "${with_starter:-false}" = true ]; then with_auth=true; fi
+  [ "${with_auth:-false}" = true ] || ask_sign_in
   make_folders
   start_log install
   place_release "$here" "$v"
   make_settings "$root/versions/$v/.env.example"
   get_images "$v"
   boot_start
+  # Asked before the start, which takes a while, so nobody waits to answer.
+  local first_admin=false
+  people_soft=true
+  if $start && [ "${with_auth:-false}" = true ] && ask_person kilnmark-admins; then first_admin=true; fi
   if $start; then
-    "$root/kilnmark.sh" up --no-browser
+    "$root/kilnmark.sh" up --no-browser < /dev/null
+    ! $first_admin || make_person || true
+    if [ "${with_starter:-false}" = true ]; then
+      starter_on
+      [ "${with_auth:-false}" != true ] \
+        || echo "Add the example people, with a password you type: $root/kilnmark.sh starter people"
+    fi
+  fi
+  if $own_provider; then
+    cat <<EOF
+
+To sign in with your organisation's identity provider, fill in the KILNMARK_OIDC_ settings in
+$root/config/.env, then run $root/kilnmark.sh restart (INSTALL.md, "Sign in with your identity provider").
+EOF
   fi
   cat <<EOF
 
@@ -636,21 +790,357 @@ cmd_uninstall() {
   echo "Kilnmark's containers, volumes and images are deleted. $root is kept: delete it yourself if you wish."
 }
 
+# --- the Starter Pack (ADR 0051) ----------------------------------------------------------------
+
+# Waits for a one-off service (samples-db) of this start to finish; false when it failed or did not
+# finish in 5 minutes. By compose's labels, which Docker and Podman both set.
+one_off_done() {
+  local i state
+  for i in $(seq 1 150); do
+    state="$("$engine" ps -a --filter "label=com.docker.compose.project=$project" \
+      --filter "label=com.docker.compose.service=$1" --format '{{.Status}}' 2> /dev/null | head -n 1)"
+    case "$state" in
+      Exited\ \(0\)*) return 0 ;;
+      Exited*) return 1 ;;
+    esac
+    sleep 2
+  done
+  return 1
+}
+
+# Turns the Starter Pack's example data on through Kilnmark's own API, as Settings > Starter Pack
+# does: Kilnmark does the work. The admin token goes to curl in a file in a new folder only this
+# account can open, never on a command line; the folder goes however the script ends.
+starter_work=""
+starter_on() {
+  local answer code
+  set_compose
+  one_off_done samples-db \
+    || echo "Warning: samples-db did not finish well, so the Starter Pack may not find its database. See: ./kilnmark.sh logs samples-db"
+  trap '[ -z "$starter_work" ] || rm -rf "$starter_work"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  starter_work="$(mktemp -d)" || die "Could not make a private folder for the request."
+  {
+    cat <<EOF
+header = "Authorization: Bearer $(setting KILNMARK_ADMIN_TOKEN)"
+EOF
+  } > "$starter_work/curl.conf"
+  echo "Turning the Starter Pack on ..."
+  code="$(curl -k -s --config "$starter_work/curl.conf" -X POST --max-time 600 -o "$starter_work/answer" \
+    -w '%{http_code}' "$(local_url)/api/v1/starter-pack")" || code=000
+  answer="$(cat "$starter_work/answer" 2> /dev/null || true)"
+  rm -rf "$starter_work"; starter_work=""
+  if [ "$code" != 200 ]; then
+    echo "The Starter Pack was not turned on (HTTP $code): $(sed -n 's/^{"error":"\(.*\)"}$/\1/p' <<< "$answer")" >&2
+    echo "Turn it on later under Settings > Starter Pack." >&2
+    return 0
+  fi
+  # Each step, one a line: "step: outcome".
+  grep -o '"step":"[^"]*","outcome":"[^"]*"' <<< "$answer" | sed 's/"step":"\([^"]*\)","outcome":"\([^"]*\)"/  \1: \2/'
+  echo "The Starter Pack is on: example data, for training and development only. Turn it off under Settings > Starter Pack."
+}
+
+# keycloak-setup runs at every start: waits for it, and on a Starter Pack install tells Kilnmark what
+# it did to the example people (brought an earlier version's into the pack, or removed them). On a
+# production install it refuses a realm that has the example people: that stops here.
+people_after_up() {
+  local id out
+  if ! one_off_done keycloak-setup; then
+    starter_mode || die "keycloak-setup refused or did not finish. See why with: ./kilnmark.sh logs keycloak-setup (a production install refuses a realm with the Starter Pack's example people: production needs a fresh install)."
+    echo "Warning: keycloak-setup did not finish well. See why with: ./kilnmark.sh logs keycloak-setup" >&2
+  fi
+  starter_mode || return 0
+  id="$("$engine" ps -a -q --filter "label=com.docker.compose.project=$project" \
+    --filter "label=com.docker.compose.service=keycloak-setup" | sed -n 1p)"
+  [ -n "$id" ] || return 0
+  # Only its latest run: it says "started" first.
+  out="$("$engine" logs "$id" 2>&1 | hide_compose_commands \
+    | awk '/^keycloak-setup: started/ { buf = "" } { buf = buf $0 "\n" } END { printf "%s", buf }')"
+  record_people "$out"
+}
+
+# A request to Kilnmark's own API as the admin: the token goes to curl in a file in a new folder
+# only this account can open, never on a command line; the folder goes however the script ends.
+# $1 method, $2 path, $3 JSON body or empty; prints the HTTP code, the answer in $api_answer.
+api_answer=""
+api_call() {
+  local code
+  trap '[ -z "$starter_work" ] || rm -rf "$starter_work"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  starter_work="$(mktemp -d)" || die "Could not make a private folder for the request."
+  {
+    cat <<EOF
+header = "Authorization: Bearer $(setting KILNMARK_ADMIN_TOKEN)"
+header = "Content-Type: application/json"
+EOF
+  } > "$starter_work/curl.conf"
+  printf '%s' "${3:-}" > "$starter_work/body"
+  code="$(curl -k -s --config "$starter_work/curl.conf" -X "$1" --max-time 600 -o "$starter_work/answer" \
+    --data-binary "@$starter_work/body" -w '%{http_code}' "$(local_url)$2")" || code=000
+  api_answer="$(cat "$starter_work/answer" 2> /dev/null || true)"
+  rm -rf "$starter_work"; starter_work=""
+  printf '%s' "$code"
+}
+
+# Tells Kilnmark what keycloak-setup did to the example people (its output, $1), so Kilnmark's
+# audit log holds it (starter.people): Kilnmark holds no Keycloak credential to find out itself.
+record_people() {
+  local action pattern people code
+  for action in add new-password remove adopt; do
+    case "$action" in
+      add) pattern='^keycloak-setup: added \([a-z.]*@kilnmark\.com\) (.*$' ;;
+      new-password) pattern='^keycloak-setup: gave \([a-z.]*@kilnmark\.com\) the new password$' ;;
+      remove) pattern='^keycloak-setup: removed \([a-z.]*@kilnmark\.com\) (a Starter Pack example person)$' ;;
+      adopt) pattern='^keycloak-setup: brought \([a-z.]*@kilnmark\.com\) into the Starter Pack.*$' ;;
+    esac
+    people="$(sed -n "s/$pattern/\"\1\"/p" <<< "$1" | paste -sd, -)"
+    [ -n "$people" ] || continue
+    code="$(api_call POST /api/v1/starter-pack/people "{\"action\":\"$action\",\"people\":[$people]}")"
+    [ "$code" = 204 ] || echo "Warning: Kilnmark did not record this in its audit log (HTTP $code); Keycloak's admin events have it." >&2
+  done
+}
+
+# The password for the example people: typed twice with the echo off when this runs at a terminal,
+# else one line on standard input (a pipe). Never shown, never on a command line, never in a file.
+read_people_password() {
+  local first second
+  if [ -t 0 ]; then
+    read -r -s -p "A password for the example people (12 characters or more, not shown): " first; echo >&2
+    read -r -s -p "The same again: " second; echo >&2
+    [ "$first" = "$second" ] || die "The two did not match. Nothing was changed."
+  else
+    IFS= read -r first || true
+    first="${first%$'\r'}"
+  fi
+  [ "${#first}" -ge 12 ] || die "The example people's password is 12 characters or more. Nothing was changed."
+  people_password="$first"
+}
+
+# The Starter Pack's five example people, made and removed by keycloak-setup with Keycloak's own
+# admin: Kilnmark holds no Keycloak credential. Their password is the one you type (or pipe in),
+# handed to that one run of keycloak-setup on its standard input: never shown, never in its
+# environment, a command line, config/.env or logs/. People already there keep theirs unless
+# --new-password. What setup did goes to Kilnmark's audit log.
+people_password=""
+cmd_starter() {
+  local what="${1:-}" action=add a profiles password=""
+  [ $# -eq 0 ] || shift
+  [ "$what" = people ] || die "Say what: ./kilnmark.sh starter people [--new-password | --remove]"
+  for a in "$@"; do
+    case "$a" in
+      --new-password) action=new-password ;;
+      --remove) action=remove ;;
+      *) die "Unknown option $a: only --new-password and --remove." ;;
+    esac
+  done
+  current_version > /dev/null; ensure_settings
+  profiles="$(setting COMPOSE_PROFILES | tr -d '[:space:]')"
+  [[ ",$profiles," == *",auth,"* ]] \
+    || die "The example people need the bundled Keycloak: the auth profile (INSTALL.md, \"Keycloak, if you have no identity provider\")."
+  starter_mode || die "This is a production install: it never has the Starter Pack's example people. Nothing was changed."
+  if [ "$action" != remove ]; then
+    [ "$(setting KILNMARK_STARTER)" = allowed ] \
+      || die "Set KILNMARK_STARTER=allowed in config/.env first: the example people are only for trials and training."
+    read_people_password
+  fi
+  set_compose
+  echo "Asking keycloak-setup to $( [ "$action" = remove ] && echo remove || echo add ) the example people ..."
+  local out
+  if ! out="$(printf '%s\n' "$people_password" | KILNMARK_STARTER_PEOPLE_ACTION="$action" \
+    "${compose[@]}" run --rm -T keycloak-setup 2>&1 | hide_compose_commands)"; then
+    people_password=""
+    printf '%s\n' "$out"
+    die "keycloak-setup did not finish: see what it said above. Nothing more was done."
+  fi
+  people_password=""
+  printf '%s\n' "$out"
+  record_people "$out"
+  if [ "$action" = remove ]; then
+    echo "The example people the Starter Pack made are removed from Keycloak; anyone else is left as they are."
+  else
+    echo "The example people $( [ "$action" = new-password ] && echo "now all sign in" || echo "added just now sign in" ) with the password you gave."
+    [ "$action" = new-password ] || echo "(Any that were there already keep theirs: --new-password gives them all a new one.)"
+  fi
+}
+
+# People of your own in the bundled Keycloak, in either mode (ADR 0051, decision 10): made by one
+# run of keycloak-setup with Keycloak's own admin, never by Kilnmark, which holds no Keycloak
+# credential. Each is given a temporary password, so Keycloak has them choose their own at their
+# first sign-in, and the one-time code applies as for everyone. Never in the Starter Pack's group,
+# so its removal never touches them; never at kilnmark.com. The password is typed with the echo
+# off, or piped in: never shown, never in config/.env, a command line or logs/; it goes to
+# keycloak-setup on its standard input. Kilnmark's own sign-in is not this: Keycloak's own admin
+# (KILNMARK_KEYCLOAK_ADMIN) signs in to Keycloak's console only.
+person_email="" person_first="" person_last="" person_groups="" person_password="" people_soft=false
+# Nobody made: the people command stops; install (people_soft) says so and goes on.
+people_no() {
+  person_password=""
+  if [ "$people_soft" = true ]; then
+    echo "$1 Add them later with: $root/kilnmark.sh people add" >&2
+  else
+    die "$1"
+  fi
+}
+# Asks for one person: at a terminal, the password twice with the echo off; else lines on standard
+# input (email, first name, last name, groups unless $1 gives them, password). $1: the groups
+# install's first admin gets (kilnmark-admins), or nothing to ask. False when nobody is to be made.
+# The quick checks here save typing a password for nothing; keycloak-setup checks it all again.
+ask_person() {
+  local again
+  if [ -t 0 ]; then
+    if [ -n "$1" ]; then echo "Kilnmark's first admin: a person of your own, who signs in to Kilnmark with Keycloak."; fi
+    read -r -p "Their email, which is their user name$( [ -z "$1" ] || echo ' (Enter to skip)'): " person_email
+  else
+    IFS= read -r person_email || true
+  fi
+  person_email="$(printf '%s' "${person_email%$'\r'}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+  if [ -z "$person_email" ]; then
+    if [ -n "$1" ]; then
+      echo "No first admin was made. Add people later with $root/kilnmark.sh people add (or people import, or Keycloak's console: INSTALL.md, \"Keycloak, if you have no identity provider\")."
+    else
+      people_no "No email was given. Nobody was made."
+    fi
+    return 1
+  fi
+  [[ "$person_email" =~ ^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$ ]] \
+    || { people_no "That is not an email address. Nobody was made."; return 1; }
+  if [[ "$person_email" == *@kilnmark.com ]] || [[ "$person_email" == *.kilnmark.com ]]; then
+    people_no "Use an address of your own organisation: kilnmark.com addresses are the Starter Pack's example people. Nobody was made."
+    return 1
+  fi
+  if [ -t 0 ]; then
+    read -r -p "Their first name: " person_first
+    read -r -p "Their last name: " person_last
+    if [ -n "$1" ]; then person_groups="$1"; else
+      read -r -p "Their groups, separated by ; (kilnmark-viewers, kilnmark-stewards, kilnmark-designers, kilnmark-admins, kilnmark-sensitive-data): " person_groups
+    fi
+    read -r -s -p "A temporary password for them, 12 characters or more (not shown; they choose their own at their first sign-in): " person_password; echo >&2
+    read -r -s -p "The same again: " again; echo >&2
+    [ "$person_password" = "$again" ] || { people_no "The two did not match. Nobody was made."; return 1; }
+  else
+    IFS= read -r person_first || true
+    IFS= read -r person_last || true
+    if [ -n "$1" ]; then person_groups="$1"; else IFS= read -r person_groups || true; fi
+    IFS= read -r person_password || true
+  fi
+  person_first="${person_first%$'\r'}"; person_last="${person_last%$'\r'}"; person_groups="${person_groups%$'\r'}"
+  person_password="${person_password%$'\r'}"
+  [ -n "$person_first" ] && [ -n "$person_last" ] || { people_no "A person needs a first and a last name. Nobody was made."; return 1; }
+  [ -n "${person_groups//[[:space:];,]/}" ] || { people_no "A person needs at least one of Kilnmark's groups. Nobody was made."; return 1; }
+  [ "${#person_password}" -ge 12 ] || { people_no "The temporary password is 12 characters or more. Nobody was made."; return 1; }
+}
+
+# The password for a file of people: one for the batch, typed twice with the echo off, or one line
+# on standard input. Each person chooses their own at their first sign-in.
+ask_batch_password() {
+  local again
+  if [ -t 0 ]; then
+    read -r -s -p "A temporary password for everyone in the file, 12 characters or more (not shown): " person_password; echo >&2
+    read -r -s -p "The same again: " again; echo >&2
+    [ "$person_password" = "$again" ] || { person_password=""; die "The two did not match. Nobody was made."; }
+  else
+    IFS= read -r person_password || true
+    person_password="${person_password%$'\r'}"
+  fi
+  [ "${#person_password}" -ge 12 ] || { person_password=""; die "The temporary password is 12 characters or more. Nobody was made."; }
+}
+
+# Tells Kilnmark what keycloak-setup did ($1, its output; $2 add or import), so Kilnmark's audit log
+# holds it (auth.person_added for each person made, auth.people_imported for each import): who
+# and which groups, never a password.
+record_own_people() {
+  local made kept refused code
+  made="$(sed -n 's/^keycloak-setup: made \([a-z0-9._%+@-]*\) (\([a-z;-]*\)): they choose their own password.*$/{"person":"\1","groups":"\2"}/p' <<< "$1" | paste -sd, -)"
+  kept="$(sed -n 's/^keycloak-setup: left \([a-z0-9._%+@-]*\) as they are: someone with this address is here already.*$/"\1"/p' <<< "$1" | paste -sd, -)"
+  refused="$(sed -n 's/^keycloak-setup: people import: made [0-9]*, already there [0-9]*, refused \([0-9]*\).*$/\1/p' <<< "$1" | tail -n 1)"
+  [ -n "$made$kept" ] || [ "$2" = import ] || return 0
+  code="$(api_call POST /api/v1/auth/people "{\"via\":\"$2\",\"made\":[$made],\"kept\":[$kept],\"refused\":${refused:-0}}")"
+  [ "$code" = 204 ] || echo "Warning: Kilnmark did not record this in its audit log (HTTP $code); Keycloak's admin events have it." >&2
+}
+
+# One run of keycloak-setup for the people command: $1 the action; its standard input is this
+# function's. Its output in people_out; false when it failed.
+people_out=""
+run_people_setup() {
+  set_compose
+  people_out="$(KILNMARK_PEOPLE_ACTION="$1" KILNMARK_PERSON_EMAIL="$person_email" \
+    KILNMARK_PERSON_FIRST_NAME="$person_first" KILNMARK_PERSON_LAST_NAME="$person_last" \
+    KILNMARK_PERSON_GROUPS="$person_groups" "${compose[@]}" run --rm -T keycloak-setup 2>&1 | hide_compose_commands)"
+}
+
+# Makes the person ask_person asked for, then records it. Keycloak must be up.
+make_person() {
+  local ok=true
+  echo "Asking keycloak-setup to add $person_email ..."
+  # Fed by a process substitution, not a pipe, so people_out is set here; printf is a builtin.
+  run_people_setup add < <(printf '%s\n' "$person_password") || ok=false
+  person_password=""
+  printf '%s\n' "$people_out"
+  if ! $ok; then people_no "keycloak-setup did not finish: see what it said above. Nobody was made."; return 1; fi
+  record_own_people "$people_out" add
+  if grep -qF "keycloak-setup: made $person_email (" <<< "$people_out"; then
+    echo "$person_email signs in to Kilnmark with that password, then chooses their own and sets up a one-time code."
+  else
+    echo "$person_email was here already, so was left as they are: nothing was changed."
+  fi
+}
+
+cmd_people() {
+  local what="${1:-}" profiles file ok=true
+  [ $# -eq 0 ] || shift
+  current_version > /dev/null; ensure_settings
+  profiles="$(setting COMPOSE_PROFILES | tr -d '[:space:]')"
+  [[ ",$profiles," == *",auth,"* ]] \
+    || die "This install does not use the bundled Keycloak: add people in your organisation's own identity provider, or with API tokens only, make tokens under API tokens. The people commands are for the bundled Keycloak (the auth profile)."
+  case "$what" in
+    add)
+      [ $# -eq 0 ] || die "people add takes no options: it asks."
+      ask_person "" || return 0
+      make_person ;;
+    import)
+      file="${1:-}"
+      [ $# -eq 1 ] && [ -f "$file" ] || die "Say which file: ./kilnmark.sh people import people.csv (an example: containers/keycloak/people.example.csv in the release)."
+      ask_batch_password
+      echo "Asking keycloak-setup to add the people in the file ..."
+      run_people_setup import < <(printf '%s\n' "$person_password"; cat -- "$file") || ok=false
+      person_password=""
+      printf '%s\n' "$people_out"
+      record_own_people "$people_out" import
+      $ok || die "Nobody was made: see the lines named above."
+      echo "Each person made signs in with that password, then chooses their own and sets up a one-time code." ;;
+    list)
+      [ $# -eq 0 ] || die "people list takes no options."
+      run_people_setup list < /dev/null || { printf '%s\n' "$people_out"; die "keycloak-setup did not finish: see what it said above."; }
+      sed -n 's/^keycloak-setup: person \(.*\)$/\1/p; s/^keycloak-setup: people: \(.*\)$/people: \1/p' <<< "$people_out"
+      echo "(must-choose-password=yes: they have not yet signed in with their temporary password.)" ;;
+    *) die "Say what: ./kilnmark.sh people add | people import FILE | people list" ;;
+  esac
+}
+
 # --- backup and restore (the scripts beside compose.yaml) --------------------------------------
 
 # backup.sh and restore.sh split KILNMARK_COMPOSE on spaces, which is why the root has none.
 compose_line() { echo "${compose[*]}"; }
 
+# on when the bundled Keycloak is (the auth profile): backup.sh and restore.sh take its database too.
+keycloak_on() {
+  if [[ ",$(setting COMPOSE_PROFILES | tr -d '[:space:]')," == *",auth,"* ]]; then echo on; else echo off; fi
+}
+
 cmd_backup() {
   local dest="${1:-$root/backups}"
   current_version > /dev/null; set_compose
   mkdir -p "$dest"
-  (cd "$root/current" && KILNMARK_COMPOSE="$(compose_line)" sh ./backup.sh "$dest")
+  (cd "$root/current" && KILNMARK_COMPOSE="$(compose_line)" KILNMARK_KEYCLOAK="$(keycloak_on)" sh ./backup.sh "$dest")
 }
 
 cmd_restore() {
   current_version > /dev/null; set_compose
-  (cd "$root/current" && KILNMARK_COMPOSE="$(compose_line)" sh ./restore.sh "$@")
+  (cd "$root/current" && KILNMARK_COMPOSE="$(compose_line)" KILNMARK_KEYCLOAK="$(keycloak_on)" sh ./restore.sh "$@")
 }
 
 # --- main --------------------------------------------------------------------------------------
@@ -692,6 +1182,8 @@ case "$command" in
     pull_images "$(current_version)" ;;
   build) build_images "$(current_version)" ;;
   backup) start_log backup; cmd_backup "$@" ;;
+  starter) start_log starter; cmd_starter "$@" ;;
+  people) start_log people; cmd_people "$@" ;;
   restore) start_log restore; cmd_restore "$@" ;;
   upgrade) cmd_upgrade "$@" ;;
   uninstall) cmd_uninstall "$@" ;;

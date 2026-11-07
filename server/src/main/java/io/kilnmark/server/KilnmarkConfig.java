@@ -85,6 +85,33 @@ public interface KilnmarkConfig {
     /** Kilnmark's own database (ADR 0032). */
     Database database();
 
+    /**
+     * The deployment mode (ADR 0051): {@code production}, or {@code starter-pack} for training and
+     * development, set at install (KILNMARK_MODE). Recorded in Kilnmark's own database at the first
+     * start: the server does not start without a valid mode, or with one that differs from the
+     * record ({@code ModeCheck}). Anything but starter-pack is treated as production.
+     */
+    java.util.Optional<String> mode();
+
+    /** The Starter Pack's database, kilnmark_samples, on Kilnmark's own PostgreSQL server (ADR 0051). */
+    SamplesDb samplesDb();
+
+    interface SamplesDb {
+        /**
+         * Where it is, as the samples' database source reaches it. Unset (the default): the database
+         * kilnmark_samples on the server of Kilnmark's own database, reached as Kilnmark reaches its
+         * own, over TLS.
+         */
+        Optional<String> url();
+
+        /** Its own login, which can connect to that database only. */
+        @WithDefault("kilnmark_samples")
+        String username();
+
+        /** The login's password ({@code KILNMARK_SAMPLES_DB_PASSWORD}); unset, the pack cannot be turned on. */
+        Optional<String> password();
+    }
+
     interface Database {
         /**
          * Stop the server at start unless its own database is reached over TLS: the connection must

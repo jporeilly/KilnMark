@@ -14,6 +14,9 @@
 #   KILNMARK_PORT          optional: the port Kilnmark is published on (8780)
 #   KILNMARK_DB_PORT       optional: the port its database is published on, on this machine only (5442)
 #   KILNMARK_CERTS_DIR     optional: the folder holding server.crt and server.key for HTTPS (./tls)
+#   KILNMARK_SAMPLES_DB_PASSWORD   password of the Starter Pack's database login (the control script
+#                          makes one); unset, that database is not made and the pack cannot be turned on
+#   KILNMARK_FILES_DIR     optional: your own folder, read-only at /srv/share
 # The key that encrypts stored source passwords is generated on first start, in the keys volume.
 #
 # The project is always called kilnmark, whatever this folder is called, so its volumes keep their
@@ -43,6 +46,28 @@ services:
       # backups and administration, on 5442 so it never clashes with another PostgreSQL here.
       - "127.0.0.1:${KILNMARK_DB_PORT:-5442}:5432"
 
+  # The Starter Pack's database (ADR 0051), on a Starter Pack install only (the control script
+  # turns this profile on in that mode): a one-off at every start that makes, or keeps, the empty
+  # database kilnmark_samples on the server above, owned by a login of its own (kilnmark_samples),
+  # and, once, when it makes it, closes it to everyone but that login. Then it stops. Kilnmark
+  # fills it only when an admin turns the Starter Pack on (Settings, Starter Pack). Kilnmark's
+  # backups hold Kilnmark's own database only, never this one.
+  samples-db:
+    image: ghcr.io/jporeilly/kilnmark-postgres:@VERSION@
+    profiles: ["starter-pack"]
+    entrypoint: ["/usr/local/bin/kilnmark-samples-db.sh"]
+    environment:
+      PGHOST: postgres
+      PGUSER: kilnmark
+      PGPASSWORD: ${KILNMARK_DB_PASSWORD:?Set KILNMARK_DB_PASSWORD to a strong password before starting Kilnmark (see .env.example)}
+      PGSSLMODE: require
+      # No default, as for every secret: unset, nothing is made (the control script sets it).
+      KILNMARK_SAMPLES_DB_PASSWORD: ${KILNMARK_SAMPLES_DB_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   kilnmark:
     image: ghcr.io/jporeilly/kilnmark-server:@VERSION@
     restart: always   # back after a reboot (down removes the containers, so a stop stays a stop)
@@ -58,9 +83,18 @@ services:
       QUARKUS_DATASOURCE_PASSWORD: ${KILNMARK_DB_PASSWORD:?Set KILNMARK_DB_PASSWORD to a strong password before starting Kilnmark (see .env.example)}
       # The admin API token: km_ followed by 43 or more letters, digits, - or _ (see .env.example).
       KILNMARK_ADMIN_TOKEN: ${KILNMARK_ADMIN_TOKEN:?Set KILNMARK_ADMIN_TOKEN to a new admin token before starting Kilnmark (see .env.example)}
-      # Folders that folder sources may read. Mount yours there (see volumes below); with nothing
-      # mounted, folder sources find no files.
-      KILNMARK_FILES_ROOTS: /srv/files
+      # The folders file sources may use: /srv/files, Kilnmark's own (the files volume), which they
+      # may write with Allow writing on, and /srv/share, your own folder (KILNMARK_FILES_DIR),
+      # read-only (see volumes below).
+      KILNMARK_FILES_ROOTS: /srv/files,/srv/share
+      # The Starter Pack (ADR 0051; Settings, Starter Pack): the samples' database login, made by
+      # samples-db above. No default, as for every secret.
+      KILNMARK_SAMPLES_DB_PASSWORD: ${KILNMARK_SAMPLES_DB_PASSWORD}
+      # The deployment mode (ADR 0051): production, or starter-pack for training and development,
+      # written at install and recorded in Kilnmark's database at the first start. The server does
+      # not start without it, or with one that differs from the record. Kilnmark holds no Keycloak
+      # credential: the pack's example people are made by keycloak-setup (below).
+      KILNMARK_MODE: ${KILNMARK_MODE:?Set KILNMARK_MODE to production or starter-pack (the control script sets it)}
       # Optional host names bulk import rewrites when asked to (remapHosts=true), as from=to pairs,
       # for example localhost=host.docker.internal. Unset by default.
       KILNMARK_SOURCES_HOST_MAP: ${KILNMARK_SOURCES_HOST_MAP:-}
@@ -103,9 +137,13 @@ services:
       - "host.docker.internal:host-gateway"   # reach databases on this machine (Podman also has host.containers.internal)
     volumes:
       - keys:/var/lib/kilnmark     # the key for stored source passwords, and drivers/ (Settings > Drivers): back it up apart from pgdata
-      # A folder of files to scan, read-only. Uncomment and put your own folder on the left; in
-      # Kilnmark, add a source of kind files with path /srv/files.
-      # - /path/to/your/share:/srv/files:ro,Z
+      # Kilnmark's own files folder, writable: the files volume. The samples and the Starter Pack
+      # write here (ADR 0051), never in your folder.
+      - files:/srv/files:Z
+      # Your own folder, read-only, when config/.env sets KILNMARK_FILES_DIR to its full path
+      # (INSTALL.md, "The files folder"); else an empty volume. In Kilnmark, add a source of kind
+      # files with path /srv/share. Podman labels it for this container (:Z, on SELinux hosts).
+      - ${KILNMARK_FILES_DIR:-share}:/srv/share:ro,Z
       # Optional organisation branding: product name, logo and connector logos you are licensed to use
       # (Documentation, "Branding and appearance"). Kilnmark reads /etc/kilnmark/branding; without
       # it, Kilnmark's own name and letter tiles are shown.
@@ -211,8 +249,23 @@ services:
       KILNMARK_OIDC_CLIENT_SECRET: ${KILNMARK_OIDC_CLIENT_SECRET}
       # The address browsers reach Kilnmark at: Keycloak sends people back there after sign-in.
       KILNMARK_URL: ${KILNMARK_URL:-http://localhost:8780}
-      # Only for a demonstration: five example people, one per role (see .env.example).
-      KILNMARK_KEYCLOAK_DEMO_PASSWORD: ${KILNMARK_KEYCLOAK_DEMO_PASSWORD}
+      # The Starter Pack's five example people (ADR 0051), only on a Starter Pack install: made when
+      # the control script asks (kilnmark.sh starter people, which hands this one run the password
+      # you typed, on standard input, never here), while KILNMARK_STARTER=allowed, and removed at the
+      # next start once it is not. A production install refuses a realm that has them.
+      KILNMARK_STARTER: ${KILNMARK_STARTER:-}
+      KILNMARK_MODE: ${KILNMARK_MODE:-}
+      # Set by the control script's starter people for that one run only, from its own environment,
+      # never from .env: add, new-password or remove.
+      KILNMARK_STARTER_PEOPLE_ACTION: ${KILNMARK_STARTER_PEOPLE_ACTION:-}
+      # People of your own, in either mode: set by the control script's people command (and
+      # install's first admin) for that one run only, never in .env (the script refuses them there):
+      # add, import or list, and the one person to add. Passwords go on standard input.
+      KILNMARK_PEOPLE_ACTION: ${KILNMARK_PEOPLE_ACTION:-}
+      KILNMARK_PERSON_EMAIL: ${KILNMARK_PERSON_EMAIL:-}
+      KILNMARK_PERSON_FIRST_NAME: ${KILNMARK_PERSON_FIRST_NAME:-}
+      KILNMARK_PERSON_LAST_NAME: ${KILNMARK_PERSON_LAST_NAME:-}
+      KILNMARK_PERSON_GROUPS: ${KILNMARK_PERSON_GROUPS:-}
     volumes:
       - ./containers/keycloak/setup.sh:/opt/kilnmark/setup.sh:ro,Z
     depends_on:
@@ -309,5 +362,7 @@ services:
 volumes:
   pgdata:
   keys:
+  files:      # /srv/files, Kilnmark's own files folder
+  share:      # /srv/share when KILNMARK_FILES_DIR names no folder of your own: empty
   models:     # GGUF model files for the AI profiles
   keycloak-pgdata:   # Keycloak's own database, for the auth profile: back it up with pgdata

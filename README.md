@@ -52,8 +52,10 @@ The server needs PostgreSQL with Apache AGE and pgvector; `podman compose up --b
 (Docker works too). The root `compose.yaml` is the developer setup; customers install from the
 release folder, which has its own `compose.yaml` and never the reference lab
 ([ADR 0024](docs/adr/0024-the-lab-is-not-the-product.md)).
-To install on a clean machine, see [INSTALL.md](INSTALL.md); for everything else, the
-[development guide](docs/development.md).
+To install on a clean machine, see [INSTALL.md](INSTALL.md), which starts with
+[choosing a deployment](INSTALL.md#choosing-a-deployment): a production install, or a Starter Pack
+install for training, demonstrations and development, each chosen once at install. For everything
+else, the [development guide](docs/development.md).
 
 ## Layout
 

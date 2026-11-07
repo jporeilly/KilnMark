@@ -91,6 +91,13 @@ public class AuditLog {
     public static final String SIGN_IN_REFUSED = "auth.sign_in_refused";
     /** Someone signed out of a provider sign-in. */
     public static final String SIGN_OUT = "auth.sign_out";
+    /**
+     * The control script's people add or import made a person of the organisation's own in the
+     * bundled Keycloak (ADR 0051); detail: person, groups, via (add or import). Never a password.
+     */
+    public static final String PERSON_ADDED = "auth.person_added";
+    /** The control script's people import ran; detail: made, alreadyThere, refused (counts). */
+    public static final String PEOPLE_IMPORTED = "auth.people_imported";
 
     /** A designer token's unmask grant waits for a second admin (ADR 0038); detail: name. */
     public static final String UNMASK_REQUESTED = "unmask.requested";
@@ -122,11 +129,24 @@ public class AuditLog {
      */
     public static final String SCHEDULE_PAUSED = "schedule.paused";
 
+    /**
+     * An admin turned the Starter Pack on (ADR 0051), or tried to: its example data; detail: steps
+     * (each step's outcome), or refused and why.
+     */
+    public static final String STARTER_PACK_ADDED = "starter.added";
+    /** An admin turned the Starter Pack off, removing what it added; detail: steps, and what went. */
+    public static final String STARTER_PACK_REMOVED = "starter.removed";
+    /**
+     * The control script's starter people made, gave a new password to, or removed the Starter
+     * Pack's example people in the bundled Keycloak (ADR 0051); detail: action, people.
+     */
+    public static final String STARTER_PEOPLE = "starter.people";
+
     /** Every kind of event, for the API's filter. */
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
         SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, MAX_RUNS_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
-        SIGN_OUT, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED, SCHEDULE_SET,
-        SCHEDULE_DELETED, SCHEDULE_PAUSED);
+        SIGN_OUT, PERSON_ADDED, PEOPLE_IMPORTED, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED, SCHEDULE_SET,
+        SCHEDULE_DELETED, SCHEDULE_PAUSED, STARTER_PACK_ADDED, STARTER_PACK_REMOVED, STARTER_PEOPLE);
 
     /** The most events one request returns. */
     public static final int MAX_LIMIT = 500;
@@ -381,6 +401,15 @@ public class AuditLog {
 
     /** Who is not signed in, or whose sign-in failed. */
     public static final String ANONYMOUS = "anonymous";
+
+    /**
+     * How a run, a schedule, or anything queued for later, names who asked for it: a person by their
+     * sign-in's name, a token as {@code token <id> (<name>)}, so that the id, never a name chosen
+     * freely, says which token it was.
+     */
+    public static String requester(SecurityIdentity identity) {
+        return actor(identity).toString();
+    }
 
     /** The caller of the current request; anonymous when it is not signed in or its sign-in failed. */
     public static Actor actor(SecurityIdentity identity) {

@@ -188,7 +188,7 @@ class TokenLifetimeTest {
     void csvCellsCannotRunAsFormulas() {
         var r = new io.kilnmark.server.api.AccessReviewResource.Review(Instant.now(), null, java.util.List.of(
             new io.kilnmark.server.api.AccessReviewResource.Entry("token", "=HYPERLINK(\"x\")", "viewer", false,
-                "active", "@admin", null, null, null, null, null)));
+                "active", "@admin", null, null, null, null, null, false)));
         String csv = io.kilnmark.server.api.AccessReviewResource.csvForTests(r);
         assertTrue(csv.contains("\"'=HYPERLINK(\"\"x\"\")\""), csv);
         assertTrue(csv.contains("\"'@admin\""), csv);

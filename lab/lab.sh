@@ -34,7 +34,7 @@ sqlserver|lab-sqlserver|lab-sqlserver-init|lab-sqlserver-data|14330|lab-sqlserve
 mariadb|lab-mariadb||lab-mariadb-data|3307|lab-mariadb|MariaDB 11.4: databases shop and stock (orders, inventory)
 oracle|lab-oracle||lab-oracle-data|1522|lab-oracle|Oracle Database Free 23ai: schemas FLEET and FREIGHT (needs its driver)
 mail|lab-mailpit|||8025|-|Mailpit: catches the emails Kilnmark sends (SMTP 1025), read them at http://localhost:8025
-files||||-|lab-share|File share lab/files/share, read from disk (mounted at /srv/files)'
+files||||-|lab-share|File share lab/files/share, read from disk (mounted at /srv/share)'
 
 SQLSERVER_LICENCE='https://go.microsoft.com/fwlink/?linkid=857698'
 

@@ -103,6 +103,9 @@ dependencies {
     "testImplementation"("io.quarkus:quarkus-test-security-oidc")
     // Validates the data quality exports against the published OpenLineage and ODCS schemas (Apache-2.0, test only).
     "testImplementation"(libs.json.schema.validator)
+    // Real PostgreSQL (the kilnmark-postgres image) and Keycloak containers, for the Starter Pack's
+    // isolation and service-account tests (ADR 0051). Test only.
+    "testImplementation"(libs.testcontainers.junit)
 }
 
 // Arrow reads buffer addresses through java.nio; tests and dev mode need the same opening as the jar.

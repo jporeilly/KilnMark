@@ -60,4 +60,6 @@ is optional rather than part of every install.
 - **The look**: a login theme (`themes/kilnmark`) on Keycloak's own, changing only colours, fonts
   (Inter and Manrope, OFL 1.1, with their licence) and words.
 - **Demonstration people**, only with `KILNMARK_KEYCLOAK_DEMO_PASSWORD`: five at `kilnmark.com`, one
-  per role.
+  per role. (Superseded 7 November 2026 by ADR 0051: the five are made only on a Starter Pack install,
+  with a password the operator types, and people of the organisation's own with the control
+  script's `people` commands; `KILNMARK_KEYCLOAK_DEMO_PASSWORD` is retired.)

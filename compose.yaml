@@ -46,8 +46,12 @@ services:
       # Optional admin API token (km_ + 43 or more base64url characters). Unset, the first start
       # writes one to /var/lib/kilnmark/admin-token in the keys volume.
       KILNMARK_ADMIN_TOKEN: ${KILNMARK_ADMIN_TOKEN:-}
-      # Folders that folder sources may read. The share below is mounted here read-only.
-      KILNMARK_FILES_ROOTS: /srv/files
+      # Folders that folder sources may use: /srv/files, Kilnmark's own (writable), and /srv/share,
+      # the share below, read-only, as the release's compose has them.
+      KILNMARK_FILES_ROOTS: /srv/files,/srv/share
+      # The deployment mode (ADR 0051): production, as this developer stack has no Keycloak, which a
+      # Starter Pack install needs. quarkusDev is a Starter Pack install (application.properties).
+      KILNMARK_MODE: ${KILNMARK_MODE:-production}
       # Host names bulk import rewrites when asked (remapHosts=true): sources written from this
       # machine's point of view (localhost:5433) then work from inside the container.
       KILNMARK_SOURCES_HOST_MAP: ${KILNMARK_SOURCES_HOST_MAP:-localhost=host.docker.internal,127.0.0.1=host.docker.internal}
@@ -55,9 +59,11 @@ services:
       - "host.docker.internal:host-gateway"   # reach databases on this machine (Podman also has host.containers.internal)
     volumes:
       - keys:/var/lib/kilnmark     # the key for stored source passwords, and drivers/ (Settings > Drivers): back it up apart from pgdata
-      # A folder to scan, read-only; by default the reference lab's file share. In Kilnmark,
-      # add a source of kind files with path /srv/files. Point KILNMARK_FILES_DIR at your own folder.
-      - ${KILNMARK_FILES_DIR:-./lab/files/share}:/srv/files:ro,Z
+      # Kilnmark's own files folder, writable: the samples and the Starter Pack write here.
+      - files:/srv/files:Z
+      # A folder to scan, read-only; by default the reference lab's file share. In Kilnmark, add a
+      # source of kind files with path /srv/share. Point KILNMARK_FILES_DIR at your own folder.
+      - ${KILNMARK_FILES_DIR:-./lab/files/share}:/srv/share:ro,Z
       # Optional organisation branding: product name, logo and connector logos you are licensed to use
       # (docs/guide/branding.md). Kilnmark reads /etc/kilnmark/branding (KILNMARK_BRANDING_DIR);
       # without it, Kilnmark's own name and letter tiles are shown.
@@ -173,4 +179,5 @@ networks:
 volumes:
   pgdata:
   keys:
+  files:      # /srv/files, Kilnmark's own files folder
   models:     # GGUF model files for the AI profiles

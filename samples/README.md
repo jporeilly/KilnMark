@@ -4,9 +4,16 @@ Small pipelines and flows, one idea each, sorted by what they show, and syntheti
 them to read. They ship with Kilnmark: the server bundles them, and the release has the samples in
 its `samples` folder. They write only under `samples/` in the file storage they are given.
 
-## The starter pack
+## The Starter Pack
 
-The quickest way to try them: in the **Library**, on the **Samples** tab, choose **Add samples**, then under
+On a trial, demonstration or training install, the quickest way of all: an admin turns on the
+**Starter Pack** under **Settings** (INSTALL.md, "Try Kilnmark with the Starter Pack"), and Kilnmark
+does what follows in a database of its own, `kilnmark_samples`, with a folder of its own for the
+files. Turning it off takes it all out again.
+
+## The starter pack in Add samples
+
+Otherwise, in the **Library**, on the **Samples** tab, choose **Add samples**, then under
 **Starter pack** pick a database and a schema in it, and a file source for what the samples write
 (both must allow writing), and choose **Add the starter pack**. Kilnmark then:
 

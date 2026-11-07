@@ -111,6 +111,9 @@ dependency verification (ADR 0042, #99) and signed images with an offline instal
     `accepted_pattern.rule_id`, `drift_event.compared_with` and `quality_issue.drift_event_id`.
 18. **Audit events** for data read with the unmask grant, and for MCP refusals (ADR 0029).
 19. **A full export in open formats** (for exit), and a FIPS mode when a federal customer needs it.
+19a. **Kilnmark's own login off the superuser role**: it owns the server today (ADR 0032), so no
+    grant can keep it out of `kilnmark_samples` (ADR 0051); a separate superuser for administration,
+    used by `samples-db`, backup and restore only, would let Kilnmark's login be an ordinary owner.
 
 ## 5. Housekeeping
 
