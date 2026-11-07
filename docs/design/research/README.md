@@ -64,4 +64,6 @@ Owner, 7 November 2026:
   [backlog](../../product/backlog.md), item 1.
 - **The gaps** go into the backlog under more nodes (item 9), with rows that fail, the error
   tolerance and which row wins first.
-- **Audit reporting tables** for standard audit reports: backlog item 18.
+- **Audit reporting tables** for standard audit reports, and **dashboards and reports about
+  Kilnmark itself** (runs, schedules, volume, quality, capacity, people and access, AI) on the same
+  tables: backlog item 18.

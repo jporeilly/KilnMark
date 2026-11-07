@@ -7,7 +7,7 @@ stay in [Plan & Scope](plan-and-scope.md) under "Beyond v0.1".
 Last reviewed: 5 November 2026, evening (owner: "let's go" on this order, after #97-#103 merged:
 timeout, priority, the Library, static analysis, flow node cards, the one-script install and the
 run timelines). Updated 7 November 2026: item 1 (run retries and owners), the gaps under item 9,
-and audit reporting tables under item 18, from [research](../design/research/README.md).
+audit reporting tables and dashboards about Kilnmark itself under item 18, from [research](../design/research/README.md).
 
 ## 1. Finish what is half built
 
@@ -165,6 +165,22 @@ dependency verification (ADR 0042, #99) and signed images with an offline instal
     With report templates for the common ones (run evidence, change log, access review,
     reconciliation), and the migration need of log tables that reports read (research, run options
     section 10). Kept as long as the audit log (no deletion; NYDFS asks for five years).
+
+    On the same tables, **dashboards and reports about Kilnmark itself** (owner, 7 November
+    2026: "analytics on the tool, not the data"), on a page of their own for admins and stewards:
+    - **Runs**: success and failure rates, how long runs take and how that changes, queue waits,
+      retries, the slowest and the most-failing pipelines and flows, and runs that took longer
+      than expected;
+    - **Schedules**: fires on time, late, skipped or paused, and the next day's load;
+    - **Volume**: rows read, written and rejected over time, by pipeline, source and target;
+    - **Quality**: rule results and issues over time, by source and owner;
+    - **Capacity**: worker slots in use, queue length, memory and spilling, by hour;
+    - **People and access**: who is active, sign-ins and refusals, tokens near expiry or unused,
+      grants held;
+    - **AI**: what the AI usage page shows today, over time.
+    Each chart filters by time, pipeline, flow, source and owner, and downloads as CSV for an
+    auditor. The same figures as metrics a monitoring system can collect (OpenTelemetry or
+    Prometheus) are a separate choice, for an ADR.
 19. **A full export in open formats** (for exit), and a FIPS mode when a federal customer needs it.
 
 ## 5. Housekeeping
