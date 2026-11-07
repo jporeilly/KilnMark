@@ -167,6 +167,11 @@ run acts as.
 - A person owner is told through the token they sign in with; people who sign in through the
   identity provider get no notifications yet (docs/design/notifications.md), so such an owner
   counts as one who cannot be told, and admins are told in their place.
+- A takeover waits until the lost worker's job lock is gone and `lost-after` has passed; a worker
+  whose connection drops stops its run at its next heartbeat, well inside that. A worker frozen
+  longer than `lost-after` (a very long pause) could still be writing when the next try starts from
+  the beginning; writes that replace or upsert make that safe to repeat, but two at once are not
+  fenced at the database. Kept small by the default of 2 minutes and the heartbeat of 10 seconds.
 - Not covered by a test: a takeover by a second worker process. The tests drive the takeover on one
   worker by marking its run lost, and test the carry-on plan directly.
 - Later: Run again from the failure for pipeline stages, a "due by" time on a schedule, a list of

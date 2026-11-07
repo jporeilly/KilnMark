@@ -1266,6 +1266,12 @@ public class FlowService {
                         LOG.infof("Flow run %d of %s handed over as its worker stops", run.id(), run.flow());
                         return;
                     }
+                    if (holder != null && !holder.equals(store.jobHolder(jobId))) {
+                        // Its job is another worker's now, which has the run: nothing of it is touched here.
+                        sqlControls.values().forEach(SqlAction.Control::stop);
+                        handedOver = true;
+                        return;
+                    }
                     abandon("The worker running this flow stopped");
                     endTry("failed", "The worker running this flow was stopped before it finished, or lost its "
                         + "connection. Check what the pipelines it had started had written.", RunRetries.Ending.LOST,

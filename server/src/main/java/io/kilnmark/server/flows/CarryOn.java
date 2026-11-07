@@ -141,7 +141,7 @@ final class CarryOn {
         if (!FlowService.runsPipeline(s)) {
             return null; // waits, checks and notices change nothing that a second try would change twice
         }
-        if (!byHand && s.retries() > 0 && !"succeeded".equals(r.status())) {
+        if (!byHand && s.retries() > 0 && "failed".equals(r.status())) {
             return "has retries of its own, and used them (a node's retries take the place of the run's)";
         }
         String unsafe = facts.unsafe(s);

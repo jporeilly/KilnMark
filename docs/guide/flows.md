@@ -298,7 +298,9 @@ run:
   `kilnmark.runs.lost-after` (2 minutes), another worker takes it over while it has tries left:
   nodes that had ended stay as they ended, and the pipeline runs still going are watched to their
   end, never started again. With `retry_on: lost`, only such a run is tried again, so a flow whose
-  pipelines append may use it.
+  pipelines append may use it. A pipeline run that was on the stopped worker itself is lost too, and
+  its node fails unless it has `retries` of its own: give them to nodes whose pipelines replace or
+  upsert.
 - **Nobody is told about a try that is tried again.** After the last try, one **Flow run failed**
   goes to the flow's owners and to those who chose it, saying how many tries were made and why no
   more. When a run then succeeds, **Flow run recovered** is told. See [Owners](#owners).

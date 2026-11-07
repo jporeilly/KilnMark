@@ -1399,20 +1399,21 @@ public class PipelineService {
                 status = "failed";
                 error = RunRetries.tookTooLong(options.timeout());
                 ending = RunRetries.Ending.TIMED_OUT;
+            } else if (status.equals("failed") && o.nodes().stream().anyMatch(n -> "gate".equals(n.type())
+                && n.error() != null)) {
+                ending = RunRetries.Ending.GATE; // a gate's verdict stands, even as the worker stops
             } else if (!status.equals("succeeded") && shutdown.getAsBoolean()) {
                 status = "failed";
                 ending = RunRetries.Ending.LOST;
             } else if (status.equals("cancelled")) {
                 ending = RunRetries.Ending.CANCELLED;
-            } else if (status.equals("failed") && o.nodes().stream().anyMatch(n -> "gate".equals(n.type())
-                && n.error() != null)) {
-                ending = RunRetries.Ending.GATE;
             }
             ended(log, status, error);
             boolean done = t.end(status, error, result.toString(), ending);
             RunQuality.NodeQuality lowest = RunQuality.lowestOutputNode(measured);
             if (done) {
-                finished(run.pipeline(), id, status, score, threshold, lowest == null ? null : lowest.node(), t.told);
+                // t.status: a try that was to be tried again as a cancel landed ends cancelled, and is told so.
+                finished(run.pipeline(), id, t.status, score, threshold, lowest == null ? null : lowest.node(), t.told);
             }
             LOG.infof("Run %d of pipeline %s: %s", id, run.pipeline(), o.status());
         } catch (InterruptedException e) {
