@@ -28,6 +28,12 @@ details.
 
 ### Details
 
+- **Research: what other tools offer** (docs/design/research): the settings about twenty data
+  integration and orchestration tools give their nodes and their runs, from their own
+  documentation, the 15 gaps that matter most for banks, and a migration map. The backlog takes
+  it: run retries, owners and Run again from the failure (item 1), the gaps in nodes (item 9),
+  audit reporting tables, and dashboards and reports about Kilnmark itself (item 18). flow-controls.md now says that no worker takes a flow over
+  until run retries exist.
 - **Dependencies updated** (Dependabot's npm and GitHub Actions groups, redone on an owner branch,
   since Dependabot's own branches get no runner): `@xyflow/react` 12.12.1, `marked` 18.1.3,
   `@vitejs/plugin-react` 6.2.1, `vitest` 5.1.0, and `gradle/actions/wrapper-validation` 6.4.1,
