@@ -92,13 +92,17 @@ export function SettingsPage({ role }: { role: AccessRole }) {
  */
 function SamplesSwitch() {
   const [offered, setOffered] = useState<boolean | null>(null);
+  const [allowed, setAllowed] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [said, setSaid] = useState("");
   useEffect(() => {
     samplesApi
       .offered()
-      .then((o) => setOffered(o.offered))
+      .then((o) => {
+        setOffered(o.offered);
+        setAllowed(o.allowed !== false);
+      })
       .catch((e: Error) => setError(e.message));
   }, []);
   const change = async (to: boolean) => {
@@ -115,6 +119,17 @@ function SamplesSwitch() {
       setSaving(false);
     }
   };
+  if (!allowed) {
+    return (
+      <div className="panel samples-switch">
+        <h3 id="samples-switch-h">Samples</h3>
+        <p className="hint">
+          This is a production install: the samples, for training and development, are only on a Starter Pack install.
+          The Library&apos;s templates are here as on any install.
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="panel samples-switch">
       <h3 id="samples-switch-h">Samples</h3>

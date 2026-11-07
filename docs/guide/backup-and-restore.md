@@ -45,7 +45,9 @@ Without a folder it uses the install root's `backups`. It writes a new folder, `
 - `kilnmark-db.dump`: the database, as one consistent snapshot, in PostgreSQL's custom format;
 - `kilnmark-keys.tar`: the keys volume;
 - `keycloak-db.dump`, with the bundled Keycloak: Keycloak's database, dumped and read back the
-  same way, inside its container as its own user (no password is needed or shown);
+  same way, inside its container as its own user (no password is needed or shown). It holds the
+  realm's password hashes, its people's one-time code secrets, the realm's signing keys and the
+  client secret: keep it as safe as the keys file;
 - `backup.txt`: when it was taken, the Kilnmark version, the last database migration, and whether
   it holds Keycloak's database (`keycloak=yes`);
 - `SHA256SUMS`: a checksum of each file, which the restore checks.

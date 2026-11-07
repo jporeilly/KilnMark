@@ -86,6 +86,21 @@ describe("the library", () => {
     expect(host.textContent).toContain("Add samples");
   });
 
+  test("on a production install says why there are no samples, and offers no way to add them", async () => {
+    const { samplesApi, ApiError } = await import("../api");
+    vi.mocked(samplesApi.list).mockRejectedValueOnce(
+      new ApiError(
+        "This is a production install: the samples are only on a Starter Pack install, for training and development",
+        403,
+      ),
+    );
+    await act(async () => root.render(<LibraryPage role="admin" tab="samples" />));
+    await settle();
+    expect(host.textContent).toContain("This is a production install: the samples are only on a Starter Pack install");
+    expect(host.textContent).toContain("The templates are still here");
+    expect(host.textContent).not.toContain("Add samples");
+  });
+
   test("opens a template as a new pipeline or flow, for designers only", async () => {
     await act(async () => root.render(<LibraryPage role="designer" tab="templates" />));
     await settle();

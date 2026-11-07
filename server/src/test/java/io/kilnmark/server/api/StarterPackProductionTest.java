@@ -27,10 +27,11 @@ import io.restassured.path.json.JsonPath;
 
 /**
  * A production install (ADR 0051): the Starter Pack is never turned on, through the API either,
- * and the refusal is recorded; the example people, by the pack's group or, from an earlier version,
- * by their five addresses, are refused sign-in, each refusal recorded; the templates are there as on
- * any install; and an install whose records name one of the five addresses is never first recorded
- * as production. On a database of its own: the mode is recorded at the first start.
+ * and the refusal is recorded; nor are the samples offered; anyone in the pack's group is refused
+ * sign-in, each refusal recorded; the templates are there as on any install; a database migrated
+ * before this start (an install from before there were modes) never records a mode, and production is
+ * never recorded where the Starter Pack's database or login is. On a database of its own: the mode is
+ * recorded at the first start.
  */
 @QuarkusTest
 @TestProfile(StarterPackProductionTest.Production.class)
@@ -94,7 +95,7 @@ class StarterPackProductionTest {
         // people import: one event for each person made, and one for the import
         admin().contentType(ContentType.JSON).body(Map.of("via", "import", "made", List.of(
             made("vera.lane@example.com", "kilnmark-viewers"),
-            made("priya.shah@example.com", "kilnmark-designers;kilnmark-sensitive-data")),
+            made("priya.shah@example.com", "kilnmark-designers;kilnmark-stewards")),
             "kept", List.of("sam.okafor@example.com"), "refused", 0)).post("/api/v1/auth/people").then().statusCode(204);
         StarterPackApiTest.eventually(AuditLog.PERSON_ADDED, added + 3);
         StarterPackApiTest.eventually(AuditLog.PEOPLE_IMPORTED, imports + 1);
@@ -102,7 +103,7 @@ class StarterPackProductionTest {
             .extract().jsonPath();
         assertEquals(Map.of("person", "rita.okoro@bank.example", "groups", List.of("kilnmark-admins"), "via", "add"),
             ev.getMap("events[2].detail"));
-        assertEquals(List.of("kilnmark-designers", "kilnmark-sensitive-data"), ev.getList("events[0].detail.groups"));
+        assertEquals(List.of("kilnmark-designers", "kilnmark-stewards"), ev.getList("events[0].detail.groups"));
         assertTrue(!ev.prettify().contains("never-kept"), "no password");
         JsonPath im = admin().get("/api/v1/audit?action=" + AuditLog.PEOPLE_IMPORTED + "&limit=1").then().statusCode(200)
             .extract().jsonPath();
@@ -121,6 +122,26 @@ class StarterPackProductionTest {
         }
         admin().contentType(ContentType.JSON).body(Map.of("via", "import", "made", List.of(made("rita@bank.example",
             "kilnmark-viewers;kilnmark-admins")))).post("/api/v1/auth/people").then().statusCode(400);
+        // on production, someone who sees sensitive values never comes from a file either
+        admin().contentType(ContentType.JSON).body(Map.of("via", "import", "made", List.of(made("rita@bank.example",
+            "kilnmark-designers;kilnmark-sensitive-data")))).post("/api/v1/auth/people").then().statusCode(400);
+        // activate and expire: one person activated; anyone disabled for an unused password
+        int activatedBefore = StarterPackApiTest.events(AuditLog.PERSON_ACTIVATED);
+        int disabledBefore = StarterPackApiTest.events(AuditLog.PERSON_DISABLED);
+        admin().contentType(ContentType.JSON).body(Map.of("via", "activate", "activated", List.of("ada@bank.example")))
+            .post("/api/v1/auth/people").then().statusCode(204);
+        admin().contentType(ContentType.JSON).body(Map.of("via", "expire", "disabled", List.of("ben@bank.example",
+            "cy@bank.example"))).post("/api/v1/auth/people").then().statusCode(204);
+        StarterPackApiTest.eventually(AuditLog.PERSON_ACTIVATED, activatedBefore + 1);
+        StarterPackApiTest.eventually(AuditLog.PERSON_DISABLED, disabledBefore + 2);
+        for (Map<String, Object> bad : List.<Map<String, Object>>of(
+            Map.of("via", "activate", "activated", List.of("a@bank.example", "b@bank.example")),
+            Map.of("via", "activate", "activated", List.of("vera.lane@kilnmark.com")),
+            Map.of("via", "expire", "disabled", List.of("x@kilnmark.com")),
+            Map.of("via", "expire", "made", List.of(made("a@bank.example", "kilnmark-viewers"))),
+            Map.of("via", "add", "activated", List.of("a@bank.example")))) {
+            admin().contentType(ContentType.JSON).body(bad).post("/api/v1/auth/people").then().statusCode(400);
+        }
         admin().contentType(ContentType.JSON).body(Map.of("via", "reset", "made", List.of(made("rita@bank.example",
             "kilnmark-viewers")))).post("/api/v1/auth/people").then().statusCode(400);
         admin().contentType(ContentType.JSON).body(Map.of("via", "add", "made", List.of(made("a@bank.example",
@@ -130,6 +151,7 @@ class StarterPackProductionTest {
             .body(Map.of("via", "add", "made", List.of(made("rita@bank.example", "kilnmark-viewers"))))
             .post("/api/v1/auth/people").then().statusCode(403);
         assertEquals(added + 3, StarterPackApiTest.events(AuditLog.PERSON_ADDED), "nothing refused was recorded");
+        assertEquals(activatedBefore + 1, StarterPackApiTest.events(AuditLog.PERSON_ACTIVATED));
         // and a production install lets them sign in: in kilnmark-admins, not the pack's group
         assertNull(OidcAccess.decide(config, token("f1", "rita.okoro@bank.example", "kilnmark-admins"), Instant.now())
             .refusal());
@@ -163,22 +185,21 @@ class StarterPackProductionTest {
     }
 
     @Test
-    void theExamplePeopleAreRefusedSignInByTheirGroupOrTheirAddresses() throws Exception {
+    void theExamplePeopleAreRefusedSignInByThePacksGroup() throws Exception {
         Instant now = Instant.now();
         // a member of the pack's group, whatever their name
         assertEquals(OidcAccess.STARTER_GROUP_ON_PRODUCTION, OidcAccess.decide(config,
             token("s1", "someone@bank.example", "kilnmark-admins", OidcAccess.STARTER_GROUP), now).refusal());
         assertEquals(OidcAccess.STARTER_GROUP_ON_PRODUCTION, OidcAccess.decide(config,
             token("s2", "someone@bank.example", "kilnmark-viewers", "/" + OidcAccess.STARTER_GROUP), now).refusal());
-        // one of the five an earlier version made, never put in the group
-        assertEquals(OidcAccess.STARTER_GROUP_ON_PRODUCTION, OidcAccess.decide(config,
-            token("s3", "Alex.Morgan@kilnmark.com", "kilnmark-admins"), now).refusal());
+        // by the group alone: an address is no sign (no install from before there were modes reaches here)
+        assertNull(OidcAccess.decide(config, token("s3", "Alex.Morgan@kilnmark.com", "kilnmark-admins"), now).refusal());
         // a real person
         assertNull(OidcAccess.decide(config, token("s4", "rita@bank.example", "kilnmark-admins"), now).refusal());
 
         // each refusal is recorded, as the sign-in events record every refused sign-in
         var identity = io.quarkus.security.runtime.QuarkusSecurityIdentity.builder()
-            .setPrincipal(token("s5", "priya.shah@kilnmark.com", "kilnmark-viewers"))
+            .setPrincipal(token("s5", "priya.shah@kilnmark.com", "kilnmark-viewers", OidcAccess.STARTER_GROUP))
             .addCredential(new io.quarkus.oidc.IdTokenCredential("id-token")).build();
         signIns.fire(new io.quarkus.oidc.SecurityEvent(io.quarkus.oidc.SecurityEvent.Type.OIDC_LOGIN, identity));
         audit.awaitStored(5000);
@@ -188,17 +209,54 @@ class StarterPackProductionTest {
     }
 
     @Test
-    void anInstallThatHasHadTheExamplePeopleIsNeverFirstRecordedAsProduction() throws Exception {
-        // this database was recorded as production at its first start (no signs then)
-        assertNull(modes.check(ModeCheck.PRODUCTION));
-        // an install with no mode recorded yet, whose records name one of the five: only starter-pack
-        audit.record(new AuditLog.Actor("sso:dana.reyes@kilnmark.com (d1)", null), AuditLog.SIGN_IN, "session", Map.of());
-        audit.awaitStored(5000);
+    void onlyANewDatabaseRecordsAModeAndProductionNeverWhereTheStarterPackHasBeen() throws Exception {
+        java.time.Instant later = java.time.Instant.now().plusSeconds(60);
+        // a database migrated before this start never records a mode: it predates modes
         String key = "deployment_mode_test_" + System.nanoTime();
-        String refused = modes.checkFor(ModeCheck.PRODUCTION, key);
-        assertTrue(refused != null && refused.contains("has had the Starter Pack's example people"), refused);
-        assertNull(modes.checkFor(ModeCheck.STARTER_PACK, key), "it may be a Starter Pack install");
-        // and once recorded, the other mode is refused
-        assertTrue(modes.checkFor(ModeCheck.PRODUCTION, key).contains("never becomes a production one"));
+        for (String mode : List.of(ModeCheck.PRODUCTION, ModeCheck.STARTER_PACK)) {
+            String refused = modes.checkFor(mode, key, new ModeCheck.FirstStart(later, false));
+            assertTrue(refused != null && refused.contains("predates deployment modes") && refused.contains("install Kilnmark afresh"),
+                refused);
+        }
+        // a new one records it, and from then on the other mode is refused, either way round
+        assertNull(modes.checkFor(ModeCheck.PRODUCTION, key, new ModeCheck.FirstStart(java.time.Instant.EPOCH, false)));
+        assertNull(modes.checkFor(ModeCheck.PRODUCTION, key, new ModeCheck.FirstStart(later, true)), "recorded: checked only");
+        assertTrue(modes.checkFor(ModeCheck.STARTER_PACK, key, new ModeCheck.FirstStart(later, false))
+            .contains("never comes to a production install"));
+        // production is never first recorded where the Starter Pack's database or login is
+        try (java.sql.Connection c = io.quarkus.arc.Arc.container().instance(io.agroal.api.AgroalDataSource.class).get()
+            .getConnection(); java.sql.Statement st = c.createStatement()) {
+            st.execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'kilnmark_samples') THEN "
+                + "CREATE ROLE kilnmark_samples LOGIN; END IF; END $$");
+        }
+        String other = "deployment_mode_test_" + System.nanoTime();
+        String refused = modes.checkFor(ModeCheck.PRODUCTION, other, new ModeCheck.FirstStart(java.time.Instant.EPOCH, true));
+        assertTrue(refused != null && refused.contains("already has the Starter Pack's database or login"), refused);
+        assertNull(modes.checkFor(ModeCheck.STARTER_PACK, other, new ModeCheck.FirstStart(java.time.Instant.EPOCH, true)),
+            "a Starter Pack install may be");
+        // a refused start is recorded in the audit log before the server stops
+        int before = StarterPackApiTest.events(AuditLog.START_REFUSED);
+        IllegalStateException e = org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+            () -> modes.refuse(refused));
+        assertEquals(refused, e.getMessage());
+        StarterPackApiTest.eventually(AuditLog.START_REFUSED, before + 1);
+        assertEquals(refused, admin().get("/api/v1/audit?action=" + AuditLog.START_REFUSED + "&limit=1").then().statusCode(200)
+            .extract().jsonPath().getString("events[0].detail.reason"));
+    }
+
+    @Test
+    void theSamplesAreNeverOfferedHereNorAddedNorTheirTablesMade() {
+        admin().get("/api/v1/samples/offered").then().statusCode(200).body("offered", equalTo(false))
+            .body("allowed", equalTo(false));
+        admin().contentType(ContentType.JSON).body(Map.of("offered", true)).put("/api/v1/samples/offered").then()
+            .statusCode(409).body("error", containsString("production install"));
+        admin().get("/api/v1/samples/offered").then().statusCode(200).body("offered", equalTo(false));
+        admin().get("/api/v1/samples").then().statusCode(403).body("error", containsString("production install"));
+        admin().contentType(ContentType.JSON).body(Map.of("sources", Map.of("crm-db", "x"))).post("/api/v1/samples").then()
+            .statusCode(403);
+        admin().contentType(ContentType.JSON).body(Map.of("source", "x", "schema", "public")).post("/api/v1/samples/tables")
+            .then().statusCode(403);
+        // the templates stay
+        admin().get("/api/v1/templates").then().statusCode(200);
     }
 }

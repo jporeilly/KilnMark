@@ -875,7 +875,7 @@ function svg(name, height, title, sub, body) {
     text(L + 62, y2 + 47, "never converted; install afresh for production", { size: 11.5, fill: C.quiet }) +
     rect(R + 14, y2 + 10, IW, 48, { fill: C.orange, fillOpacity: 0.08, stroke: C.orange }) +
     text(R + 30, y2 + 30, "A Starter Pack install, as recorded", { weight: 600 }) +
-    text(R + 30, y2 + 47, "and a 0.1.1 install that had the example people", { size: 11.5, fill: C.quiet }) +
+    text(R + 30, y2 + 47, "only a new database records a mode", { size: 11.5, fill: C.quiet }) +
     foot(y3, "lock", "Either way round, a start whose KILNMARK_MODE differs from the record is refused, saying what to do.");
   svg("deployment-modes", y3 + 50, "The two deployment modes", "Chosen once at install: what each signs in with and what it holds", b);
 }

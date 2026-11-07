@@ -166,7 +166,8 @@ class StarterPeopleSetupTest {
     void noPeopleWithoutTheSwitchOrOnProduction() throws Exception {
         ok(setup("", PRODUCTION, "", ""));   // a production install, with no example people: fine
         // The site lets people set attributes of their own, and keeps admin events' details: setup
-        // changes neither. One of the five, as an earlier version made it, with the old attribute.
+        // changes neither. Someone not made by the pack has one of the five addresses, and sets
+        // the attribute an earlier design marked the pack's people with.
         com.fasterxml.jackson.databind.node.ObjectNode p = (com.fasterxml.jackson.databind.node.ObjectNode) profile();
         p.put("unmanagedAttributePolicy", "ENABLED");
         assertEquals(200, call(admin(), "PUT", "/admin/realms/kilnmark/users/profile", p).statusCode());
@@ -183,13 +184,10 @@ class StarterPeopleSetupTest {
         assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark/users/" + user("vera.lane@kilnmark.com")
             .path("id").asText() + "/groups/" + team, null).statusCode());
 
-        // a production install now refuses this realm: it has one of the five
-        ExecResult r = setup("", PRODUCTION, "", "");
-        assertNotEquals(0, r.getExitCode(), "a production install refuses a realm with the example people");
-        assertTrue(r.getStderr().contains("may only be a Starter Pack install"), r.getStderr());
-        assertNotNull(user("vera.lane@kilnmark.com"), "and changes nothing");
+        ok(setup("", PRODUCTION, "", ""));   // a production run leaves her as she is
+        assertNotNull(user("vera.lane@kilnmark.com"));
 
-        r = setup("", STARTER, "add", FIRST);
+        ExecResult r = setup("", STARTER, "add", FIRST);
         assertNotEquals(0, r.getExitCode(), "refused without KILNMARK_STARTER=allowed");
         // only starter-pack, exactly, is a Starter Pack install
         for (String mode : List.of(PRODUCTION, "", "Starter-Pack", "starter_pack", "STARTER-PACK", "true")) {
@@ -209,13 +207,13 @@ class StarterPeopleSetupTest {
 
     @Test
     @Order(2)
-    void allowedTheyAreMadeInTheMarkedGroupWithTheEarlierVersionsOnesBroughtIn() throws Exception {
+    void allowedTheyAreMadeInTheMarkedGroupAndSomeoneElseWithAnAddressIsLeftAlone() throws Exception {
         ExecResult r = setup("allowed", STARTER, "add", FIRST);
         ok(r);
-        // the one an earlier version made is brought into the pack, keeping her own password
-        assertTrue(r.getStdout().contains("brought vera.lane@kilnmark.com into the Starter Pack"), r.getStdout());
+        // someone the pack did not make, with one of the addresses: never taken into it
+        assertTrue(r.getStdout().contains("left vera.lane@kilnmark.com as they are"), r.getStdout());
         JsonNode vera = user("vera.lane@kilnmark.com");
-        assertEquals(java.util.Set.of(GROUP, "/" + DECOY), java.util.Set.copyOf(groups(vera)));
+        assertEquals(List.of("/" + DECOY), groups(vera), "never given the pack's group or its people's groups");
         assertFalse(signsIn("vera.lane@kilnmark.com", FIRST));
         assertTrue(signsIn("vera.lane@kilnmark.com", VERAS_OWN), "her own password is kept");
         for (String person : PEOPLE.subList(1, PEOPLE.size())) {
@@ -231,7 +229,7 @@ class StarterPeopleSetupTest {
         JsonNode g = JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark/group-by-path" + GROUP, null).body());
         assertEquals("true", g.path("attributes").path("kilnmark_starter_pack").path(0).asText(), g.toString());
         JsonNode realm = realm();
-        assertTrue(realm.path("adminEventsEnabled").asBoolean(), "Keycloak records the changes as admin events");
+        assertTrue(realm.path("adminEventsEnabled").asBoolean(), "Keycloak records the changes as admin events, in both modes");
         assertTrue(realm.path("adminEventsDetailsEnabled").asBoolean(), "the site's own event setting is kept");
         assertEquals("ENABLED", profile().path("unmanagedAttributePolicy").asText(), "the site's own policy is kept");
     }
@@ -246,7 +244,7 @@ class StarterPeopleSetupTest {
         ok(setup("allowed", STARTER, "new-password", SECOND));
         assertTrue(signsIn("sam.okafor@kilnmark.com", SECOND), "--new-password gives them all the new one");
         assertFalse(signsIn("sam.okafor@kilnmark.com", FIRST));
-        assertTrue(signsIn("vera.lane@kilnmark.com", SECOND), "the one brought in too: she is the pack's now");
+        assertTrue(signsIn("vera.lane@kilnmark.com", VERAS_OWN), "someone the pack did not make keeps her own");
     }
 
     @Test
@@ -266,9 +264,10 @@ class StarterPeopleSetupTest {
         assertNotNull(user("a.morgan@example.test"), "renamed");
 
         ok(setup("", STARTER, "", ""));         // KILNMARK_STARTER removed: the next up removes them
-        for (String person : PEOPLE) {
+        for (String person : PEOPLE.subList(1, PEOPLE.size())) {
             assertNull(user(person), person + " removed once the switch went");
         }
+        assertNotNull(user("vera.lane@kilnmark.com"), "never someone the pack did not make");
         assertEquals(404, call(admin(), "GET", "/admin/realms/kilnmark/users/" + alexId, null).statusCode(),
             "the renamed example admin is removed too");
         assertEquals(404, group(GROUP), "the empty group goes too");
@@ -278,7 +277,9 @@ class StarterPeopleSetupTest {
         ok(setup("allowed", STARTER, "add", FIRST));
         ok(setup("allowed", STARTER, "remove", ""));   // starter people --remove
         assertNull(user("dana.reyes@kilnmark.com"));
-        ok(setup("", PRODUCTION, "", ""));             // and with none of the five left, production is fine
+        ok(setup("", PRODUCTION, "", ""));
+        assertEquals(204, call(admin(), "DELETE", "/admin/realms/kilnmark/users/" + user("vera.lane@kilnmark.com")
+            .path("id").asText(), null).statusCode());
     }
 
     @Test
@@ -312,11 +313,30 @@ class StarterPeopleSetupTest {
             + "' KILNMARK_PERSON_GROUPS='" + groups + "'; printf '%s\\r\\n' '" + password + "' | bash /opt/kilnmark/setup.sh");
     }
 
-    /** people import: the password, then the file, on setup's input, as the control script sends them. */
+    /**
+     * people import: on a Starter Pack install the class's password, then the file, on setup's input,
+     * as the control script sends them; on production the file alone (password null).
+     */
     private static ExecResult importPeople(String mode, String password, String csv) throws Exception {
-        KC.copyFileToContainer(org.testcontainers.images.builder.Transferable.of(password + "\r\n" + csv), "/tmp/people-in");
+        KC.copyFileToContainer(org.testcontainers.images.builder.Transferable.of(
+            (password == null ? "" : password + "\r\n") + csv), "/tmp/people-in");
         return KC.execInContainer("bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "") + " KILNMARK_PEOPLE_ACTION=import;"
             + " bash /opt/kilnmark/setup.sh < /tmp/people-in; rc=$?; rm -f /tmp/people-in; exit $rc");
+    }
+
+    /** people activate: the email in setup's environment, the password on its input. */
+    private static ExecResult activate(String mode, String email, String password) throws Exception {
+        return KC.execInContainer("bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "")
+            + " KILNMARK_PEOPLE_ACTION=activate KILNMARK_PERSON_EMAIL='" + email + "'; printf '%s\\n' '" + password
+            + "' | bash /opt/kilnmark/setup.sh");
+    }
+
+    /** An ordinary run, as if at {@code hoursLater} hours from now (KILNMARK_SETUP_NOW_MS, for tests only). */
+    private static ExecResult later(String mode, int hoursLater, String activationHours) throws Exception {
+        long at = System.currentTimeMillis() + hoursLater * 3_600_000L;
+        return KC.execInContainer("bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "")
+            + " KILNMARK_SETUP_NOW_MS=" + at + (activationHours == null ? "" : " KILNMARK_PEOPLE_ACTIVATION_HOURS=" + activationHours)
+            + "; bash /opt/kilnmark/setup.sh < /dev/null");
     }
 
     private static ExecResult listPeople(String mode) throws Exception {
@@ -413,6 +433,9 @@ class StarterPeopleSetupTest {
         ExecResult r = addPerson(PRODUCTION, "kim@bank.example", "Kim", "Lee", "kilnmark-viewers", "short");
         assertNotEquals(0, r.getExitCode());
         assertTrue(r.getStderr().contains("at least 12 characters"), r.getStderr());
+        r = addPerson(PRODUCTION, "kim@bank.example", "Kim", "Lee", "kilnmark-viewers", "a-tab\there-0123456789");
+        assertNotEquals(0, r.getExitCode());
+        assertTrue(r.getStderr().contains("control character"), r.getStderr());
         assertNull(user("kim@bank.example"));
         // never in the same run as the example people
         r = KC.execInContainer("bash", "-c", env("allowed", STARTER, "add") + " KILNMARK_PEOPLE_ACTION=add"
@@ -440,32 +463,39 @@ class StarterPeopleSetupTest {
             + "nobody,No,Body,kilnmark-viewers\n"                                       // line 10: not an address
             + "x@example.com,X,Y,kilnmark-everything\n"                                 // line 11: no such group
             + "y@example.com,Y,Z\n"                                                     // line 12: three fields
-            + "z@example.com,,Z,kilnmark-viewers\n";                                    // line 13: no first name
-        ExecResult r = importPeople(PRODUCTION, RITAS_FIRST, bad);
+            + "z@example.com,,Z,kilnmark-viewers\n"                                     // line 13: no first name
+            + "o@example.com,O(Brien,Smith,kilnmark-viewers\n";                         // line 14: Keycloak refuses (
+        ExecResult r = importPeople(STARTER, RITAS_FIRST, bad);
         assertNotEquals(0, r.getExitCode());
         String err = r.getStderr();
         for (String line : List.of("line 7: admins are added one at a time", "line 8: the same address",
             "line 9: a kilnmark.com address", "line 10: not an email address", "line 11: a group that is not",
-            "line 12: not four fields", "line 13: needs a first and a last name")) {
+            "line 12: not four fields", "line 13: needs a first and a last name", "line 14: a name holds a character")) {
             assertTrue(err.contains(line), line + ": " + err);
         }
-        assertTrue(err.contains("people import: made 0, already there 0, refused 7"), err);
+        assertTrue(err.contains("people import: made 0, already there 0, refused 8"), err);
         for (String value : List.of("alex.morgan", "Morgan", "someone@kilnmark", "nobody", "kilnmark-everything",
-            "y@example.com", "z@example.com", RITAS_FIRST)) {
+            "y@example.com", "z@example.com", "O(Brien", RITAS_FIRST)) {
             assertFalse((r.getStdout() + err).contains(value), "a value was echoed: " + value);
         }
         for (String person : List.of("vera.lane@example.com", "sam.okafor@example.com", "dana.reyes@example.com",
             "priya.shah@example.com")) {
             assertNull(user(person), person + ": nobody was made");
         }
+        // on production, someone who sees sensitive values never comes from a file: the example's
+        // line 6 is refused there, and nobody is made
+        r = importPeople(PRODUCTION, null, good);
+        assertNotEquals(0, r.getExitCode());
+        assertTrue(r.getStderr().contains("line 6: people who see sensitive values are added one at a time"), r.getStderr());
+        assertNull(user("vera.lane@example.com"));
         // a file of only an admin is refused too
-        r = importPeople(PRODUCTION, RITAS_FIRST, "email,first_name,last_name,groups\nalex@bank.example,Alex,M,kilnmark-viewers;kilnmark-admins\n");
+        r = importPeople(STARTER, RITAS_FIRST, "email,first_name,last_name,groups\nalex@bank.example,Alex,M,kilnmark-viewers;kilnmark-admins\n");
         assertNotEquals(0, r.getExitCode());
         assertNull(user("alex@bank.example"));
-        // the header first, and a password
-        assertNotEquals(0, importPeople(PRODUCTION, RITAS_FIRST, "mail,first,last,groups\na@bank.example,A,B,kilnmark-viewers\n")
+        // the header first, and a password for a class
+        assertNotEquals(0, importPeople(STARTER, RITAS_FIRST, "mail,first,last,groups\na@bank.example,A,B,kilnmark-viewers\n")
             .getExitCode());
-        assertTrue(importPeople(PRODUCTION, "short", good).getStderr().contains("at least 12 characters"));
+        assertTrue(importPeople(STARTER, "short", good).getStderr().contains("at least 12 characters"));
         assertNull(user("a@bank.example"));
     }
 
@@ -499,13 +529,14 @@ class StarterPeopleSetupTest {
         assertEquals(List.of(), groups(sam), "no group given");
         assertTrue(signsIn("sam.okafor@example.com", VERAS_OWN), "their password is the one they had");
 
-        // list: everyone, their Kilnmark groups, and who must still choose a password
+        // list: everyone, their Kilnmark groups, whether active, and who must still choose a password
         r = listPeople(STARTER);
         ok(r);
         assertTrue(r.getStdout().contains("person priya.shah@example.com groups=kilnmark-designers;kilnmark-sensitive-data "
-            + "must-choose-password=yes") || r.getStdout().contains("person priya.shah@example.com groups=kilnmark-sensitive-data;"
-            + "kilnmark-designers must-choose-password=yes"), r.getStdout());
-        assertTrue(r.getStdout().contains("person sam.okafor@example.com groups=none must-choose-password=no"), r.getStdout());
+            + "status=active must-choose-password=yes") || r.getStdout().contains("person priya.shah@example.com "
+            + "groups=kilnmark-sensitive-data;kilnmark-designers status=active must-choose-password=yes"), r.getStdout());
+        assertTrue(r.getStdout().contains("person sam.okafor@example.com groups=none status=active must-choose-password=no"),
+            r.getStdout());
         assertTrue(r.getStdout().contains("person vera.lane@kilnmark.com groups="), "the example people too");
         assertFalse(r.getStdout().contains(RITAS_FIRST) || r.getStdout().contains(FIRST), "no password");
 
@@ -523,5 +554,92 @@ class StarterPeopleSetupTest {
         assertNotEquals(0, importPeople(STARTER, RITAS_FIRST, "email,first_name,last_name,groups\n"
             + "vera.lane@kilnmark.com,Vera,Lane,kilnmark-viewers\n").getExitCode());
         assertNull(user("vera.lane@kilnmark.com"));
+    }
+
+    static final String TEAM = "email,first_name,last_name,groups\nada@bank.example,Ada,Byron,kilnmark-viewers\n"
+        + "ben@bank.example,Ben,Ng,kilnmark-designers;kilnmark-stewards\n";
+
+    @Test
+    @Order(10)
+    void productionImportMakesPeopleWaitingDisabledWithNoPasswordUntilEachIsActivated() throws Exception {
+        ExecResult r = importPeople(PRODUCTION, null, TEAM);
+        ok(r);
+        assertTrue(r.getStdout().contains("made ada@bank.example (kilnmark-viewers): waiting to be activated"), r.getStdout());
+        assertTrue(r.getStdout().contains("people import: made 2, already there 0, refused 0"), r.getStdout());
+        for (String person : List.of("ada@bank.example", "ben@bank.example")) {
+            JsonNode u = user(person);
+            assertNotNull(u, person);
+            assertFalse(u.path("enabled").asBoolean(), person + " is disabled");
+            assertEquals("[]", JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark/users/" + u.path("id").asText()
+                + "/credentials", null).body()).toString(), person + " has no password");
+        }
+        assertEquals(java.util.Set.of("/kilnmark-designers", "/kilnmark-stewards"), java.util.Set.copyOf(groups(user("ben@bank.example"))));
+        r = listPeople(PRODUCTION);
+        assertTrue(r.getStdout().contains("person ada@bank.example groups=kilnmark-viewers status=waiting-to-be-activated"),
+            r.getStdout());
+
+        // activate: one person, a temporary password of their own; never shown
+        r = activate(PRODUCTION, "Ada@Bank.example", RITAS_FIRST);
+        ok(r);
+        assertTrue(r.getStdout().contains("activated ada@bank.example: they choose their own password"), r.getStdout());
+        assertFalse((r.getStdout() + r.getStderr()).contains(RITAS_FIRST), "the password never appears");
+        JsonNode ada = user("ada@bank.example");
+        assertTrue(ada.path("enabled").asBoolean());
+        assertTrue(ada.path("requiredActions").toString().contains("UPDATE_PASSWORD"), ada.toString());
+        assertTrue(grant("ada@bank.example", RITAS_FIRST).contains("not fully set up"));
+        assertFalse(user("ben@bank.example").path("enabled").asBoolean(), "the others still wait");
+        // never someone already active, nor anyone unknown, nor at kilnmark.com
+        r = activate(PRODUCTION, "ada@bank.example", SECOND);
+        assertNotEquals(0, r.getExitCode());
+        assertTrue(r.getStderr().contains("is active already"), r.getStderr());
+        assertTrue(grant("ada@bank.example", RITAS_FIRST).contains("not fully set up"), "her password is unchanged");
+        assertTrue(activate(PRODUCTION, "nobody@bank.example", SECOND).getStderr().contains("nobody here has that address"));
+        assertTrue(activate(PRODUCTION, "x@kilnmark.com", SECOND).getStderr().contains("kilnmark.com address"));
+        assertTrue(activate(PRODUCTION, "ben@bank.example", "short").getStderr().contains("at least 12 characters"));
+        // nor someone who has chosen their own password and was disabled on purpose
+        assertEquals(201, call(admin(), "POST", "/admin/realms/kilnmark/users", Map.of("username", "cy@bank.example",
+            "email", "cy@bank.example", "emailVerified", true, "firstName", "Cy", "lastName", "Ng", "enabled", false,
+            "credentials", List.of(Map.of("type", "password", "value", VERAS_OWN, "temporary", false)))).statusCode());
+        r = activate(PRODUCTION, "cy@bank.example", SECOND);
+        assertNotEquals(0, r.getExitCode());
+        assertTrue(r.getStderr().contains("has signed in and chosen their own password"), r.getStderr());
+        assertFalse(user("cy@bank.example").path("enabled").asBoolean());
+    }
+
+    @Test
+    @Order(11)
+    void anUnusedTemporaryPasswordExpiresAfterTheWindowAndActivateGivesANewOne() throws Exception {
+        // the window: 1 to 720 hours
+        for (String hours : List.of("0", "721", "72h")) {
+            ExecResult r = later(PRODUCTION, 0, hours);
+            assertNotEquals(0, r.getExitCode(), hours);
+            assertTrue(r.getStderr().contains("KILNMARK_PEOPLE_ACTIVATION_HOURS"), r.getStderr());
+        }
+        // within it, nobody goes
+        ExecResult r = later(PRODUCTION, 71, null);
+        ok(r);
+        assertTrue(user("ada@bank.example").path("enabled").asBoolean(), "within 72 hours");
+        // past it: everyone still holding a temporary password, the first admin too, is disabled, and said
+        r = later(PRODUCTION, 73, null);
+        ok(r);
+        for (String person : List.of("ada@bank.example", "rita.okoro@bank.example", "omar@bank.example")) {
+            assertTrue(r.getStdout().contains("disabled " + person + ": their temporary password was not used within 72 hours"),
+                person + ": " + r.getStdout());
+            assertFalse(user(person).path("enabled").asBoolean(), person);
+        }
+        // someone with a password of their own is never touched
+        assertTrue(user("sam.okafor@example.com").path("enabled").asBoolean());
+        // a shorter window, as set
+        ok(activate(PRODUCTION, "ada@bank.example", SECOND));
+        r = later(PRODUCTION, 2, "1");
+        assertTrue(r.getStdout().contains("disabled ada@bank.example"), r.getStdout());
+        // activate gives a new temporary password, never shown, and the person may sign in again
+        r = activate(PRODUCTION, "rita.okoro@bank.example", SECOND);
+        ok(r);
+        assertFalse((r.getStdout() + r.getStderr()).contains(SECOND), "the password never appears");
+        assertTrue(user("rita.okoro@bank.example").path("enabled").asBoolean());
+        assertTrue(grant("rita.okoro@bank.example", SECOND).contains("not fully set up"));
+        assertTrue(listPeople(PRODUCTION).getStdout().contains("person ada@bank.example groups=kilnmark-viewers "
+            + "status=waiting-to-be-activated must-choose-password=yes"));
     }
 }

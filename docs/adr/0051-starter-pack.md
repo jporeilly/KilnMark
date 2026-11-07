@@ -2,8 +2,9 @@
 
 Status: Accepted (6 November 2026; decision 5 amended the same day after a security review, and
 decisions 5 to 8 after a second; amended 7 November 2026 by the owner: two deployment modes, fixed
-at install (decisions 6 to 12), in place of a production setting and the start-up sweep; the
-people commands and Keycloak's backup the same day)
+at install (decisions 6 to 13), in place of a production setting and the start-up sweep; the
+people commands and Keycloak's backup the same day; then no upgrade from before modes, activation
+on production, and expiring temporary passwords)
 
 ## Context
 
@@ -117,10 +118,7 @@ converted: Production or Starter Pack.
    setup did not make (one a directory federation brings, say) is never taken for it, and setup
    stops, changing nothing. Only admins can put people in a group, and setup puts a person in it
    only as it makes them, in the same step, so a person who registered, or an admin's account, with
-   one of the addresses is never given the people's groups or deleted. The one exception is the five
-   exact addresses an earlier version made with `KILNMARK_KEYCLOAK_DEMO_PASSWORD` (decision 7): on a
-   Starter Pack install setup brings them into the group, saying so, so the pack's rules and its
-   removal cover them. (A first version marked them with a user attribute and set the realm's
+   one of the addresses is never given the people's groups or deleted. (A first version marked them with a user attribute and set the realm's
    unmanaged attributes to admins only; a review found that a person could set it before that, and
    that an admin choosing a stricter policy later would hide it, so the people would never be
    removed. A group depends on neither, and the realm's own settings are left as they are.) A run
@@ -146,14 +144,19 @@ converted: Production or Starter Pack.
    did can be on a production install.
    - **Production**: the Starter Pack can never be turned on (its page offers nothing; the API
      refuses, `force` or not, and records each refusal); no samples database and no example
-     people. Kilnmark refuses the sign-in of anyone whose groups claim holds
-     `kilnmark-starter-pack`, and, as a second line, of the five example addresses, each refusal
-     recorded; `keycloak-setup` refuses a realm that has any of the five.
+     people, nor the samples by any route (Add samples and the sample tables included). Kilnmark
+     refuses the sign-in of anyone whose groups claim holds `kilnmark-starter-pack`, each refusal
+     recorded.
    - **Starter Pack**: the pack works as above, with a marking for everyone on every page,
      "Starter Pack: training and development only", saying too when its example data is on.
    - In code, whether the example data is allowed and whether the example people are allowed are
      two checks (`ModeCheck.samplesAllowed`, `ModeCheck.examplePeopleAllowed`), both true on a
-     Starter Pack install only; nothing turns either on for production.
+     Starter Pack install only; nothing turns either on for production (the owner decided
+     Production stays clean).
+   - What decides is the mode recorded in the database, not `config/.env` alone: the control
+     scripts read it (with the database's own `psql`) before `starter people`, `upgrade` and
+     `restore`, and `samples-db` waits for it and makes the samples database only when it says
+     `starter-pack`.
    - Templates are there in both modes (ADR 0043).
 
    Compose would take `KILNMARK_MODE`, `KILNMARK_STARTER` and the one-run settings from the shell's
@@ -161,18 +164,18 @@ converted: Production or Starter Pack.
    first, read an `export` in front of a line and the name's letter case exactly, as compose does,
    and refuse a one-run setting written in `config/.env`: `config/.env` alone decides.
 
-7. **Upgrading an install from before there were modes.** Release 0.1.1 was a preview, not a
-   production release, and it made the five example people when `KILNMARK_KEYCLOAK_DEMO_PASSWORD`
-   was set. An install with no recorded mode that shows any sign of them may only become a Starter
-   Pack install, and asking for production is refused with a plain message to install afresh; it
-   is never offered a conversion. The signs, each checked where it can be seen: the demo password is
-   set (the control scripts then write `starter-pack`); Kilnmark's own records name any of the five
-   addresses (audit events, tokens, pipelines, flows, schedules and runs: the server will not
-   record production); or the realm has any of them (`keycloak-setup` refuses). With no sign, the
-   control scripts write `production`. `KILNMARK_KEYCLOAK_DEMO_PASSWORD` is retired: a production
-   install does not start while it is set, and a Starter Pack install takes a typed password
-   instead; the operator is told to delete it. The owner decided there is no route to production
-   for a 0.1.1 install with the example people, even one whose people never signed in.
+7. **No upgrade from before there were modes.** Release 0.1.2 is the first with them. 0.1.1 and
+   earlier were previews, never production releases, and the owner decided they are not carried
+   across: such an install is installed afresh. Only a new database records a mode: at the first
+   start with nothing recorded, a database whose first migration ran before this start predates
+   modes, and the server refuses to start ("install afresh"); the control scripts' `up` refuses a
+   `config/.env` with no `KILNMARK_MODE`, `upgrade` refuses before it changes anything, and
+   `restore` refuses a backup with no mode recorded, or of the other mode. (A first design
+   looked for signs of 0.1.1's example people, the demo password, its records and its realm, to
+   decide which mode such an install could have; with no upgrade at all, that went.) A new
+   database on a server that already has the Starter Pack's database or login (`kilnmark_samples`)
+   is never recorded as production. Each refused start is recorded in the audit log first, when
+   the database answers (`server.start_refused`).
 
 8. **The start-up sweep is dropped.** It revoked tokens an example account made (and chains of
    tokens those made, up to 64 deep), paused schedules they set and cancelled runs they asked for,
@@ -192,28 +195,42 @@ converted: Production or Starter Pack.
 10. **People of the organisation's own, added by the control script, in both modes, with the
     bundled Keycloak.** So that nobody makes the first person by hand in Keycloak's console, and a
     trainer can load a class at once, the control script has `people add` (one person, in any of
-    Kilnmark's groups), `people import FILE` (a CSV, `email,first_name,last_name,groups`, with one
-    temporary password for the batch) and `people list` (who is there, their Kilnmark groups, and
-    who has not yet chosen their own password). Install offers Kilnmark's first admin, which is
-    `people add` with `kilnmark-admins`. Like the example people, they are made by one run of
-    `keycloak-setup` with Keycloak's own admin from `config/.env`: Kilnmark itself still holds no
+    Kilnmark's groups), `people import FILE` (a CSV, `email,first_name,last_name,groups`), `people
+    activate EMAIL` and `people list` (who is there, their Kilnmark groups, whether active or
+    waiting, and who has not yet chosen their own password). Install offers Kilnmark's first admin,
+    which is `people add` with `kilnmark-admins`. Like the example people, they are made by one run
+    of `keycloak-setup` with Keycloak's own admin from `config/.env`: Kilnmark itself still holds no
     Keycloak credential (decision 5). The rules:
     - every password is temporary: Keycloak has the person choose their own at the first sign-in,
       and the one-time code applies as for everyone. It is typed with the echo off or piped in,
-      never shown, in `.env`, on a command line or in `logs`;
+      never shown, in `.env`, on a command line or in `logs`, and may hold no control character;
+    - an import on a **Starter Pack install** gives the class one shared temporary password; on
+      **production** a shared password would let anyone who learns it sign in as anyone not yet
+      signed in, so nobody is given one: each person is made disabled, with no password, waiting
+      for `people activate`, which gives one person a temporary password of their own and enables
+      them. It refuses anyone already active, and anyone who has chosen their own password (they
+      have signed in; disabled on purpose);
+    - **unused temporary passwords expire**: at every run of `keycloak-setup` (every start, every
+      `people` command), anyone still holding one more than `KILNMARK_PEOPLE_ACTIVATION_HOURS` (72
+      unless set; 1 to 720) after it was set is disabled, recorded (`auth.person_disabled`); `people
+      activate` gives them a new one. This covers people from `people add`, the first admin too: the
+      operator's `KILNMARK_ADMIN_TOKEN` stays the way in;
     - `kilnmark-admins` only through `people add`, one person at a time, never from a file, to keep
-      the two-person rules (ADR 0038, ADR 0045) from being got round in bulk;
+      the two-person rules (ADR 0038, ADR 0045) from being got round in bulk; on production so is
+      `kilnmark-sensitive-data` (on a Starter Pack install the data is made up, so a class may have it);
     - an import checks the whole file before changing anything (a well-formed address, a known
-      group, no address twice), names each bad line by its number, never its values, and then makes
-      nobody; it ends with how many were made, already there and refused;
+      group, no address twice, no character Keycloak refuses in a name), names each bad line by its
+      number, never its values, and then makes nobody; it ends with how many were made, already
+      there and refused, and should Keycloak refuse someone part way, with how many it made first;
     - someone already there with that user name or email is left exactly as they are, their
       password and groups too;
-    - the five example addresses, and anything at kilnmark.com, are refused, so a real person is
-      never taken for an example one; and people added this way are never in the pack's group, so
-      the pack's removal never deletes them;
-    - each person made (`auth.person_added`, with their groups) and each import
-      (`auth.people_imported`) is in Kilnmark's audit log, from what the control script reads in
-      setup's output (`POST /api/v1/auth/people`, admin), never a password;
+    - anything at kilnmark.com is refused, so a real person is never taken for an example one; and
+      people added this way are never in the pack's group, so the pack's removal never deletes them;
+    - the commands check that Kilnmark answers before changing anything, and each person made
+      (`auth.person_added`, with their groups), each import (`auth.people_imported`) and each
+      activation (`auth.person_activated`) is in Kilnmark's audit log, from what the control script
+      reads in setup's output (`POST /api/v1/auth/people`, admin, attributed to that admin), never a
+      password; Keycloak's admin events are on in both modes, without representations;
     - with the organisation's own identity provider the commands refuse: people are added there.
 
     Kilnmark's first admin person is not Keycloak's own admin (`KILNMARK_KEYCLOAK_ADMIN`), who
@@ -230,6 +247,15 @@ converted: Production or Starter Pack.
     have nobody able to sign in; every Starter Pack install has the bundled Keycloak. So `backup`
     and `restore` take Keycloak's database too, beside Kilnmark's (ADR 0039, decision 8).
 
+13. **Secrets stay off command lines, and the samples' login is held by PostgreSQL itself.**
+    podman-compose puts every environment setting of a container on podman's command line, which
+    other users of the machine can read; so the two one-off services read their secrets from
+    `config/.env`, mounted read-only (`keycloak-setup`: Keycloak's admin password and the client
+    secret, running as root in its own container to read the file, which is the account's alone;
+    `samples-db`: the database's and the samples login's passwords). Lines at the top of
+    `pg_hba.conf`, kept there at every start of the database image, let `kilnmark_samples` reach its
+    own database over TLS and refuse it every other one, whatever the grants say.
+
 ## Consequences
 
 - A trial install is one command (`install --starter`), with the bundled Keycloak, and every sample
@@ -245,7 +271,7 @@ converted: Production or Starter Pack.
 - Turning the pack off in Kilnmark does not remove the people: the page says so and gives the
   command.
 - A site that tried Kilnmark with the Starter Pack installs afresh for production: nothing moves
-  across, by design. A 0.1.1 install with the example people stays a Starter Pack install.
+  across, by design. Installs from 0.1.1 and earlier are installed afresh too.
 - A run a token asks for, and a schedule a token sets, now name it `token <id> (<name>)` where they
   named only `<name>`.
 - The people's passwords stay permanent rather than temporary (Keycloak's update-password action):

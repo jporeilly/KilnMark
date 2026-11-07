@@ -28,9 +28,11 @@ import org.testcontainers.utility.MountableFile;
 /**
  * The Starter Pack's database (ADR 0051), against the real kilnmark-postgres image and this tree's
  * kilnmark-samples-db.sh, which the samples-db service runs at every start of a Starter Pack
- * install: the login kilnmark_samples owns kilnmark_samples, reached over TLS, which is closed to
- * everyone else when it is made, once; it reads and makes nothing in Kilnmark's own database; and
- * the script changes no other database's grants, nor, at a later start, the samples database's.
+ * install, only once Kilnmark's own record says starter-pack: the login kilnmark_samples owns
+ * kilnmark_samples, reached over TLS, which is closed to everyone else when it is made, once;
+ * pg_hba.conf (kilnmark-hba.sh) refuses that login every other database, and grants alone would let
+ * it read or make nothing in Kilnmark's; and the script changes no other database's grants, nor, at a
+ * later start, the samples database's.
  */
 @Testcontainers
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -49,10 +51,15 @@ class SamplesDatabaseIsolationTest {
      */
     static final String SCRIPT = "/tmp/kilnmark-samples-db.sh";
 
+    /** This tree's pg_hba.conf keeper, copied in too, and run as the image's start runs it. */
+    static final String HBA = "/tmp/kilnmark-hba.sh";
+
     @Container
     static final GenericContainer<?> PG = new GenericContainer<>(DockerImageName.parse(IMAGE))
         .withCopyFileToContainer(MountableFile.forHostPath(Path.of("../containers/postgres/kilnmark-samples-db.sh")
             .toAbsolutePath().normalize()), SCRIPT)
+        .withCopyFileToContainer(MountableFile.forHostPath(Path.of("../containers/postgres/kilnmark-hba.sh")
+            .toAbsolutePath().normalize()), HBA)
         .withEnv("POSTGRES_DB", "kilnmark").withEnv("POSTGRES_USER", "kilnmark")
         .withEnv("POSTGRES_PASSWORD", SUPER_PASSWORD).withExposedPorts(5432)
         .waitingFor(Wait.forLogMessage(".*database system is ready to accept connections.*", 2));
@@ -76,11 +83,41 @@ class SamplesDatabaseIsolationTest {
         return as("kilnmark_samples", SAMPLES_PASSWORD, database);
     }
 
-    /** Runs the image's own script as samples-db does: the superuser over TLS, the password in the environment. */
+    /**
+     * Runs the script as samples-db does: the superuser over TLS, the passwords read from a settings
+     * file mounted as config/.env is, not the environment; waiting a few seconds at most for Kilnmark's
+     * recorded mode.
+     */
     private static ExecResult provision(String samplesPassword) throws Exception {
-        return PG.execInContainer("sh", "-c", "PGHOST=127.0.0.1 PGUSER=kilnmark PGPASSWORD='" + SUPER_PASSWORD
-            + "' PGSSLMODE=require KILNMARK_SAMPLES_DB_PASSWORD='" + samplesPassword
-            + "' sh " + SCRIPT);
+        PG.copyFileToContainer(org.testcontainers.images.builder.Transferable.of("KILNMARK_DB_PASSWORD=" + SUPER_PASSWORD
+            + "\r\nKILNMARK_SAMPLES_DB_PASSWORD=" + samplesPassword + "\r\n"), "/run/kilnmark/env");
+        return PG.execInContainer("sh", "-c", "PGHOST=127.0.0.1 PGUSER=kilnmark PGSSLMODE=require KILNMARK_SAMPLES_DB_WAIT=4 sh "
+            + SCRIPT);
+    }
+
+    /** What Kilnmark recorded at its first start, as its migrations and ModeCheck leave it; null: nothing. */
+    private static void recordMode(String mode) throws SQLException {
+        try (Connection c = superuser("kilnmark")) {
+            exec(c, "CREATE SCHEMA IF NOT EXISTS kilnmark", "CREATE TABLE IF NOT EXISTS kilnmark.server_setting "
+                + "(key text PRIMARY KEY, value text NOT NULL, updated_by text)", "DELETE FROM kilnmark.server_setting");
+            if (mode != null) {
+                try (java.sql.PreparedStatement ps = c.prepareStatement(
+                    "INSERT INTO kilnmark.server_setting VALUES ('deployment_mode', ?, 'test')")) {
+                    ps.setString(1, mode);
+                    ps.executeUpdate();
+                }
+            }
+        }
+    }
+
+    /** "pg_hba.conf rejects connection": refused before any grant is looked at. */
+    private static void rejected(String user, String password, String database, String sslmode) {
+        Properties p = new Properties();
+        p.setProperty("user", user);
+        p.setProperty("password", password);
+        SQLException e = assertThrows(SQLException.class, () -> DriverManager.getConnection("jdbc:postgresql://" + PG.getHost()
+            + ":" + PG.getMappedPort(5432) + "/" + database + "?sslmode=" + sslmode, p).close(), database);
+        assertEquals("28000", e.getSQLState(), database + ": " + e.getMessage());
     }
 
     private static void exec(Connection c, String... sql) throws SQLException {
@@ -130,10 +167,25 @@ class SamplesDatabaseIsolationTest {
 
     @Test
     @Order(2)
+    void onlyWhereKilnmarksOwnRecordSaysStarterPack() throws Exception {
+        // .env alone never decides: nothing recorded yet (waits, then makes nothing), or production
+        for (String mode : new String[] {null, "production", "Starter-Pack"}) {
+            recordMode(mode);
+            ExecResult r = provision(SAMPLES_PASSWORD);
+            assertEquals(1, r.getExitCode(), mode + ": " + r.getStdout());
+            assertTrue(r.getStderr().contains(mode == null ? "has not recorded its deployment mode" : "not a Starter Pack install"),
+                r.getStderr());
+            assertFalse(exists("SELECT 1 FROM pg_database WHERE datname = 'kilnmark_samples'"), mode + ": nothing made");
+        }
+        recordMode("starter-pack");
+    }
+
+    @Test
+    @Order(3)
     void theSamplesLoginOwnsItsDatabaseClosedToOthersAndReadsNothingOfKilnmarks() throws Exception {
         // Kilnmark's own tables, as its migrations make them: a schema of its own, owned by kilnmark.
         try (Connection c = superuser("kilnmark")) {
-            exec(c, "CREATE SCHEMA kilnmark", "CREATE TABLE kilnmark.api_token (id int, hash text)",
+            exec(c, "CREATE TABLE kilnmark.api_token (id int, hash text)",
                 "INSERT INTO kilnmark.api_token VALUES (1, 'secret')", "CREATE TABLE public.notes (t text)");
         }
         java.util.Map<String, String> before = grants();
@@ -168,8 +220,16 @@ class SamplesDatabaseIsolationTest {
             + "(SELECT oid FROM pg_roles WHERE rolname = 'kilnmark_samples')"), "owned by its login");
         assertTrue(exists("SELECT 1 FROM pg_database WHERE datname = 'kilnmark' AND datdba = "
             + "(SELECT oid FROM pg_roles WHERE rolname = 'kilnmark')"), "Kilnmark's own database is still Kilnmark's");
-        // In Kilnmark's own database, as PostgreSQL lets any login connect: it reads and makes nothing.
-        try (Connection c = samples("kilnmark"); Statement st = c.createStatement()) {
+        // In Kilnmark's own database, were it let in: it reads and makes nothing (the grants alone). An
+        // image from this tree refuses it there already, at its start (pg_hba.conf, below).
+        Connection in;
+        try {
+            in = samples("kilnmark");
+        } catch (SQLException e) {
+            assertEquals("28000", e.getSQLState(), e.getMessage());
+            return;
+        }
+        try (Connection c = in; Statement st = c.createStatement()) {
             for (String sql : new String[] {"SELECT * FROM kilnmark.api_token", "SELECT * FROM public.notes",
                 "CREATE TABLE public.mine (id int)", "CREATE SCHEMA mine", "CREATE TABLE kilnmark.mine (id int)"}) {
                 SQLException e = assertThrows(SQLException.class, () -> st.execute(sql), sql);
@@ -179,7 +239,29 @@ class SamplesDatabaseIsolationTest {
     }
 
     @Test
-    @Order(3)
+    @Order(4)
+    void pgHbaLetsTheSamplesLoginReachItsOwnDatabaseOnlyOverTls() throws Exception {
+        // as the image's start runs it, twice: the second changes nothing
+        for (int run = 0; run < 2; run++) {
+            ExecResult r = PG.execInContainer("sh", "-c", "sh " + HBA + " \"$PGDATA/pg_hba.conf\"");
+            assertEquals(0, r.getExitCode(), r.getStderr());
+        }
+        ExecResult head = PG.execInContainer("sh", "-c", "grep -c 'kilnmark-samples: begin' \"$PGDATA/pg_hba.conf\"");
+        assertEquals("1", head.getStdout().strip(), "the lines once");
+        try (Connection c = superuser("postgres")) {
+            exec(c, "SELECT pg_reload_conf()");
+        }
+        Thread.sleep(500);
+        for (String database : new String[] {"kilnmark", "postgres", "template1"}) {
+            rejected("kilnmark_samples", SAMPLES_PASSWORD, database, "require");
+        }
+        rejected("kilnmark_samples", SAMPLES_PASSWORD, "kilnmark_samples", "disable");
+        samples("kilnmark_samples").close();
+        superuser("kilnmark").close();   // everyone else as before
+    }
+
+    @Test
+    @Order(5)
     void aLaterStartLeavesTheSamplesDatabasesGrantsAsTheSiteSetThem() throws Exception {
         // the samples database is closed once, when it is made: a grant an admin adds since is theirs
         try (Connection c = superuser("postgres")) {

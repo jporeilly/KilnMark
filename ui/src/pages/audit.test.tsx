@@ -49,8 +49,17 @@ group("the audit log page", () => {
       "2 statements on warehouse, version 3",
     );
     expect(describe(event("starter.added", { refused: "production" }))).toBe("Refused, nothing changed: production");
-    expect(describe(event("starter.people", { action: "adopt", people: ["vera.lane@kilnmark.com", "sam.okafor@kilnmark.com"] }))).toBe(
-      "Brought into the pack: vera.lane@kilnmark.com, sam.okafor@kilnmark.com",
+    expect(describe(event("starter.people", { action: "remove", people: ["vera.lane@kilnmark.com", "sam.okafor@kilnmark.com"] }))).toBe(
+      "Removed: vera.lane@kilnmark.com, sam.okafor@kilnmark.com",
+    );
+    expect(describe(event("auth.person_activated", { person: "ada@bank.example" }))).toBe(
+      "Gave ada@bank.example a temporary password and enabled them",
+    );
+    expect(describe(event("auth.person_disabled", { person: "ben@bank.example" }))).toBe(
+      "Disabled ben@bank.example: their temporary password went unused",
+    );
+    expect(describe(event("server.start_refused", { reason: "This install predates deployment modes" }))).toBe(
+      "This install predates deployment modes",
     );
   });
 
@@ -84,6 +93,9 @@ group("the audit log page", () => {
         "auth.sign_out",
         "auth.person_added",
         "auth.people_imported",
+        "auth.person_activated",
+        "auth.person_disabled",
+        "server.start_refused",
         "access.review",
         "unmask.requested",
         "unmask.approved",

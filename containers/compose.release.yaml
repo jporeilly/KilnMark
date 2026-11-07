@@ -59,10 +59,12 @@ services:
     environment:
       PGHOST: postgres
       PGUSER: kilnmark
-      PGPASSWORD: ${KILNMARK_DB_PASSWORD:?Set KILNMARK_DB_PASSWORD to a strong password before starting Kilnmark (see .env.example)}
       PGSSLMODE: require
-      # No default, as for every secret: unset, nothing is made (the control script sets it).
-      KILNMARK_SAMPLES_DB_PASSWORD: ${KILNMARK_SAMPLES_DB_PASSWORD}
+    # Its two passwords, the database's and the samples login's (KILNMARK_DB_PASSWORD and
+    # KILNMARK_SAMPLES_DB_PASSWORD), are read from config/.env, read-only: never in its environment,
+    # which podman-compose puts on podman's command line. No default: unset, nothing is made.
+    volumes:
+      - ${KILNMARK_ENV_FILE:-../../config/.env}:/run/kilnmark/env:ro,z
     depends_on:
       postgres:
         condition: service_healthy
@@ -242,17 +244,19 @@ services:
     image: quay.io/keycloak/keycloak:26.8.1@sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332
     profiles: ["auth"]
     entrypoint: ["/bin/bash", "/opt/kilnmark/setup.sh"]
+    # As root in its own container, to read config/.env (yours only) for Keycloak's admin password
+    # and the client secret: never in its environment, which podman-compose puts on podman's command
+    # line, where other users of the machine can read it.
+    user: "0"
     environment:
       KEYCLOAK_URL: http://keycloak:8080
       KC_ADMIN_USER: ${KILNMARK_KEYCLOAK_ADMIN:-admin}
-      KC_ADMIN_PASSWORD: ${KILNMARK_KEYCLOAK_ADMIN_PASSWORD}
-      KILNMARK_OIDC_CLIENT_SECRET: ${KILNMARK_OIDC_CLIENT_SECRET}
       # The address browsers reach Kilnmark at: Keycloak sends people back there after sign-in.
       KILNMARK_URL: ${KILNMARK_URL:-http://localhost:8780}
       # The Starter Pack's five example people (ADR 0051), only on a Starter Pack install: made when
       # the control script asks (kilnmark.sh starter people, which hands this one run the password
       # you typed, on standard input, never here), while KILNMARK_STARTER=allowed, and removed at the
-      # next start once it is not. A production install refuses a realm that has them.
+      # next start once it is not.
       KILNMARK_STARTER: ${KILNMARK_STARTER:-}
       KILNMARK_MODE: ${KILNMARK_MODE:-}
       # Set by the control script's starter people for that one run only, from its own environment,
@@ -260,14 +264,19 @@ services:
       KILNMARK_STARTER_PEOPLE_ACTION: ${KILNMARK_STARTER_PEOPLE_ACTION:-}
       # People of your own, in either mode: set by the control script's people command (and
       # install's first admin) for that one run only, never in .env (the script refuses them there):
-      # add, import or list, and the one person to add. Passwords go on standard input.
+      # add, import, activate or list, and the one person. Passwords go on standard input.
       KILNMARK_PEOPLE_ACTION: ${KILNMARK_PEOPLE_ACTION:-}
       KILNMARK_PERSON_EMAIL: ${KILNMARK_PERSON_EMAIL:-}
       KILNMARK_PERSON_FIRST_NAME: ${KILNMARK_PERSON_FIRST_NAME:-}
       KILNMARK_PERSON_LAST_NAME: ${KILNMARK_PERSON_LAST_NAME:-}
       KILNMARK_PERSON_GROUPS: ${KILNMARK_PERSON_GROUPS:-}
+      # How long a temporary password may wait unused before its person is disabled: 1 to 720 hours.
+      KILNMARK_PEOPLE_ACTIVATION_HOURS: ${KILNMARK_PEOPLE_ACTIVATION_HOURS:-72}
     volumes:
       - ./containers/keycloak/setup.sh:/opt/kilnmark/setup.sh:ro,Z
+      # config/.env, read-only, from the install root (KILNMARK_ENV_FILE elsewhere): only its two
+      # secrets above are read from it.
+      - ${KILNMARK_ENV_FILE:-../../config/.env}:/run/kilnmark/env:ro,z
     depends_on:
       keycloak:
         condition: service_healthy

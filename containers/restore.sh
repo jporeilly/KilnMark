@@ -137,6 +137,26 @@ $compose exec -T postgres createdb -U kilnmark kilnmark_restoring
 $compose exec -T postgres pg_restore -U kilnmark -d kilnmark_restoring --exit-on-error --single-transaction \
   < "$src/kilnmark-db.dump"
 
+# The backup's deployment mode (ADR 0051) must be this install's: a backup from before there were
+# modes (0.1.1 or earlier, a preview) is never restored, nor one of the other mode. Checked on the
+# restored copy, before anything is stopped or replaced.
+stage="checking the backup's deployment mode"
+mode_of() {
+  $compose exec -T postgres psql -U kilnmark -d "$1" -X -q -At \
+    -c "SELECT value FROM kilnmark.server_setting WHERE key = 'deployment_mode'" 2>/dev/null | tr -d '\r' || true
+}
+backup_mode=$(mode_of kilnmark_restoring)
+live_mode=$(mode_of kilnmark)
+want_mode=${KILNMARK_EXPECTED_MODE:-$(sed -n 's/^KILNMARK_MODE=//p' .env 2>/dev/null | tail -n 1 | tr -d '\r')}
+if [ -z "$backup_mode" ]; then
+  echo "The backup has no deployment mode recorded: it is from before deployment modes (release 0.1.1 or earlier, a preview), which cannot be restored into this release. Install Kilnmark afresh. Nothing was changed." >&2
+  exit 1
+fi
+if { [ -n "$live_mode" ] && [ "$backup_mode" != "$live_mode" ]; } || { [ -n "$want_mode" ] && [ "$backup_mode" != "$want_mode" ]; }; then
+  echo "The backup is of a $backup_mode install, and this is not one: an install never changes mode (ADR 0051). Restore it into an install of its own mode. Nothing was changed." >&2
+  exit 1
+fi
+
 if $restore_keycloak; then
   stage="restoring Keycloak's database into keycloak_restoring"
   echo "Restoring Keycloak's database into a database of its own (Keycloak keeps running)"

@@ -65,29 +65,12 @@ public final class OidcAccess {
      * pack's people. Every sign-in, renewal and request with a session is decided here.
      */
     public static Decision decide(KilnmarkConfig config, org.eclipse.microprofile.jwt.JsonWebToken token, Instant now) {
-        if (!io.kilnmark.server.starter.ModeCheck.examplePeopleAllowed(config) && (strings(token.getClaim(
+        if (!io.kilnmark.server.starter.ModeCheck.examplePeopleAllowed(config) && strings(token.getClaim(
             config.auth().oidc().groupsClaim())).stream().anyMatch(g -> STARTER_GROUP.equals(g)
-                || ("/" + STARTER_GROUP).equals(g))
-            || examplePerson(token))) {
+                || ("/" + STARTER_GROUP).equals(g))) {
             return Decision.refused(STARTER_GROUP_ON_PRODUCTION);
         }
         return decide(config.auth().oidc(), token::getClaim, now);
-    }
-
-    /**
-     * Whether the sign-in is one of the five example people by their exact address (user name or
-     * email), as earlier versions made them without the pack's group: the fallback for a realm never
-     * run through this version's keycloak-setup.
-     */
-    static boolean examplePerson(org.eclipse.microprofile.jwt.JsonWebToken token) {
-        for (String claim : List.of("preferred_username", "email", "upn")) {
-            for (String v : strings(token.getClaim(claim))) {
-                if (io.kilnmark.server.starter.ExampleAccounts.PEOPLE.contains(v.strip().toLowerCase(Locale.ROOT))) {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 
     /**

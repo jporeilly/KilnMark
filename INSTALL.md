@@ -36,17 +36,17 @@ Kilnmark is installed in one of two modes, chosen at install and never changed
 | Sample data | A separate samples database; an admin turns it on and off under **Settings** | None; it cannot be turned on |
 | Templates | Yes | Yes |
 | First admin | `KILNMARK_ADMIN_TOKEN` from `.env` (with none, a first admin token that works for 24 hours); and, offered at install, a first admin person in Keycloak | The same; the first admin person with Kilnmark's own Keycloak |
-| Adding people | `people add`, `people import`, Keycloak's console | With Kilnmark's own Keycloak: the same, or Active Directory or LDAP in it; with your own identity provider: in that service |
+| Adding people | `people add`; `people import` with one temporary password for a class; Keycloak's console | With Kilnmark's own Keycloak: `people add`; `people import`, each person then given a password of their own with `people activate`; Keycloak's console; or Active Directory or LDAP in it. With your own identity provider: in that service |
 | Backup | Kilnmark's database and Keycloak's | Kilnmark's database, and Keycloak's when it is used |
 | Changing mode | It cannot become Production: install afresh | It cannot become Starter Pack: install afresh |
-| From 0.1.1 (a preview) | An install that has had the example people becomes Starter Pack | Only an install that never had the example people |
 
 Ways to add people:
 
 | Way | Mode | Who runs it | Good for |
 | --- | --- | --- | --- |
 | `people add` | Either, with Kilnmark's own Keycloak | The operator | One person, admins included |
-| `people import` | Either, with Kilnmark's own Keycloak | The operator | A class or a team at once (no admins) |
+| `people import` | Either, with Kilnmark's own Keycloak | The operator | A class (Starter Pack: one shared temporary password) or a team (Production: each waits for `people activate`); never admins, nor on Production anyone who sees sensitive values |
+| `people activate` | Either, with Kilnmark's own Keycloak | The operator | Giving one waiting person a temporary password of their own |
 | Keycloak's console | Either, with Kilnmark's own Keycloak | The operator | Changes, password resets, removals |
 | Active Directory or LDAP in Keycloak | Production | The operator | People already in the directory |
 | Your organisation's identity provider | Production | That service's admins | Banks and other regulated organisations |
@@ -116,12 +116,13 @@ A release is `kilnmark-<version>.tar.gz` (or `.zip`). It ships with
 4. **Open** http://localhost:8780 and sign in with the admin token: it is `KILNMARK_ADMIN_TOKEN` in
    `config/.env`. Under **API tokens**, make a permanent admin token for yourself and keep it safe.
 5. **Add a source** under **Sources**: nothing is scanned until you do.
-6. **To try the samples**, small pipelines that each show one idea, an admin turns the
-   **Starter Pack** on under **Settings** (below, "Try Kilnmark with the Starter Pack"): every
-   sample is then in the **Library**, ready to run, apart from your own pipelines. Or, in the
-   **Library**, choose **Add samples** and pick your own sources for the placeholders the samples
-   use (`crm-db`, `shop-db`, `files`). See [samples/README.md](samples/README.md). The samples are
-   also in the release's `samples` folder.
+6. **To try the samples**, small pipelines that each show one idea, use a Starter Pack install:
+   an admin turns the **Starter Pack** on under **Settings** (below, "Try Kilnmark with the Starter
+   Pack"), and every sample is then in the **Library**, ready to run, apart from your own pipelines.
+   There, in the **Library**, **Add samples** also lets a designer pick sources for the
+   placeholders the samples use (`crm-db`, `shop-db`, `files`). A production install has no
+   samples, by any route; its **Library** holds the templates. See
+   [samples/README.md](samples/README.md). The samples are also in the release's `samples` folder.
 7. **Schedule a daily backup**: `kilnmark.sh backup` (`kilnmark.cmd backup`), from cron or Task
    Scheduler (below, "Back up and restore").
 
@@ -173,8 +174,9 @@ written `-Offline`, `-Root`, `-SkipVerify` and so on.
 | `restore BACKUP --yes` | Puts Kilnmark back to a backup |
 | `upgrade ARCHIVE [--offline IMAGES]` | Checks the new release, backs up, puts it beside this one, and starts it. If the new version does not answer, the old one is current again, and the script says how to restore |
 | `people add` | With the bundled Keycloak, in either mode, adds one person of your own, in any of Kilnmark's groups, admins included: it asks for their email, names, groups and a temporary password, which you type (it is not shown) or pipe in (below, "Adding people to the bundled Keycloak") |
-| `people import FILE` | Adds the people in a CSV file, with one temporary password for the batch; never an admin |
-| `people list` | Lists the realm's people, their Kilnmark groups, and who has not yet chosen their own password |
+| `people import FILE` | Adds the people in a CSV file; never an admin. On a Starter Pack install, with one temporary password for the class; on production, each waits, disabled and with no password, for `people activate` |
+| `people activate EMAIL` | Gives one person waiting to be activated a temporary password of their own, typed (not shown) or piped in, and enables them |
+| `people list` | Lists the realm's people, their Kilnmark groups, whether they are active or waiting to be activated, and who has not yet chosen their own password |
 | `starter people [--new-password \| --remove]` | On a Starter Pack install, the five example people in the bundled Keycloak, with `KILNMARK_STARTER=allowed`: adds them, gives them all a new password, or removes them. You type the password (it is not shown) or pipe it in, and it is kept nowhere (below, "Try Kilnmark with the Starter Pack") |
 | `uninstall [--purge]` | Stops Kilnmark. `--purge` also deletes its volumes and images, once you type `DELETE` |
 
@@ -444,6 +446,7 @@ Kilnmark:
 | --- | --- | --- |
 | Add one person | `kilnmark.sh people add` | `kilnmark.cmd people add` |
 | Add the people in a file | `kilnmark.sh people import people.csv` | `kilnmark.cmd people import people.csv` |
+| Activate one waiting person | `kilnmark.sh people activate ada@bank.example` | `kilnmark.cmd people activate ada@bank.example` |
 | List who is there | `kilnmark.sh people list` | `kilnmark.cmd people list` |
 
 - **`people add`** asks for the person's email, which is their user name, their first and last
@@ -454,26 +457,48 @@ Kilnmark:
 - **`people import FILE`** adds everyone in a CSV file whose first line is
   `email,first_name,last_name,groups`. `groups` is a `;`-separated list of Kilnmark's groups,
   never `kilnmark-admins`; lines starting with `#`, and blank lines, are skipped; a name may not
-  hold a comma. It asks once for a temporary password for the whole file (or takes one line on
-  standard input). It checks the whole file before changing anything: a well-formed address, a
+  hold a comma, nor any of the characters Keycloak refuses in names (`( ) / \ ; & < > " $ % ! # ?
+  * ~ | ^ = [ ] { }`). It checks the whole file before changing anything: a well-formed address, a
   known group and no address twice. If any line is wrong it names each one by its number, never
-  its values, and makes nobody. At the end it says how many were made, already there and refused.
-  The release has an example, `containers/keycloak/people.example.csv`, at example.com addresses,
-  which are reserved and receive no mail.
-- **`people list`** shows each person in the realm with their Kilnmark groups and
-  `must-choose-password=yes` while they have not yet signed in with their temporary password: for
-  a trainer, who has not yet signed in. It shows no password.
+  its values, and makes nobody. At the end it says how many were made, already there and refused;
+  should Keycloak refuse someone part way, it says how many it made before stopping.
+  - On a **Starter Pack install**, for a class, it asks once for a temporary password the whole
+    file shares (or takes one line on standard input), and everyone may sign in with it at once.
+    Training data is made up, so a file may give `kilnmark-sensitive-data`.
+  - On a **production install** nobody is given a password: each person is made **disabled**,
+    waiting to be activated, and the operator gives each a temporary password of their own with
+    `people activate`, one by one. A file may not give `kilnmark-sensitive-data` either: like
+    admins, people who see sensitive values are added one at a time with `people add`.
 
-Each person is made with the temporary password: at their first sign-in Keycloak has them choose
-their own, and set up a one-time code. The password goes to `keycloak-setup` on its input only:
+  The release has an example, `containers/keycloak/people.example.csv`, at example.com addresses,
+  which are reserved and receive no mail (on production, its last line is refused: Priya sees
+  sensitive values).
+- **`people activate EMAIL`** gives one person waiting to be activated (imported on production, or
+  disabled because their temporary password went unused) a temporary password of their own, typed
+  twice and not shown, or piped in, and enables them. It refuses someone already active, and
+  anyone who has signed in and chosen their own password (disabled on purpose: enable them in
+  Keycloak's console).
+- **`people list`** shows each person in the realm with their Kilnmark groups, whether they are
+  `active`, `waiting-to-be-activated` or `disabled`, and `must-choose-password=yes` while they have
+  not yet signed in with their temporary password: for a trainer, who has not yet signed in. It
+  shows no password.
+
+Each temporary password works once: at their first sign-in Keycloak has the person choose their
+own, and set up a one-time code. **Unused temporary passwords expire**: at every start, and at every
+`people` command, anyone still holding one more than `KILNMARK_PEOPLE_ACTIVATION_HOURS` (72 unless
+you set it, 1 to 720) after it was set is disabled, and Kilnmark's audit log says so
+(`auth.person_disabled`). That includes people made by `people add` and Kilnmark's first admin;
+`people activate` gives them a new one, and `KILNMARK_ADMIN_TOKEN` stays the way in meanwhile. The password goes to `keycloak-setup` on its input only:
 never on the screen, in `.env`, a command line or `logs`. Someone already there with that email is
 left exactly as they are, their password and groups too, and reported as already there; running a
 command again changes nothing. Addresses at kilnmark.com, the Starter Pack's example people's, are
 refused, so a real person is never taken for an example one; on a Starter Pack install people
 added this way are never in the pack's group, so removing the example people never removes them.
-Kilnmark's audit log records each person made (`auth.person_added`, with their groups) and each
-import (`auth.people_imported`), never a password. With your organisation's own identity provider,
-the commands refuse: add people there.
+Kilnmark's audit log records each person made (`auth.person_added`, with their groups), each import
+(`auth.people_imported`) and each activation (`auth.person_activated`), never a password; Keycloak
+records every change to people as an admin event too. The commands check that Kilnmark answers
+first, so nobody is made without that record. With your organisation's own identity provider, the
+commands refuse: add people there.
 
 On one machine, `http://localhost` works as it is: browsers treat localhost as secure, so
 Kilnmark's session cookie (sent over HTTPS only) still works there. Keycloak is published on this
@@ -541,8 +566,9 @@ The page shows each step and how it went. A source called `starter-samples-db` o
 **Its database.** A Starter Pack install has an empty database, `kilnmark_samples`, on Kilnmark's
 own PostgreSQL server, with a login of its own, `kilnmark_samples`, whose password is
 `KILNMARK_SAMPLES_DB_PASSWORD` in `.env` (the control script makes one). The database is closed to
-everyone but that login when it is made, and that login reads and makes nothing in Kilnmark's own
-database. The `samples-db` service makes or checks both at every start, then stops
+everyone but that login when it is made, and PostgreSQL itself (`pg_hba.conf`) lets that login
+reach its own database only, over TLS, and no other. The `samples-db` service makes or checks both
+at every start, once Kilnmark's own record says this is a Starter Pack install, then stops
 (`kilnmark.sh logs samples-db` says what it did); it changes no other database's grants. A
 production install has neither. Kilnmark's backups do not hold `kilnmark_samples`: after a
 restore, turn the pack off and on again to recreate the samples.
@@ -625,35 +651,28 @@ approves membership of the unmask group at the provider
 While Kilnmark runs, `kilnmark.sh backup` (`kilnmark.cmd backup`) writes a new folder in `backups`
 (or the folder you name) holding the database and the keys that open stored source passwords, and,
 while the bundled Keycloak is on, Keycloak's database (`keycloak-db.dump`: its people, groups and
-one-time code setups), without which nobody could sign in to a restored install. Keep the keys file
-apart from the database dumps. `kilnmark.sh restore backups/kilnmark-<time> --yes` puts them all
-back, on this machine or a new one, and the same backup restores on Linux or Windows.
+one-time code setups), without which nobody could sign in to a restored install. That dump also
+holds the realm's password hashes, one-time code secrets, signing keys and the client secret:
+keep it as safe as the keys. Keep the keys file apart from the database dumps. `kilnmark.sh restore backups/kilnmark-<time> --yes` puts them all
+back, on this machine or a new one, and the same backup restores on Linux or Windows. A backup
+is restored only into an install of its own deployment mode, and never one from before there were
+modes.
 Schedule a daily backup, back up before every upgrade (`upgrade` does), and test a restore every
 quarter: the runbook, with what to check after a restore, is
 [Backing up and restoring Kilnmark](docs/guide/backup-and-restore.md)
 ([ADR 0039](docs/adr/0039-backup-and-restore.md)). The release folder's `backup.sh` and `restore.sh`
 are what the control script runs on Linux.
 
-### Upgrading from 0.1.1
+### Upgrading from 0.1.1 or earlier
 
-Release 0.1.1 was a preview, not a production release: there is no way from a 0.1.1 install to a
-production one. A production install starts fresh, in production mode. On the first `up` or
-`upgrade` of an install made before there were modes:
-
-- with `KILNMARK_KEYCLOAK_DEMO_PASSWORD` set (0.1.1 made its five example people with it), the
-  control script sets `KILNMARK_MODE=starter-pack`: it is a Starter Pack install from then on.
-  Delete `KILNMARK_KEYCLOAK_DEMO_PASSWORD` from `config/.env`: it is retired, and a production
-  install does not start while it is set. Give the example people a password of your own with
-  `kilnmark.sh starter people --new-password`;
-- otherwise it sets `KILNMARK_MODE=production`. Kilnmark then refuses to start as production if its
-  own records name any of the five example addresses, and `keycloak-setup` refuses if its realm has
-  any of them: set `KILNMARK_MODE=starter-pack` for such an install. Production needs a fresh
-  install; nothing converts one to it;
-- a Starter Pack install needs the bundled Keycloak: the `auth` profile and sign-in with it, as
-  install writes them;
-- a share of your own that an earlier version's `compose.yaml` was edited to mount at `/srv/files`:
-  set `KILNMARK_FILES_DIR` in `config/.env` to its full path instead. Kilnmark sees it read-only at
-  `/srv/share`: point its file sources there. `up` warns while the old mount is there.
+Release 0.1.2 is the first with deployment modes. Installs from before it (0.1.1 and earlier, which
+were previews, never production releases) **cannot be upgraded**: install Kilnmark afresh, in the
+mode you want. Back up first anything you mean to carry across by hand. On such an install,
+`upgrade` refuses before it changes anything, `up` refuses a `config/.env` with no
+`KILNMARK_MODE`, and Kilnmark itself refuses to start on a database that was made before this
+start with no mode recorded: only a new database records one. A backup with no mode recorded is
+never restored. `KILNMARK_KEYCLOAK_DEMO_PASSWORD`, which 0.1.1 used for its example people, is not
+read by these releases.
 
 ### Run pipelines and flows from your scheduler
 

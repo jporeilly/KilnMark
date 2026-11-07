@@ -98,6 +98,18 @@ public class AuditLog {
     public static final String PERSON_ADDED = "auth.person_added";
     /** The control script's people import ran; detail: made, alreadyThere, refused (counts). */
     public static final String PEOPLE_IMPORTED = "auth.people_imported";
+    /**
+     * The control script's people activate gave a person waiting to be activated a temporary
+     * password and enabled them; detail: person. Never a password.
+     */
+    public static final String PERSON_ACTIVATED = "auth.person_activated";
+    /**
+     * keycloak-setup disabled a person whose temporary password went unused for longer than
+     * KILNMARK_PEOPLE_ACTIVATION_HOURS, as the control script reported it; detail: person.
+     */
+    public static final String PERSON_DISABLED = "auth.person_disabled";
+    /** The server refused to start: its deployment mode (ADR 0051); detail: reason. */
+    public static final String START_REFUSED = "server.start_refused";
 
     /** A designer token's unmask grant waits for a second admin (ADR 0038); detail: name. */
     public static final String UNMASK_REQUESTED = "unmask.requested";
@@ -145,7 +157,7 @@ public class AuditLog {
     /** Every kind of event, for the API's filter. */
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
         SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, MAX_RUNS_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
-        SIGN_OUT, PERSON_ADDED, PEOPLE_IMPORTED, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED, SCHEDULE_SET,
+        SIGN_OUT, PERSON_ADDED, PEOPLE_IMPORTED, PERSON_ACTIVATED, PERSON_DISABLED, START_REFUSED, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED, SCHEDULE_SET,
         SCHEDULE_DELETED, SCHEDULE_PAUSED, STARTER_PACK_ADDED, STARTER_PACK_REMOVED, STARTER_PEOPLE);
 
     /** The most events one request returns. */

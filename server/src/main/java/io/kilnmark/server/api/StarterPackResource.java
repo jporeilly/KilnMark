@@ -99,8 +99,8 @@ public class StarterPackResource {
     @RolesAllowed(AccessRole.ADMIN_ROLE)
     @Operation(summary = "Record what the example people step did", description = "The control script's starter "
         + "people, and its up, tell Kilnmark what keycloak-setup did to the Starter Pack's example people, so its "
-        + "audit log holds it (starter.people): action is add, new-password, remove or adopt (people of an earlier "
-        + "version brought into the pack), people the kilnmark.com addresses. Kilnmark holds no Keycloak credential "
+        + "audit log holds it (starter.people): action is add, new-password or remove, people the kilnmark.com "
+        + "addresses. Kilnmark holds no Keycloak credential "
         + "and changes nothing here. Refused (409) on a production install. Role: admin.")
     @APIResponses({
         @APIResponse(responseCode = "204", description = "Recorded"),

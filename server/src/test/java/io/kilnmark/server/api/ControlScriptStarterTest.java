@@ -155,6 +155,20 @@ class ControlScriptStarterTest {
             "and not offered in .env.example");
         assertTrue(setup.contains("KILNMARK_STARTER: ${KILNMARK_STARTER:-}")
             && setup.contains("KILNMARK_MODE: ${KILNMARK_MODE:-}"), "setup knows the mode itself");
+        // The one-offs' secrets never go in their environment, which podman-compose puts on podman's
+        // command line: they read them from config/.env, mounted read-only.
+        String samples = c.substring(c.indexOf("\n  samples-db:\n"), c.indexOf("\n  kilnmark:\n"));
+        for (String[] one : new String[][] {{"keycloak-setup", setup}, {"samples-db", samples}}) {
+            assertTrue(one[1].contains("- ${KILNMARK_ENV_FILE:-../../config/.env}:/run/kilnmark/env:ro,z"), one[0]);
+            for (String secret : List.of("PASSWORD}", "SECRET}", "PASSWORD:?", "SECRET:?", "PASSWORD:-", "TOKEN}")) {
+                assertFalse(one[1].contains(secret), one[0] + " has a secret in its environment: " + secret);
+            }
+        }
+        String samplesScript = Files.readString(Path.of("../containers/postgres/kilnmark-samples-db.sh"));
+        assertTrue(script.contains("KC_ADMIN_PASSWORD=\"$(setting_from_file KILNMARK_KEYCLOAK_ADMIN_PASSWORD)\"")
+            && script.contains("KILNMARK_OIDC_CLIENT_SECRET=\"$(setting_from_file KILNMARK_OIDC_CLIENT_SECRET)\""));
+        assertTrue(samplesScript.contains("PGPASSWORD=$(setting_from_file KILNMARK_DB_PASSWORD)")
+            && samplesScript.contains("KILNMARK_SAMPLES_DB_PASSWORD=$(setting_from_file KILNMARK_SAMPLES_DB_PASSWORD)"));
     }
 
     /** The example people's password as the tests type it, on the scripts' standard input. */
@@ -176,7 +190,7 @@ class ControlScriptStarterTest {
             && sh.contains("run_people_setup import < <(printf '%s\\n' \"$person_password\"; cat -- \"$file\") || ok=false"),
             "on keycloak-setup's standard input, from printf (a builtin) and the file");
         assertTrue(sh.contains("read -r -s -p \"A temporary password for them")
-            && sh.contains("read -r -s -p \"A temporary password for everyone in the file"), "typed with the echo off");
+            && sh.contains("read -r -s -p \"A temporary password for $1"), "typed with the echo off");
         assertTrue(ps.contains("$out = @($Lines | & $script:Engine @base run --rm -T keycloak-setup 2>&1 |"),
             "on keycloak-setup's standard input");
         assertTrue(ps.contains("$a = Read-Host -AsSecureString $Prompt"), "typed, not shown");
@@ -234,18 +248,22 @@ class ControlScriptStarterTest {
             assertTrue(out.contains("KILNMARK_MODE in config") && !out.contains("does not work"), v + ": " + out);
         }
 
-        // Upgrading an install from before there were modes: with KILNMARK_KEYCLOAK_DEMO_PASSWORD it has
-        // had the example people, so it becomes a Starter Pack install; with no sign, production.
-        Up demo = e.up(Map.of("KILNMARK_MODE", "", "COMPOSE_PROFILES", "auth", "KILNMARK_KEYCLOAK_DEMO_PASSWORD",
-            "old-demo-0123456789"), null);
-        assertEquals("starter-pack", demo.env().get("KILNMARK_MODE"), demo.out());
-        assertTrue(demo.out().contains("is retired: delete it"), demo.out());
-        assertEquals("production", e.up(Map.of("KILNMARK_MODE", ""), null).env().get("KILNMARK_MODE"));
-        // and production refuses to start while KILNMARK_KEYCLOAK_DEMO_PASSWORD is set
-        Up refused = e.up(Map.of("KILNMARK_MODE", "production", "KILNMARK_KEYCLOAK_DEMO_PASSWORD", "old-demo-0123456789"),
-            null);
-        assertTrue(refused.out().contains("may only be a Starter Pack install") && !refused.out().contains("does not work"),
-            refused.out());
+        // An install from before there were modes (0.1.1 or earlier, a preview) is never upgraded: no
+        // mode is chosen for it, and it does not start; whatever else its settings hold
+        for (Map<String, String> old : List.<Map<String, String>>of(Map.of("KILNMARK_MODE", ""),
+            Map.of("KILNMARK_MODE", "", "KILNMARK_KEYCLOAK_DEMO_PASSWORD", "old-demo-0123456789", "COMPOSE_PROFILES", "auth"))) {
+            Up refused = e.up(old, null);
+            assertTrue(refused.out().contains("predates deployment modes") && !refused.out().contains("does not work"),
+                refused.out());
+            assertEquals("", refused.env().getOrDefault("KILNMARK_MODE", ""), "no mode is chosen for it");
+        }
+        // the activation window, 1 to 720 hours
+        for (String hours : List.of("0", "721", "72h", "-1", "1e2")) {
+            String out = e.up(Map.of("KILNMARK_MODE", "production", "KILNMARK_PEOPLE_ACTIVATION_HOURS", hours), null).out();
+            assertTrue(out.contains("KILNMARK_PEOPLE_ACTIVATION_HOURS in config") && !out.contains("does not work"), hours + ": " + out);
+        }
+        assertFalse(e.up(Map.of("KILNMARK_MODE", "production", "KILNMARK_PEOPLE_ACTIVATION_HOURS", "720"), null).out()
+            .contains("KILNMARK_PEOPLE_ACTIVATION_HOURS in config"));
 
         // a folder of your own by its full path only: a bare name would mount a volume of Kilnmark's own
         for (String bare : List.of("keys", "pgdata", "share/x")) {
@@ -269,9 +287,9 @@ class ControlScriptStarterTest {
             .contains("This is a production install"), "never on a production install");
         assertTrue(p.run(Map.of("KILNMARK_MODE", "starter-pack", "COMPOSE_PROFILES", "auth"))
             .contains("Set KILNMARK_STARTER=allowed"), "not allowed");
-        // a Starter Pack install, allowed, with Keycloak: it goes on, to the engine, with the typed password
-        assertTrue(p.run(Map.of("KILNMARK_MODE", "starter-pack", "COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed"))
-            .contains("does not work"), "allowed: it would run keycloak-setup");
+        // a Starter Pack install, allowed, with Keycloak: on to the engine, to read the recorded mode
+        String allowed = p.run(Map.of("KILNMARK_MODE", "starter-pack", "COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed"));
+        assertTrue(allowed.contains("does not work") || allowed.contains("own record does not say"), allowed);
         // too short a password stops it first
         stdin = "short";
         try {
@@ -344,6 +362,13 @@ class ControlScriptStarterTest {
         assertTrue(out.contains("keycloak-setup: got a password"), out);
         assertTrue(out.contains("with the password you gave"), out);
         assertFalse(out.contains(PEOPLE_PASSWORD), "the password was shown: " + out);
+        // what Kilnmark recorded at its first start decides, not config/.env alone
+        for (String recorded : List.of("production", "")) {
+            String refused = ok.run(PEOPLE_ALLOWED, Map.of("FAKE_RECORDED_MODE", recorded.isEmpty() ? " " : recorded),
+                "starter", true);
+            assertTrue(refused.contains("own record does not say this is a Starter Pack install")
+                && !refused.contains("keycloak-setup: got a password"), refused);
+        }
     }
 
     /** A person's temporary password as the tests type it. */
@@ -406,7 +431,8 @@ class ControlScriptStarterTest {
             .out().contains("kilnmark.com addresses are the Starter Pack's example people"));
         for (String[] bad : new String[][] {{"rita@bank.example\nRita\nOkoro\nkilnmark-viewers\nshort", "12 characters or more"},
             {"rita@bank.example\n\nOkoro\nkilnmark-viewers\n" + PERSON_PASSWORD, "a first and a last name"},
-            {"rita@bank.example\nRita\nOkoro\n ; \n" + PERSON_PASSWORD, "at least one of Kilnmark's groups"}}) {
+            {"rita@bank.example\nRita\nOkoro\n ; \n" + PERSON_PASSWORD, "at least one of Kilnmark's groups"},
+            {"rita@bank.example\nRita\nOkoro\nkilnmark-viewers\ntab\tinside-0123456789", "control character"}}) {
             Admin refused = a.run(WITH_KEYCLOAK, ADD, bad[0], true);
             assertTrue(refused.out().contains(bad[1]) && !refused.out().contains("keycloak-setup:"), refused.out());
         }
@@ -425,33 +451,60 @@ class ControlScriptStarterTest {
             assertTrue(refused.out().contains(key + " is for one run of the control script only")
                 && !refused.out().contains("keycloak-setup:"), refused.out());
         }
+        // Kilnmark must answer first, so nobody is made without a record (port 9: nothing listens)
+        for (List<String> args : List.of(ADD, List.of("people", "import", EXAMPLE_CSV), List.of("people", "activate", "rita@bank.example"))) {
+            Admin silent = a.run(Map.of("KILNMARK_MODE", "production", "COMPOSE_PROFILES", "auth", "KILNMARK_PORT", "9"), args,
+                typed, true);
+            assertTrue(silent.out().contains("Kilnmark does not answer") && !silent.out().contains("keycloak-setup:"),
+                silent.out());
+        }
         // setup fails: said, nothing recorded, the password still never shown
         Admin failed = a.run(WITH_KEYCLOAK, ADD, typed, false);
-        assertTrue(failed.out().contains("Nobody was made"), failed.out());
+        assertTrue(failed.out().contains("keycloak-setup stopped"), failed.out());
         assertFalse(failed.out().contains(PERSON_PASSWORD), failed.out());
         assertTrue(failed.posted().isEmpty());
 
-        // import: the shipped example file and one password reach setup; recorded, never with the password
-        Admin imported = a.run(WITH_KEYCLOAK, List.of("people", "import", EXAMPLE_CSV), PERSON_PASSWORD, true);
+        // import on production: nobody is given a password (each waits, disabled, for activate)
+        Admin imported = a.run(WITH_KEYCLOAK, List.of("people", "import", EXAMPLE_CSV), "", true);
         assertTrue(imported.out().contains("keycloak-setup: person [import] [] [] [] []"), imported.out());
-        assertTrue(imported.out().contains("keycloak-setup: got a password"), imported.out());
-        assertFalse(imported.out().contains(PERSON_PASSWORD) || imported.logs().contains(PERSON_PASSWORD),
-            "the password was shown");
+        assertTrue(imported.out().contains("people import: made 1") && !imported.out().contains(PERSON_PASSWORD), imported.out());
+        assertTrue(imported.out().contains("people activate EMAIL"), imported.out());
         assertEquals(List.of("{\"via\":\"import\",\"made\":[{\"person\":\"priya.shah@example.com\",\"groups\":"
             + "\"kilnmark-designers;kilnmark-sensitive-data\"}],\"kept\":[],\"refused\":0}"), imported.posted());
-        // an import setup refused is recorded too, with how many lines it refused
-        Admin refusedFile = a.run(WITH_KEYCLOAK, List.of("people", "import", EXAMPLE_CSV), PERSON_PASSWORD, false);
-        assertTrue(refusedFile.out().contains("Nobody was made"), refusedFile.out());
-        assertEquals(List.of("{\"via\":\"import\",\"made\":[],\"kept\":[],\"refused\":2}"), refusedFile.posted());
-        assertTrue(a.run(WITH_KEYCLOAK, List.of("people", "import", EXAMPLE_CSV + ".missing"), PERSON_PASSWORD, true).out()
-            .contains("Say which file"));
-        assertTrue(a.run(WITH_KEYCLOAK, List.of("people", "import", EXAMPLE_CSV), "short", true).out()
+        // on a Starter Pack install the class shares one temporary password, never shown
+        Map<String, String> starter = Map.of("KILNMARK_MODE", "starter-pack", "COMPOSE_PROFILES", "auth");
+        Admin classImport = a.run(starter, List.of("people", "import", EXAMPLE_CSV), PERSON_PASSWORD, true);
+        assertTrue(classImport.out().contains("keycloak-setup: got a password"), classImport.out());
+        assertFalse(classImport.out().contains(PERSON_PASSWORD) || classImport.logs().contains(PERSON_PASSWORD),
+            "the password was shown");
+        assertTrue(a.run(starter, List.of("people", "import", EXAMPLE_CSV), "short", true).out()
             .contains("12 characters or more"));
-        // list: who is there, and who must still choose their password; nothing recorded
+        // an import setup refused is recorded too, with how many lines it refused
+        Admin refusedFile = a.run(WITH_KEYCLOAK, List.of("people", "import", EXAMPLE_CSV), "", false);
+        assertTrue(refusedFile.out().contains("keycloak-setup stopped"), refusedFile.out());
+        assertEquals(List.of("{\"via\":\"import\",\"made\":[],\"kept\":[],\"refused\":2}"), refusedFile.posted());
+        assertTrue(a.run(WITH_KEYCLOAK, List.of("people", "import", EXAMPLE_CSV + ".missing"), "", true).out()
+            .contains("Say which file"));
+        // activate: one person, their own temporary password, never shown; recorded
+        Admin activated = a.run(WITH_KEYCLOAK, List.of("people", "activate", "Rita@Bank.example"), PERSON_PASSWORD, true);
+        assertTrue(activated.out().contains("keycloak-setup: person [activate] [rita@bank.example]"), activated.out());
+        assertTrue(activated.out().contains("keycloak-setup: got a password"), activated.out());
+        assertFalse(activated.out().contains(PERSON_PASSWORD) || activated.logs().contains(PERSON_PASSWORD),
+            "the password was shown");
+        assertEquals(List.of("{\"via\":\"activate\",\"activated\":[\"rita@bank.example\"]}"), activated.posted());
+        Admin notActivated = a.run(WITH_KEYCLOAK, List.of("people", "activate", "rita@bank.example"), PERSON_PASSWORD, false);
+        assertTrue(notActivated.out().contains("Nobody was activated") && notActivated.posted().isEmpty(), notActivated.out());
+        for (String[] bad : new String[][] {{"rita", PERSON_PASSWORD, "not an email address"},
+            {"rita@bank.example", "short", "12 characters or more"},
+            {"rita@bank.example", "tab\tinside-0123456789", "control character"}}) {
+            Admin refused = a.run(WITH_KEYCLOAK, List.of("people", "activate", bad[0]), bad[1], true);
+            assertTrue(refused.out().contains(bad[2]) && !refused.out().contains("keycloak-setup:"), refused.out());
+        }
+        // list: who is there, and who is waiting; anyone setup disabled for an unused password is recorded
         Admin list = a.run(WITH_KEYCLOAK, List.of("people", "list"), "", true);
-        assertTrue(list.out().contains("rita@bank.example groups=kilnmark-admins must-choose-password=yes")
+        assertTrue(list.out().contains("rita@bank.example groups=kilnmark-admins status=active must-choose-password=yes")
             && list.out().contains("people: 1"), list.out());
-        assertTrue(list.posted().isEmpty());
+        assertEquals(List.of("{\"via\":\"expire\",\"disabled\":[\"old@bank.example\"]}"), list.posted());
     }
 
     /**
@@ -463,6 +516,10 @@ class ControlScriptStarterTest {
             List<String> posted = java.util.Collections.synchronizedList(new ArrayList<>());
             var server = com.sun.net.httpserver.HttpServer.create(
                 new java.net.InetSocketAddress(java.net.InetAddress.getLoopbackAddress(), 0), 0);
+            server.createContext("/api/v1/audit", x -> {
+                x.sendResponseHeaders(200, -1);
+                x.close();
+            });
             server.createContext("/api/v1/auth/people", x -> {
                 posted.add(new String(x.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                 x.sendResponseHeaders(204, -1);
@@ -486,7 +543,7 @@ class ControlScriptStarterTest {
     private static Path adminRoot(boolean windows, Map<String, String> settings, Api api) throws IOException {
         Path root = installRoot(windows);
         Map<String, String> all = new LinkedHashMap<>(settings);
-        all.put("KILNMARK_PORT", String.valueOf(api.port()));
+        all.putIfAbsent("KILNMARK_PORT", String.valueOf(api.port()));
         writeEnv(root, all);
         return root;
     }
@@ -662,6 +719,8 @@ class ControlScriptStarterTest {
             Path f = dir.resolve(name + ".cmd");
             Files.writeString(f, "@echo off\r\n"
                 + "if \"%1 %2\"==\"compose version\" exit /b 0\r\n"
+                + "if not defined FAKE_RECORDED_MODE set FAKE_RECORDED_MODE=starter-pack\r\n"
+                + "echo %* | %SystemRoot%\\System32\\findstr.exe /c:\"psql\" > nul && (echo %FAKE_RECORDED_MODE%& exit /b 0)\r\n"
                 + "set pw=\r\n"
                 + "set /p pw=\r\n"
                 + "echo podman run --name kilnmark_x -e KC_ADMIN_PASSWORD=" + LEAKED + " quay.io/keycloak/keycloak 1>&2\r\n"
@@ -670,7 +729,8 @@ class ControlScriptStarterTest {
                 + "echo keycloak-setup: seen [%KILNMARK_MODE%] [%KILNMARK_STARTER%]\r\n"
                 + "if not defined KILNMARK_PEOPLE_ACTION exit /b " + exit + "\r\n"
                 + "echo keycloak-setup: person [%KILNMARK_PEOPLE_ACTION%] [%KILNMARK_PERSON_EMAIL%] [%KILNMARK_PERSON_FIRST_NAME%] [%KILNMARK_PERSON_LAST_NAME%] [%KILNMARK_PERSON_GROUPS%]\r\n"
-                + (ok ? "if \"%KILNMARK_PEOPLE_ACTION%\"==\"list\" (echo keycloak-setup: person rita@bank.example groups=kilnmark-admins must-choose-password=yes& echo keycloak-setup: people: 1)\r\n"
+                + (ok ? "if \"%KILNMARK_PEOPLE_ACTION%\"==\"list\" (echo keycloak-setup: disabled old@bank.example: their temporary password was not used within 72 hours& echo keycloak-setup: person rita@bank.example groups=kilnmark-admins status=active must-choose-password=yes& echo keycloak-setup: people: 1)\r\n"
+                    + "if \"%KILNMARK_PEOPLE_ACTION%\"==\"activate\" (echo keycloak-setup: activated %KILNMARK_PERSON_EMAIL%: they choose their own password at their first sign-in& exit /b 0)\r\n"
                     + "if \"%KILNMARK_PEOPLE_ACTION%\"==\"import\" (echo keycloak-setup: made priya.shah@example.com ^(kilnmark-designers;kilnmark-sensitive-data^): they choose their own password at their first sign-in& echo keycloak-setup: people import: made 1, already there 0, refused 0)\r\n"
                     + "if not \"%KILNMARK_PEOPLE_ACTION%\"==\"add\" exit /b 0\r\n"
                     + "if \"%KILNMARK_PERSON_EMAIL:~0,5%\"==\"here.\" (echo keycloak-setup: left %KILNMARK_PERSON_EMAIL% as they are: someone with this address is here already) else (echo keycloak-setup: made %KILNMARK_PERSON_EMAIL% ^(%KILNMARK_PERSON_GROUPS%^): they choose their own password at their first sign-in)\r\n"
@@ -681,6 +741,7 @@ class ControlScriptStarterTest {
         Path f = dir.resolve(name + ".sh");
         Files.writeString(f, "#!/bin/bash\n"
             + "if [ \"$1 $2\" = \"compose version\" ]; then exit 0; fi\n"
+            + "case \"$*\" in *psql*) echo \"${FAKE_RECORDED_MODE:-starter-pack}\"; exit 0 ;; esac\n"
             + "pw=''; IFS= read -r -t 2 pw || true\n"
             + "echo \"podman run --name kilnmark_x -e KC_ADMIN_PASSWORD=" + LEAKED + " quay.io/keycloak/keycloak\" >&2\n"
             + "echo \"['podman', 'run', '-e', 'KILNMARK_OIDC_CLIENT_SECRET=" + LEAKED + "']\" >&2\n"
@@ -689,7 +750,9 @@ class ControlScriptStarterTest {
             + "if [ -n \"${KILNMARK_PEOPLE_ACTION-}\" ]; then\n"
             + "  echo \"keycloak-setup: person [$KILNMARK_PEOPLE_ACTION] [${KILNMARK_PERSON_EMAIL-}] [${KILNMARK_PERSON_FIRST_NAME-}] [${KILNMARK_PERSON_LAST_NAME-}] [${KILNMARK_PERSON_GROUPS-}]\"\n"
             + (ok ? "  case \"$KILNMARK_PEOPLE_ACTION\" in\n"
-                + "    list) echo \"keycloak-setup: person rita@bank.example groups=kilnmark-admins must-choose-password=yes\"; echo \"keycloak-setup: people: 1\" ;;\n"
+                + "    list) echo \"keycloak-setup: disabled old@bank.example: their temporary password was not used within 72 hours\"\n"
+                + "      echo \"keycloak-setup: person rita@bank.example groups=kilnmark-admins status=active must-choose-password=yes\"; echo \"keycloak-setup: people: 1\" ;;\n"
+                + "    activate) echo \"keycloak-setup: activated $KILNMARK_PERSON_EMAIL: they choose their own password at their first sign-in\" ;;\n"
                 + "    import) echo \"keycloak-setup: lines [$(cat | wc -l | tr -d ' ')]\"\n"
                 + "      echo \"keycloak-setup: made priya.shah@example.com (kilnmark-designers;kilnmark-sensitive-data): they choose their own password at their first sign-in\"\n"
                 + "      echo \"keycloak-setup: people import: made 1, already there 0, refused 0\" ;;\n"

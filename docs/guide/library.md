@@ -28,9 +28,11 @@ One sample, `sample-volume`, reads four million made-up sales, enough for a run 
 run it and open the run's page to see where each node spent its time, how many rows a second went
 through, and which node held the others up.
 
-An admin can stop offering the samples on a server that should hold its own pipelines only: under
-**Settings**, **Administration**, clear **Offer the samples**. The Samples tab then says so, and the
-samples' API refuses; samples already added stay. The templates are offered either way.
+The samples are on a Starter Pack install only (INSTALL.md, "Choosing a deployment"). A production
+install never has them, by any route: its Samples tab says so, and the samples' API, **Add
+samples** and the sample tables included, refuses. On a Starter Pack install an admin can stop
+offering them too: under **Settings**, **Administration**, clear **Offer the samples**; samples
+already added stay. The templates are offered on every install.
 
 ### Samples ready to run: the Starter Pack
 

@@ -87,4 +87,6 @@ statement it runs, works after a restore. A restored graph with labels of its ow
   who reads them.
 - A full export in open formats, for exit (DORA Article 28(8)), is a separate item.
 - With the bundled Keycloak, a backup is also as sensitive as Keycloak's database: it holds the
-  realm's password hashes and one-time code secrets.
+  realm's password hashes, one-time code secrets, signing keys and the client secret.
+- A backup carries its deployment mode (ADR 0051): `restore` restores it only into an install of the
+  same mode, and refuses one from before there were modes, before it stops anything.

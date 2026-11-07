@@ -1581,7 +1581,8 @@ export const samplesApi = {
       body: JSON.stringify({ source, schema }),
     }),
   /** Whether this server offers the samples; an admin turns them off or on. */
-  offered: () => call<{ offered: boolean }>("/api/v1/samples/offered"),
+  /** allowed: false on a production install, which never has the samples (ADR 0051). */
+  offered: () => call<{ offered: boolean; allowed?: boolean }>("/api/v1/samples/offered"),
   setOffered: (offered: boolean) =>
     call<{ offered: boolean }>("/api/v1/samples/offered", { method: "PUT", body: JSON.stringify({ offered }) }),
 };

@@ -20,7 +20,7 @@ $Project = 'kilnmark'; if ($env:KILNMARK_PROJECT) { $Project = $env:KILNMARK_PRO
 # Compose fills ${NAME} from this process's environment before config\.env. These must mean what
 # config\.env says, as this script reads them (ADR 0051), so a value set outside never counts.
 $OneRun = @('KILNMARK_STARTER_PEOPLE_ACTION', 'KILNMARK_PEOPLE_ACTION', 'KILNMARK_PERSON_EMAIL', 'KILNMARK_PERSON_FIRST_NAME', 'KILNMARK_PERSON_LAST_NAME', 'KILNMARK_PERSON_GROUPS')
-foreach ($n in (@('KILNMARK_MODE', 'KILNMARK_STARTER', 'KILNMARK_KEYCLOAK_DEMO_PASSWORD') + $OneRun)) {
+foreach ($n in (@('KILNMARK_MODE', 'KILNMARK_STARTER') + $OneRun)) {
     Remove-Item ('Env:' + $n) -ErrorAction SilentlyContinue
 }
 $Launchers = @('kilnmark.ps1', 'kilnmark.cmd', 'start-kilnmark.cmd', 'stop-kilnmark.cmd', 'create-shortcut.ps1', 'kilnmark.ico')
@@ -59,13 +59,15 @@ Kilnmark control script.
                        turned on, and starter people adds the example people. A production
                        install asks how people sign in (-Auth: the bundled Keycloak). With
                        the bundled Keycloak, install offers to add Kilnmark's first admin.
-  people add | people import FILE | people list
+  people add | people import FILE | people activate EMAIL | people list
                        With the bundled Keycloak, in either mode: add one person of your own (any
                        of Kilnmark's groups, admins included; install asks for the first admin
-                       this way), add people from a CSV file (no admins; the example is
-                       people.example.csv), or list who is there and who has not yet chosen their
-                       own password. Each gets a temporary password you type (or pipe in), never
-                       shown. Someone already there is left as they are.
+                       this way), add people from a CSV file (no admins; on production no one who
+                       sees sensitive values, and each waits, disabled, for people activate; the
+                       example is people.example.csv), activate one, or list who is there. A
+                       temporary password is typed (or piped in), never shown, and goes unused for
+                       KILNMARK_PEOPLE_ACTIVATION_HOURS (72) at most. Someone already there is left
+                       as they are.
   starter people [-NewPassword | -Remove]
                        On a Starter Pack install, the five example people in the bundled Keycloak
                        (with KILNMARK_STARTER=allowed): add them, give them all a new password, or
@@ -169,6 +171,16 @@ function Test-StarterMode { return ((Get-Setting 'KILNMARK_MODE') -ceq 'starter-
 # Whether the Starter Pack's example data (its database) may be here: on a Starter Pack install.
 # Kept apart from the example people (Test-StarterMode), which only a Starter Pack install has.
 function Test-SamplesAllowed { return (Test-StarterMode) }
+
+# The deployment mode Kilnmark recorded in its own database at its first start (ADR 0051), read with
+# the database's own tools: what decides, not config\.env alone. Empty when nothing is recorded, or
+# the database does not answer.
+function Get-RecordedMode {
+    $base = Get-ComposeArgs
+    $out = (& $script:Engine @base exec -T postgres psql -U kilnmark -d kilnmark -X -q -At -c "SELECT value FROM kilnmark.server_setting WHERE key = 'deployment_mode'" 2> $null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) { return '' }
+    return $out
+}
 
 function Get-ComposeArgs {
     Select-Engine
@@ -479,20 +491,10 @@ function New-Settings([string]$Example) {
 function Update-Settings {
     $env = Join-Path $script:Root 'config\.env'
     if (-not (Test-Path $env)) { return }
-    $demo = Get-Setting 'KILNMARK_KEYCLOAK_DEMO_PASSWORD'
+    # Every install since deployment modes (ADR 0051) has one; an install from before them (0.1.1 or
+    # earlier, a preview) is never upgraded.
     if (-not (Get-Setting 'KILNMARK_MODE')) {
-        # An install made before there were modes (ADR 0051). One that made the example people (an
-        # earlier version did, with KILNMARK_KEYCLOAK_DEMO_PASSWORD) may only be a Starter Pack install.
-        if ($demo) {
-            Set-Line $env 'KILNMARK_MODE' 'starter-pack'
-            Write-Host 'Set KILNMARK_MODE=starter-pack in config\.env: this install has had the example people'
-            Write-Host '(KILNMARK_KEYCLOAK_DEMO_PASSWORD), so it is a Starter Pack install, for training and development.'
-            Write-Host 'It never becomes a production one: production needs a fresh install.'
-        } else {
-            Set-Line $env 'KILNMARK_MODE' 'production'
-            Write-Host 'Set KILNMARK_MODE=production in config\.env (an install made before there were modes). Should it'
-            Write-Host 'have had the example people, Kilnmark says so when it starts: then set KILNMARK_MODE=starter-pack.'
-        }
+        Fail 'This install predates deployment modes (release 0.1.1 or earlier, a preview), so it cannot be upgraded: install Kilnmark afresh. Back up first anything you mean to keep by hand. Nothing was changed.'
     }
     Assert-Mode
     # Each is for one run of keycloak-setup, set by this script only: in config\.env every start would take it.
@@ -503,11 +505,9 @@ function Update-Settings {
     if ((Test-StarterMode) -and -not (',' + ((Get-Setting 'COMPOSE_PROFILES') -replace '\s', '') + ',').Contains(',auth,')) {
         Fail 'A Starter Pack install (KILNMARK_MODE=starter-pack) needs the bundled Keycloak, where its example people are: put auth in COMPOSE_PROFILES in config\.env, with the Keycloak settings install writes. Nothing was changed.'
     }
-    # Retired (ADR 0051): the example people take a password typed at starter people now.
-    if ($demo) {
-        if (-not (Test-StarterMode)) { Fail 'KILNMARK_KEYCLOAK_DEMO_PASSWORD is set: this install has had the example people, so it may only be a Starter Pack install (KILNMARK_MODE=starter-pack). Production needs a fresh install. Nothing was changed.' }
-        Write-Host 'KILNMARK_KEYCLOAK_DEMO_PASSWORD is retired: delete it from config\.env. The example people take a password'
-        Write-Host 'you type at kilnmark.cmd starter people -NewPassword.'
+    $hours = Get-Setting 'KILNMARK_PEOPLE_ACTIVATION_HOURS'
+    if ($hours -and -not ($hours -cmatch '^[0-9]{1,3}$' -and [int]$hours -ge 1 -and [int]$hours -le 720)) {
+        Fail 'KILNMARK_PEOPLE_ACTIVATION_HOURS in config\.env is a whole number of hours from 1 to 720. Nothing was changed.'
     }
     if ((Test-SamplesAllowed) -and -not (Get-Setting 'KILNMARK_SAMPLES_DB_PASSWORD')) {
         Set-Line $env 'KILNMARK_SAMPLES_DB_PASSWORD' (New-RandomValue)
@@ -719,6 +719,12 @@ function Invoke-Upgrade([string[]]$Options) {
     if (-not ($archive -and (Test-Path $archive))) { Fail 'Say which release to upgrade to: kilnmark.cmd upgrade kilnmark-<version>.zip' }
     $archive = (Resolve-Path $archive).Path
     $old = Get-CurrentVersion
+    # An install from before deployment modes is never upgraded (ADR 0051): refused before anything
+    # changes, by config\.env and by what the database recorded.
+    Update-Settings
+    $recorded = Get-RecordedMode
+    if (-not $recorded) { Fail "Kilnmark's database has no deployment mode recorded (or does not answer: start it with kilnmark.cmd up first). An install from before deployment modes (release 0.1.1 or earlier, a preview) cannot be upgraded: install Kilnmark afresh. Nothing was changed." }
+    if ($recorded -cne (Get-Setting 'KILNMARK_MODE')) { Fail 'KILNMARK_MODE in config\.env differs from the mode Kilnmark recorded at its first start: set it back. Nothing was changed.' }
     Start-Log 'upgrade'
     Test-FileSignature $archive
     $versions = Join-Path $script:Root 'versions'
@@ -838,10 +844,9 @@ function Invoke-StarterOn {
 # production install it refuses a realm that has the example people: that stops here.
 function Invoke-PeopleAfterUp {
     if (-not (Wait-OneOff 'keycloak-setup')) {
-        if (-not (Test-StarterMode)) { Fail "keycloak-setup refused or did not finish. See why with: kilnmark.cmd logs keycloak-setup (a production install refuses a realm with the Starter Pack's example people: production needs a fresh install)." }
+        if (-not (Test-StarterMode)) { Fail 'keycloak-setup refused or did not finish. See why with: kilnmark.cmd logs keycloak-setup' }
         Write-Host 'Warning: keycloak-setup did not finish well. See why with: kilnmark.cmd logs keycloak-setup' -ForegroundColor Yellow
     }
-    if (-not (Test-StarterMode)) { return }
     $id = (& $script:Engine ps -a -q --filter ('label=com.docker.compose.project=' + $Project) --filter 'label=com.docker.compose.service=keycloak-setup' | Out-String).Trim()
     if (-not $id) { return }
     $id = ($id -split "`r?`n")[0].Trim()
@@ -849,7 +854,9 @@ function Invoke-PeopleAfterUp {
     # Only its latest run: it says "started" first.
     $start = 0
     for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i].StartsWith('keycloak-setup: started')) { $start = $i } }
-    Send-PeopleDone @($lines[$start..($lines.Count - 1)])
+    $latest = @($lines[$start..($lines.Count - 1)])
+    Send-OwnPeopleDone $latest 'expire'
+    if (Test-StarterMode) { Send-PeopleDone $latest }
 }
 
 # A request to Kilnmark's own API as the admin: the token reaches curl in a settings file in a new
@@ -878,7 +885,6 @@ function Send-PeopleDone([string[]]$Lines) {
         'add' = '^keycloak-setup: added ([a-z.]+@kilnmark\.com) \('
         'new-password' = '^keycloak-setup: gave ([a-z.]+@kilnmark\.com) the new password$'
         'remove' = '^keycloak-setup: removed ([a-z.]+@kilnmark\.com) \(a Starter Pack example person\)$'
-        'adopt' = '^keycloak-setup: brought ([a-z.]+@kilnmark\.com) into the Starter Pack'
     }
     foreach ($action in $patterns.Keys) {
         $people = @($Lines | ForEach-Object { if ($_ -cmatch $patterns[$action]) { '"' + $Matches[1] + '"' } })
@@ -904,6 +910,7 @@ function Read-PeoplePassword {
         $second = $null
     }
     if ($first.Length -lt 12) { Fail "The example people's password is 12 characters or more. Nothing was changed." }
+    if ($first -match '\p{Cc}') { Fail 'The password holds a control character (a tab, say), which it may not. Nothing was changed.' }
     return $first
 }
 
@@ -933,6 +940,7 @@ function Invoke-Starter([string[]]$Options) {
         if ((Get-Setting 'KILNMARK_STARTER') -ne 'allowed') { Fail 'Set KILNMARK_STARTER=allowed in config\.env first: the example people are only for trials and training.' }
         $password = Read-PeoplePassword
     }
+    if ((Get-RecordedMode) -cne 'starter-pack') { $password = $null; Fail "Kilnmark's own record does not say this is a Starter Pack install (or its database does not answer: start it with kilnmark.cmd up). Nothing was changed." }
     if ($action -eq 'remove') { Write-Host 'Asking keycloak-setup to remove the example people ...' } else { Write-Host 'Asking keycloak-setup to add the example people ...' }
     $base = Get-ComposeArgs
     $env:KILNMARK_STARTER_PEOPLE_ACTION = $action
@@ -1032,6 +1040,7 @@ function Read-Person([string]$Groups) {
     if (-not $first -or -not $last) { $password = $null; Write-NoPerson 'A person needs a first and a last name. Nobody was made.'; return $null }
     if (-not ($groupList -replace '[\s;,]', '')) { $password = $null; Write-NoPerson "A person needs at least one of Kilnmark's groups. Nobody was made."; return $null }
     if ($password.Length -lt 12) { $password = $null; Write-NoPerson 'The temporary password is 12 characters or more. Nobody was made.'; return $null }
+    if ($password -match '\p{Cc}') { $password = $null; Write-NoPerson 'The password holds a control character (a tab, say), which it may not. Nobody was made.'; return $null }
     return @{ Email = $email; First = $first; Last = $last; Groups = $groupList; Password = $password }
 }
 
@@ -1061,28 +1070,64 @@ function Invoke-PeopleSetup([string]$Action, $Person, [string[]]$Lines) {
     return , $out
 }
 
-# Tells Kilnmark what keycloak-setup did (its lines; add or import), so Kilnmark's audit log holds
-# it (auth.person_added for each person made, auth.people_imported for each import): who and which
-# groups, never a password.
+# Tells Kilnmark what keycloak-setup did (its lines; add, import, activate, or expire for an ordinary
+# start), so Kilnmark's audit log holds it: auth.person_added for each person made, with their
+# groups, auth.people_imported for each import, auth.person_activated, and auth.person_disabled for
+# each person disabled for an unused temporary password. Never a password.
 function Send-OwnPeopleDone([string[]]$Lines, [string]$Via) {
-    $made = @(); $kept = @(); $refused = '0'
+    $made = @(); $kept = @(); $refused = '0'; $activated = @(); $disabled = @()
     foreach ($line in $Lines) {
-        if ($line -cmatch '^keycloak-setup: made ([a-z0-9._%+@-]+) \(([a-z;-]+)\): they choose their own password') { $made += ('{"person":"' + $Matches[1] + '","groups":"' + $Matches[2] + '"}') }
+        if ($line -cmatch '^keycloak-setup: made ([a-z0-9._%+@-]+) \(([a-z;-]+)\): (they choose their own password|waiting to be activated)') { $made += ('{"person":"' + $Matches[1] + '","groups":"' + $Matches[2] + '"}') }
         elseif ($line -cmatch '^keycloak-setup: left ([a-z0-9._%+@-]+) as they are: someone with this address is here already') { $kept += ('"' + $Matches[1] + '"') }
         elseif ($line -cmatch '^keycloak-setup: people import: made [0-9]+, already there [0-9]+, refused ([0-9]+)') { $refused = $Matches[1] }
+        elseif ($line -cmatch '^keycloak-setup: activated ([a-z0-9._%+@-]+): they choose their own password') { $activated += ('"' + $Matches[1] + '"') }
+        elseif ($line -cmatch '^keycloak-setup: disabled ([a-z0-9._%+@-]+): their temporary password was not used') { $disabled += ('"' + $Matches[1] + '"') }
     }
-    if ($made.Count -eq 0 -and $kept.Count -eq 0 -and $Via -ne 'import') { return }
-    $code = Invoke-KilnmarkApi 'POST' '/api/v1/auth/people' ('{"via":"' + $Via + '","made":[' + ($made -join ',') + '],"kept":[' + ($kept -join ',') + '],"refused":' + $refused + '}')
-    if ($code -ne '204') { Write-Host ("Warning: Kilnmark did not record this in its audit log (HTTP " + $code + "); Keycloak's admin events have it.") -ForegroundColor Yellow }
+    $bodies = @()
+    # what an ordinary run of setup did, before the command's own work: its own record
+    if ($disabled.Count -gt 0) { $bodies += ('{"via":"expire","disabled":[' + ($disabled -join ',') + ']}') }
+    if ($Via -eq 'activate') {
+        if ($activated.Count -gt 0) { $bodies += ('{"via":"activate","activated":[' + ($activated -join ',') + ']}') }
+    } elseif ($Via -ne 'expire' -and ($made.Count -gt 0 -or $kept.Count -gt 0 -or $Via -eq 'import')) {
+        $bodies += ('{"via":"' + $Via + '","made":[' + ($made -join ',') + '],"kept":[' + ($kept -join ',') + '],"refused":' + $refused + '}')
+    }
+    foreach ($b in $bodies) {
+        $code = Invoke-KilnmarkApi 'POST' '/api/v1/auth/people' $b
+        if ($code -ne '204') { Write-Host ("Warning: Kilnmark did not record this in its audit log (HTTP " + $code + "); Keycloak's admin events have it.") -ForegroundColor Yellow }
+    }
+}
+
+# A temporary password, typed twice, not shown, at a console; else one line on standard input: $Whose
+# says whose. Never shown. Each person chooses their own at their first sign-in.
+function Read-TemporaryPassword([string]$Whose) {
+    if ([Console]::IsInputRedirected) {
+        $password = [Console]::In.ReadLine(); if ($null -eq $password) { $password = '' }; $password = $password.TrimEnd("`r")
+    } else {
+        $password = Read-Secret ('A temporary password for ' + $Whose + ', 12 characters or more (not shown)')
+        $again = Read-Secret 'The same again'
+        if ($password -cne $again) { $password = $null; $again = $null; Fail 'The two did not match. Nothing was changed.' }
+        $again = $null
+    }
+    if ($password.Length -lt 12) { $password = $null; Fail 'The temporary password is 12 characters or more. Nothing was changed.' }
+    if ($password -match '\p{Cc}') { $password = $null; Fail 'The password holds a control character (a tab, say), which it may not. Nothing was changed.' }
+    return $password
+}
+
+# Kilnmark must answer, as its admin, before anyone is made: a person is never made without being
+# recorded in its audit log.
+function Assert-KilnmarkAnswers {
+    $code = Invoke-KilnmarkApi 'GET' '/api/v1/audit?limit=1' ''
+    if ($code -ne '200') { Fail ('Kilnmark does not answer (HTTP ' + $code + '), so nobody was made or changed: a person is never made without a record in its audit log. Start it with kilnmark.cmd up, then try again.') }
 }
 
 # Makes the person Read-Person asked for, then records it. Keycloak must be up.
 function New-Person($Person) {
+    Assert-KilnmarkAnswers
     Write-Host ('Asking keycloak-setup to add ' + $Person.Email + ' ...')
     $out = Invoke-PeopleSetup 'add' $Person @($Person.Password)
     $Person.Password = $null
     $out | Out-Host
-    if (-not $script:PeopleOk) { Write-NoPerson 'keycloak-setup did not finish: see what it said above. Nobody was made.'; return $false }
+    if (-not $script:PeopleOk) { Send-OwnPeopleDone $out 'add'; Write-NoPerson 'keycloak-setup stopped: see what it said above.'; return $false }
     Send-OwnPeopleDone $out 'add'
     if (@($out | Where-Object { $_.StartsWith('keycloak-setup: made ' + $Person.Email + ' (', [StringComparison]::Ordinal) }).Count -gt 0) {
         Write-Host ($Person.Email + ' signs in to Kilnmark with that password, then chooses their own and sets up a one-time code.')
@@ -1106,34 +1151,50 @@ function Invoke-People([string[]]$Options) {
         'import' {
             if ($Options.Count -ne 2 -or -not (Test-Path -PathType Leaf $Options[1])) { Fail 'Say which file: kilnmark.cmd people import people.csv (an example: containers\keycloak\people.example.csv in the release).' }
             $file = (Resolve-Path $Options[1]).Path
-            if ([Console]::IsInputRedirected) {
-                $password = [Console]::In.ReadLine(); if ($null -eq $password) { $password = '' }; $password = $password.TrimEnd("`r")
-            } else {
-                $password = Read-Secret 'A temporary password for everyone in the file, 12 characters or more (not shown)'
-                $again = Read-Secret 'The same again'
-                if ($password -cne $again) { $password = $null; $again = $null; Fail 'The two did not match. Nobody was made.' }
-                $again = $null
-            }
-            if ($password.Length -lt 12) { $password = $null; Fail 'The temporary password is 12 characters or more. Nobody was made.' }
+            Assert-KilnmarkAnswers
+            # A class on a Starter Pack install shares one temporary password; on production nobody is
+            # given one: each waits, disabled, for people activate.
+            $lines = @([IO.File]::ReadAllLines($file, [Text.Encoding]::UTF8))
+            if (Test-StarterMode) { $lines = @(Read-TemporaryPassword 'everyone in the file') + $lines }
             Write-Host 'Asking keycloak-setup to add the people in the file ...'
-            $out = Invoke-PeopleSetup 'import' $null (@($password) + [IO.File]::ReadAllLines($file, [Text.Encoding]::UTF8))
-            $password = $null
+            $out = Invoke-PeopleSetup 'import' $null $lines
+            $lines = $null
             $out | Out-Host
             Send-OwnPeopleDone $out 'import'
-            if (-not $script:PeopleOk) { Fail 'Nobody was made: see the lines named above.' }
-            Write-Host 'Each person made signs in with that password, then chooses their own and sets up a one-time code.'
+            if (-not $script:PeopleOk) { Fail 'keycloak-setup stopped: see what it said above (how many it made, if any, before it stopped).' }
+            if (Test-StarterMode) {
+                Write-Host 'Each person made signs in with that password, then chooses their own and sets up a one-time code.'
+            } else {
+                Write-Host ('Each person made waits, disabled, until you give them a temporary password of their own: ' + (Join-Path $script:Root 'kilnmark.cmd') + ' people activate EMAIL')
+            }
+        }
+        'activate' {
+            if ($Options.Count -ne 2) { Fail 'Say whom: kilnmark.cmd people activate EMAIL' }
+            $email = ($Options[1] -replace '\s', '').ToLowerInvariant()
+            if ($email -cnotmatch '^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$') { Fail 'That is not an email address. Nothing was changed.' }
+            Assert-KilnmarkAnswers
+            $password = Read-TemporaryPassword $email
+            Write-Host ('Asking keycloak-setup to activate ' + $email + ' ...')
+            $out = Invoke-PeopleSetup 'activate' @{ Email = $email; First = ''; Last = ''; Groups = '' } @($password)
+            $password = $null
+            $out | Out-Host
+            Send-OwnPeopleDone $out 'activate'
+            if (-not $script:PeopleOk) { Fail 'Nobody was activated: see what keycloak-setup said above.' }
+            Write-Host ($email + ' signs in to Kilnmark with that password, then chooses their own and sets up a one-time code.')
         }
         'list' {
             if ($Options.Count -gt 1) { Fail 'people list takes no options.' }
             $out = Invoke-PeopleSetup 'list' $null @()
             if (-not $script:PeopleOk) { $out | Out-Host; Fail 'keycloak-setup did not finish: see what it said above.' }
+            Send-OwnPeopleDone $out 'expire'
             foreach ($line in $out) {
-                if ($line.StartsWith('keycloak-setup: person ')) { Write-Host $line.Substring(23) }
+                if ($line.StartsWith('keycloak-setup: disabled ')) { Write-Host $line.Substring(16) }
+                elseif ($line.StartsWith('keycloak-setup: person ')) { Write-Host $line.Substring(23) }
                 elseif ($line.StartsWith('keycloak-setup: people: ')) { Write-Host ('people: ' + $line.Substring(24)) }
             }
-            Write-Host '(must-choose-password=yes: they have not yet signed in with their temporary password.)'
+            Write-Host '(status=waiting-to-be-activated: give them a temporary password with people activate EMAIL; must-choose-password=yes: they have not yet signed in with it.)'
         }
-        default { Fail 'Say what: kilnmark.cmd people add | people import FILE | people list' }
+        default { Fail 'Say what: kilnmark.cmd people add | people import FILE | people activate EMAIL | people list' }
     }
 }
 
@@ -1161,6 +1222,8 @@ function Invoke-Backup([string[]]$Options) {
     $dir = Join-Path $dest ('kilnmark-' + $now.ToString('yyyyMMddTHHmmssZ'))
     if (Test-Path $dir) { Fail ($dir + ' already exists: wait a second and run again.') }
     New-Item -ItemType Directory $dir -Force | Out-Null
+    # yours only, wherever it is: it holds the database, the keys and, with Keycloak, its secrets
+    Protect-Folder $dir
     $bad = { param($what) Fail ('Backup failed: ' + $what + '. Nothing usable is in ' + $dir + '; delete it and run again.') }
     $pg = Get-ContainerId 'postgres'
     # One consistent snapshot while Kilnmark keeps working, read back in full as a restore would.
@@ -1288,6 +1351,18 @@ function Invoke-Restore([string[]]$Options) {
         if ($LASTEXITCODE -ne 0) { Fail "Keycloak's dump could not be copied into its database container. Kilnmark and Keycloak are as they were." }
         $ok = Invoke-Compose exec -T keycloak-db sh -c 'dropdb -U keycloak --if-exists keycloak_restoring && createdb -U keycloak keycloak_restoring && pg_restore -U keycloak -d keycloak_restoring --exit-on-error --single-transaction /tmp/restore-keycloak.dump; rc=$?; rm -f /tmp/restore-keycloak.dump; exit $rc'
         if (-not $ok) { Fail "Keycloak's database could not be restored into keycloak_restoring. Kilnmark and Keycloak are as they were." }
+    }
+
+    # The backup's deployment mode (ADR 0051) must be this install's: a backup from before there were
+    # modes (0.1.1 or earlier, a preview) is never restored, nor one of the other mode. Checked on the
+    # restored copy, before anything is stopped or replaced.
+    $modeSql = "SELECT value FROM kilnmark.server_setting WHERE key = 'deployment_mode'"
+    $base = Get-ComposeArgs
+    $backupMode = (& $script:Engine @base exec -T postgres psql -U kilnmark -d kilnmark_restoring -X -q -At -c $modeSql 2> $null | Out-String).Trim()
+    $liveMode = Get-RecordedMode
+    if (-not $backupMode) { Fail 'The backup has no deployment mode recorded: it is from before deployment modes (release 0.1.1 or earlier, a preview), which cannot be restored into this release. Install Kilnmark afresh. Nothing was changed.' }
+    if (($liveMode -and $backupMode -cne $liveMode) -or $backupMode -cne (Get-Setting 'KILNMARK_MODE')) {
+        Fail ('The backup is of a ' + $backupMode + ' install, and this is not one: an install never changes mode (ADR 0051). Restore it into an install of its own mode. Nothing was changed.')
     }
 
     Write-Host 'Stopping Kilnmark'

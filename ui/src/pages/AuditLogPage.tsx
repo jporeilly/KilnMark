@@ -20,6 +20,9 @@ export const ACTIONS: { value: string; label: string; tone: Tone }[] = [
   { value: "auth.sign_out", label: "Signed out", tone: "neutral" },
   { value: "auth.person_added", label: "Person added", tone: "warn" },
   { value: "auth.people_imported", label: "People imported", tone: "warn" },
+  { value: "auth.person_activated", label: "Person activated", tone: "warn" },
+  { value: "auth.person_disabled", label: "Person disabled", tone: "neutral" },
+  { value: "server.start_refused", label: "Start refused", tone: "bad" },
   { value: "access.review", label: "Access review viewed", tone: "neutral" },
   { value: "unmask.requested", label: "Sensitive values asked for", tone: "warn" },
   { value: "unmask.approved", label: "Sensitive values approved", tone: "warn" },
@@ -82,6 +85,15 @@ export function describe(e: AuditEvent): string {
     const via = d.via === "import" ? "from a file" : "one at a time";
     return `Added ${String(d.person ?? "")} (${groups}) ${via}, with a password they change at their first sign-in`;
   }
+  if (e.action === "auth.person_activated") {
+    return `Gave ${String(d.person ?? "")} a temporary password and enabled them`;
+  }
+  if (e.action === "auth.person_disabled") {
+    return `Disabled ${String(d.person ?? "")}: their temporary password went unused`;
+  }
+  if (e.action === "server.start_refused") {
+    return String(d.reason ?? "");
+  }
   if (e.action === "auth.people_imported") {
     return `Made ${String(d.made ?? 0)}, already there ${String(d.alreadyThere ?? 0)}, refused ${String(d.refused ?? 0)}`;
   }
@@ -90,7 +102,6 @@ export function describe(e: AuditEvent): string {
       add: "Added",
       "new-password": "Gave a new password to",
       remove: "Removed",
-      adopt: "Brought into the pack",
     };
     const people = Array.isArray(d.people) ? (d.people as unknown[]).map(String).join(", ") : "";
     return `${verb[String(d.action)] ?? String(d.action ?? "")}: ${people}`;

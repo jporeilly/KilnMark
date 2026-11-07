@@ -322,13 +322,13 @@ class StarterPackApiTest {
     @Order(8)
     void whatTheControlScriptDidToTheExamplePeopleIsInTheAuditLog() throws Exception {
         int before = events(AuditLog.STARTER_PEOPLE);
-        admin().contentType(ContentType.JSON).body(Map.of("action", "adopt", "people",
+        admin().contentType(ContentType.JSON).body(Map.of("action", "remove", "people",
             List.of("vera.lane@kilnmark.com", "alex.morgan@kilnmark.com"))).post("/api/v1/starter-pack/people").then()
             .statusCode(204);
         eventually(AuditLog.STARTER_PEOPLE, before + 1);
         JsonPath ev = admin().get("/api/v1/audit?action=" + AuditLog.STARTER_PEOPLE + "&limit=1").then().statusCode(200)
             .extract().jsonPath();
-        assertEquals("adopt", ev.getString("events[0].detail.action"));
+        assertEquals("remove", ev.getString("events[0].detail.action"));
         assertEquals(List.of("vera.lane@kilnmark.com", "alex.morgan@kilnmark.com"), ev.getList("events[0].detail.people"));
         // only the five example addresses, only the four actions, only admins
         admin().contentType(ContentType.JSON).body(Map.of("action", "add", "people", List.of("rita@bank.example")))

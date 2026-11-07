@@ -246,7 +246,7 @@ public class StarterPack {
     }
 
     /** The actions keycloak-setup takes on the example people, as the control script reports them. */
-    static final java.util.Set<String> PEOPLE_ACTIONS = java.util.Set.of("add", "new-password", "remove", "adopt");
+    static final java.util.Set<String> PEOPLE_ACTIONS = java.util.Set.of("add", "new-password", "remove");
 
     /**
      * Records what the control script says keycloak-setup did to the example people
@@ -258,7 +258,7 @@ public class StarterPack {
             throw ApiError.of(Response.Status.CONFLICT, "This is a production install: it has no example people");
         }
         if (action == null || !PEOPLE_ACTIONS.contains(action)) {
-            throw new IllegalArgumentException("action: add, new-password, remove or adopt");
+            throw new IllegalArgumentException("action: add, new-password or remove");
         }
         if (people == null || people.size() > ExampleAccounts.PEOPLE.size()
             || !ExampleAccounts.PEOPLE.containsAll(people)) {

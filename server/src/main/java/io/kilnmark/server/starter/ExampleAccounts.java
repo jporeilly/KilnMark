@@ -14,8 +14,8 @@ public final class ExampleAccounts {
     }
 
     /**
-     * The five example people, by their exact addresses (and user names), the same since 0.1.1,
-     * where KILNMARK_KEYCLOAK_DEMO_PASSWORD made them.
+     * The Starter Pack's five example people, by their exact addresses (and user names), as
+     * keycloak-setup makes them (containers/keycloak/setup.sh).
      */
     public static final java.util.List<String> PEOPLE = java.util.List.of("vera.lane@kilnmark.com",
         "sam.okafor@kilnmark.com", "dana.reyes@kilnmark.com", "priya.shah@kilnmark.com", "alex.morgan@kilnmark.com");

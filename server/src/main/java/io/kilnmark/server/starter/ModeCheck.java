@@ -17,9 +17,11 @@ import jakarta.enterprise.event.Observes;
  * {@code production} or {@code starter-pack}, in ASCII lower case, and nothing else. At the first
  * start it is recorded in Kilnmark's own database; from then on a setting that differs from the
  * record stops the server, so editing config/.env never moves an install from one mode to the
- * other. A Starter Pack install never becomes a production one: install Kilnmark afresh. An install
- * made before there were modes that has had the example people (any of their five addresses in
- * Kilnmark's own records) is never recorded as production either.
+ * other. A Starter Pack install never becomes a production one: install Kilnmark afresh. Only a new
+ * database records a mode: one made before there were modes (release 0.1.1 and earlier, a preview)
+ * is never upgraded, and its server does not start. Production is never recorded on a database
+ * server that already has the Starter Pack's database or login. A refusal is recorded in the audit
+ * log, when the database answers, before the server stops.
  */
 @ApplicationScoped
 public class ModeCheck {
@@ -41,20 +43,61 @@ public class ModeCheck {
         this.db = db;
     }
 
+    @jakarta.inject.Inject
+    io.kilnmark.server.audit.AuditLog audit;
+
+    /**
+     * What a first start checks before it records a mode: a database migrated before {@code
+     * startedAt} predates modes; with {@code samples}, production is refused where the Starter
+     * Pack's database or login is already on the server.
+     */
+    public record FirstStart(java.time.Instant startedAt, boolean samples) {
+    }
+
     // after the migrations (DatabaseTls, priority 1)
     void onStart(@Observes @Priority(3) StartupEvent event) {
         org.eclipse.microprofile.config.Config config = ConfigProvider.getConfig();
         String mode = config.getConfigValue("kilnmark.mode").getValue();
-        String problem = check(mode);
+        io.quarkus.runtime.LaunchMode launch = io.quarkus.runtime.LaunchMode.current();
+        // quarkusDev keeps a developer's database from before there were modes; the tests' database
+        // servers are shared, so the Starter Pack's login may be there from another test
+        FirstStart first = new FirstStart(launch == io.quarkus.runtime.LaunchMode.DEVELOPMENT ? java.time.Instant.EPOCH
+            : java.time.Instant.ofEpochMilli(java.lang.management.ManagementFactory.getRuntimeMXBean().getStartTime()),
+            launch == io.quarkus.runtime.LaunchMode.NORMAL);
+        String problem = checkFor(mode, RECORDED, first);
         // A running install, not quarkusDev or the tests, which have no Keycloak of their own.
         if (problem == null && io.quarkus.runtime.LaunchMode.current() == io.quarkus.runtime.LaunchMode.NORMAL) {
             problem = signInProblem(mode, config.getOptionalValue("quarkus.oidc.tenant-enabled", Boolean.class)
                 .orElse(false), config.getConfigValue("quarkus.oidc.auth-server-url").getValue());
         }
         if (problem != null) {
-            throw new IllegalStateException(problem);
+            refuse(problem);
         }
     }
+
+    /**
+     * Stops the start: records why in the audit log first, when the database answers (the row and
+     * the line for the SIEM), then throws.
+     */
+    public void refuse(String problem) {
+        try {
+            audit.record(new io.kilnmark.server.audit.AuditLog.Actor("server (start)", null),
+                io.kilnmark.server.audit.AuditLog.START_REFUSED, "deployment mode", java.util.Map.of("reason", problem));
+            audit.awaitStored(3000);
+        } catch (RuntimeException e) {
+            LOG.warnf("Could not record the refused start in the audit log (%s)", e.getClass().getSimpleName());
+        }
+        throw new IllegalStateException(problem);
+    }
+
+    /** Why a database made before there were modes never starts (ADR 0051). */
+    static final String PREDATES = "This install predates deployment modes (release 0.1.1 or earlier, a preview), so "
+        + "it cannot be upgraded: install Kilnmark afresh. Back up first anything you mean to keep by hand.";
+
+    /** Why production is refused where the Starter Pack has been. */
+    static final String SAMPLES_THERE = "This database server already has the Starter Pack's database or login "
+        + "(kilnmark_samples), so a production install is not recorded on it: install Kilnmark afresh, on a server of "
+        + "its own, or set KILNMARK_MODE=starter-pack.";
 
     /** The bundled Keycloak's realm, as the release's compose file reaches it. */
     public static final String BUNDLED_ISSUER = "http:" + "/" + "/keycloak:8080/realms/kilnmark";
@@ -91,28 +134,22 @@ public class ModeCheck {
             return null;
         }
         return "kilnmark.mode (KILNMARK_MODE) is production or starter-pack: the server does not start without one "
-            + "of them. The control script sets it at install; an install made before there were modes is production.";
+            + "of them. The control script sets it at install.";
     }
 
     /**
-     * Checks {@code configured} against the mode recorded in Kilnmark's own database, recording it
-     * when nothing is recorded yet (the first start; the first of several servers starting together
-     * wins, and the rest are checked against it). Why the server may not start, or null.
+     * Checks {@code configured} against the mode recorded in Kilnmark's own database (under {@code
+     * key}), recording it when nothing is recorded yet and the database is new (the first start; the
+     * first of several servers starting together wins, and the rest are checked against it). Why the
+     * server may not start, or null.
      */
-    public String check(String configured) {
-        return checkFor(configured, RECORDED);
-    }
-
-    /** As {@link #check(String)}, with the mode recorded under {@code key}: for tests. */
-    public String checkFor(String configured, String key) {
+    public String checkFor(String configured, String key, FirstStart rules) {
         String problem = problem(configured);
         if (problem != null) {
             return problem;
         }
-        String[] traces = new String[1];
+        String[] refusal = new String[1];
         String recorded = db.tx(c -> {
-            // Nothing recorded yet, and production asked for: an install that has had the example
-            // people (an earlier version made them with KILNMARK_KEYCLOAK_DEMO_PASSWORD) may not be it.
             boolean first;
             try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.server_setting WHERE key = ?")) {
                 ps.setString(1, key);
@@ -120,11 +157,13 @@ public class ModeCheck {
                     first = !rs.next();
                 }
             }
-            if (first && PRODUCTION.equals(configured)) {
-                traces[0] = exampleTraces(c);
-                if (traces[0] != null) {
-                    return null;
-                }
+            if (first && migratedBefore(c, rules.startedAt())) {
+                refusal[0] = PREDATES;
+                return null;
+            }
+            if (first && rules.samples() && PRODUCTION.equals(configured) && samplesThere(c)) {
+                refusal[0] = SAMPLES_THERE;
+                return null;
             }
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.server_setting (key, value, updated_by) "
                 + "VALUES (?, ?, 'server (first start)') ON CONFLICT (key) DO NOTHING")) {
@@ -141,43 +180,28 @@ public class ModeCheck {
                 }
             }
         });
-        if (traces[0] != null) {
-            return "This install has had the Starter Pack's example people (" + traces[0] + " names one of their "
-                + "addresses), so it may only be a Starter Pack install: set KILNMARK_MODE=starter-pack. Production "
-                + "needs a fresh install.";
+        if (refusal[0] != null) {
+            return refusal[0];
         }
         return mismatch(configured, recorded);
     }
 
-    /**
-     * Where Kilnmark's own records name one of the five example addresses (sign-ins and everything
-     * else in the audit log, tokens, the owners of work, who asked for runs), or null when none does.
-     */
-    static String exampleTraces(java.sql.Connection c) throws java.sql.SQLException {
-        String[][] places = {
-            {"the audit log", "SELECT 1 FROM kilnmark.audit_event WHERE lower(actor || ' ' || coalesce(detail::text, '')) "
-                + "LIKE ? LIMIT 1"},
-            {"an API token", "SELECT 1 FROM kilnmark.api_token WHERE lower(created_by || ' ' || coalesce(unmask_requested_by, "
-                + "'') || ' ' || coalesce(unmask_approved_by, '')) LIKE ? LIMIT 1"},
-            {"a pipeline", "SELECT 1 FROM kilnmark.pipeline WHERE lower(created_by || ' ' || updated_by) LIKE ? LIMIT 1"},
-            {"a flow", "SELECT 1 FROM kilnmark.flow WHERE lower(created_by || ' ' || updated_by) LIKE ? LIMIT 1"},
-            {"a schedule", "SELECT 1 FROM kilnmark.schedule WHERE lower(created_by || ' ' || updated_by) LIKE ? LIMIT 1"},
-            {"a pipeline run", "SELECT 1 FROM kilnmark.pipeline_run WHERE lower(requested_by) LIKE ? LIMIT 1"},
-            {"a flow run", "SELECT 1 FROM kilnmark.flow_run WHERE lower(requested_by) LIKE ? LIMIT 1"},
-        };
-        for (String person : ExampleAccounts.PEOPLE) {
-            for (String[] place : places) {
-                try (PreparedStatement ps = c.prepareStatement(place[1])) {
-                    ps.setString(1, "%" + person.replace("_", "\\_") + "%");
-                    try (ResultSet rs = ps.executeQuery()) {
-                        if (rs.next()) {
-                            return place[0];
-                        }
-                    }
-                }
-            }
+    /** Whether the database's first migration ran before {@code startedAt}: a database from before this start. */
+    static boolean migratedBefore(java.sql.Connection c, java.time.Instant startedAt) throws java.sql.SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT min(installed_on) FROM kilnmark.flyway_schema_history");
+             ResultSet rs = ps.executeQuery()) {
+            java.sql.Timestamp at = rs.next() ? rs.getTimestamp(1) : null;
+            return at != null && at.toInstant().isBefore(startedAt);
         }
-        return null;
+    }
+
+    /** Whether the Starter Pack's database or login is on this database server. */
+    static boolean samplesThere(java.sql.Connection c) throws java.sql.SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM pg_roles WHERE rolname = 'kilnmark_samples' "
+            + "UNION ALL SELECT 1 FROM pg_database WHERE datname = 'kilnmark_samples'");
+             ResultSet rs = ps.executeQuery()) {
+            return rs.next();
+        }
     }
 
     /** Why a setting of {@code configured} may not start an install recorded as {@code recorded}, or null. */

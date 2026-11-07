@@ -81,7 +81,8 @@ export function LibraryPage({ role, tab }: { role: AccessRole; tab: Tab }) {
 
 function SamplesTab({ designer }: { designer: boolean }) {
   const [catalogue, setCatalogue] = useState<SampleCatalogue | null>(null);
-  const [off, setOff] = useState(false);
+  // why the samples are not here (the server says: turned off, or a production install), or null
+  const [off, setOff] = useState<string | null>(null);
   const [pipelines, setPipelines] = useState<PipelineSummary[]>([]);
   const [flows, setFlows] = useState<FlowSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -91,11 +92,11 @@ function SamplesTab({ designer }: { designer: boolean }) {
       .list()
       .then((c) => {
         setCatalogue(c);
-        setOff(false);
+        setOff(null);
         setError(null);
       })
       .catch((e: Error) => {
-        if (e instanceof ApiError && e.status === 403) setOff(true);
+        if (e instanceof ApiError && e.status === 403) setOff(e.message);
         else setError(e.message);
       });
     pipelinesApi.list().then(setPipelines, () => {});
@@ -106,8 +107,7 @@ function SamplesTab({ designer }: { designer: boolean }) {
   if (off) {
     return (
       <p className="panel">
-        This server does not offer the samples: an admin turns them on under <a href={href.settings()}>Settings</a>.
-        The templates are still here, on the other tab.
+        {off.replace(/\.$/, "")}. The templates are still here, on the other tab.
       </p>
     );
   }
