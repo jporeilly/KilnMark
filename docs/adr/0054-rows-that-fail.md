@@ -8,7 +8,7 @@ Today one bad value stops a run. A cast of `'12a'` to a number, a division by ze
 long for its column ends the whole pipeline, and the rows that were fine are not written either.
 Every comparable tool lets a node send the rows that fail to an output of their own, with what
 went wrong, and lets a person say how many failures a run may have before it stops
-(docs/design/research/node-options.md, section 2 and gaps 1 and 2). Banks need both: every
+(the owner's research into other tools, section 2 and gaps 1 and 2, kept with the backlog). Banks need both: every
 rejected row kept, with its reason, and rows read reconciled with rows written and rows rejected.
 
 Kilnmark already sets some rows aside: a filter's `rejected` port (rows the condition is false
