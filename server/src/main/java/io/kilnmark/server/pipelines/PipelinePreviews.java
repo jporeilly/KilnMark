@@ -325,7 +325,7 @@ public class PipelinePreviews {
             }
             try {
                 job.done.complete(NodePreview.run(graph, p.plan().node(), p.port(), rows, masks, limits.memoryBytes(),
-                    limits.rowSetCapacity(), limits.timeout(), limits.stopWait(), job.runner));
+                    limits.rowSetCapacity(), limits.timeout(), limits.stopWait(), job.runner, p.plan().drains()));
             } catch (IllegalArgumentException e) {
                 PipelineExecution.closeNodes(graph); // refused before its nodes started
                 job.done.completeExceptionally(PreviewFailed.of(context.scrub("The preview could not start: "

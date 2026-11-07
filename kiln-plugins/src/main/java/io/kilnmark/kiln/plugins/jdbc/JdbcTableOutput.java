@@ -471,10 +471,11 @@ final class JdbcTableOutput implements Node {
     /** Sends rows the table would refuse to the errors port. */
     private static void setAside(NodeContext context, VectorSchemaRoot batch, int[] rows, RowErrors.Failure[] why,
                                  int count) throws NodeException {
+        VectorSchemaRoot errors = RowErrors.batch(batch, rows, why, count, context.nodeName(), context.allocator());
         try {
-            context.emit(RowErrors.PORT, RowErrors.batch(batch, rows, why, count, context.nodeName(),
-                context.allocator()));
+            context.emit(RowErrors.PORT, errors);
         } catch (InterruptedException e) {
+            errors.close(); // interrupted while waiting for room: the batch was not handed over
             Thread.currentThread().interrupt();
             throw new NodeException("Interrupted", e);
         }

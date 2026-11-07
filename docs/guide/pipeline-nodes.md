@@ -97,8 +97,9 @@ port (limits: max_error_share 1.00%)", so rows read, written and set aside can b
 How the rows are found: a node works on a batch of rows at once, so when a batch fails the node
 splits it in halves, and each failing half again, until it has the single rows that fail. A batch
 that works costs nothing extra. A failure that is not about one row's value (a setting that is
-wrong for every row, or a wrong argument such as field 0 for `split_part`) still stops the run, so
-a mistake never quietly sends every row to `errors`. A preview of a node whose `errors` port the
+wrong for every row, or a wrong argument such as field 0 for `split_part`) still stops the run. A
+failure on every row's value (a division by zero everywhere, say) sends every row to `errors`: set
+`max_error_share` to stop such a run. A preview of a node whose `errors` port the
 pipeline reads sets failing rows aside as the run does.
 
 ## filter

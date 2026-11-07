@@ -112,7 +112,8 @@ public final class RowErrors {
     public static Schema schema(Schema in) {
         List<Field> fields = new ArrayList<>();
         for (Field f : in.getFields()) {
-            if (!COLUMNS.contains(f.getName())) {
+            // in any case: a database or an expression that ignores case would otherwise meet two
+            if (!COLUMNS.contains(f.getName().toLowerCase(Locale.ROOT))) {
                 fields.add(f);
             }
         }

@@ -653,16 +653,22 @@ behaves as before (the same first failure, the same message).
   schema. The sites that throw for one row's value carry a code (`ExprException.row`):
   `cast_failed`, `division_by_zero`, `out_of_range`, `too_long`, `too_slow`, `too_complex`;
   their problem and hint are fixed wordings. A single row failing without a
-  code stops the run (`Failing.single`), so a mistake that fails every row never empties the output
-  quietly, and text built from a value can never reach an error row.
+  code stops the run (`Failing.single`), so text built from a value can never reach an error row,
+  and a wrong argument (field 0 of `split_part`, a regular expression that is not valid) stops the
+  run rather than sending every row to `errors`. A coded failure on every row (`x / 0`) still sends
+  every row there: set a tolerance to stop such a run.
 - **Error rows** (`RowErrors`, kiln-core): the input's columns, less any `error_*` columns already
   there, then `error_node`, `error_column`, `error_code`, `error_message` (utf8, nullable). The
   errors port's columns are the input's, so marks follow by name: `NodePreview.marked` and `hidden`
   give a node one set for all its ports, which covers `errors`. `marked` adds `error_column`,
   `error_code` and `error_message` (`FAILED_ON`) when the node's expressions, casts or conditions
-  touch a marked column, and for a write given any marked column: which value failed says something
-  about it. A preview drains (`NodePreview.drained`, a `filter` on `false`) each errors port in its
-  cut that the pipeline reads from outside it, so it fails no sooner than the run.
+  touch a marked column (a column computed earlier in the same compute from a marked one counts),
+  and for a write given any marked column, on the edges leaving its errors port (not on what it
+  writes itself): which value failed says something about it. A preview drains (`NodePreview.drained`,
+  `NodePreview.Drain`) each errors port of a compute, select, filter or route in its cut that the
+  pipeline reads from outside it, so it fails no sooner than the run; a drain stops when the
+  collector has its rows, so the nodes before it still end early. `RowErrors.schema` drops input
+  columns named like the error columns in any case.
 - **Tolerance** (`RowErrors.Tally`): `max_errors` is checked as rows fail, `max_error_share` when the
   input ends, against the rows that arrived at the node. The node's line in the run's log comes from
   the tally. With nothing on `errors` nothing is counted.

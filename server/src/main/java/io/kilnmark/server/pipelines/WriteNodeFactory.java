@@ -222,8 +222,7 @@ public final class WriteNodeFactory implements NodeFactory {
                 + "whose rows can repeat; " + mode + " writes every row");
         }
         problems.addAll(RowErrors.check(config));
-        if (config.get(RowErrors.MAX_SHARE) != null && config.get("commit_every") instanceof Number every
-            && every.longValue() > 0) {
+        if (config.get(RowErrors.MAX_SHARE) != null && commitsAlong(config)) {
             problems.add(RowErrors.MAX_SHARE + ": the share is judged when the input ends, but commit_every commits "
                 + "rows before that, and they would stay; leave out commit_every, or use max_errors");
         }
@@ -306,6 +305,23 @@ public final class WriteNodeFactory implements NodeFactory {
             }
         }
         return RowErrors.schema(in);
+    }
+
+    /**
+     * Whether rows are committed to the target as the write goes ({@code commit_every} above 0, read
+     * as the writer reads it, text included), so they stay when the run fails later. A replace fills
+     * a new table that only takes the target's place at the end.
+     */
+    static boolean commitsAlong(Map<String, Object> config) {
+        Object v = config.get("commit_every");
+        if (v == null || "replace".equals(mode(config))) {
+            return false;
+        }
+        try {
+            return Long.parseLong(v.toString().strip().replace("_", "")) > 0;
+        } catch (NumberFormatException e) {
+            return v instanceof Number n && n.doubleValue() > 0;
+        }
     }
 
     /** Why a target is not acceptable, or null: it must stay inside the source. */
