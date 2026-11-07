@@ -1,0 +1,52 @@
+# Window: running totals and the latest row per key (a Kilnmark sample).
+# Gives every billing transaction a running balance for its account, numbers each account's
+# transactions, and shows the amount before; then keeps each account's latest transaction, with the
+# account's balance after it.
+# Look for: partition_by starts the balance again for each account; the second window numbers the
+# rows newest first, so row number 1 is the latest, and the filter keeps only those.
+kilnmark: pipeline/v1
+name: sample-window
+description: A running balance per account, and each account's latest transaction.
+
+nodes:
+  - id: transactions
+    type: read
+    source: crm-db
+    asset: billing.transactions
+
+  - id: balances
+    type: window
+    input: transactions
+    partition_by: [account_id]
+    order_by: [txn_at, txn_id]
+    columns:
+      balance: "sum(amount)"
+      txn_number: "row_number()"
+      previous_amount: "lag(amount, 1, 0)"
+
+  - id: newest_first
+    type: window
+    input: balances
+    partition_by: [account_id]
+    order_by: [txn_at desc, txn_id desc]
+    columns:
+      recency: "row_number()"
+
+  - id: latest
+    type: filter
+    input: newest_first
+    condition: "recency = 1"
+
+  - id: all_rows
+    type: write
+    input: balances
+    source: files
+    path: samples/transform/running_balances.csv
+    mode: replace
+
+  - id: out
+    type: write
+    input: latest
+    source: files
+    path: samples/transform/latest_per_account.csv
+    mode: replace

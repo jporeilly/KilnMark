@@ -20,6 +20,15 @@ details.
   sides comes out with its type; a right column whose name the left already has is renamed
   `right_...`. In the Combine folder of the canvas, with a sample, `sample-join`. A `lookup` is
   still the quicker choice for a small table. ([join](docs/guide/pipeline-nodes.md#join))
+- **Window functions** (a new `window` node, ADR 0049): row numbers, ranks, running totals (count,
+  sum, average, smallest and largest so far) and the previous or next row's value, with an offset
+  and a default, worked out over each group of rows (`partition_by`) in an order (`order_by`). Every
+  row comes out with the new columns: a running balance per account, say, or the latest row per key
+  by keeping row number 1. Rows with equal order values keep their order, and empty values go last
+  unless a column says `nulls first`, as in a sort. Any number of rows can be used: past the node's
+  memory limit it carries on on disk, as a sort does, and the run's log says how much it wrote. In
+  the Transform folder of the canvas, with a sample, `sample-window`.
+  ([window](docs/guide/pipeline-nodes.md#window))
 - **Signing in through your organisation's provider no longer ends after a few minutes.** A sign-in
   now renews itself while the person works, and lasts until 8 hours after they signed in at the
   provider, until the provider's own session ends, or until they sign out. With the bundled
@@ -85,6 +94,23 @@ details.
   refuses one matching on a hidden column, and masks a hidden right column under its new name;
   marks follow the rename to what a write writes. The canvas shows Left column and Right column
   for its keys.
+- **`window` sorts with `sort`'s `ExternalSorter`** by partition and then order, and works out its
+  columns as the sorted batches pass (`Windowing` in `kiln-nodes`; docs/design/pipelines.md,
+  "Window functions"). Partition and peer boundaries are found by comparing `KeyCodec` bytes with
+  the row before. Running totals use the `rows` frame (each row its own total, ties in arrival
+  order) and the aggregate node's accumulators and types. `lag` and `lead` take a written-out offset
+  from 0 to 1,000 and any expression as a default; a batch waits until the rows its leads reach have
+  arrived, and only the values a lag reaches are kept after it is passed on, counted against
+  `memory_limit_mb`. A column must be one window function, and its name must not be an input's or
+  another new column's, ignoring case. `row_number`, `rank`, `dense_rank`, `lag` and `lead` are
+  refused outside a window node. New columns are marked sensitive when their arguments, partition or
+  order columns are; a preview refuses a window that looks at a hidden column. The quality predictor
+  passes rows through and leaves the new columns unestimated. The canvas shows a Function for each
+  new column and "balance, n · per account_id" on the node. The function index of the components
+  reference lists the window functions, and the build checks the guide's tables name them all.
+- **Previews read a list of columns written as one text** (`group_by: region, ssn`) as the nodes
+  do, as two columns: an aggregate grouping or a dedupe keyed by a hidden column written that way
+  was previewed with the column's values shown, where a list (`[region, ssn]`) was refused.
 - **A node can say how much it wrote to disk.** `NodeContext.spilled(bytes)` adds to the run's
   `NodeResult.spilledBytes` (not yet stored in the database), and `NodeContext.note(text)` adds a
   line in the node's own words to the run's log (`node_note`, through `RunListener.nodeNote`).
