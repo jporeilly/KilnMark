@@ -605,6 +605,10 @@ final class Compiler {
             }
             case "split_part" -> {
                 arity(c, 3, 3);
+                if (c.args().get(2) instanceof Node.Literal l && Long.valueOf(0).equals(l.value())) {
+                    throw new ExprException("split_part's field number cannot be 0", c.args().get(2).pos(),
+                        "count fields from 1, or from -1 for the last");
+                }
                 yield new Ev.Call(List.of(text(c, args, 0), text(c, args, 1), whole(c, args, 2)), Type.UTF8, true,
                     a -> Texts.splitPart((String) a[0], (String) a[1], (Long) a[2], pos), pos);
             }
@@ -613,7 +617,7 @@ final class Compiler {
                 yield new Ev.Call(List.of(text(c, args, 0), text(c, args, 1)), Type.BOOLEAN, true, switch (fn) {
                     case "starts_with" -> a -> ((String) a[0]).startsWith((String) a[1]);
                     case "ends_with" -> a -> ((String) a[0]).endsWith((String) a[1]);
-                    default -> a -> ((String) a[0]).contains((String) a[1]);
+                    default -> a -> Texts.contains((String) a[0], (String) a[1]);
                 }, pos);
             }
             case "greatest", "least" -> {
@@ -673,7 +677,9 @@ final class Compiler {
             }
             case "sha256" -> {
                 arity(c, 1, 1);
-                yield new Ev.Call(List.of(text(c, args, 0)), Type.UTF8, true, a -> Texts.sha256((String) a[0]), pos);
+                java.security.MessageDigest digest = Texts.sha256();
+                yield new Ev.Call(List.of(text(c, args, 0)), Type.UTF8, true, a -> Texts.sha256(digest, (String) a[0]),
+                    pos);
             }
             default -> throw new IllegalStateException("function without a body: " + fn);
         };

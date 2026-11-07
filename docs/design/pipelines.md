@@ -428,7 +428,8 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
 - Functions: `trim lower upper length substring replace coalesce nullif abs round floor ceil
   concat regex_match regex_replace (with time and size limits) now today date_trunc
   date_part parse_date parse_timestamp format_date`, and since ADR 0049 `if lpad rpad left right
-  split_part starts_with ends_with contains greatest least date_add date_diff sha256`. Aggregates in `aggregate` only: `count
+  split_part starts_with ends_with contains greatest least date_add date_diff sha256`. Aggregates
+  in `aggregate` only: `count
   count_distinct sum min max avg`. Window functions in `window` only: `row_number rank dense_rank
   lag lead` and running `count sum avg min max` (section 4, "Window functions").
 - SQL null rules. Types are checked against the input schema before the run: an unknown column or
@@ -478,8 +479,8 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
 - **Functions as built:** `trim lower upper length substring replace coalesce nullif abs round
   floor ceil concat regex_match regex_replace now today date_trunc date_part parse_date
   parse_timestamp format_date if lpad rpad left right split_part starts_with ends_with contains
-  greatest least date_add date_diff sha256`. `now()` is fixed when the node starts. Date patterns use
-  `DateTimeFormatter` letters, read strictly (31 February is rejected) and must be written out;
+  greatest least date_add date_diff sha256`. `now()` is fixed when the node starts. Date patterns
+  use `DateTimeFormatter` letters, read strictly (31 February is rejected) and must be written out;
   so must `date_trunc` / `date_part` units and `round`'s digits, so mistakes are found before a run.
 - **The functions of ADR 0049, 6.3** (decisions):
   - `if(cond, a, b)` is a function, not new syntax: `case` was already in the language, and a
@@ -489,8 +490,11 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
   - Text functions count Unicode code points, as `length` and `substring` do. `lpad`, `rpad`,
     `left`, `right` and `split_part` follow PostgreSQL (padding cuts longer text to `n`; negative
     counts for `left`, `right` and `split_part` count from the other end), so a reader who knows SQL
-    is not surprised; `lpad` and `rpad` are capped at 1,000,000 characters and count against the
-    batch's text budget.
+    is not surprised; `lpad` and `rpad` are capped at 1,000,000 characters (UTF-16 units, as the
+    other functions count them) and count against the batch's text budget. `contains` and
+    `split_part` look for a text of more than 64 characters with the Knuth-Morris-Pratt search,
+    linear in both lengths: `String.indexOf` is quadratic at worst, and both values may come from the
+    data. (`replace`, which predates them, still uses `indexOf`.)
   - `date_add(d, n, 'unit')` moves by calendar units with Java's `plus` (31 January plus a month is
     the end of February); `date_diff('unit', a, b)` counts whole units elapsed (`ChronoUnit.between`),
     not boundaries crossed: the guide shows both on a month. Units are written out, as for

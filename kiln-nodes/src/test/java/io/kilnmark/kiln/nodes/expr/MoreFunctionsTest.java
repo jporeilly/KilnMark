@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
@@ -72,6 +73,9 @@ class MoreFunctionsTest {
         assertEquals("abc", eval("left('abc', 10)"));
         assertEquals("", eval("left('abc', 0)"));
         assertEquals("", eval("right('abc', -5)"));
+        assertEquals("abc", eval("left('abc', 9223372036854775807)"));
+        assertEquals("", eval("left('abc', -9223372036854775807 - 1)"));
+        assertEquals("", eval("right('abc', -9223372036854775807 - 1)"));
         assertEquals("😀b", eval("right('a😀b', 2)"));
         assertNull(eval("left(ns, 1)"));
     }
@@ -89,8 +93,49 @@ class MoreFunctionsTest {
         assertEquals("", eval("split_part('a,b', '', 2)"));
         assertEquals("example.com", eval("split_part('ada@example.com', '@', 2)"));
         assertNull(eval("split_part(ns, ',', 1)"));
+        assertEquals("split_part's field number cannot be 0 at 22; count fields from 1, or from -1 for the last",
+            error("split_part('a', ',', 0)"), "a written-out 0 is refused before the run");
         assertEquals("split_part's field number cannot be 0 at 1; count fields from 1, or from -1 for the last",
-            error("split_part('a', ',', 0)"));
+            error("split_part('a', ',', zero)"), "and one worked out stops the run");
+        assertEquals("", eval("split_part('a,b', ',', 9223372036854775807)"));
+        assertEquals("", eval("split_part('a,b', ',', -9223372036854775807 - 1)"));
+    }
+
+    @Test
+    void paddingKeepsToTheTextLimits() throws ExprException {
+        // counted in UTF-16 units, as concat and replace count them: an emoji takes two
+        assertTrue(error("lpad('x', 1000000, '😀')").contains("1,000,000 characters"));
+        // 7,000 rows of 10,000 characters is more than one call may make for a batch
+        Object[] values = new Object[7_000];
+        java.util.Arrays.fill(values, "x");
+        ExprException e = org.junit.jupiter.api.Assertions.assertThrows(ExprException.class,
+            () -> evalColumn("lpad(v, 10000, '-')", "v", Type.UTF8, values));
+        assertTrue(e.getMessage().contains("64,000,000 characters"), e.getMessage());
+    }
+
+    @Test
+    void searchingLongTextTakesTimeInProportion() {
+        // a text and a search made to be slow for a simple search: about 4 * 10^10 steps, against 4 * 10^5
+        String text = "a".repeat(400_000);
+        String sought = "a".repeat(100_000) + "b";
+        Map<String, Type> types = Map.of("t", Type.UTF8, "x", Type.UTF8);
+        Col t = Col.nulls(Type.UTF8, 1);
+        t.set(0, text);
+        Col x = Col.nulls(Type.UTF8, 1);
+        x.set(0, sought);
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(10), () -> {
+            assertEquals(false, Expression.parse("contains(t, x)").compile(types)
+                .eval(Batch.of(1, Map.of("t", t, "x", x), 0)).get(0));
+            assertEquals("", Expression.parse("split_part(t, x, 2)").compile(types)
+                .eval(Batch.of(1, Map.of("t", t, "x", x), 0)).get(0));
+            assertEquals(text, Expression.parse("split_part(t, x, -1)").compile(types)
+                .eval(Batch.of(1, Map.of("t", t, "x", x), 0)).get(0));
+        });
+        assertEquals(true, eval("contains('xxabcabcabd', 'abcabd')"));
+        String found = "q".repeat(70) + "w";
+        assertEquals("tail", eval("split_part('head" + found + "tail', '" + found + "', 2)"), "a long separator");
+        assertEquals(true, eval("contains('zz" + found + "zz', '" + found + "')"));
+        assertEquals(false, eval("contains('" + found.substring(1) + "', '" + found + "')"));
     }
 
     @Test
@@ -143,6 +188,9 @@ class MoreFunctionsTest {
         assertTrue(error("date_add(dt, 1, s)").startsWith("date_add needs a unit in quotes"), "units are written out");
         assertEquals("a date is out of range (years -9999 to 9999) at 1", error("date_add(dt, 9000, 'year')"));
         assertTrue(error("date_add(dt, 9223372036854775807, 'quarter')").contains("out of range"));
+        assertTrue(error("date_add(dt, 9223372036854775807, 'year')").contains("out of range"));
+        assertTrue(error("date_add(ts, 9223372036854775807, 'second')").contains("out of range"));
+        assertEquals("a timestamp is out of range (years -9999 to 9999) at 1", error("date_add(ts, -20000, 'year')"));
         assertTrue(error("date_add(s, 1, 'day')").contains("read text with parse_date or parse_timestamp first"));
     }
 
@@ -168,8 +216,7 @@ class MoreFunctionsTest {
     void sha256GivesHexadecimalOfTheUtf8Bytes() {
         assertEquals("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", eval("sha256('')"));
         assertEquals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", eval("sha256('abc')"));
-        assertEquals("23d4c9f2a1ad11bc0d9cbfa8b4a8e0a0e0a61b6d1ef0f6dde6bbf1d2e1bd6b6c".length(),
-            ((String) eval("sha256(s)")).length());
+        assertEquals(64, ((String) eval("sha256(s)")).length());
         assertNull(eval("sha256(ns)"));
         assertEquals("sha256 needs text as argument 1, not an int64 at 8; cast it first, like cast(x as utf8)",
             error("sha256(i)"));

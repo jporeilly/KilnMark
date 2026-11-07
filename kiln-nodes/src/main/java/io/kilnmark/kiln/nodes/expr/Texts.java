@@ -66,8 +66,14 @@ final class Texts {
         while (need >= fillLength) {
             padding.append(fill);
             need -= fillLength;
+            if (s.length() + padding.length() > Casts.MAX_TEXT) {
+                throw Casts.tooLong(pos); // as the other functions count it: in UTF-16 units
+            }
         }
         padding.append(head(fill, need));
+        if (s.length() + padding.length() > Casts.MAX_TEXT) {
+            throw Casts.tooLong(pos);
+        }
         budget.spend(s.length() + padding.length(), pos);
         return left ? padding + s : s + padding;
     }
@@ -97,9 +103,10 @@ final class Texts {
         if (sep.isEmpty()) {
             return n == 1 || n == -1 ? s : "";
         }
+        int[] table = sep.length() > SHORT ? table(sep) : null;
         if (n < 0) {
             long fields = 1;
-            for (int at = s.indexOf(sep); at >= 0; at = s.indexOf(sep, at + sep.length())) {
+            for (int at = find(s, sep, 0, table); at >= 0; at = find(s, sep, at + sep.length(), table)) {
                 fields++;
             }
             n = fields + n + 1;
@@ -109,24 +116,75 @@ final class Texts {
         }
         int from = 0;
         for (long field = 1; field < n; field++) {
-            int at = s.indexOf(sep, from);
+            int at = find(s, sep, from, table);
             if (at < 0) {
                 return "";
             }
             from = at + sep.length();
         }
-        int end = s.indexOf(sep, from);
+        int end = find(s, sep, from, table);
         return end < 0 ? s.substring(from) : s.substring(from, end);
+    }
+
+    /** Whether {@code s} holds {@code x}, in time linear in their lengths. */
+    static boolean contains(String s, String x) {
+        return find(s, x, 0, x.length() > SHORT ? table(x) : null) >= 0;
+    }
+
+    /**
+     * Below this length a text searched for is found with {@link String#indexOf}, whose worst case
+     * (the text's length times this) stays small; longer ones with a search whose time is linear in
+     * both lengths, so a hostile pair of long values cannot take minutes on one row.
+     */
+    private static final int SHORT = 64;
+
+    /** Where {@code x} next appears in {@code s} from {@code from}, or -1; {@code table} null for a short {@code x}. */
+    private static int find(String s, String x, int from, int[] table) {
+        if (table == null) {
+            return s.indexOf(x, from);
+        }
+        for (int i = from, k = 0; i < s.length(); i++) {
+            while (k > 0 && s.charAt(i) != x.charAt(k)) {
+                k = table[k - 1];
+            }
+            if (s.charAt(i) == x.charAt(k)) {
+                k++;
+            }
+            if (k == x.length()) {
+                return i - k + 1;
+            }
+        }
+        return -1;
+    }
+
+    /** For each start of {@code x}, the longest proper start of it that is also its end (Knuth, Morris and Pratt). */
+    private static int[] table(String x) {
+        int[] t = new int[x.length()];
+        for (int i = 1, k = 0; i < x.length(); i++) {
+            while (k > 0 && x.charAt(i) != x.charAt(k)) {
+                k = t[k - 1];
+            }
+            if (x.charAt(i) == x.charAt(k)) {
+                k++;
+            }
+            t[i] = k;
+        }
+        return t;
     }
 
     private static final HexFormat HEX = HexFormat.of();
 
-    /** The SHA-256 digest of the text's UTF-8 bytes, as 64 lower-case hexadecimal digits. */
-    static String sha256(String s) {
+    /** A SHA-256 digest, for one function call (a compiled expression is used by one thread at a time). */
+    static MessageDigest sha256() {
         try {
-            return HEX.formatHex(MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8)));
+            return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("every Java runtime has SHA-256", e);
         }
+    }
+
+    /** The SHA-256 digest of the text's UTF-8 bytes, as 64 lower-case hexadecimal digits. */
+    static String sha256(MessageDigest digest, String s) {
+        return HEX.formatHex(digest.digest(s.getBytes(StandardCharsets.UTF_8)));
     }
 }
