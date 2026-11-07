@@ -428,7 +428,8 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
 - Functions: `trim lower upper length substring replace coalesce nullif abs round floor ceil
   concat regex_match regex_replace (with time and size limits) now today date_trunc
   date_part parse_date parse_timestamp format_date`. Aggregates in `aggregate` only: `count
-  count_distinct sum min max avg`.
+  count_distinct sum min max avg`. Window functions in `window` only: `row_number rank dense_rank
+  lag lead` and running `count sum avg min max` (section 4, "Window functions").
 - SQL null rules. Types are checked against the input schema before the run: an unknown column or
   a type mismatch is an error naming the node, the expression and the position.
 - Later, a read followed by filters and computes on the same database can be pushed down as SQL.
@@ -524,6 +525,7 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
 | `limit` | `in` → `out` | First N rows, for trying a pipeline out |
 | `sort` | `in` → `out` | Orders rows by columns, spilling to disk past its memory limit |
 | `join` | `left`, `right` → `out` | Inner, left, right or full join of two inputs of any size (sort-merge, spilling) |
+| `window` | `in` → `out` | Row numbers, ranks, running totals, lag and lead by partition and order, spilling to disk |
 | `gate` | `in` → `out`, `quarantine` | Checks rows against the asset's rules and its own in the stream; stops the run, quarantines failing rows or warns (docs/design/data-quality.md section 7) |
 | `write` | `in` → | Writes to a database table or a file in a saved source |
 
@@ -563,6 +565,8 @@ found through `ServiceLoader`. Settings, with defaults:
   feed nothing else.
 - `sort`: `by` (kind `ORDER`: a list of `column [asc|desc] [nulls first|last]`, as SQL writes it;
   the UI writes the same text), `memory_limit_mb` (256). See "Sorting, and spilling to disk" below.
+- `window`: `partition_by` (columns), `order_by` (kind `ORDER`, as `sort`'s `by`), `columns` (name →
+  one window function), `memory_limit_mb` (256). See "Window functions" below.
 
 ### Sorting, and spilling to disk (ADR 0049)
 
@@ -683,6 +687,54 @@ found through `ServiceLoader`. Settings, with defaults:
   rename the same way, so a write carries them to `right_name`.
 - **Quality predictor.** It does not yet estimate a join (rows depend on how keys repeat): the
   join's output columns are known, its rows are reported as not known.
+
+### Window functions (ADR 0049)
+
+`window` adds columns worked out over the rows of each partition in order: `row_number`, `rank`,
+`dense_rank`, running `count`, `sum`, `avg`, `min` and `max`, and `lag` and `lead`. The functions are
+`Windowing` in `io.kilnmark.kiln.nodes.expr`; the node is `WindowFactory`.
+
+- **One function per column, arguments as expressions.** Each value of `columns` must be one call
+  of a window function; its arguments are ordinary expressions over the row (`sum(price * qty)`),
+  compiled once against the input. A window column combined with other values (`opening +
+  sum(amount)`) is refused with "work out more from it in a compute node after": a later `compute`
+  says the same with no second kind of expression to learn. `lag`, `lead`, `row_number`, `rank` and
+  `dense_rank` are refused anywhere else, saying they belong in a window node.
+- **Sorting, reused.** Rows go into an `ExternalSorter` keyed by the partition columns (ascending,
+  nulls last) and then `order_by`, so the window spills to disk exactly as `sort` does (the same
+  encrypted private folder, deleted at the end, the same note in the run's log, the same stability:
+  rows with equal keys keep their arrival order). Where a partition starts, and where a run of equal
+  `order_by` values (peers) starts, is found by encoding each sorted batch's partition and order
+  columns with `KeyCodec` and comparing bytes with the row before, across batch boundaries; nulls
+  are equal to each other, so empty values form one partition.
+- **Frames.** Running totals use SQL's `rows between unbounded preceding and current row`, not the
+  default `range` frame: a bank statement's running balance gives each row its own balance even when
+  two postings share a timestamp. Ties are told apart only by arrival order, so the guide advises an
+  id as the last `order_by` column. `rank` and `dense_rank` are the functions that treat peers alike.
+  The totals reuse the aggregate node's accumulators and result types (`Aggregation.newAcc`,
+  `Aggregation.resultType`), so a running `sum` and an `aggregate`'s `sum` always agree.
+- **Lag and lead.** The offset is a literal from 0 to 1,000 (`Windowing.MAX_OFFSET`); the default is
+  any expression on the current row, widened with the value to a common type (refused when there is
+  none). Each sorted batch is held until the rows its furthest `lead` looks at have arrived, then
+  passed on with its new columns (its own vectors moved, not copied); after that only its argument
+  values are kept, as long as a later row's `lag` can reach them. A row looks at another only when
+  both carry the same partition number, given as partitions start. What is held (the batches waiting
+  and the lag values kept, estimated in bytes) is checked against `memory_limit_mb` on its own; past
+  it the run stops with "the rows held for lag and lead take more than N MB", which only very wide
+  rows and a large offset reach. The sorter's own rows are not counted in it: with nothing on disk
+  they stay in memory until the node ends, so a window can hold about twice the limit, where a sort
+  holds about one and an eighth. Counting both against one budget would make a window that fits in
+  memory spill as soon as it has a lead.
+- **Names and types.** The input's columns come out as they were, then the new ones, written with the
+  expression types (`int64` for numbers and ranks, `decimal(38,s)`, `float64`, `utf8`, `date`,
+  `timestamp`). A new name equal to an input column's or another new column's, ignoring case (as a
+  database target would), is refused before the run.
+- **Marks and preview.** A new column is marked sensitive when its arguments name a marked column,
+  or when its partition or order columns are marked (a rank shows how marked values compare); input
+  columns keep their marks. A preview refuses a window that groups, orders or works out a value from
+  a column hidden from the caller, as it refuses `sort` and `compute`, and runs one otherwise with its
+  share of the preview's memory. The quality predictor passes the rows through and reports the new
+  columns as not estimated.
 
 Memory: a node closes every batch it takes or hands it on, and splits batches by copying only
 when rows go to more than one port (a batch whose rows all go one way is handed on whole).

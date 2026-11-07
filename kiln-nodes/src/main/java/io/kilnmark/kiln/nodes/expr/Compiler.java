@@ -383,6 +383,10 @@ final class Compiler {
             }
             return hook.aggregate(c);
         }
+        if (Windowing.OWN.contains(fn)) {
+            throw new ExprException(fn + "(...) looks at other rows, so it can only be used in a window node's columns",
+                c.pos());
+        }
         if (c.star()) {
             throw new ExprException("only count(*) takes a star", c.pos());
         }

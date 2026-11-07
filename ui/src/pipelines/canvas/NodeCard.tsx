@@ -22,6 +22,7 @@ import {
   IconSum,
   IconActivity,
   IconTableRow,
+  IconTimeline,
 } from "@tabler/icons-react";
 import { formatNumber, formatScore, type PipelineNodeQuality } from "../../api";
 import { StatusChip, type Tone } from "../../components/ui";
@@ -73,6 +74,7 @@ const ICONS: Record<string, typeof IconBox> = {
   route: IconArrowsSplit,
   limit: IconListNumbers,
   sort: IconArrowsSort,
+  window: IconTimeline,
   gate: IconShieldCheck,
 };
 

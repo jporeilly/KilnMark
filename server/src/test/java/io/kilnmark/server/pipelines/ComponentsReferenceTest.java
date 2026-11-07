@@ -184,6 +184,7 @@ class ComponentsReferenceTest {
         }
         Set<String> expected = new TreeSet<>(Expression.functions());
         expected.addAll(Expression.aggregates());
+        expected.addAll(Expression.windowFunctions());
         assertEquals(expected, documented, "the functions in pipeline-nodes.md's tables");
     }
 
