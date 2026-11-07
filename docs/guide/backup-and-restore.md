@@ -48,8 +48,9 @@ Without a folder it uses the install root's `backups`. It writes a new folder, `
   same way, inside its container as its own user (no password is needed or shown). It holds the
   realm's password hashes, its people's one-time code secrets, the realm's signing keys and the
   client secret: keep it as safe as the keys file;
-- `backup.txt`: when it was taken, the Kilnmark version, the last database migration, and whether
-  it holds Keycloak's database (`keycloak=yes`);
+- `backup.txt`: when it was taken, the Kilnmark version, the last database migration, whether
+  it holds Keycloak's database (`keycloak=yes`), the install's deployment mode (`deployment_mode`)
+  and its own id (`install_id`), made at its first start;
 - `SHA256SUMS`: a checksum of each file, which the restore checks.
 
 The script reads the whole dump back before it finishes, as a restore reads it, so a dump that was
@@ -95,6 +96,11 @@ A restore puts Kilnmark back as it was when the backup was taken. Everything sin
 
    Put `kilnmark-keys.tar` back in the backup's folder first. The script checks each of the backup's
    files against `SHA256SUMS`, then says what it will do and asks you to run it again with `--yes` (`-Yes` on Windows).
+   It takes a backup only into an install of the same deployment mode (production, or a Starter
+   Pack install), and only a whole one: before anything is stopped, it refuses a backup whose
+   `backup.txt` names another mode or install than its dump does (or neither: a backup taken before
+   they were recorded), a Keycloak database whose realm names another install or mode, and, on
+   production, a Keycloak database holding the Starter Pack's group or anyone at kilnmark.com.
    With `--yes`, it:
    - restores the backup into a database of its own, `kilnmark_restoring`, while Kilnmark keeps
      running. If that fails, nothing has changed: Kilnmark still runs on its own database, and the

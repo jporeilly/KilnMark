@@ -64,7 +64,48 @@ public class DatabaseTls {
         FlywayDataSourceRuntimeConfig f = flywayConfig.datasources().get(DataSourceUtil.DEFAULT_DATASOURCE_NAME);
         boolean active = f == null || f.active().orElse(true);
         if (active && flyway.isResolvable()) {
+            // A database with no migration history is new: marked so straight after migrating, so the
+            // first start's mode is recorded (ModeCheck) even when that start fails after this and a
+            // later one gets there. A database migrated before, with no mode, never gets the mark.
+            boolean fresh;
+            try (Connection c = source.getConnection()) {
+                fresh = isNew(c);
+            } catch (SQLException e) {
+                throw new IllegalStateException("Kilnmark's own database could not be read before migrating ("
+                    + e.getSQLState() + ")", e);
+            }
             flyway.get().migrate();
+            if (fresh) {
+                try (Connection c = source.getConnection()) {
+                    markNew(c, NEW_DATABASE);
+                } catch (SQLException e) {
+                    throw new IllegalStateException("Kilnmark's own database could not be marked new ("
+                        + e.getSQLState() + ")", e);
+                }
+            }
+        }
+    }
+
+    /** The mark of a new database, in kilnmark.server_setting, until its first start records a mode. */
+    public static final String NEW_DATABASE = "deployment_mode_new";
+
+    /** Whether the database has no migration history yet: a new one. */
+    public static boolean isNew(Connection c) throws SQLException {
+        try (Statement st = c.createStatement();
+             ResultSet rs = st.executeQuery("SELECT to_regclass('kilnmark.flyway_schema_history') IS NULL")) {
+            return rs.next() && rs.getBoolean(1);
+        }
+    }
+
+    /** Marks the database new under {@code key}, once; it stays until a mode is recorded. */
+    public static void markNew(Connection c, String key) throws SQLException {
+        try (java.sql.PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.server_setting (key, value, "
+            + "updated_by) VALUES (?, 'new', 'server (first start)') ON CONFLICT (key) DO NOTHING")) {
+            ps.setString(1, key);
+            ps.executeUpdate();
+        }
+        if (!c.getAutoCommit()) {
+            c.commit();
         }
     }
 

@@ -1,7 +1,8 @@
 #!/bin/bash
 # Sets up Kilnmark's realm in the bundled Keycloak (ADR 0014; INSTALL.md, "Keycloak, if you have no
 # identity provider"). Run by the keycloak-setup service in compose.yaml, profile auth, after
-# Keycloak starts; run it again with: podman compose --profile auth run --rm keycloak-setup
+# Keycloak starts; run it again with the control script (kilnmark.sh restart), which hands it its
+# two secrets in a file for that run alone.
 #
 # The realm is called kilnmark. In it:
 # - groups that give Kilnmark's roles: kilnmark-viewers, kilnmark-stewards, kilnmark-designers,
@@ -16,10 +17,11 @@
 #   (KILNMARK_MODE=starter-pack), made when the control script asks (kilnmark.sh starter people)
 #   while KILNMARK_STARTER=allowed, and deleted at the next run once it is not. Never for real use.
 # - people of the organisation's own, in both modes, when the control script's people add (install
-#   asks for Kilnmark's first admin this way), people import or people activate asks; temporary
-#   passwords left unused for KILNMARK_PEOPLE_ACTIVATION_HOURS disable their person, at every run;
-#   and, for people list, who is here. Never Keycloak's own admin (KILNMARK_KEYCLOAK_ADMIN), who
-#   signs in to Keycloak's console, not to Kilnmark.
+#   asks for Kilnmark's first admin this way), people import or people activate asks; a temporary
+#   password these set, marked kilnmark-temporary, left unused for KILNMARK_PEOPLE_ACTIVATION_HOURS
+#   disables its person, at every run and at people expire, which the control script's timer runs
+#   hourly; and, for people list, who is here. Never Keycloak's own admin (KILNMARK_KEYCLOAK_ADMIN),
+#   who signs in to Keycloak's console, not to Kilnmark.
 #
 # Each part is checked on its own and made if it is missing, so a run that stopped half way is
 # finished by the next. What is there is kept, except the client's address and secret, which follow
@@ -33,17 +35,26 @@ KEYCLOAK_URL="${KEYCLOAK_URL:-http://keycloak:8080}"
 KILNMARK_URL="${KILNMARK_URL:-http://localhost:8780}"
 KILNMARK_URL="${KILNMARK_URL%/}"
 : "${KC_ADMIN_USER:?Set KILNMARK_KEYCLOAK_ADMIN to the Keycloak admin user name}"
-# The two secrets come from config/.env, mounted read-only at /run/kilnmark/env, not from the
-# environment: podman-compose puts each environment setting on podman's command line, which other
-# users of the machine can read. Only these two lines are read from it. (The environment still
-# works, for a compose of your own.)
+# The two secrets come from a file the control script writes for each run, holding only them,
+# mounted read-only at /run/kilnmark/env, not from the environment: podman-compose puts each
+# environment setting on podman's command line, which other users of the machine can read. (The
+# environment still works, for a compose of your own.) Read as compose reads .env: an export in
+# front, spaces around =, a value in double or single quotes, or bare up to a " #" comment.
 setting_from_file() {
   local f=/run/kilnmark/env line v=""
-  [ -r "$f" ] || return 0
+  [ -f "$f" ] && [ -r "$f" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
-    line="${line#export }"
-    [[ "$line" == "$1="* ]] && v="${line#"$1="}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    if [[ "$line" =~ ^export[[:space:]]+(.*)$ ]]; then line="${BASH_REMATCH[1]}"; fi
+    [[ "$line" =~ ^$1[[:space:]]*=(.*)$ ]] || continue
+    v="${BASH_REMATCH[1]}"
+    v="${v#"${v%%[![:space:]]*}"}"
+    case "$v" in
+      \"*) v="${v#\"}"; v="${v%%\"*}" ;;
+      \'*) v="${v#\'}"; v="${v%%\'*}" ;;
+      *) v="${v%%[[:space:]]#*}"; v="${v%"${v##*[![:space:]]}"}" ;;
+    esac
   done < "$f"
   printf '%s' "$v"
 }
@@ -75,13 +86,14 @@ esac
 # script's people command asks: KILNMARK_PEOPLE_ACTION add (one person: KILNMARK_PERSON_EMAIL,
 # _FIRST_NAME, _LAST_NAME, _GROUPS, a ;-separated list), import (a CSV on standard input: on a
 # Starter Pack install after the class's shared password; on production, nobody gets a password:
-# each waits, disabled, for activate), activate (KILNMARK_PERSON_EMAIL) or list. A temporary
+# each waits, disabled, for activate), activate (KILNMARK_PERSON_EMAIL), list, or expire (only the
+# expiry of unused temporary passwords, below, which the control script's timer runs hourly). A temporary
 # password comes on standard input, never the environment or a command line. Never in the Starter
 # Pack's group, so its removal never touches them; never at kilnmark.com, the example people's.
 PERSON_ACTION="${KILNMARK_PEOPLE_ACTION:-}"
 case "$PERSON_ACTION" in
-  ""|add|import|activate|list) ;;
-  *) echo "keycloak-setup: KILNMARK_PEOPLE_ACTION is add, import, activate or list" >&2; exit 1 ;;
+  ""|add|import|activate|list|expire) ;;
+  *) echo "keycloak-setup: KILNMARK_PEOPLE_ACTION is add, import, activate, list or expire" >&2; exit 1 ;;
 esac
 if [ -n "$PERSON_ACTION" ] && [ -n "$PEOPLE_ACTION" ]; then
   echo "keycloak-setup: people of your own and the Starter Pack's example people are separate runs. Nothing was changed" >&2
@@ -236,8 +248,12 @@ FORMS="kilnmark sign-in"
 ROLE_GROUPS="kilnmark-viewers kilnmark-stewards kilnmark-designers kilnmark-admins kilnmark-sensitive-data"
 export KC_CLI_PASSWORD="$KC_ADMIN_PASSWORD"
 unset KC_ADMIN_PASSWORD
+# kcadm keeps a token for Keycloak's master realm in its config file: a new one in a private folder
+# for each run, never ~/.keycloak, removed however the run ends, so an exited container never holds one.
+KC_CONFIG_DIR="$(mktemp -d)"
+trap 'rm -rf "$KC_CONFIG_DIR"' EXIT
 
-kc() { /opt/keycloak/bin/kcadm.sh "$@"; }
+kc() { /opt/keycloak/bin/kcadm.sh "$@" --config "$KC_CONFIG_DIR/kcadm.config"; }
 say() { echo "keycloak-setup: $*"; }
 # A text as a JSON string, for secrets sent on kcadm's input.
 json() { local s="${1//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }
@@ -273,6 +289,78 @@ require() {
 # The first line of its input. It reads all of it: a reader that stopped early would end the
 # writer with SIGPIPE, which pipefail turns into a failure of the whole pipeline.
 one() { local first=""; IFS= read -r first || true; printf '%s\n' "$first"; cat > /dev/null; }
+
+# Every line of a listing kcadm pages through ($1 the path; $2 its fields), 500 at a time: never only
+# the first page, however many there are. Fails when a page fails, so nobody is missed unsaid.
+# KILNMARK_SETUP_PAGE, a smaller page, is for the tests only (compose never passes it).
+PAGE=500
+if [[ "${KILNMARK_SETUP_PAGE:-}" =~ ^[1-9][0-9]{0,2}$ ]] && [ "$KILNMARK_SETUP_PAGE" -le 500 ]; then PAGE="$KILNMARK_SETUP_PAGE"; fi
+all_of() {
+  local first=0 page line n
+  while :; do
+    page="$(kc get "$1" -r "$REALM" -q first="$first" -q max="$PAGE" --fields "$2" --format csv --noquotes)" || return 1
+    n=0
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      printf '%s\n' "$line"; n=$((n + 1))
+    done <<< "$page"
+    [ "$n" -eq "$PAGE" ] || return 0
+    first=$((first + PAGE))
+  done
+}
+# The temporary password the people commands set (add, import, activate) is marked with this label,
+# so only it expires: Keycloak drops the mark when its person chooses their own (a new password has
+# no label), and a password an admin set in Keycloak's console never has it.
+TEMPORARY_LABEL=kilnmark-temporary
+# When person $1's (an id) temporary password, by its mark, was set, in milliseconds; false when
+# they have anything else: no password, one of their own, or another credential (a one-time code) too.
+temporary_set_at() {
+  local type label created n=0 at="" list
+  list="$(kc get "users/$1/credentials" -r "$REALM" --fields type,userLabel,createdDate --format csv --noquotes)" || return 1
+  while IFS=, read -r type label created; do
+    [ -n "$type" ] || continue
+    n=$((n + 1))
+    if [ "$type" = password ] && [ "$label" = "$TEMPORARY_LABEL" ]; then at="$created"; fi
+  done <<< "$list"
+  [ "$n" -eq 1 ] && [[ "$at" =~ ^[0-9]+$ ]] || return 1
+  printf '%s' "$at"
+}
+# Unused temporary passwords expire, at every run (every start runs setup), at people expire (the
+# control script's timer, hourly) and before people list: anyone enabled who still has to choose
+# their own password more than ACTIVATION_HOURS after their marked temporary one was set is
+# disabled, each said for Kilnmark's audit log. people activate gives them a new one. The operator's
+# KILNMARK_ADMIN_TOKEN stays the way in should a first admin expire.
+expire_unused() {
+  local now_ms limit_ms users id username enabled rest set_at
+  now_ms=$(( $(date +%s) * 1000 ))
+  # a later "now", for the tests only (compose never passes it): an earlier one would expire nobody
+  if [[ "${KILNMARK_SETUP_NOW_MS:-}" =~ ^[0-9]{13}$ ]] && [ "$KILNMARK_SETUP_NOW_MS" -gt "$now_ms" ]; then
+    now_ms="$KILNMARK_SETUP_NOW_MS"
+  fi
+  limit_ms=$(( ACTIVATION_HOURS * 3600 * 1000 ))
+  users="$(all_of users id,username,enabled,requiredActions)"
+  while IFS=, read -r id username enabled rest; do
+    [ -n "$id" ] && [ "$enabled" = true ] || continue
+    [[ ",$rest," == *",UPDATE_PASSWORD,"* ]] || continue
+    set_at="$(temporary_set_at "$id")" || continue
+    if [ $(( now_ms - set_at )) -gt "$limit_ms" ]; then
+      kc update "users/$id" -r "$REALM" -s enabled=false
+      say "disabled $username: their temporary password was not used within $ACTIVATION_HOURS hours (people activate gives them a new one)"
+    fi
+  done <<< "$users"
+}
+
+# people expire: only the expiry, on a realm setup made before; nothing else is changed (so the
+# hourly run adds nothing to Keycloak's admin events but what it disables).
+if [ "$PERSON_ACTION" = expire ]; then
+  if ! kc get "realms/$REALM" > /dev/null 2>&1; then
+    say "the realm kilnmark is not made yet: nothing to expire"
+    exit 0
+  fi
+  expire_unused
+  say "people expire: done"
+  exit 0
+fi
 
 # Brute-force protection on Keycloak's own admin realm too: its admin signs in on the same pages.
 kc update realms/master -s bruteForceProtected=true -s failureFactor=10
@@ -391,6 +479,12 @@ user_id() { kc get users -r "$REALM" -q username="$1" -q exact=true --fields id 
 # Whether person $1 is in group $2 (ids). grep reads all of kcadm's output (no -q), so kcadm never
 # ends with SIGPIPE, which pipefail would turn into "not a member".
 in_group() { kc get "users/$1/groups" -r "$REALM" --fields id --format csv --noquotes | grep -x "$2" > /dev/null; }
+# Whether person $1 (an id) is someone else's: from a directory (a federation link) or signing in
+# through another identity provider (a federated identity). The people commands never change them.
+federated() {
+  [ -n "$(kc get "users/$1" -r "$REALM" --fields federationLink --format csv --noquotes | tr -d ' \r\n')" ] && return 0
+  [ -n "$(kc get "users/$1/federated-identity" -r "$REALM" --fields identityProvider --format csv --noquotes | tr -d ' \r\n')" ]
+}
 set_password() {
   printf '{"type":"password","temporary":false,"value":%s}' "$(json "$PEOPLE_PASSWORD")" \
     | kc update "users/$1/reset-password" -r "$REALM" -f -
@@ -422,17 +516,24 @@ make_starter_group() {
   fi
   echo "$gid"
 }
-# The people the pack made are the members of its group, whatever their user name is now (a realm
-# can let people change it): each is deleted, then the group. Anyone else is left as they are.
+# The people the pack made are the members of its group at a kilnmark.com address, Keycloak's own
+# (no directory's), whatever their user name is now (a realm can let people change it): each is
+# deleted. Anyone else in the group (put there by hand, or by a default group) is only taken out of
+# it, and said so; then the group goes. Nobody outside it is touched.
 remove_people() {
-  local gid members id username
+  local gid members id username email link
   gid="$(starter_group)"
   [ -n "$gid" ] || return 0
-  members="$(kc get "groups/$gid/members" -r "$REALM" -q first=0 -q max=1000 --fields id,username --format csv --noquotes)"
-  while IFS=, read -r id username; do
+  members="$(all_of "groups/$gid/members" id,username,email,federationLink)"
+  while IFS=, read -r id username email link; do
     [ -n "$id" ] || continue
-    kc delete "users/$id" -r "$REALM"
-    say "removed $username (a Starter Pack example person)"
+    if [[ "${email,,}" == *@kilnmark.com ]] && [ -z "$link" ] && ! federated "$id"; then
+      kc delete "users/$id" -r "$REALM"
+      say "removed $username (a Starter Pack example person)"
+    else
+      kc delete "users/$id/groups/$gid" -r "$REALM"
+      say "took $username out of the group $STARTER_GROUP and left them in Keycloak: not one of the example people (an address outside kilnmark.com, or from a directory or another identity provider)"
+    fi
   done <<< "$members"
   kc delete "groups/$gid" -r "$REALM"
 }
@@ -440,6 +541,13 @@ remove_people() {
 # Keycloak records every change to people as an admin event (Realm settings, Events, Admin events),
 # in both modes; whether it keeps their details (representations) stays the site's setting.
 kc update "realms/$REALM" -s adminEventsEnabled=true
+# The install this realm belongs to, and its mode (ADR 0051), as Kilnmark recorded them: the control
+# script's people commands hand them. Kept on the realm, so a restore refuses a backup's Keycloak
+# database that belongs to another install.
+if [[ "${KILNMARK_INSTALL_ID:-}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+  kc update "realms/$REALM" -s "attributes.kilnmark_install_id=$KILNMARK_INSTALL_ID" \
+    -s "attributes.kilnmark_mode=$( [ "$STARTER_MODE" = true ] && echo starter-pack || echo production )"
+fi
 if [ "$STARTER_MODE" != true ]; then
   :
 elif [ "$PEOPLE_ACTION" = remove ] || [ "$STARTER_ALLOWED" = false ]; then
@@ -488,8 +596,25 @@ person_id() {
 # Whether person $1 (an id) has a password, and whether Keycloak still asks them to choose their
 # own (a temporary one not yet used).
 has_password() { kc get "users/$1/credentials" -r "$REALM" --fields type --format csv --noquotes | grep -x password > /dev/null; }
-must_choose() { kc get "users/$1" -r "$REALM" --fields requiredActions | tr -d ' \n\r\t' | grep UPDATE_PASSWORD > /dev/null; }
+must_choose() { kc get "users/$1" -r "$REALM" --fields requiredActions --format csv --noquotes | grep UPDATE_PASSWORD > /dev/null; }
+no_credentials() { [ -z "$(kc get "users/$1/credentials" -r "$REALM" --fields type --format csv --noquotes | tr -d ' \r\n')" ]; }
 temporary_password() { printf '{"type":"password","temporary":true,"value":%s}' "$(json "$PERSON_PASSWORD")"; }
+# Marks person $1's (an id) password as the temporary one the people commands set (TEMPORARY_LABEL),
+# and checks it took; false when it did not.
+mark_temporary() {
+  local cid
+  cid="$(kc get "users/$1/credentials" -r "$REALM" --fields id,type --format csv --noquotes | { grep ',password$' || true; } | cut -d, -f1 | one)"
+  [ -n "$cid" ] || return 1
+  kc update "users/$1/credentials/$cid/userLabel" -r "$REALM" -h Content-Type=text/plain -b "$TEMPORARY_LABEL" > /dev/null 2>&1 || return 1
+  temporary_set_at "$1" > /dev/null
+}
+# Takes person $1's (an id) passwords away again, when their mark did not take.
+drop_passwords() {
+  local cid
+  while IFS=, read -r cid _; do
+    [ -z "$cid" ] || kc delete "users/$1/credentials/$cid" -r "$REALM" || true
+  done < <(kc get "users/$1/credentials" -r "$REALM" --fields id,type --format csv --noquotes | { grep ',password$' || true; })
+}
 
 # People of the organisation's own, asked for by the control script's people command (add or
 # import): in their groups, never in the Starter Pack's. people add gives a temporary password, so
@@ -527,6 +652,16 @@ if [ "$PERSON_ACTION" = add ] || [ "$PERSON_ACTION" = import ]; then
     if $ok; then
       for g in "${list[@]}"; do in_group "$uid" "$(group_id "$g")" || ok=false; done
     fi
+    # Never in a group of the Starter Pack's name (a default group of the realm, say): the pack's
+    # removal deletes members there, and production refuses their sign-in.
+    pack="$(group_id "$STARTER_GROUP")"
+    if $ok && [ -n "$pack" ] && in_group "$uid" "$pack"; then
+      kc delete "users/$uid" -r "$REALM"
+      echo "keycloak-setup: $email was put in the group $STARTER_GROUP as they were made (it is one of the realm's default groups, say), so was removed again: take it out of the default groups. $made made before it stay; nothing more was done" >&2
+      [ "$PERSON_ACTION" != import ] || echo "keycloak-setup: people import: made $made, already there $kept, refused 0, stopped part way" >&2
+      exit 1
+    fi
+    if $ok && ! $waiting && ! mark_temporary "$uid"; then ok=false; fi
     if ! $ok; then
       [ -z "$uid" ] || kc delete "users/$uid" -r "$REALM"
       echo "keycloak-setup: $email could not be made (Keycloak refused them, or their groups): it stopped there. $made made before it stay; nothing more was done" >&2
@@ -556,8 +691,16 @@ if [ "$PERSON_ACTION" = activate ]; then
     echo "keycloak-setup: $email is active already: nothing was changed (reset a password in Keycloak's console)" >&2
     exit 1
   fi
-  if has_password "$uid" && ! must_choose "$uid"; then
-    echo "keycloak-setup: $email has signed in and chosen their own password: they were disabled on purpose, so they are left as they are (enable them in Keycloak's console)" >&2
+  # Only someone waiting for a first password: none at all (imported on production), or only the
+  # marked temporary one, unused. Never anyone with a password of their own or a one-time code (they
+  # have signed in, and were disabled on purpose), nor anyone from a directory or another identity
+  # provider.
+  if federated "$uid"; then
+    echo "keycloak-setup: $email comes from a directory or another identity provider: the people commands never change them. Nothing was changed" >&2
+    exit 1
+  fi
+  if ! no_credentials "$uid" && { ! temporary_set_at "$uid" > /dev/null || ! must_choose "$uid"; }; then
+    echo "keycloak-setup: $email has signed in (a password of their own, or a one-time code): they were disabled on purpose, so they are left as they are (enable them in Keycloak's console)" >&2
     exit 1
   fi
   if [ -n "$(kc get "users/$uid/groups" -r "$REALM" --fields name --format csv --noquotes | grep -x "$STARTER_GROUP" || true)" ]; then
@@ -565,38 +708,25 @@ if [ "$PERSON_ACTION" = activate ]; then
     exit 1
   fi
   temporary_password | kc update "users/$uid/reset-password" -r "$REALM" -f -
+  if ! mark_temporary "$uid"; then
+    drop_passwords "$uid"
+    echo "keycloak-setup: $email's temporary password could not be marked as one, so it was taken away again and they stay disabled. Nothing more was done" >&2
+    exit 1
+  fi
   kc update "users/$uid" -r "$REALM" -s enabled=true
   say "activated $email: they choose their own password at their first sign-in"
 fi
 unset PERSON_PASSWORD
 
-# Unused temporary passwords expire, at every run (every start runs setup) and before people list:
-# anyone enabled who still has to choose their own password more than ACTIVATION_HOURS after their
-# temporary one was set is disabled, each said for Kilnmark's audit log. people activate gives them
-# a new one. The operator's KILNMARK_ADMIN_TOKEN stays the way in should a first admin expire.
-now_ms=$(( $(date +%s) * 1000 ))
-# a later "now", for the tests only (compose never passes it): an earlier one would expire nobody
-if [[ "${KILNMARK_SETUP_NOW_MS:-}" =~ ^[0-9]{13}$ ]] && [ "$KILNMARK_SETUP_NOW_MS" -gt "$now_ms" ]; then
-  now_ms="$KILNMARK_SETUP_NOW_MS"
-fi
-limit_ms=$(( ACTIVATION_HOURS * 3600 * 1000 ))
-while IFS=, read -r id username enabled rest; do
-  [ -n "$id" ] && [ "$enabled" = true ] || continue
-  [[ ",$rest," == *",UPDATE_PASSWORD,"* ]] || continue
-  set_at="$(kc get "users/$id/credentials" -r "$REALM" --fields type,createdDate --format csv --noquotes | { grep '^password,' || true; } | one)"
-  set_at="${set_at#password,}"
-  [[ "$set_at" =~ ^[0-9]+$ ]] || continue
-  if [ $(( now_ms - set_at )) -gt "$limit_ms" ]; then
-    kc update "users/$id" -r "$REALM" -s enabled=false
-    say "disabled $username: their temporary password was not used within $ACTIVATION_HOURS hours (people activate gives them a new one)"
-  fi
-done < <(kc get users -r "$REALM" -q first=0 -q max=10000 --fields id,username,enabled,requiredActions --format csv --noquotes)
+# Unused temporary passwords expire (expire_unused, above).
+expire_unused
 
 # The realm's people, with their Kilnmark groups, whether they are active, waiting to be activated
 # (imported, or their temporary password expired) or disabled, and whether they must still choose
 # their own password. No password is shown.
 if [ "$PERSON_ACTION" = list ]; then
   count=0
+  users="$(all_of users id,username,enabled,requiredActions)"
   while IFS=, read -r id username enabled rest; do
     [ -n "$id" ] || continue
     names=""
@@ -611,7 +741,7 @@ if [ "$PERSON_ACTION" = list ]; then
     fi
     say "person $username groups=${names:-none} status=$status must-choose-password=$change"
     count=$((count + 1))
-  done < <(kc get users -r "$REALM" -q first=0 -q max=10000 --fields id,username,enabled,requiredActions --format csv --noquotes)
+  done <<< "$users"
   say "people: $count"
 fi
 

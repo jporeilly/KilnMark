@@ -22,7 +22,7 @@ default_root="/opt/kilnmark"
 # config/.env says, as this script reads them (ADR 0051), so a value exported here never counts.
 unset KILNMARK_MODE KILNMARK_STARTER KILNMARK_STARTER_PEOPLE_ACTION \
   KILNMARK_PEOPLE_ACTION KILNMARK_PERSON_EMAIL KILNMARK_PERSON_FIRST_NAME KILNMARK_PERSON_LAST_NAME \
-  KILNMARK_PERSON_GROUPS
+  KILNMARK_PERSON_GROUPS KILNMARK_INSTALL_ID KILNMARK_SECRETS_DIR KILNMARK_ENV_FILE
 
 # Rootless Podman needs the account's systemd session; sudo -iu and su do not set it up, but its
 # runtime folder exists once lingering is on (prepare turns it on).
@@ -33,6 +33,18 @@ fi
 
 die() { echo "Error: $*" >&2; exit 1; }
 note() { echo "$*"; }
+
+# However this script ends, the private folders it made go: the one-offs' secrets
+# (write_run_secrets) and a request's (api_call, starter_on).
+starter_work="" run_secrets=""
+cleanup() {
+  [ -z "$starter_work" ] || rm -rf "$starter_work"
+  [ -z "$run_secrets" ] || rm -rf "$run_secrets"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 usage() {
   cat <<'EOF'
@@ -49,14 +61,15 @@ Kilnmark control script.
                        turned on, and starter people adds the example people. A production
                        install asks how people sign in (--auth: the bundled Keycloak). With
                        the bundled Keycloak, install offers to add Kilnmark's first admin.
-  people add | people import FILE | people activate EMAIL | people list
+  people add | people import FILE | people activate EMAIL | people list | people expire
                        With the bundled Keycloak, in either mode: add one person of your own (any
                        of Kilnmark's groups, admins included; install asks for the first admin
                        this way), add people from a CSV file (no admins; on production no one who
                        sees sensitive values, and each waits, disabled, for people activate; the
                        example is people.example.csv), activate one, or list who is there. A
                        temporary password is typed (or piped in), never shown, and goes unused for
-                       KILNMARK_PEOPLE_ACTIVATION_HOURS (72) at most. Someone already there is left
+                       KILNMARK_PEOPLE_ACTIVATION_HOURS (72) at most: people expire, which a timer
+                       runs every hour, disables anyone past it. Someone already there is left
                        as they are.
   starter people [--new-password | --remove]
                        On a Starter Pack install, the five example people in the bundled Keycloak
@@ -65,7 +78,7 @@ Kilnmark control script.
   up [--no-browser]    Start Kilnmark (and Keycloak when .env turns on the auth profile); wait
                        until it answers; open it in the browser. The default command.
   down                 Stop. Every volume, so all data, is kept.
-  restart [SERVICE]    Restart everything, or one service.
+  restart [SERVICE]    Restart everything (a stop, then up), or one service.
   status               Version, containers, health, ports and the last backup.
   logs [SERVICE] [-f]  The last 200 lines of the logs, or follow them.
   check                Check the prerequisites and the settings, changing nothing.
@@ -153,11 +166,31 @@ samples_allowed() { starter_mode; }
 # The deployment mode Kilnmark recorded in its own database at its first start (ADR 0051), read with
 # the database's own tools: what decides, not config/.env alone. Empty when nothing is recorded, or
 # the database does not answer.
-recorded_mode() {
+recorded_mode() { recorded_setting deployment_mode; }
+# A setting Kilnmark recorded in its own database ($1: deployment_mode, or install_id, the install's
+# own id, made at its first start); empty when there is none, or the database does not answer.
+recorded_setting() {
   set_compose
   "${compose[@]}" exec -T postgres psql -U kilnmark -d kilnmark -X -q -At \
-    -c "SELECT value FROM kilnmark.server_setting WHERE key = 'deployment_mode'" 2> /dev/null | tr -d '\r' || true
+    -c "SELECT value FROM kilnmark.server_setting WHERE key = '$1'" 2> /dev/null | tr -d '[:space:]' || true
 }
+
+# The people commands act only where Kilnmark's own record says the same mode as config/.env:
+# refused when they differ, or when the database does not answer. keycloak-setup is then handed
+# the recorded mode (people_mode), never config/.env's alone.
+people_mode="" mode_problem=""
+check_people_mode() {
+  local recorded; recorded="$(recorded_mode)"
+  people_mode="" mode_problem=""
+  if [ -z "$recorded" ]; then
+    mode_problem="Kilnmark's database does not answer, or has no deployment mode recorded, so nobody was made or changed. Start Kilnmark with $root/kilnmark.sh up, then try again."
+  elif [ "$recorded" != "$(setting KILNMARK_MODE)" ]; then
+    mode_problem="KILNMARK_MODE in config/.env differs from the mode Kilnmark recorded at its first start, so nobody was made or changed: set it back."
+  else
+    people_mode="$recorded"
+  fi
+}
+require_people_mode() { check_people_mode; [ -z "$mode_problem" ] || die "$mode_problem"; }
 
 # compose, always the kilnmark project, with this site's .env and the current version's file.
 compose=()
@@ -178,6 +211,105 @@ set_compose() {
 
 image_names() { echo "$registry/kilnmark-server:$1 $registry/kilnmark-postgres:$1"; }
 
+# The few secrets each one-off needs (keycloak-setup: Keycloak's admin password and the client
+# secret; samples-db: the database's password and the samples login's), each set in a file of its
+# own, in a new folder only this account can open under config/run, for one run: compose mounts
+# them read-only (KILNMARK_SECRETS_DIR, relative to compose.yaml), never config/.env whole. Gone once
+# the run is over (drop_run_secrets), and however this script ends; one a killed run left goes a day on.
+run_secret_line() {
+  local v; v="$(setting "$1")"
+  if [[ "$v" != *"'"* ]]; then printf "%s='%s'\n" "$1" "$v"
+  elif [[ "$v" != *'"'* ]]; then printf '%s="%s"\n' "$1" "$v"
+  else die "$1 in config/.env holds both kinds of quote mark, which compose tools do not all read alike: choose another. Nothing was changed."
+  fi
+}
+write_run_secrets() {
+  local base="$root/config/run"
+  [ -z "$run_secrets" ] || return 0
+  mkdir -p "$base" && chmod 700 "$base" || die "Could not make $base for the one-offs' secrets."
+  find "$base" -mindepth 1 -maxdepth 1 -type d -name 'r.*' -mmin +1440 -exec rm -rf {} + 2> /dev/null || true
+  run_secrets="$(mktemp -d "$base/r.XXXXXXXX")" || die "Could not make a private folder in $base."
+  { run_secret_line KILNMARK_KEYCLOAK_ADMIN_PASSWORD; run_secret_line KILNMARK_OIDC_CLIENT_SECRET; } > "$run_secrets/keycloak-setup.env"
+  { run_secret_line KILNMARK_DB_PASSWORD; run_secret_line KILNMARK_SAMPLES_DB_PASSWORD; } > "$run_secrets/samples-db.env"
+  # readable inside the containers, whichever user each runs as: the folder keeps everyone else out
+  chmod 644 "$run_secrets/keycloak-setup.env" "$run_secrets/samples-db.env"
+  export KILNMARK_SECRETS_DIR="../../config/run/$(basename "$run_secrets")"
+}
+drop_run_secrets() {
+  [ -z "$run_secrets" ] || rm -rf "$run_secrets"
+  run_secrets=""
+  unset KILNMARK_SECRETS_DIR
+}
+
+# --- the hourly expiry of unused temporary passwords (ADR 0051) -----------------------------------
+
+# With the bundled Keycloak, people expire runs every hour from a systemd timer of this account (a
+# system one when this runs as root), so a temporary password left unused is disabled at most an
+# hour after its window, whether or not Kilnmark starts again. up sets it up, and removes it without
+# the bundled Keycloak; uninstall removes it. KILNMARK_SYSTEMCTL and KILNMARK_SYSTEMD_DIR are for
+# the tests only.
+expiry_unit="kilnmark-$project-people-expire"
+expiry_systemctl() {
+  local sc="${KILNMARK_SYSTEMCTL:-systemctl}"
+  if [ "$(id -u)" -eq 0 ]; then "$sc" "$@"; else "$sc" --user "$@"; fi
+}
+expiry_dir() {
+  if [ -n "${KILNMARK_SYSTEMD_DIR:-}" ]; then printf '%s' "$KILNMARK_SYSTEMD_DIR"
+  elif [ "$(id -u)" -eq 0 ]; then printf '%s' /etc/systemd/system
+  else printf '%s' "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  fi
+}
+expiry_timer_set() {
+  local dir service timer engine_line=""
+  dir="$(expiry_dir)"
+  [ -z "${KILNMARK_ENGINE:-}" ] || engine_line="
+Environment=KILNMARK_ENGINE=$KILNMARK_ENGINE"
+  service="[Unit]
+Description=Kilnmark ($project): disable people whose temporary password went unused
+[Service]
+Type=oneshot
+Environment=KILNMARK_PROJECT=$project$engine_line
+ExecStart=$root/kilnmark.sh people expire"
+  timer="[Unit]
+Description=Kilnmark ($project): expire unused temporary passwords every hour
+[Timer]
+OnCalendar=hourly
+AccuracySec=1min
+Persistent=true
+[Install]
+WantedBy=timers.target"
+  if [ "$(cat "$dir/$expiry_unit.service" 2> /dev/null)" = "$service" ] \
+    && [ "$(cat "$dir/$expiry_unit.timer" 2> /dev/null)" = "$timer" ] \
+    && expiry_systemctl is-enabled "$expiry_unit.timer" > /dev/null 2>&1; then
+    return 0
+  fi
+  if mkdir -p "$dir" && printf '%s\n' "$service" > "$dir/$expiry_unit.service" \
+    && printf '%s\n' "$timer" > "$dir/$expiry_unit.timer" \
+    && expiry_systemctl daemon-reload > /dev/null 2>&1 \
+    && expiry_systemctl enable --now "$expiry_unit.timer" > /dev/null 2>&1; then
+    echo "Set up the hourly expiry of unused temporary passwords: the systemd timer $expiry_unit.timer."
+  else
+    echo "Warning: the hourly expiry of unused temporary passwords could not be set up (a systemd timer). Run $root/kilnmark.sh people expire every hour yourself (from cron, say); each start expires them too." >&2
+  fi
+}
+expiry_timer_remove() {
+  local dir; dir="$(expiry_dir)"
+  [ -f "$dir/$expiry_unit.timer" ] || [ -f "$dir/$expiry_unit.service" ] || return 0
+  expiry_systemctl disable --now "$expiry_unit.timer" > /dev/null 2>&1 || true
+  rm -f "$dir/$expiry_unit.timer" "$dir/$expiry_unit.service"
+  expiry_systemctl daemon-reload > /dev/null 2>&1 || true
+  echo "Removed the hourly expiry of unused temporary passwords (the systemd timer $expiry_unit.timer)."
+}
+expiry_timer_state() {
+  local dir; dir="$(expiry_dir)"
+  if [ -f "$dir/$expiry_unit.timer" ] && expiry_systemctl is-enabled "$expiry_unit.timer" > /dev/null 2>&1; then
+    echo "hourly (the systemd timer $expiry_unit.timer)"
+  else
+    echo "not set up"
+  fi
+}
+auth_on() { [[ ",$(setting COMPOSE_PROFILES | tr -d '[:space:]')," == *",auth,"* ]]; }
+
 images_present() {
   local i
   for i in $(image_names "$1"); do "$engine" image inspect "$i" > /dev/null 2>&1 || return 1; done
@@ -195,6 +327,8 @@ hide_compose_commands() { grep --line-buffered -v -E "$compose_command_line" || 
 start_log() {
   [ -n "$root" ] && [ -d "$root/logs" ] || return 0
   local log; log="$root/logs/$1-$(date -u +%Y%m%dT%H%M%SZ).log"
+  # the hourly expiry keeps one log a day, not one a run
+  [ "${2:-}" != daily ] || log="$root/logs/$1-$(date -u +%Y%m%d).log"
   exec > >(hide_compose_commands | tee -a "$log") 2>&1
 }
 
@@ -408,7 +542,7 @@ ensure_settings() {
   check_mode
   # Each is for one run of keycloak-setup, set by this script only: in config/.env every start would take it.
   for one_run in KILNMARK_STARTER_PEOPLE_ACTION KILNMARK_PEOPLE_ACTION KILNMARK_PERSON_EMAIL KILNMARK_PERSON_FIRST_NAME \
-    KILNMARK_PERSON_LAST_NAME KILNMARK_PERSON_GROUPS; do
+    KILNMARK_PERSON_LAST_NAME KILNMARK_PERSON_GROUPS KILNMARK_INSTALL_ID KILNMARK_SECRETS_DIR; do
     [ -z "$(setting "$one_run")" ] || die "$one_run is for one run of the control script only: delete it from config/.env. Nothing was changed."
   done
   # A Starter Pack install signs in with the bundled Keycloak, where its example people are (ADR 0051).
@@ -468,22 +602,45 @@ cmd_up() {
   v="$(current_version)"; ensure_settings; set_compose
   images_present "$v" || die "The images of Kilnmark $v are not here. Get them with one of: ./kilnmark.sh pull, ./kilnmark.sh load-images FILE, ./kilnmark.sh build"
   echo "Starting Kilnmark $v ..."
+  write_run_secrets
   compose_quietly up -d || die "Kilnmark could not start. See why with: ./kilnmark.sh logs"
   wait_for Kilnmark "$(local_url)/q/health/ready" 90 \
     || die "Kilnmark did not answer within 3 minutes. See why with: ./kilnmark.sh logs kilnmark"
-  profiles="$(setting COMPOSE_PROFILES | tr -d '[:space:]')"
-  if [[ ",$profiles," == *",auth,"* ]]; then
-    local kc; kc="$(setting KILNMARK_KEYCLOAK_PORT)"
-    wait_for Keycloak "http://localhost:${kc:-8180}/realms/kilnmark" 150 \
-      || die "Keycloak did not answer within 5 minutes. See why with: ./kilnmark.sh logs keycloak"
-    people_after_up
-  fi
+  after_one_offs
+  if auth_on; then expiry_timer_set; else expiry_timer_remove; fi
   url="$(setting KILNMARK_URL)"; url="${url:-$(local_url)}"; url="${url%/}"
   echo "Kilnmark $v is ready at $url"
   if $browser && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v xdg-open > /dev/null; then
     setsid xdg-open "$url" > /dev/null 2>&1 < /dev/null &
     sleep 1
   fi
+}
+
+# The one-offs this start ran: waits for them (keycloak-setup tells Kilnmark what it did), then
+# their secrets go.
+after_one_offs() {
+  if auth_on; then
+    local kc; kc="$(setting KILNMARK_KEYCLOAK_PORT)"
+    wait_for Keycloak "http://localhost:${kc:-8180}/realms/kilnmark" 150 \
+      || die "Keycloak did not answer within 5 minutes. See why with: ./kilnmark.sh logs keycloak"
+    people_after_up
+  fi
+  if samples_allowed && ! one_off_done samples-db; then
+    echo "Warning: samples-db did not finish well, so the Starter Pack may not find its database. See: ./kilnmark.sh logs samples-db" >&2
+  fi
+  drop_run_secrets
+}
+
+# Everything: a stop, then up, so the one-offs run again with this start's settings. One service:
+# compose restarts it (never a one-off, which runs at every up).
+cmd_restart() {
+  local s
+  if [ $# -eq 0 ]; then cmd_down; cmd_up --no-browser; return; fi
+  for s in "$@"; do
+    case "$s" in keycloak-setup|samples-db) die "$s runs once at every start: restart everything (./kilnmark.sh restart), or run up." ;; esac
+  done
+  set_compose
+  "${compose[@]}" restart "$@"
 }
 
 cmd_down() {
@@ -500,6 +657,7 @@ cmd_status() {
   "${compose[@]}" ps || true
   if curl -k -s -f -o /dev/null "$(local_url)/q/health/ready"; then echo "Health: ready at $(local_url)"
   else echo "Health: not answering at $(local_url)"; fi
+  ! auth_on || echo "People expiry: $(expiry_timer_state)"
   last="$(ls -1d "$root"/backups/kilnmark-* 2> /dev/null | tail -n 1 || true)"
   if [ -n "$last" ]; then echo "Last backup: $(basename "$last")"; else echo "Last backup: none in $root/backups"; fi
 }
@@ -780,6 +938,7 @@ cmd_uninstall() {
   local purge=false
   for a in "$@"; do case "$a" in --purge) purge=true ;; *) die "Unknown option $a." ;; esac; done
   local v; v="$(current_version)"; set_compose
+  expiry_timer_remove
   if ! $purge; then
     "${compose[@]}" down
     echo "Kilnmark is stopped and will not start again by itself. Its data and $root are kept."
@@ -816,16 +975,11 @@ one_off_done() {
 # Turns the Starter Pack's example data on through Kilnmark's own API, as Settings > Starter Pack
 # does: Kilnmark does the work. The admin token goes to curl in a file in a new folder only this
 # account can open, never on a command line; the folder goes however the script ends.
-starter_work=""
 starter_on() {
   local answer code
   set_compose
   one_off_done samples-db \
     || echo "Warning: samples-db did not finish well, so the Starter Pack may not find its database. See: ./kilnmark.sh logs samples-db"
-  trap '[ -z "$starter_work" ] || rm -rf "$starter_work"' EXIT
-  trap 'exit 129' HUP
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
   starter_work="$(mktemp -d)" || die "Could not make a private folder for the request."
   {
     cat <<EOF
@@ -863,6 +1017,8 @@ people_after_up() {
   out="$("$engine" logs "$id" 2>&1 | hide_compose_commands \
     | awk '/^keycloak-setup: started/ { buf = "" } { buf = buf $0 "\n" } END { printf "%s", buf }')"
   record_own_people "$out" expire
+  # anyone the pack's removal only took out of its group, not one of the example people
+  sed -n 's/^keycloak-setup: \(took .*\)$/\1/p' <<< "$out"
   starter_mode || return 0
   record_people "$out"
 }
@@ -873,6 +1029,7 @@ people_after_up() {
 api_answer=""
 api_call() {
   local code
+  # run in a subshell ($(api_call ...)), which has traps of its own: only its own folder goes there
   trap '[ -z "$starter_work" ] || rm -rf "$starter_work"' EXIT
   trap 'exit 129' HUP
   trap 'exit 130' INT
@@ -958,9 +1115,13 @@ cmd_starter() {
     || { people_password=""; die "Kilnmark's own record does not say this is a Starter Pack install (or its database does not answer: start it with ./kilnmark.sh up). Nothing was changed."; }
   set_compose
   echo "Asking keycloak-setup to $( [ "$action" = remove ] && echo remove || echo add ) the example people ..."
-  local out
-  if ! out="$(printf '%s\n' "$people_password" | KILNMARK_STARTER_PEOPLE_ACTION="$action" \
-    "${compose[@]}" run --rm -T keycloak-setup 2>&1 | hide_compose_commands)"; then
+  local out id ok=true
+  id="$(recorded_setting install_id)"
+  write_run_secrets
+  out="$(printf '%s\n' "$people_password" | KILNMARK_STARTER_PEOPLE_ACTION="$action" KILNMARK_MODE=starter-pack \
+    KILNMARK_INSTALL_ID="$id" "${compose[@]}" run --rm -T keycloak-setup 2>&1 | hide_compose_commands)" || ok=false
+  drop_run_secrets
+  if ! $ok; then
     people_password=""
     printf '%s\n' "$out"
     die "keycloak-setup did not finish: see what it said above. Nothing more was done."
@@ -1081,13 +1242,9 @@ record_own_people() {
   activated="$(sed -n 's/^keycloak-setup: activated \([a-z0-9._%+@-]*\): they choose their own password.*$/"\1"/p' <<< "$1" | paste -sd, -)"
   disabled="$(sed -n 's/^keycloak-setup: disabled \([a-z0-9._%+@-]*\): their temporary password was not used.*$/"\1"/p' <<< "$1" | paste -sd, -)"
   # what an ordinary run of setup did, before the command's own work: its own record
-  if [ -n "$disabled" ] && [ "$2" != expire ]; then
-    code="$(api_call POST /api/v1/auth/people "{\"via\":\"expire\",\"disabled\":[$disabled]}")"
-    [ "$code" = 204 ] || echo "Warning: Kilnmark did not record who was disabled in its audit log (HTTP $code); Keycloak's admin events have it." >&2
-  fi
+  [ -z "$disabled" ] || post_disabled "$disabled"
   case "$2" in
-    expire) [ -n "$disabled" ] || return 0
-      code="$(api_call POST /api/v1/auth/people "{\"via\":\"expire\",\"disabled\":[$disabled]}")" ;;
+    expire) return 0 ;;
     activate) [ -n "$activated" ] || return 0
       code="$(api_call POST /api/v1/auth/people "{\"via\":\"activate\",\"activated\":[$activated]}")" ;;
     *) [ -n "$made$kept" ] || [ "$2" = import ] || return 0
@@ -1096,20 +1253,45 @@ record_own_people() {
   [ "$code" = 204 ] || echo "Warning: Kilnmark did not record this in its audit log (HTTP $code); Keycloak's admin events have it." >&2
 }
 
+# Who was disabled ($1: quoted addresses, joined by commas), recorded 500 at a time: Kilnmark takes
+# at most 1000 people in one record.
+post_disabled() {
+  local all chunk="" n=0 p code
+  IFS=, read -r -a all <<< "$1"
+  for p in "${all[@]}" ""; do
+    if [ -n "$p" ]; then chunk="${chunk:+$chunk,}$p"; n=$((n + 1)); fi
+    if [ -n "$chunk" ] && { [ "$n" -eq 500 ] || [ -z "$p" ]; }; then
+      code="$(api_call POST /api/v1/auth/people "{\"via\":\"expire\",\"disabled\":[$chunk]}")"
+      [ "$code" = 204 ] || echo "Warning: Kilnmark did not record who was disabled in its audit log (HTTP $code); Keycloak's admin events have it." >&2
+      chunk="" n=0
+    fi
+  done
+}
+
 # One run of keycloak-setup for the people command: $1 the action; its standard input is this
-# function's. Its output in people_out; false when it failed.
+# function's. It is handed the mode Kilnmark recorded (check_people_mode), never config/.env's alone,
+# and the install's id. Its output in people_out; false when it failed.
 people_out=""
 run_people_setup() {
+  local id rc=0
+  [ -n "$people_mode" ] || die "Kilnmark's own record of its deployment mode was not read, so nobody was made or changed."
   set_compose
+  id="$(recorded_setting install_id)"
+  write_run_secrets
   people_out="$(KILNMARK_PEOPLE_ACTION="$1" KILNMARK_PERSON_EMAIL="$person_email" \
     KILNMARK_PERSON_FIRST_NAME="$person_first" KILNMARK_PERSON_LAST_NAME="$person_last" \
-    KILNMARK_PERSON_GROUPS="$person_groups" "${compose[@]}" run --rm -T keycloak-setup 2>&1 | hide_compose_commands)"
+    KILNMARK_PERSON_GROUPS="$person_groups" KILNMARK_MODE="$people_mode" KILNMARK_INSTALL_ID="$id" \
+    "${compose[@]}" run --rm -T keycloak-setup 2>&1 | hide_compose_commands)" || rc=$?
+  drop_run_secrets
+  return "$rc"
 }
 
 # Makes the person ask_person asked for, then records it. Keycloak and Kilnmark must be up.
 make_person() {
   local ok=true
   require_kilnmark_answers
+  check_people_mode
+  if [ -n "$mode_problem" ]; then people_no "$mode_problem"; return 1; fi
   echo "Asking keycloak-setup to add $person_email ..."
   # Fed by a process substitution, not a pipe, so people_out is set here; printf is a builtin.
   run_people_setup add < <(printf '%s\n' "$person_password") || ok=false
@@ -1134,17 +1316,20 @@ cmd_people() {
   case "$what" in
     add)
       [ $# -eq 0 ] || die "people add takes no options: it asks."
+      require_kilnmark_answers
+      require_people_mode
       ask_person "" || return 0
       make_person ;;
     import)
       file="${1:-}"
       [ $# -eq 1 ] && [ -f "$file" ] || die "Say which file: ./kilnmark.sh people import people.csv (an example: containers/keycloak/people.example.csv in the release)."
       require_kilnmark_answers
+      require_people_mode
       # A class on a Starter Pack install shares one temporary password; on production nobody is
-      # given one: each waits, disabled, for people activate.
-      if starter_mode; then ask_temporary_password "everyone in the file"; else person_password=""; fi
+      # given one: each waits, disabled, for people activate. By the recorded mode.
+      if [ "$people_mode" = starter-pack ]; then ask_temporary_password "everyone in the file"; else person_password=""; fi
       echo "Asking keycloak-setup to add the people in the file ..."
-      if starter_mode; then
+      if [ "$people_mode" = starter-pack ]; then
         run_people_setup import < <(printf '%s\n' "$person_password"; cat -- "$file") || ok=false
       else
         run_people_setup import < "$file" || ok=false
@@ -1153,7 +1338,7 @@ cmd_people() {
       printf '%s\n' "$people_out"
       record_own_people "$people_out" import
       $ok || die "keycloak-setup stopped: see what it said above (how many it made, if any, before it stopped)."
-      if starter_mode; then
+      if [ "$people_mode" = starter-pack ]; then
         echo "Each person made signs in with that password, then chooses their own and sets up a one-time code."
       else
         echo "Each person made waits, disabled, until you give them a temporary password of their own: $root/kilnmark.sh people activate EMAIL"
@@ -1163,6 +1348,7 @@ cmd_people() {
       person_email="$(printf '%s' "$1" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
       [[ "$person_email" =~ ^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$ ]] || die "That is not an email address. Nothing was changed."
       require_kilnmark_answers
+      require_people_mode
       ask_temporary_password "$person_email"
       echo "Asking keycloak-setup to activate $person_email ..."
       run_people_setup activate < <(printf '%s\n' "$person_password") || ok=false
@@ -1173,11 +1359,26 @@ cmd_people() {
       echo "$person_email signs in to Kilnmark with that password, then chooses their own and sets up a one-time code." ;;
     list)
       [ $# -eq 0 ] || die "people list takes no options."
+      require_people_mode
       run_people_setup list < /dev/null || { printf '%s\n' "$people_out"; die "keycloak-setup did not finish: see what it said above."; }
       record_own_people "$people_out" expire
       sed -n 's/^keycloak-setup: \(disabled .*\)$/\1/p; s/^keycloak-setup: person \(.*\)$/\1/p; s/^keycloak-setup: people: \(.*\)$/people: \1/p' <<< "$people_out"
       echo "(status=waiting-to-be-activated: give them a temporary password with people activate EMAIL; must-choose-password=yes: they have not yet signed in with it.)" ;;
-    *) die "Say what: ./kilnmark.sh people add | people import FILE | people activate EMAIL | people list" ;;
+    expire)
+      # Every hour, from the timer up sets up; by hand too. Nothing to do while Keycloak is stopped:
+      # nobody signs in then, and each start expires them first.
+      [ $# -eq 0 ] || die "people expire takes no options."
+      local kcp; kcp="$(setting KILNMARK_KEYCLOAK_PORT)"
+      if ! curl -s -f -o /dev/null --max-time 10 "http://localhost:${kcp:-8180}/realms/kilnmark"; then
+        echo "Keycloak does not answer, so nothing was expired now: each start of Kilnmark expires unused temporary passwords too."
+        return 0
+      fi
+      require_people_mode
+      run_people_setup expire < /dev/null || { printf '%s\n' "$people_out"; die "keycloak-setup did not finish: see what it said above."; }
+      record_own_people "$people_out" expire
+      sed -n 's/^keycloak-setup: \(disabled .*\)$/\1/p' <<< "$people_out"
+      echo "people expire: done." ;;
+    *) die "Say what: ./kilnmark.sh people add | people import FILE | people activate EMAIL | people list | people expire" ;;
   esac
 }
 
@@ -1200,8 +1401,12 @@ cmd_backup() {
 
 cmd_restore() {
   current_version > /dev/null; set_compose
+  # its last step starts Kilnmark: the one-offs get their secrets for that run only
+  write_run_secrets
   (cd "$root/current" && KILNMARK_COMPOSE="$(compose_line)" KILNMARK_KEYCLOAK="$(keycloak_on)" \
     KILNMARK_EXPECTED_MODE="$(setting KILNMARK_MODE)" sh ./restore.sh "$@")
+  case " $* " in *" --yes "*) after_one_offs ;; esac
+  drop_run_secrets
 }
 
 # --- main --------------------------------------------------------------------------------------
@@ -1215,7 +1420,7 @@ case "$command" in
   install) cmd_install "$@" ;;
   up|start) start_log up; cmd_up "$@" ;;
   down|stop) start_log down; cmd_down ;;
-  restart) set_compose; "${compose[@]}" restart "$@" ;;
+  restart) start_log restart; cmd_restart "$@" ;;
   status) cmd_status ;;
   logs)
     set_compose
@@ -1228,6 +1433,11 @@ case "$command" in
     if [ -n "$root" ] && [ -f "$root/config/.env" ]; then
       added="$(new_settings "$root/current/.env.example")"
       [ -z "$added" ] || echo "Settings in this version's .env.example that config/.env does not mention: $(echo "$added" | tr '\n' ' ')"
+      if auth_on; then
+        expiry="$(expiry_timer_state)"
+        echo "People expiry: $expiry"
+        [ "$expiry" != "not set up" ] || warnings+=("The hourly expiry of unused temporary passwords is not set up: ./kilnmark.sh up sets it up (a systemd timer).")
+      fi
     fi
     report_checks && echo "All checks passed." ;;
   verify)
@@ -1244,7 +1454,7 @@ case "$command" in
   build) build_images "$(current_version)" ;;
   backup) start_log backup; cmd_backup "$@" ;;
   starter) start_log starter; cmd_starter "$@" ;;
-  people) start_log people; cmd_people "$@" ;;
+  people) if [ "${1:-}" = expire ]; then start_log people-expire daily; else start_log people; fi; cmd_people "$@" ;;
   restore) start_log restore; cmd_restore "$@" ;;
   upgrade) cmd_upgrade "$@" ;;
   uninstall) cmd_uninstall "$@" ;;

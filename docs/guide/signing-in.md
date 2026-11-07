@@ -145,8 +145,8 @@ provider"). It works like any other provider above, with Kilnmark's own look:
   who has not yet signed in (INSTALL.md, "Adding people to the bundled Keycloak"). Or in Keycloak's
   console. A class on a Starter Pack install shares one temporary password; a team imported on
   production waits, disabled, until each person is activated. Everyone chooses their own password
-  at their first sign-in, and a temporary password unused for 72 hours disables its person until
-  activated again. Kilnmark itself cannot add people: it holds no Keycloak credential.
+  at their first sign-in, and a temporary password the control script gave, unused for 72 hours,
+  disables its person (checked every hour) until activated again. Kilnmark itself cannot add people: it holds no Keycloak credential.
 - **Two admins, in two places.** Keycloak's own admin (`KILNMARK_KEYCLOAK_ADMIN`) signs in to
   Keycloak's console, to manage people; it is not a Kilnmark account. Kilnmark's first admin is a
   person in Keycloak's realm `kilnmark`, in `kilnmark-admins`, who signs in to Kilnmark.

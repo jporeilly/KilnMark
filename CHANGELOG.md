@@ -25,7 +25,8 @@ details.
   Pack install shares one temporary password; a team imported on production waits, disabled, and
   each person is given a temporary password of their own with `people activate`. Everyone chooses
   their own at their first sign-in, and a temporary password left unused for 72 hours (set it with
-  `KILNMARK_PEOPLE_ACTIVATION_HOURS`) disables its person until activated again. Install offers to
+  `KILNMARK_PEOPLE_ACTIVATION_HOURS`) disables its person until activated again, checked every hour
+  (`people expire`, which `up` sets up as a systemd timer or a Windows scheduled task). Install offers to
   add Kilnmark's first admin this way, so nobody has to make the first person in Keycloak's
   console. A production install asks how people will sign in, and recommends your organisation's
   own identity provider.
@@ -119,25 +120,50 @@ details.
   one at a time, with `add`; on production `kilnmark-sensitive-data` too. An import checks the whole
   file first (addresses, groups, duplicates, characters Keycloak refuses in names) and names each
   bad line by number, never its values, making nobody if any is wrong; should Keycloak refuse
-  someone part way, it says how many it made first. Every run of `keycloak-setup` disables anyone
-  still holding a temporary password more than `KILNMARK_PEOPLE_ACTIVATION_HOURS` (72; 1 to 720)
-  after it was set. Someone already there is left exactly as they are, and kilnmark.com addresses
-  are refused. People added so are never in the pack's group, so its removal never takes them. The
-  commands check Kilnmark answers first; each person made, import, activation and expiry is in the
+  someone part way, it says how many it made first. Every run of `keycloak-setup`, and `people
+  expire` every hour (a systemd timer of the service account on Linux, a scheduled task on Windows,
+  which `up` sets up with the bundled Keycloak and removes without it, and `uninstall` removes;
+  `status` and `check` show it), disables anyone still holding a temporary password the people
+  commands set more than `KILNMARK_PEOPLE_ACTIVATION_HOURS` (72; 1 to 720) after it was set, at
+  most an hour late. Only those expire: each is marked `kilnmark-temporary` on its credential, a
+  mark Keycloak drops when its person chooses their own, so someone an admin asked in Keycloak's
+  console to change their password is never disabled for it. `people activate` takes only someone
+  with no credential, or only that unused temporary password: never anyone with a password of
+  their own or a one-time code, nor anyone from a directory or another identity provider. Listings
+  page through every person, and the control script records who was disabled 500 to a record.
+  Someone already there is left exactly as they are, and kilnmark.com addresses are refused.
+  People added so are never in the pack's group: someone made who lands in it (a default group of
+  the realm) is deleted again, and the command stops. The commands act only where Kilnmark's own
+  record of the mode equals `config/.env`'s, refuse when its database does not answer, and hand
+  `keycloak-setup` the recorded mode. They check Kilnmark answers first; each person made, import, activation and expiry is in the
   audit log (`auth.person_added`, `auth.people_imported`, `auth.person_activated`,
   `auth.person_disabled`; `POST /api/v1/auth/people`, admin, from the control script), never with a
   password; Keycloak's admin events are on in both modes. With an outside identity provider the
   commands refuse. The release ships `containers/keycloak/people.example.csv`.
-- **Secrets off command lines**: `keycloak-setup` and `samples-db` read their secrets from
-  `config/.env`, mounted read-only, not their environment, which podman-compose puts on podman's
-  command line (`keycloak-setup` now runs as root in its own container to read it). The
+- **Secrets off command lines**: `keycloak-setup` and `samples-db` read their secrets from a file
+  the control script writes for each run, holding only the two each needs, in a new folder only
+  its account can open (`config/run`), mounted read-only and removed once the run is over: never
+  `config/.env` whole, nor their environment, which podman-compose puts on podman's command line.
+  Each file is read as compose reads `.env`, quotes, `export` and comments included. Both one-offs
+  run with no Linux capabilities and no new privileges, `keycloak-setup` as the image's own user;
+  it keeps kcadm's master-realm token in a private folder it removes at the end, and `samples-db`
+  sets the samples login's password with nothing in that session logged, a failing statement
+  included. `restart` with no service is now a stop and an `up`, so the one-offs run again. The
   long-running services still take theirs from compose's environment.
 - **Backup and restore with the bundled Keycloak** ([ADR 0039](docs/adr/0039-backup-and-restore.md),
   decision 8): `backup.sh` also dumps `keycloak-db` (`keycloak-db.dump`, read back in full, in
   `SHA256SUMS`, `keycloak=yes` in `backup.txt`) while the `auth` profile is on; `restore.sh`
   restores it beside Kilnmark's database, keeping the one it replaces as `keycloak_before_<time>`.
   Both control scripts do the same, and say whether Keycloak was included. No password is needed
-  or shown.
+  or shown. `backup.txt` also names the install's deployment mode and its own id, made at its first
+  start (the people commands keep both on the Keycloak realm too); a restore, before stopping
+  anything, refuses a backup whose `backup.txt` differs from its dump, a Keycloak database whose
+  realm names another install or mode, and, on production, one holding the Starter Pack's group or
+  anyone at kilnmark.com.
+- **A first start that fails after migrating no longer strands a new install**: the server marks a
+  database new before its first migration (no migration history yet), durably, straight after it,
+  and records the mode only into a database with that mark, which then goes. A database migrated
+  before modes has none, and is refused, with no clock compared.
 - **Guard rails**: the marking, the audit events `starter.added` (a refused attempt too),
   `starter.removed` (naming what it deleted; each schedule deleted with a sample is recorded as a
   `schedule.deleted`) and `starter.people`, and the access review's new `example` column

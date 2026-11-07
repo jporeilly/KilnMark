@@ -152,6 +152,20 @@ if [ -z "$backup_mode" ]; then
   echo "The backup has no deployment mode recorded: it is from before deployment modes (release 0.1.1 or earlier, a preview), which cannot be restored into this release. Install Kilnmark afresh. Nothing was changed." >&2
   exit 1
 fi
+# backup.txt names the mode and the install's id, as the dump recorded them: both must agree, so a
+# dump of another install, or a backup.txt changed since, is refused.
+backup_id=$($compose exec -T postgres psql -U kilnmark -d kilnmark_restoring -X -q -At -v ON_ERROR_STOP=1 \
+  -c "SELECT value FROM kilnmark.server_setting WHERE key = 'install_id'" | tr -d '\r')
+file_mode=$(sed -n 's/^deployment_mode=//p' "$src/backup.txt" | tr -d '\r')
+file_id=$(sed -n 's/^install_id=//p' "$src/backup.txt" | tr -d '\r')
+if [ -z "$file_mode" ] || [ -z "$file_id" ] || [ -z "$backup_id" ]; then
+  echo "The backup does not say which install it is of, and in which mode (taken by an earlier version, before they were recorded): take a new backup with this version. Nothing was changed." >&2
+  exit 1
+fi
+if [ "$file_mode" != "$backup_mode" ] || [ "$file_id" != "$backup_id" ]; then
+  echo "The backup's backup.txt does not match its database (the dump is of another install, or backup.txt was changed): the backup is not whole. Nothing was changed." >&2
+  exit 1
+fi
 if { [ -n "$live_mode" ] && [ "$backup_mode" != "$live_mode" ]; } || { [ -n "$want_mode" ] && [ "$backup_mode" != "$want_mode" ]; }; then
   echo "The backup is of a $backup_mode install, and this is not one: an install never changes mode (ADR 0051). Restore it into an install of its own mode. Nothing was changed." >&2
   exit 1
@@ -166,6 +180,32 @@ if $restore_keycloak; then
   $compose exec -T keycloak-db createdb -U keycloak keycloak_restoring
   $compose exec -T keycloak-db pg_restore -U keycloak -d keycloak_restoring --exit-on-error --single-transaction \
     < "$src/keycloak-db.dump"
+
+  # Keycloak's database must be this backup's install's: the id and mode its realm carries (the
+  # people commands keep them there), where it has them. A production install's never holds the
+  # Starter Pack's group (its mark) or example people (at kilnmark.com). Checked before anything is
+  # stopped or replaced.
+  stage="checking Keycloak's database in the backup"
+  kc_restoring() {
+    $compose exec -T keycloak-db psql -U keycloak -d keycloak_restoring -X -q -At -v ON_ERROR_STOP=1 -c "$1" | tr -d '\r'
+  }
+  realm_attribute() {
+    kc_restoring "SELECT ra.value FROM realm_attribute ra JOIN realm r ON r.id = ra.realm_id WHERE r.name = 'kilnmark' AND ra.name = '$1'"
+  }
+  kc_id=$(realm_attribute kilnmark_install_id)
+  kc_mode=$(realm_attribute kilnmark_mode)
+  if { [ -n "$kc_id" ] && [ "$kc_id" != "$backup_id" ]; } || { [ -n "$kc_mode" ] && [ "$kc_mode" != "$backup_mode" ]; }; then
+    echo "Keycloak's database in the backup belongs to another Kilnmark install, or another mode: the backup is not whole. Nothing was changed." >&2
+    exit 1
+  fi
+  if [ "$backup_mode" = production ]; then
+    pack=$(kc_restoring "SELECT count(*) FROM group_attribute WHERE name = 'kilnmark_starter_pack'")
+    examples=$(kc_restoring "SELECT count(*) FROM user_entity u JOIN realm r ON r.id = u.realm_id WHERE r.name = 'kilnmark' AND lower(u.email) LIKE '%@kilnmark.com'")
+    if [ "$pack" != 0 ] || [ "$examples" != 0 ]; then
+      echo "Keycloak's database in the backup has the Starter Pack's group or example people, which a production install never has: it is not this install's. Nothing was changed." >&2
+      exit 1
+    fi
+  fi
 fi
 
 stage="stopping Kilnmark"

@@ -8,19 +8,26 @@
 # right, so running it again is safe. The Starter
 # Pack itself, under Settings in Kilnmark, fills the database and empties it again; this only makes it.
 #   KILNMARK_SAMPLES_DB_PASSWORD   the login's password, from config/.env (the control script makes
-#                                  one); unset, nothing is made and Kilnmark runs without the pack.
+#                                  one, and hands it to each run in a file of its own); unset,
+#                                  nothing is made and Kilnmark runs without the pack.
 set -eu
 
-# The two passwords come from config/.env, mounted read-only at /run/kilnmark/env, not the
-# environment, which podman-compose puts on podman's command line (the environment still works, for
-# a compose of your own). Only these two lines are read.
+# The two passwords come from a file the control script writes for each run, holding only them,
+# mounted read-only at /run/kilnmark/env, not the environment, which podman-compose puts on
+# podman's command line (the environment still works, for a compose of your own). Read as compose
+# reads .env: an export in front, spaces around =, a value in double or single quotes, or bare up
+# to a " #" comment.
 setting_from_file() {
-  f=/run/kilnmark/env; v=""
-  [ -r "$f" ] || return 0
-  while IFS= read -r line || [ -n "$line" ]; do
-    line=$(printf '%s' "$line" | tr -d '\r'); line=${line#export }
-    case "$line" in "$1="*) v=${line#"$1="} ;; esac
-  done < "$f"
+  f=/run/kilnmark/env
+  [ -f "$f" ] && [ -r "$f" ] || return 0
+  line=$(tr -d '\r' < "$f" | grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" | tail -n 1)
+  [ -n "$line" ] || return 0
+  v=$(printf '%s' "${line#*=}" | sed -e 's/^[[:space:]]*//')
+  case "$v" in
+    \"*) v=${v#\"}; v=${v%%\"*} ;;
+    \'*) v=${v#\'}; v=${v%%\'*} ;;
+    *) v=$(printf '%s' "$v" | sed -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//') ;;
+  esac
   printf '%s' "$v"
 }
 [ -n "${PGPASSWORD:-}" ] || PGPASSWORD=$(setting_from_file KILNMARK_DB_PASSWORD)
@@ -57,9 +64,13 @@ if [ "$mode" != starter-pack ]; then
   exit 1
 fi
 
-# The password reaches psql through its environment (\getenv), never a command line, and the
-# statement that sets it is not logged (log_statement stays none).
+# The password reaches psql through its environment (\getenv), never a command line, and no
+# statement of this session is logged, even one that fails (log_min_error_statement would log it
+# whole, password and all), whatever the server's own logging settings.
 psql -X -q -v ON_ERROR_STOP=1 -d "${PGDATABASE:-postgres}" <<'SQL'
+SET log_statement = 'none';
+SET log_min_error_statement = panic;
+SET log_min_duration_statement = -1;
 \getenv samples_password KILNMARK_SAMPLES_DB_PASSWORD
 -- The login: no superuser, no database or role making, no replication, no row-security bypass.
 SELECT 'CREATE ROLE kilnmark_samples'

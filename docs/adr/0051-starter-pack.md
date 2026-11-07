@@ -196,8 +196,8 @@ converted: Production or Starter Pack.
     bundled Keycloak.** So that nobody makes the first person by hand in Keycloak's console, and a
     trainer can load a class at once, the control script has `people add` (one person, in any of
     Kilnmark's groups), `people import FILE` (a CSV, `email,first_name,last_name,groups`), `people
-    activate EMAIL` and `people list` (who is there, their Kilnmark groups, whether active or
-    waiting, and who has not yet chosen their own password). Install offers Kilnmark's first admin,
+    activate EMAIL`, `people list` (who is there, their Kilnmark groups, whether active or
+    waiting, and who has not yet chosen their own password) and `people expire` (below). Install offers Kilnmark's first admin,
     which is `people add` with `kilnmark-admins`. Like the example people, they are made by one run
     of `keycloak-setup` with Keycloak's own admin from `config/.env`: Kilnmark itself still holds no
     Keycloak credential (decision 5). The rules:
@@ -208,13 +208,27 @@ converted: Production or Starter Pack.
       **production** a shared password would let anyone who learns it sign in as anyone not yet
       signed in, so nobody is given one: each person is made disabled, with no password, waiting
       for `people activate`, which gives one person a temporary password of their own and enables
-      them. It refuses anyone already active, and anyone who has chosen their own password (they
-      have signed in; disabled on purpose);
-    - **unused temporary passwords expire**: at every run of `keycloak-setup` (every start, every
-      `people` command), anyone still holding one more than `KILNMARK_PEOPLE_ACTIVATION_HOURS` (72
-      unless set; 1 to 720) after it was set is disabled, recorded (`auth.person_disabled`); `people
-      activate` gives them a new one. This covers people from `people add`, the first admin too: the
-      operator's `KILNMARK_ADMIN_TOKEN` stays the way in;
+      them. It takes only someone waiting for a first password: no credential at all, or only the
+      temporary one these commands set, unused. It refuses anyone already active, anyone with a
+      password of their own or a one-time code (they have signed in; disabled on purpose), and
+      anyone from a directory (a federation link) or another identity provider (a federated
+      identity);
+    - **unused temporary passwords expire**, at most an hour late: anyone still holding one more
+      than `KILNMARK_PEOPLE_ACTIVATION_HOURS` (72 unless set; 1 to 720) after it was set is
+      disabled, recorded (`auth.person_disabled`); `people activate` gives them a new one. Only the
+      temporary passwords these commands set expire: each is marked (its credential label,
+      `kilnmark-temporary`), and Keycloak drops the mark when its person chooses their own, so a
+      long-standing person an admin asked in Keycloak's console to change their password is never
+      disabled for it. The check runs at every run of `keycloak-setup` (every start, every `people`
+      command) and, because nothing else may run for days, every hour as `people expire`: `up` sets
+      it up with the bundled Keycloak (on Linux a systemd timer of the service account, a system one
+      as root; on Windows a scheduled task of the user, which runs while they are signed in, as the
+      Podman machine or Docker Desktop does), removes it without, and `uninstall` removes it;
+      `status` and `check` show it. Kilnmark still holds no Keycloak credential: the timer runs the
+      control script, which runs `keycloak-setup`. It covers people from `people add`, the first
+      admin too: the operator's `KILNMARK_ADMIN_TOKEN` stays the way in. Every listing pages
+      through all of the realm's people, however many, and the control script records them 500 to
+      a record;
     - `kilnmark-admins` only through `people add`, one person at a time, never from a file, to keep
       the two-person rules (ADR 0038, ADR 0045) from being got round in bulk; on production so is
       `kilnmark-sensitive-data` (on a Starter Pack install the data is made up, so a class may have it);
@@ -225,7 +239,13 @@ converted: Production or Starter Pack.
     - someone already there with that user name or email is left exactly as they are, their
       password and groups too;
     - anything at kilnmark.com is refused, so a real person is never taken for an example one; and
-      people added this way are never in the pack's group, so the pack's removal never deletes them;
+      people added this way are never in the pack's group: someone made who lands in it (a default
+      group of the realm, say) is deleted again, and the command stops. The pack's removal deletes
+      only members of its group at a kilnmark.com address who are Keycloak's own (no directory, no
+      other identity provider); anyone else in the group is only taken out of it, and named;
+    - the commands act only where the mode Kilnmark recorded in its own database equals
+      `config/.env`'s, and refuse when the database does not answer; `keycloak-setup` is handed the
+      recorded mode, never `.env`'s alone;
     - the commands check that Kilnmark answers before changing anything, and each person made
       (`auth.person_added`, with their groups), each import (`auth.people_imported`) and each
       activation (`auth.person_activated`) is in Kilnmark's audit log, from what the control script
@@ -245,16 +265,31 @@ converted: Production or Starter Pack.
 12. **Keycloak is backed up with Kilnmark.** With the bundled Keycloak, its people, groups and
     one-time code setups are not in Kilnmark's database, and a restored install without them would
     have nobody able to sign in; every Starter Pack install has the bundled Keycloak. So `backup`
-    and `restore` take Keycloak's database too, beside Kilnmark's (ADR 0039, decision 8).
+    and `restore` take Keycloak's database too, beside Kilnmark's (ADR 0039, decision 8). Each
+    install has an id of its own, made at its first start beside its mode; the people commands
+    keep both on the Keycloak realm too. `backup.txt` names them, and a restore refuses, before
+    anything is stopped, a backup whose `backup.txt` differs from its dump, a Keycloak database whose
+    realm names another install or mode, and, on production, one holding the pack's group (its
+    mark) or anyone at kilnmark.com.
 
 13. **Secrets stay off command lines, and the samples' login is held by PostgreSQL itself.**
     podman-compose puts every environment setting of a container on podman's command line, which
-    other users of the machine can read; so the two one-off services read their secrets from
-    `config/.env`, mounted read-only (`keycloak-setup`: Keycloak's admin password and the client
-    secret, running as root in its own container to read the file, which is the account's alone;
-    `samples-db`: the database's and the samples login's passwords). Lines at the top of
+    other users of the machine can read; so the two one-off services read their secrets from a file
+    the control script writes for each run, holding only the lines that one needs, in a new folder
+    only the account can open (`config/run`), mounted read-only, and removed once the run is over
+    (`keycloak-setup`: Keycloak's admin password and the client secret; `samples-db`: the database's
+    and the samples login's passwords). Neither sees `config/.env` whole; both run with no Linux
+    capabilities and no new privileges, `keycloak-setup` as the image's own user, keeping kcadm's
+    master-realm token in a private folder it removes at the end. `samples-db` sets the password
+    with nothing in that session logged, a failing statement included. Lines at the top of
     `pg_hba.conf`, kept there at every start of the database image, let `kilnmark_samples` reach its
     own database over TLS and refuse it every other one, whatever the grants say.
+
+14. **A new database is known before it is migrated.** The server records the mode at its first
+    start only into a database that had no migration history when that start began: it marks the
+    database new before migrating, durably, straight after, and the mark goes once the mode is
+    recorded. A first start that fails after migrating leaves the mark, so the next start records
+    the mode; a database migrated before modes has no mark and is refused. No clock is compared.
 
 ## Consequences
 

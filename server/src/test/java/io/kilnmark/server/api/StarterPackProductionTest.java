@@ -4,6 +4,7 @@ import static io.kilnmark.server.Tokens.admin;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -210,18 +211,33 @@ class StarterPackProductionTest {
 
     @Test
     void onlyANewDatabaseRecordsAModeAndProductionNeverWhereTheStarterPackHasBeen() throws Exception {
-        java.time.Instant later = java.time.Instant.now().plusSeconds(60);
-        // a database migrated before this start never records a mode: it predates modes
+        io.agroal.api.AgroalDataSource source = io.quarkus.arc.Arc.container().instance(io.agroal.api.AgroalDataSource.class)
+            .get();
+        // this run's database was new: marked before its first migration, and the mark used up by the mode
+        try (java.sql.Connection c = source.getConnection()) {
+            assertFalse(io.kilnmark.server.DatabaseTls.isNew(c), "migrated now");
+            assertFalse(markThere(c, io.kilnmark.server.DatabaseTls.NEW_DATABASE), "the mark is used up");
+            assertTrue(markThere(c, ModeCheck.INSTALL_ID), "an install id, made at the first start");
+        }
+        // a database not marked new (migrated before, with no mode) never records one: it predates modes
         String key = "deployment_mode_test_" + System.nanoTime();
         for (String mode : List.of(ModeCheck.PRODUCTION, ModeCheck.STARTER_PACK)) {
-            String refused = modes.checkFor(mode, key, new ModeCheck.FirstStart(later, false));
+            String refused = modes.checkFor(mode, key, new ModeCheck.FirstStart(false, false));
             assertTrue(refused != null && refused.contains("predates deployment modes") && refused.contains("install Kilnmark afresh"),
                 refused);
         }
-        // a new one records it, and from then on the other mode is refused, either way round
-        assertNull(modes.checkFor(ModeCheck.PRODUCTION, key, new ModeCheck.FirstStart(java.time.Instant.EPOCH, false)));
-        assertNull(modes.checkFor(ModeCheck.PRODUCTION, key, new ModeCheck.FirstStart(later, true)), "recorded: checked only");
-        assertTrue(modes.checkFor(ModeCheck.STARTER_PACK, key, new ModeCheck.FirstStart(later, false))
+        // a first start that fails after migrating (the mark made, no mode recorded), then a second that succeeds
+        try (java.sql.Connection c = source.getConnection()) {
+            io.kilnmark.server.DatabaseTls.markNew(c, key + "_new");
+        }
+        assertNull(modes.checkFor(ModeCheck.PRODUCTION, key, new ModeCheck.FirstStart(false, false)));
+        try (java.sql.Connection c = source.getConnection()) {
+            assertFalse(markThere(c, key + "_new"), "used up");
+            assertTrue(markThere(c, key + "_install_id"));
+        }
+        // from then on the other mode is refused, either way round
+        assertNull(modes.checkFor(ModeCheck.PRODUCTION, key, new ModeCheck.FirstStart(false, true)), "recorded: checked only");
+        assertTrue(modes.checkFor(ModeCheck.STARTER_PACK, key, new ModeCheck.FirstStart(false, false))
             .contains("never comes to a production install"));
         // production is never first recorded where the Starter Pack's database or login is
         try (java.sql.Connection c = io.quarkus.arc.Arc.container().instance(io.agroal.api.AgroalDataSource.class).get()
@@ -230,9 +246,15 @@ class StarterPackProductionTest {
                 + "CREATE ROLE kilnmark_samples LOGIN; END IF; END $$");
         }
         String other = "deployment_mode_test_" + System.nanoTime();
-        String refused = modes.checkFor(ModeCheck.PRODUCTION, other, new ModeCheck.FirstStart(java.time.Instant.EPOCH, true));
+        try (java.sql.Connection c = source.getConnection()) {
+            io.kilnmark.server.DatabaseTls.markNew(c, other + "_new");
+        }
+        String refused = modes.checkFor(ModeCheck.PRODUCTION, other, new ModeCheck.FirstStart(false, true));
         assertTrue(refused != null && refused.contains("already has the Starter Pack's database or login"), refused);
-        assertNull(modes.checkFor(ModeCheck.STARTER_PACK, other, new ModeCheck.FirstStart(java.time.Instant.EPOCH, true)),
+        try (java.sql.Connection c = source.getConnection()) {
+            assertTrue(markThere(c, other + "_new"), "a refused first start keeps the mark");
+        }
+        assertNull(modes.checkFor(ModeCheck.STARTER_PACK, other, new ModeCheck.FirstStart(false, true)),
             "a Starter Pack install may be");
         // a refused start is recorded in the audit log before the server stops
         int before = StarterPackApiTest.events(AuditLog.START_REFUSED);
@@ -258,5 +280,14 @@ class StarterPackProductionTest {
             .then().statusCode(403);
         // the templates stay
         admin().get("/api/v1/templates").then().statusCode(200);
+    }
+
+    private static boolean markThere(java.sql.Connection c, String key) throws java.sql.SQLException {
+        try (java.sql.PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.server_setting WHERE key = ?")) {
+            ps.setString(1, key);
+            try (java.sql.ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
     }
 }

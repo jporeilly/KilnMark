@@ -88,6 +88,7 @@ class StarterPeopleSetupTest {
     }
 
     static final String STARTER = "starter-pack";
+    static final String NL = "\n";
     static final String PRODUCTION = "production";
 
     private static void ok(ExecResult r) {
@@ -602,7 +603,7 @@ class StarterPeopleSetupTest {
             "credentials", List.of(Map.of("type", "password", "value", VERAS_OWN, "temporary", false)))).statusCode());
         r = activate(PRODUCTION, "cy@bank.example", SECOND);
         assertNotEquals(0, r.getExitCode());
-        assertTrue(r.getStderr().contains("has signed in and chosen their own password"), r.getStderr());
+        assertTrue(r.getStderr().contains("has signed in (a password of their own, or a one-time code)"), r.getStderr());
         assertFalse(user("cy@bank.example").path("enabled").asBoolean());
     }
 
@@ -619,9 +620,16 @@ class StarterPeopleSetupTest {
         ExecResult r = later(PRODUCTION, 71, null);
         ok(r);
         assertTrue(user("ada@bank.example").path("enabled").asBoolean(), "within 72 hours");
-        // past it: everyone still holding a temporary password, the first admin too, is disabled, and said
+        // a temporary password an admin set in Keycloak's console is not the people commands': it never expires
+        assertEquals(201, call(admin(), "POST", "/admin/realms/kilnmark/users", Map.of("username", "una@bank.example",
+            "email", "una@bank.example", "emailVerified", true, "firstName", "Una", "lastName", "Byrne", "enabled", true,
+            "credentials", List.of(Map.of("type", "password", "value", VERAS_OWN, "temporary", true)))).statusCode());
+        assertTrue(user("una@bank.example").path("requiredActions").toString().contains("UPDATE_PASSWORD"));
+        // past it: everyone still holding a temporary password the people commands set, the first
+        // admin too, is disabled, and said
         r = later(PRODUCTION, 73, null);
         ok(r);
+        assertTrue(user("una@bank.example").path("enabled").asBoolean(), "an admin's own temporary password: " + r.getStdout());
         for (String person : List.of("ada@bank.example", "rita.okoro@bank.example", "omar@bank.example")) {
             assertTrue(r.getStdout().contains("disabled " + person + ": their temporary password was not used within 72 hours"),
                 person + ": " + r.getStdout());
@@ -641,5 +649,142 @@ class StarterPeopleSetupTest {
         assertTrue(grant("rita.okoro@bank.example", SECOND).contains("not fully set up"));
         assertTrue(listPeople(PRODUCTION).getStdout().contains("person ada@bank.example groups=kilnmark-viewers "
             + "status=waiting-to-be-activated must-choose-password=yes"));
+    }
+
+    /** One run of setup with these settings beside the usual ones, and one line on its input. */
+    private static ExecResult run(String mode, String extra, String input) throws Exception {
+        return KC.execInContainer("bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "") + " " + extra
+            + "; printf '%s\\n' '" + input + "' | bash /opt/kilnmark/setup.sh");
+    }
+
+    private static String id(String username) throws Exception {
+        return user(username).path("id").asText();
+    }
+
+    private static void partialImport(List<Map<String, Object>> users) throws Exception {
+        HttpResponse<String> r = call(admin(), "POST", "/admin/realms/kilnmark/partialImport",
+            Map.of("ifResourceExists", "SKIP", "users", users));
+        assertEquals(200, r.statusCode(), r.body());
+    }
+
+    @Test
+    @Order(12)
+    void peopleExpireDisablesOnlyThePeopleCommandsTemporaryPasswordsAndActivateOnlyThoseWaitingForOne() throws Exception {
+        // people expire: the expiry alone, as the hourly timer runs it
+        ok(activate(PRODUCTION, "ada@bank.example", RITAS_FIRST));
+        long at = System.currentTimeMillis() + 73 * 3_600_000L;
+        ExecResult r = run(PRODUCTION, "KILNMARK_PEOPLE_ACTION=expire KILNMARK_SETUP_NOW_MS=" + at, "");
+        ok(r);
+        assertTrue(r.getStdout().contains("disabled ada@bank.example: their temporary password was not used")
+            && r.getStdout().contains("people expire: done"), r.getStdout());
+        assertFalse(r.getStdout().contains("the client kilnmark signs in"), "nothing else is set up again");
+        assertFalse(user("ada@bank.example").path("enabled").asBoolean());
+        // the one in use is marked the people commands' own, and the mark goes once they choose their own
+        JsonNode ada = JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark/users/" + id("ada@bank.example")
+            + "/credentials", null).body());
+        assertEquals("kilnmark-temporary", ada.path(0).path("userLabel").asText(), ada.toString());
+
+        // activate never takes anyone from another identity provider, or with a one-time code
+        HttpResponse<String> idp = call(admin(), "POST", "/admin/realms/kilnmark/identity-provider/instances", Map.of(
+            "alias", "corp", "providerId", "oidc", "enabled", true, "config", Map.of("authorizationUrl",
+                "https:" + "/" + "/idp.bank.example/auth", "tokenUrl", "https:" + "/" + "/idp.bank.example/token",
+                "clientId", "kilnmark", "clientSecret", "not-a-secret-0123", "clientAuthMethod", "client_secret_post")));
+        assertEquals(201, idp.statusCode(), idp.body());
+        assertEquals(201, call(admin(), "POST", "/admin/realms/kilnmark/users", Map.of("username", "fed@bank.example",
+            "email", "fed@bank.example", "emailVerified", true, "firstName", "Fed", "lastName", "Eral", "enabled", false))
+            .statusCode());
+        assertEquals(204, call(admin(), "POST", "/admin/realms/kilnmark/users/" + id("fed@bank.example")
+            + "/federated-identity/corp", Map.of("identityProvider", "corp", "userId", "fed-1", "userName", "fed"))
+            .statusCode());
+        r = activate(PRODUCTION, "fed@bank.example", SECOND);
+        assertNotEquals(0, r.getExitCode());
+        assertTrue(r.getStderr().contains("comes from a directory or another identity provider"), r.getStderr());
+        assertFalse(user("fed@bank.example").path("enabled").asBoolean());
+        partialImport(List.of(Map.of("username", "otp@bank.example", "email", "otp@bank.example", "emailVerified", true,
+            "firstName", "Ot", "lastName", "Pee", "enabled", false, "credentials", List.of(Map.of("type", "otp",
+                "secretData", "{\"value\":\"JBSWY3DPEHPK3PXP\"}", "credentialData",
+                "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}")))));
+        r = activate(PRODUCTION, "otp@bank.example", SECOND);
+        assertNotEquals(0, r.getExitCode());
+        assertTrue(r.getStderr().contains("has signed in (a password of their own, or a one-time code)"), r.getStderr());
+        // the marked temporary password beside a one-time code is not one waiting either
+        assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark/users/" + id("otp@bank.example") + "/reset-password",
+            Map.of("type", "password", "value", VERAS_OWN, "temporary", true)).statusCode());
+        assertNotEquals(0, activate(PRODUCTION, "otp@bank.example", SECOND).getExitCode());
+        assertFalse(user("otp@bank.example").path("enabled").asBoolean());
+        // someone waiting with no password at all, or only the marked temporary one, is activated
+        ok(activate(PRODUCTION, "ada@bank.example", SECOND));
+        ok(activate(PRODUCTION, "ben@bank.example", SECOND));
+    }
+
+    @Test
+    @Order(13)
+    void nobodyMadeLandsInThePacksGroupAndItsRemovalDeletesOnlyItsExamplePeople() throws Exception {
+        ok(setup("allowed", STARTER, "add", FIRST));
+        String pack = JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark/group-by-path" + GROUP, null).body())
+            .path("id").asText();
+        // the pack's group a default group of the realm: someone made would land in it, so is not made
+        assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark/default-groups/" + pack, null).statusCode());
+        ExecResult r = addPerson(STARTER, "dee@bank.example", "Dee", "Ross", "kilnmark-viewers", RITAS_FIRST);
+        assertNotEquals(0, r.getExitCode());
+        assertTrue(r.getStderr().contains("was put in the group kilnmark-starter-pack"), r.getStderr());
+        assertNull(user("dee@bank.example"), "removed again");
+        r = importPeople(STARTER, RITAS_FIRST, "email,first_name,last_name,groups" + NL + "eve@bank.example,Eve,Ross,kilnmark-viewers" + NL);
+        assertNotEquals(0, r.getExitCode());
+        assertNull(user("eve@bank.example"), "removed again");
+        assertEquals(204, call(admin(), "DELETE", "/admin/realms/kilnmark/default-groups/" + pack, null).statusCode());
+
+        // someone put in the pack's group by hand, not at kilnmark.com: only taken out of it
+        assertEquals(201, call(admin(), "POST", "/admin/realms/kilnmark/users", Map.of("username", "pat@bank.example",
+            "email", "pat@bank.example", "emailVerified", true, "firstName", "Pat", "lastName", "Kay", "enabled", true))
+            .statusCode());
+        assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark/users/" + id("pat@bank.example") + "/groups/" + pack,
+            null).statusCode());
+        r = setup("allowed", STARTER, "remove", "");
+        ok(r);
+        assertTrue(r.getStdout().contains("took pat@bank.example out of the group kilnmark-starter-pack and left them"),
+            r.getStdout());
+        assertNotNull(user("pat@bank.example"), "never deleted");
+        assertNull(user("vera.lane@kilnmark.com"), "the example people are");
+        assertEquals(404, group(GROUP));
+    }
+
+    @Test
+    @Order(14)
+    void expiryAndListReachEveryoneAPageAtATimeAndSetupLeavesNoTokenBehind() throws Exception {
+        // last by user name, so on the last page
+        ok(addPerson(PRODUCTION, "zz-late@bank.example", "Zed", "Late", "kilnmark-viewers", RITAS_FIRST));
+        int all = Integer.parseInt(call(admin(), "GET", "/admin/realms/kilnmark/users/count", null).body().strip());
+        assertTrue(all > 12, "several pages of four: " + all);
+        // pages of four (KILNMARK_SETUP_PAGE, for the tests only): everyone is listed, the last page too
+        ExecResult r = run(PRODUCTION, "KILNMARK_PEOPLE_ACTION=list KILNMARK_SETUP_PAGE=4", "");
+        ok(r);
+        assertTrue(r.getStdout().contains("people: " + all), r.getStdout());
+        assertTrue(r.getStdout().contains("person zz-late@bank.example "), "the last page too");
+        long at = System.currentTimeMillis() + 73 * 3_600_000L;
+        r = run(PRODUCTION, "KILNMARK_PEOPLE_ACTION=expire KILNMARK_SETUP_PAGE=4 KILNMARK_SETUP_NOW_MS=" + at, "");
+        ok(r);
+        assertTrue(r.getStdout().contains("disabled zz-late@bank.example"), "expiry reaches the last page too: " + r.getStdout());
+        // kcadm's token for the master realm is never left behind
+        ExecResult left = KC.execInContainer("bash", "-c", "ls -a \"$HOME/.keycloak\" 2> /dev/null; ls /tmp");
+        assertFalse(left.getStdout().contains("kcadm.config"), left.getStdout());
+        assertFalse(left.getStdout().contains("tmp."), "its private folder goes too: " + left.getStdout());
+    }
+
+    @Test
+    @Order(15)
+    void theSecretsFileIsReadAsComposeReadsItAndTheRealmKnowsItsInstall() throws Exception {
+        // quoted, with an export in front, spaces around =, and comments, as config/.env may hold them
+        KC.copyFileToContainer(org.testcontainers.images.builder.Transferable.of("export KILNMARK_KEYCLOAK_ADMIN_PASSWORD = \""
+            + ADMIN_PASSWORD + "\" # quoted" + NL + "KILNMARK_OIDC_CLIENT_SECRET='oidc-0123456789' # single quotes" + NL, Integer.parseInt("644", 8)),
+            "/run/kilnmark/env");
+        String id = "6f1e2d3c-4b5a-4968-8776-655443322110";
+        ExecResult r = KC.execInContainer("bash", "-c", "export KEYCLOAK_URL=http:" + "/" + "/localhost:8080 KC_ADMIN_USER=admin"
+            + " KILNMARK_URL=http:" + "/" + "/localhost:8780 KILNMARK_MODE=production KILNMARK_INSTALL_ID=" + id
+            + "; bash /opt/kilnmark/setup.sh < /dev/null");
+        ok(r);
+        JsonNode attributes = realm().path("attributes");
+        assertEquals(id, attributes.path("kilnmark_install_id").asText(), attributes.toString());
+        assertEquals(PRODUCTION, attributes.path("kilnmark_mode").asText());
     }
 }

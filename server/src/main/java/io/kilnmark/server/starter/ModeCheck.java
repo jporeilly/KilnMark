@@ -47,12 +47,15 @@ public class ModeCheck {
     io.kilnmark.server.audit.AuditLog audit;
 
     /**
-     * What a first start checks before it records a mode: a database migrated before {@code
-     * startedAt} predates modes; with {@code samples}, production is refused where the Starter
-     * Pack's database or login is already on the server.
+     * What a first start checks before it records a mode: with {@code anyDatabase}, a database not
+     * marked new (DatabaseTls) records one too (quarkusDev only); with {@code samples}, production is
+     * refused where the Starter Pack's database or login is already on the server.
      */
-    public record FirstStart(java.time.Instant startedAt, boolean samples) {
+    public record FirstStart(boolean anyDatabase, boolean samples) {
     }
+
+    /** Where the install's id, made at its first start, is recorded: a backup carries it. */
+    public static final String INSTALL_ID = "install_id";
 
     // after the migrations (DatabaseTls, priority 1)
     void onStart(@Observes @Priority(3) StartupEvent event) {
@@ -61,8 +64,7 @@ public class ModeCheck {
         io.quarkus.runtime.LaunchMode launch = io.quarkus.runtime.LaunchMode.current();
         // quarkusDev keeps a developer's database from before there were modes; the tests' database
         // servers are shared, so the Starter Pack's login may be there from another test
-        FirstStart first = new FirstStart(launch == io.quarkus.runtime.LaunchMode.DEVELOPMENT ? java.time.Instant.EPOCH
-            : java.time.Instant.ofEpochMilli(java.lang.management.ManagementFactory.getRuntimeMXBean().getStartTime()),
+        FirstStart first = new FirstStart(launch == io.quarkus.runtime.LaunchMode.DEVELOPMENT,
             launch == io.quarkus.runtime.LaunchMode.NORMAL);
         String problem = checkFor(mode, RECORDED, first);
         // A running install, not quarkusDev or the tests, which have no Keycloak of their own.
@@ -157,7 +159,8 @@ public class ModeCheck {
                     first = !rs.next();
                 }
             }
-            if (first && migratedBefore(c, rules.startedAt())) {
+            String newMark = RECORDED.equals(key) ? io.kilnmark.server.DatabaseTls.NEW_DATABASE : key + "_new";
+            if (first && !rules.anyDatabase() && !markedNew(c, newMark)) {
                 refusal[0] = PREDATES;
                 return null;
             }
@@ -173,6 +176,17 @@ public class ModeCheck {
                     LOG.infof("Deployment mode recorded at first start: %s", configured);
                 }
             }
+            // the install's own id, beside the mode: a backup carries both
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.server_setting (key, value, updated_by) "
+                + "VALUES (?, ?, 'server (first start)') ON CONFLICT (key) DO NOTHING")) {
+                ps.setString(1, RECORDED.equals(key) ? INSTALL_ID : key + "_install_id");
+                ps.setString(2, java.util.UUID.randomUUID().toString());
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.server_setting WHERE key = ?")) {
+                ps.setString(1, newMark);
+                ps.executeUpdate();
+            }
             try (PreparedStatement ps = c.prepareStatement("SELECT value FROM kilnmark.server_setting WHERE key = ?")) {
                 ps.setString(1, key);
                 try (ResultSet rs = ps.executeQuery()) {
@@ -186,12 +200,13 @@ public class ModeCheck {
         return mismatch(configured, recorded);
     }
 
-    /** Whether the database's first migration ran before {@code startedAt}: a database from before this start. */
-    static boolean migratedBefore(java.sql.Connection c, java.time.Instant startedAt) throws java.sql.SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT min(installed_on) FROM kilnmark.flyway_schema_history");
-             ResultSet rs = ps.executeQuery()) {
-            java.sql.Timestamp at = rs.next() ? rs.getTimestamp(1) : null;
-            return at != null && at.toInstant().isBefore(startedAt);
+    /** Whether the database carries the mark of a new one (DatabaseTls, before its first migration). */
+    static boolean markedNew(java.sql.Connection c, String mark) throws java.sql.SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.server_setting WHERE key = ?")) {
+            ps.setString(1, mark);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
         }
     }
 

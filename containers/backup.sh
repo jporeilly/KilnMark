@@ -55,6 +55,17 @@ $compose exec -T postgres pg_restore -f /dev/null < "$dir/kilnmark-db.dump" \
 migration=$($compose exec -T postgres psql -U kilnmark -d kilnmark -Atc \
   "SELECT version FROM kilnmark.flyway_schema_history WHERE success AND version IS NOT NULL ORDER BY installed_rank DESC LIMIT 1") \
   || fail "the database's migration could not be read"
+# The install's deployment mode and its own id, made at its first start (ADR 0051): a restore takes
+# the backup only into an install of the same mode, and checks Keycloak's database against the id.
+recorded() {
+  $compose exec -T postgres psql -U kilnmark -d kilnmark -X -q -At \
+    -c "SELECT value FROM kilnmark.server_setting WHERE key = '$1'" | tr -d '\r'
+}
+mode=$(recorded deployment_mode) || fail "the database's deployment mode could not be read"
+install=$(recorded install_id) || fail "the install's id could not be read"
+if [ -z "$mode" ] || [ -z "$install" ]; then
+  fail "the database has no deployment mode or install id recorded yet (Kilnmark records them as it starts: start it, then back up)"
+fi
 
 # Not the keys an earlier restore set aside, nor its note for the audit log (restore.sh).
 $compose exec -T kilnmark tar -C /var/lib/kilnmark --exclude='./before-restore-*' --exclude=./restored.properties \
@@ -83,6 +94,8 @@ version=$(sed -n 's/^ *image: .*\/kilnmark-server:\(.*\)$/\1/p' compose.yaml | h
   echo "kilnmark_version=$version"
   echo "migration=$(echo "$migration" | tr -d '\r')"
   echo "keycloak=$( [ "$keycloak" = on ] && echo yes || echo no )"
+  echo "deployment_mode=$mode"
+  echo "install_id=$install"
 } > "$dir/backup.txt"
 # shellcheck disable=SC2086
 (cd "$dir" && $sums $files > SHA256SUMS)

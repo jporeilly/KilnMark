@@ -61,10 +61,14 @@ services:
       PGUSER: kilnmark
       PGSSLMODE: require
     # Its two passwords, the database's and the samples login's (KILNMARK_DB_PASSWORD and
-    # KILNMARK_SAMPLES_DB_PASSWORD), are read from config/.env, read-only: never in its environment,
-    # which podman-compose puts on podman's command line. No default: unset, nothing is made.
+    # KILNMARK_SAMPLES_DB_PASSWORD), are read from a file holding only them, which the control
+    # script writes for each run in a folder of its own (KILNMARK_SECRETS_DIR, under config/run) and
+    # removes once the run is over: never config/.env whole, never its environment, which
+    # podman-compose puts on podman's command line. No default: unset, nothing is made.
     volumes:
-      - ${KILNMARK_ENV_FILE:-../../config/.env}:/run/kilnmark/env:ro,z
+      - ${KILNMARK_SECRETS_DIR:-../../config/run}/samples-db.env:/run/kilnmark/env:ro,z
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges]
     depends_on:
       postgres:
         condition: service_healthy
@@ -179,8 +183,8 @@ services:
   #   podman compose --profile auth up -d
   # keycloak-setup then makes the kilnmark realm: the groups that give Kilnmark's roles, the client
   # Kilnmark signs in with, a sign-in of a password and a one-time code, and Kilnmark's sign-in page.
-  # Run it again after changing KILNMARK_URL or the client secret:
-  #   podman compose --profile auth run --rm keycloak-setup
+  # Run it again after changing KILNMARK_URL or the client secret with the control script
+  # (kilnmark.sh restart), which writes its two secrets in a file for that run alone.
   # Its secrets have no defaults: while one is missing, keycloak-db or keycloak-setup stops and says
   # which. They are optional to compose itself, so Kilnmark starts the same without this profile.
   keycloak-db:
@@ -244,10 +248,9 @@ services:
     image: quay.io/keycloak/keycloak:26.8.1@sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332
     profiles: ["auth"]
     entrypoint: ["/bin/bash", "/opt/kilnmark/setup.sh"]
-    # As root in its own container, to read config/.env (yours only) for Keycloak's admin password
-    # and the client secret: never in its environment, which podman-compose puts on podman's command
-    # line, where other users of the machine can read it.
-    user: "0"
+    # As the image's own user, with no powers at all: it only talks to Keycloak.
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges]
     environment:
       KEYCLOAK_URL: http://keycloak:8080
       KC_ADMIN_USER: ${KILNMARK_KEYCLOAK_ADMIN:-admin}
@@ -270,13 +273,19 @@ services:
       KILNMARK_PERSON_FIRST_NAME: ${KILNMARK_PERSON_FIRST_NAME:-}
       KILNMARK_PERSON_LAST_NAME: ${KILNMARK_PERSON_LAST_NAME:-}
       KILNMARK_PERSON_GROUPS: ${KILNMARK_PERSON_GROUPS:-}
+      # The install's own id, from Kilnmark's record, handed by the control script's people commands:
+      # kept on the realm, so a restore can tell a Keycloak database of another install.
+      KILNMARK_INSTALL_ID: ${KILNMARK_INSTALL_ID:-}
       # How long a temporary password may wait unused before its person is disabled: 1 to 720 hours.
       KILNMARK_PEOPLE_ACTIVATION_HOURS: ${KILNMARK_PEOPLE_ACTIVATION_HOURS:-72}
     volumes:
       - ./containers/keycloak/setup.sh:/opt/kilnmark/setup.sh:ro,Z
-      # config/.env, read-only, from the install root (KILNMARK_ENV_FILE elsewhere): only its two
-      # secrets above are read from it.
-      - ${KILNMARK_ENV_FILE:-../../config/.env}:/run/kilnmark/env:ro,z
+      # Keycloak's admin password and the client secret, in a file holding only them, which the
+      # control script writes for each run in a folder of its own (KILNMARK_SECRETS_DIR, under
+      # config/run) and removes once the run is over: never config/.env whole, never its environment,
+      # which podman-compose puts on podman's command line, where other users of the machine can
+      # read it.
+      - ${KILNMARK_SECRETS_DIR:-../../config/run}/keycloak-setup.env:/run/kilnmark/env:ro,z
     depends_on:
       keycloak:
         condition: service_healthy

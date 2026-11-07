@@ -156,10 +156,15 @@ class ControlScriptStarterTest {
         assertTrue(setup.contains("KILNMARK_STARTER: ${KILNMARK_STARTER:-}")
             && setup.contains("KILNMARK_MODE: ${KILNMARK_MODE:-}"), "setup knows the mode itself");
         // The one-offs' secrets never go in their environment, which podman-compose puts on podman's
-        // command line: they read them from config/.env, mounted read-only.
+        // command line: each reads its own few from a file the control script writes for the run,
+        // mounted read-only, never config/.env whole; and neither has any power.
         String samples = c.substring(c.indexOf("\n  samples-db:\n"), c.indexOf("\n  kilnmark:\n"));
+        assertFalse(c.contains("config/.env}:") || c.contains("KILNMARK_ENV_FILE"), "config/.env is never mounted");
+        assertFalse(setup.contains("user: \"0\""), "keycloak-setup runs as the image's own user");
         for (String[] one : new String[][] {{"keycloak-setup", setup}, {"samples-db", samples}}) {
-            assertTrue(one[1].contains("- ${KILNMARK_ENV_FILE:-../../config/.env}:/run/kilnmark/env:ro,z"), one[0]);
+            assertTrue(one[1].contains("- ${KILNMARK_SECRETS_DIR:-../../config/run}/" + one[0] + ".env:/run/kilnmark/env:ro,z"),
+                one[0]);
+            assertTrue(one[1].contains("    cap_drop: [ALL]\n    security_opt: [no-new-privileges]\n"), one[0]);
             for (String secret : List.of("PASSWORD}", "SECRET}", "PASSWORD:?", "SECRET:?", "PASSWORD:-", "TOKEN}")) {
                 assertFalse(one[1].contains(secret), one[0] + " has a secret in its environment: " + secret);
             }
@@ -177,8 +182,9 @@ class ControlScriptStarterTest {
     @Test
     void thePeoplesPasswordIsTypedOrPipedInAndNeverShown() throws IOException {
         String sh = Files.readString(LAUNCH.resolve("kilnmark.sh"));
-        assertTrue(sh.contains("  if ! out=\"$(printf '%s\\n' \"$people_password\" | KILNMARK_STARTER_PEOPLE_ACTION=\"$action\" \\\n"
-            + "    \"${compose[@]}\" run --rm -T keycloak-setup 2>&1 | hide_compose_commands)\"; then"),
+        assertTrue(sh.contains("  out=\"$(printf '%s\\n' \"$people_password\" | KILNMARK_STARTER_PEOPLE_ACTION=\"$action\" "
+            + "KILNMARK_MODE=starter-pack \\\n    KILNMARK_INSTALL_ID=\"$id\" \"${compose[@]}\" run --rm -T keycloak-setup 2>&1 "
+            + "| hide_compose_commands)\" || ok=false"),
             "on keycloak-setup's standard input, from printf (a builtin: no command line)");
         assertTrue(sh.contains("read -r -s -p \"A password for the example people"), "typed with the echo off");
         String ps = Files.readString(LAUNCH.resolve("kilnmark.ps1")).replace("\r\n", "\n");
@@ -381,9 +387,23 @@ class ControlScriptStarterTest {
     interface AdminRun {
         /**
          * {@code args}: the people command's words; {@code input}: the lines on its standard input;
-         * {@code ok}: whether keycloak-setup works.
+         * {@code ok}: whether keycloak-setup works; {@code outside}: the script's own environment
+         * (FAKE_RECORDED_MODE, the mode the database recorded, is config/.env's unless it says).
          */
-        Admin run(Map<String, String> settings, List<String> args, String input, boolean ok) throws Exception;
+        Admin run(Map<String, String> settings, List<String> args, String input, boolean ok, Map<String, String> outside)
+            throws Exception;
+
+        default Admin run(Map<String, String> settings, List<String> args, String input, boolean ok) throws Exception {
+            return run(settings, args, input, ok, Map.of());
+        }
+    }
+
+    /** The script's outside environment for a people command: the recorded mode config/.env's, unless {@code outside} says. */
+    static Map<String, String> recordedAsEnv(Map<String, String> settings, Map<String, String> outside) {
+        Map<String, String> env = new LinkedHashMap<>();
+        env.put("FAKE_RECORDED_MODE", settings.getOrDefault("KILNMARK_MODE", "starter-pack"));
+        env.putAll(outside);
+        return env;
     }
 
     static final Map<String, String> WITH_KEYCLOAK = Map.of("KILNMARK_MODE", "production", "COMPOSE_PROFILES", "auth");
@@ -505,6 +525,41 @@ class ControlScriptStarterTest {
         assertTrue(list.out().contains("rita@bank.example groups=kilnmark-admins status=active must-choose-password=yes")
             && list.out().contains("people: 1"), list.out());
         assertEquals(List.of("{\"via\":\"expire\",\"disabled\":[\"old@bank.example\"]}"), list.posted());
+        // keycloak-setup is handed the mode Kilnmark recorded, and its few secrets in a file for the
+        // run, read from config/.env as compose reads it (quotes and comments), which goes after it
+        Map<String, String> quoted = new LinkedHashMap<>(WITH_KEYCLOAK);
+        quoted.put("KILNMARK_KEYCLOAK_ADMIN_PASSWORD", "\"kc admin #1\" # quoted, with a comment");
+        quoted.put("KILNMARK_OIDC_CLIENT_SECRET", "bare-secret # a comment");
+        Admin handed = a.run(quoted, ADD, typed, true);
+        assertTrue(handed.out().contains("keycloak-setup: seen [production]"), handed.out());
+        assertTrue(handed.out().contains("keycloak-setup: secrets [as compose reads them]"), handed.out());
+        assertFalse(handed.out().contains("kc admin #1") || handed.out().contains("bare-secret"), "a secret was shown");
+        // the people commands act only where the record says config/.env's mode, and the database answers
+        for (List<String> args : List.of(ADD, List.of("people", "import", EXAMPLE_CSV), List.of("people", "activate",
+            "rita@bank.example"), List.of("people", "list"), List.of("people", "expire"))) {
+            for (String[] recorded : new String[][] {{"starter-pack", "differs from the mode Kilnmark recorded"},
+                {"none", "database does not answer"}}) {
+                Admin refused = a.run(WITH_KEYCLOAK, args, typed, true, Map.of("FAKE_RECORDED_MODE", recorded[0]));
+                assertTrue(refused.out().contains(recorded[1]) && !refused.out().contains("keycloak-setup: person"),
+                    args + " " + recorded[0] + ": " + refused.out());
+                assertTrue(refused.posted().isEmpty(), args.toString());
+            }
+        }
+        // expire: what the hourly timer runs; who it disabled is recorded, 500 people a record
+        Admin expired = a.run(WITH_KEYCLOAK, List.of("people", "expire"), "", true);
+        assertTrue(expired.out().contains("disabled p1200@bank.example: their temporary password") && expired.out().contains("people expire: done"),
+            expired.out());
+        assertEquals(3, expired.posted().size(), "1200 people in three records");
+        for (int i = 0; i < 3; i++) {
+            String body = expired.posted().get(i);
+            assertTrue(body.startsWith("{\"via\":\"expire\",\"disabled\":[\"p" + (i * 500 + 1) + "@bank.example\""), body);
+            assertEquals(i < 2 ? 500 : 200, body.split("@bank.example", -1).length - 1, body);
+        }
+        // nothing to do while Keycloak is stopped (port 9: nothing listens)
+        Map<String, String> stopped = new LinkedHashMap<>(WITH_KEYCLOAK);
+        stopped.put("KILNMARK_KEYCLOAK_PORT", "9");
+        Admin idle = a.run(stopped, List.of("people", "expire"), "", true);
+        assertTrue(idle.out().contains("nothing was expired now") && !idle.out().contains("keycloak-setup:"), idle.out());
     }
 
     /**
@@ -520,6 +575,13 @@ class ControlScriptStarterTest {
                 x.sendResponseHeaders(200, -1);
                 x.close();
             });
+            // Kilnmark ready, and Keycloak's realm answering, for up and people expire
+            for (String path : List.of("/q/health/ready", "/realms/kilnmark")) {
+                server.createContext(path, x -> {
+                    x.sendResponseHeaders(200, -1);
+                    x.close();
+                });
+            }
             server.createContext("/api/v1/auth/people", x -> {
                 posted.add(new String(x.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                 x.sendResponseHeaders(204, -1);
@@ -544,6 +606,7 @@ class ControlScriptStarterTest {
         Path root = installRoot(windows);
         Map<String, String> all = new LinkedHashMap<>(settings);
         all.putIfAbsent("KILNMARK_PORT", String.valueOf(api.port()));
+        all.putIfAbsent("KILNMARK_KEYCLOAK_PORT", String.valueOf(api.port()));
         writeEnv(root, all);
         return root;
     }
@@ -623,13 +686,24 @@ class ControlScriptStarterTest {
             return run(List.of(shell, script, "starter", "people"), root, works.toString().replace('\\', '/'), outside);
         });
         try (Api api = Api.start()) {
-            adminRules((settings, args, input, ok) -> {
+            adminRules((settings, args, input, ok, outside) -> {
                 Path root = adminRoot(false, settings, api);
                 api.posted().clear();
                 List<String> c = new ArrayList<>(List.of(shell, script));
                 c.addAll(args.stream().map(w -> w.replace('\\', '/')).toList());
-                String out = withInput(input, () -> run(c, root, (ok ? works : engine).toString().replace('\\', '/')));
+                String out = withInput(input, () -> run(c, root, (ok ? works : engine).toString().replace('\\', '/'),
+                    recordedAsEnv(settings, outside)));
+                noRunSecretsLeft(root);
                 return new Admin(out, logsOf(root), List.copyOf(api.posted()));
+            });
+            timerRules((settings, args) -> {
+                Path root = TIMER_ROOTS.computeIfAbsent("linux", k -> uncheckedRoot(false));
+                writeEnv(root, withApi(settings, api));
+                List<String> c = new ArrayList<>(List.of(shell, script));
+                c.addAll(args);
+                String out = withInput("", () -> run(c, root, works.toString().replace('\\', '/'), recordedAsEnv(settings, Map.of())));
+                noRunSecretsLeft(root);
+                return new Timer(out, unitsOf(root), "");
             });
         }
     }
@@ -679,14 +753,108 @@ class ControlScriptStarterTest {
             return run(c, root, works.toString(), outside);
         });
         try (Api api = Api.start()) {
-            adminRules((settings, args, input, ok) -> {
+            adminRules((settings, args, input, ok, outside) -> {
                 Path root = adminRoot(true, settings, api);
                 api.posted().clear();
                 List<String> c = new ArrayList<>(ps);
                 c.addAll(args);
-                String out = withInput(input, () -> run(c, root, (ok ? works : engine).toString()));
+                String out = withInput(input, () -> run(c, root, (ok ? works : engine).toString(), recordedAsEnv(settings, outside)));
+                noRunSecretsLeft(root);
                 return new Admin(out, logsOf(root), List.copyOf(api.posted()));
             });
+            timerRules((settings, args) -> {
+                Path root = TIMER_ROOTS.computeIfAbsent("windows", k -> uncheckedRoot(true));
+                writeEnv(root, withApi(settings, api));
+                List<String> c = new ArrayList<>(ps);
+                c.addAll(args.stream().map(a -> a.equals("--no-browser") ? "-NoBrowser" : a).toList());
+                String out = withInput("", () -> run(c, root, works.toString(), recordedAsEnv(settings, Map.of())));
+                noRunSecretsLeft(root);
+                Path log = root.resolve("schtasks.log");
+                return new Timer(out, "", Files.exists(log) ? Files.readString(log) : "");
+            });
+        }
+    }
+
+    /** What up, status and uninstall printed, the systemd units there (Linux), and what schtasks was asked (Windows). */
+    record Timer(String out, String units, String schtasks) {
+    }
+
+    interface TimerRun {
+        /** {@code args}: the command's words, the same install root throughout, Kilnmark's API answering. */
+        Timer run(Map<String, String> settings, List<String> args) throws Exception;
+    }
+
+    static final Map<String, Path> TIMER_ROOTS = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * With the bundled Keycloak, up sets up the hourly people expire (a systemd timer on Linux, a
+     * scheduled task on Windows), once; status and check show it; up without the bundled Keycloak
+     * and uninstall remove it.
+     */
+    private static void timerRules(TimerRun t) throws Exception {
+        Timer first = t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"));
+        assertTrue(first.out().contains("is ready at") && first.out().contains("Set up the hourly expiry"), first.out());
+        if (!first.units().isEmpty()) {
+            assertTrue(first.units().contains("/kilnmark.sh people expire\n") && first.units().contains("OnCalendar=hourly")
+                && first.units().contains("Environment=KILNMARK_PROJECT=kilnmark"), first.units());
+        } else {
+            assertTrue(first.schtasks().contains("/Create /SC HOURLY /TN \"Kilnmark kilnmark people expire\"")
+                && first.schtasks().contains("kilnmark.ps1 people expire -Project kilnmark"), first.schtasks());
+        }
+        Timer again = t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"));
+        assertFalse(again.out().contains("Set up the hourly expiry"), "once: " + again.out());
+        assertTrue(t.run(WITH_KEYCLOAK, List.of("status")).out().contains("People expiry: hourly"));
+        assertTrue(t.run(WITH_KEYCLOAK, List.of("check")).out().contains("People expiry: hourly"));
+        Timer without = t.run(Map.of("KILNMARK_MODE", "production"), List.of("up", "--no-browser"));
+        assertTrue(without.out().contains("Removed the hourly expiry"), without.out());
+        assertTrue(without.units().isEmpty() || !without.units().contains("people expire"), without.units());
+        assertTrue(t.run(WITH_KEYCLOAK, List.of("check")).out().contains("People expiry: not set up"));
+        assertTrue(t.run(WITH_KEYCLOAK, List.of("up", "--no-browser")).out().contains("Set up the hourly expiry"));
+        Timer gone = t.run(WITH_KEYCLOAK, List.of("uninstall"));
+        assertTrue(gone.out().contains("Removed the hourly expiry"), gone.out());
+        assertTrue(gone.units().isEmpty() || !gone.units().contains("people expire"), gone.units());
+        if (!gone.schtasks().isEmpty()) {
+            assertTrue(gone.schtasks().contains("/Delete /TN \"Kilnmark kilnmark people expire\""), gone.schtasks());
+        }
+    }
+
+    private static Path uncheckedRoot(boolean windows) {
+        try {
+            return installRoot(windows);
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
+
+    private static Map<String, String> withApi(Map<String, String> settings, Api api) {
+        Map<String, String> all = new LinkedHashMap<>(settings);
+        all.put("KILNMARK_PORT", String.valueOf(api.port()));
+        all.put("KILNMARK_KEYCLOAK_PORT", String.valueOf(api.port()));
+        return all;
+    }
+
+    /** The systemd units the Linux edition wrote, as text. */
+    private static String unitsOf(Path root) throws IOException {
+        Path dir = root.resolve("systemd");
+        if (!Files.isDirectory(dir)) {
+            return "";
+        }
+        StringBuilder b = new StringBuilder();
+        try (var files = Files.list(dir)) {
+            for (Path f : files.sorted().toList()) {
+                b.append(Files.readString(f));
+            }
+        }
+        return b.toString();
+    }
+
+    /** The one-offs' secrets go once the run is over. */
+    private static void noRunSecretsLeft(Path root) throws IOException {
+        Path run = root.resolve("config/run");
+        if (Files.isDirectory(run)) {
+            try (var left = Files.list(run)) {
+                assertEquals(List.of(), left.toList(), "the run's secrets are still there");
+            }
         }
     }
 
@@ -720,7 +888,16 @@ class ControlScriptStarterTest {
             Files.writeString(f, "@echo off\r\n"
                 + "if \"%1 %2\"==\"compose version\" exit /b 0\r\n"
                 + "if not defined FAKE_RECORDED_MODE set FAKE_RECORDED_MODE=starter-pack\r\n"
+                + "echo %* | %SystemRoot%\\System32\\findstr.exe /c:\"install_id\" > nul && (echo 0e38a49e-ee00-4b1e-98f9-fe3c44e6fa09& exit /b 0)\r\n"
+                + "echo %* | %SystemRoot%\\System32\\findstr.exe /c:\"psql\" > nul && if \"%FAKE_RECORDED_MODE%\"==\"none\" exit /b 1\r\n"
                 + "echo %* | %SystemRoot%\\System32\\findstr.exe /c:\"psql\" > nul && (echo %FAKE_RECORDED_MODE%& exit /b 0)\r\n"
+                + "if \"%1\"==\"ps\" (echo Exited ^(0^) 2 seconds ago& exit /b 0)\r\n"
+                + "if \"%1\"==\"logs\" (echo keycloak-setup: started& echo keycloak-setup: disabled old@bank.example: their temporary password was not used within 72 hours& exit /b 0)\r\n"
+                + "if not defined KILNMARK_SECRETS_DIR goto nosecrets\r\n"
+                + "set sd=%KILNMARK_SECRETS_DIR:/=\\%\r\n"
+                + "for %%I in (\"%sd%\") do set rn=%%~nxI\r\n"
+                + "%SystemRoot%\\System32\\findstr.exe /c:\"KILNMARK_KEYCLOAK_ADMIN_PASSWORD='kc admin #1'\" \"%KILNMARK_ROOT%\\config\\run\\%rn%\\keycloak-setup.env\" > nul 2> nul && %SystemRoot%\\System32\\findstr.exe /c:\"KILNMARK_OIDC_CLIENT_SECRET='bare-secret'\" \"%KILNMARK_ROOT%\\config\\run\\%rn%\\keycloak-setup.env\" > nul 2> nul && echo keycloak-setup: secrets [as compose reads them]\r\n"
+                + ":nosecrets\r\n"
                 + "set pw=\r\n"
                 + "set /p pw=\r\n"
                 + "echo podman run --name kilnmark_x -e KC_ADMIN_PASSWORD=" + LEAKED + " quay.io/keycloak/keycloak 1>&2\r\n"
@@ -730,6 +907,8 @@ class ControlScriptStarterTest {
                 + "if not defined KILNMARK_PEOPLE_ACTION exit /b " + exit + "\r\n"
                 + "echo keycloak-setup: person [%KILNMARK_PEOPLE_ACTION%] [%KILNMARK_PERSON_EMAIL%] [%KILNMARK_PERSON_FIRST_NAME%] [%KILNMARK_PERSON_LAST_NAME%] [%KILNMARK_PERSON_GROUPS%]\r\n"
                 + (ok ? "if \"%KILNMARK_PEOPLE_ACTION%\"==\"list\" (echo keycloak-setup: disabled old@bank.example: their temporary password was not used within 72 hours& echo keycloak-setup: person rita@bank.example groups=kilnmark-admins status=active must-choose-password=yes& echo keycloak-setup: people: 1)\r\n"
+                    + "if \"%KILNMARK_PEOPLE_ACTION%\"==\"expire\" (for /L %%i in (1,1,1200) do @echo keycloak-setup: disabled p%%i@bank.example: their temporary password was not used within 72 hours)\r\n"
+                    + "if \"%KILNMARK_PEOPLE_ACTION%\"==\"expire\" (echo keycloak-setup: people expire: done& exit /b 0)\r\n"
                     + "if \"%KILNMARK_PEOPLE_ACTION%\"==\"activate\" (echo keycloak-setup: activated %KILNMARK_PERSON_EMAIL%: they choose their own password at their first sign-in& exit /b 0)\r\n"
                     + "if \"%KILNMARK_PEOPLE_ACTION%\"==\"import\" (echo keycloak-setup: made priya.shah@example.com ^(kilnmark-designers;kilnmark-sensitive-data^): they choose their own password at their first sign-in& echo keycloak-setup: people import: made 1, already there 0, refused 0)\r\n"
                     + "if not \"%KILNMARK_PEOPLE_ACTION%\"==\"add\" exit /b 0\r\n"
@@ -741,7 +920,13 @@ class ControlScriptStarterTest {
         Path f = dir.resolve(name + ".sh");
         Files.writeString(f, "#!/bin/bash\n"
             + "if [ \"$1 $2\" = \"compose version\" ]; then exit 0; fi\n"
-            + "case \"$*\" in *psql*) echo \"${FAKE_RECORDED_MODE:-starter-pack}\"; exit 0 ;; esac\n"
+            + "case \"$*\" in *install_id*) echo 0e38a49e-ee00-4b1e-98f9-fe3c44e6fa09; exit 0 ;; *psql*) [ \"${FAKE_RECORDED_MODE-}\" != none ] || exit 1\n"
+            + "  echo \"${FAKE_RECORDED_MODE:-starter-pack}\"; exit 0 ;; esac\n"
+            + "case \"$1\" in ps) echo 'Exited (0) 2 seconds ago'; exit 0 ;; logs) echo 'keycloak-setup: started'\n"
+            + "  echo 'keycloak-setup: disabled old@bank.example: their temporary password was not used within 72 hours'; exit 0 ;; esac\n"
+            + "f=\"${KILNMARK_ROOT-}/config/run/${KILNMARK_SECRETS_DIR##*/}/keycloak-setup.env\"\n"
+            + "if [ -n \"${KILNMARK_SECRETS_DIR-}\" ] && [ \"$(cat \"$f\" 2> /dev/null)\" = \"KILNMARK_KEYCLOAK_ADMIN_PASSWORD='kc admin #1'\n"
+            + "KILNMARK_OIDC_CLIENT_SECRET='bare-secret'\" ]; then echo 'keycloak-setup: secrets [as compose reads them]'; fi\n"
             + "pw=''; IFS= read -r -t 2 pw || true\n"
             + "echo \"podman run --name kilnmark_x -e KC_ADMIN_PASSWORD=" + LEAKED + " quay.io/keycloak/keycloak\" >&2\n"
             + "echo \"['podman', 'run', '-e', 'KILNMARK_OIDC_CLIENT_SECRET=" + LEAKED + "']\" >&2\n"
@@ -753,6 +938,8 @@ class ControlScriptStarterTest {
                 + "    list) echo \"keycloak-setup: disabled old@bank.example: their temporary password was not used within 72 hours\"\n"
                 + "      echo \"keycloak-setup: person rita@bank.example groups=kilnmark-admins status=active must-choose-password=yes\"; echo \"keycloak-setup: people: 1\" ;;\n"
                 + "    activate) echo \"keycloak-setup: activated $KILNMARK_PERSON_EMAIL: they choose their own password at their first sign-in\" ;;\n"
+                + "    expire) for i in $(seq 1 1200); do echo \"keycloak-setup: disabled p$i@bank.example: their temporary password was not used within 72 hours\"; done\n"
+                + "      echo 'keycloak-setup: people expire: done' ;;\n"
                 + "    import) echo \"keycloak-setup: lines [$(cat | wc -l | tr -d ' ')]\"\n"
                 + "      echo \"keycloak-setup: made priya.shah@example.com (kilnmark-designers;kilnmark-sensitive-data): they choose their own password at their first sign-in\"\n"
                 + "      echo \"keycloak-setup: people import: made 1, already there 0, refused 0\" ;;\n"
@@ -768,6 +955,44 @@ class ControlScriptStarterTest {
             // Windows: Git Bash runs it by its first line
         }
         return f;
+    }
+
+    static final Map<Boolean, Path> TIMER_TOOLS = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * A systemctl (false) or schtasks (true) that only notes what it was asked, in FAKE_TIMER_LOG:
+     * systemctl says a timer is enabled when its unit file is in KILNMARK_SYSTEMD_DIR; schtasks has a
+     * task once created, until deleted.
+     */
+    private static Path fakeTimerTool(boolean windows) {
+        return TIMER_TOOLS.computeIfAbsent(windows, w -> {
+            try {
+                Path dir = Files.createTempDirectory("kilnmark-fake-timer");
+                if (w) {
+                    Path f = dir.resolve("schtasks.cmd");
+                    Files.writeString(f, "@echo off\r\n"
+                        + "echo %*>> \"%FAKE_TIMER_LOG%\"\r\n"
+                        + "if /i \"%1\"==\"/Query\" (if exist \"%FAKE_TIMER_LOG%.task\" (exit /b 0) else (exit /b 1))\r\n"
+                        + "if /i \"%1\"==\"/Create\" (echo task> \"%FAKE_TIMER_LOG%.task\"& exit /b 0)\r\n"
+                        + "if /i \"%1\"==\"/Delete\" (del \"%FAKE_TIMER_LOG%.task\"& exit /b 0)\r\n"
+                        + "exit /b 0\r\n");
+                    return f;
+                }
+                Path f = dir.resolve("systemctl.sh");
+                Files.writeString(f, "#!/bin/bash\n"
+                    + "echo \"$*\" >> \"$FAKE_TIMER_LOG\"\n"
+                    + "case \"$*\" in *is-enabled*) [ -f \"$KILNMARK_SYSTEMD_DIR/${@: -1}\" ] && echo enabled && exit 0; exit 1 ;; esac\n"
+                    + "exit 0\n");
+                try {
+                    Files.setPosixFilePermissions(f, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+                } catch (UnsupportedOperationException e) {
+                    // Windows: Git Bash runs it by its first line
+                }
+                return f;
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        });
     }
 
     /** An install root with one version in it, as install leaves it; Windows marks it in current.txt. */
@@ -831,6 +1056,12 @@ class ControlScriptStarterTest {
         pb.environment().put("KILNMARK_ROOT", root.toString());
         pb.environment().put("KILNMARK_ENGINE", engine);
         pb.environment().remove("KILNMARK_PROJECT");
+        // the hourly expiry's tools: fakes that keep to this root, never the machine's own
+        pb.environment().put("KILNMARK_SYSTEMCTL", fakeTimerTool(false).toString().replace('\\', '/'));
+        pb.environment().put("KILNMARK_SYSTEMD_DIR", root.resolve("systemd").toString().replace('\\', '/'));
+        pb.environment().put("KILNMARK_SCHTASKS", fakeTimerTool(true).toString());
+        pb.environment().put("FAKE_TIMER_LOG", root.resolve(System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT)
+            .contains("win") ? "schtasks.log" : "systemctl.log").toString());
         pb.environment().putAll(outside);
         Process p = pb.start();
         try (var in = p.getOutputStream()) {

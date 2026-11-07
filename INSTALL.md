@@ -162,10 +162,10 @@ written `-Offline`, `-Root`, `-SkipVerify` and so on.
 | `prepare` | Linux, once, with sudo: makes the kilnmark account and the install root (above) |
 | `up` | Starts Kilnmark (and Keycloak when `.env` turns on the `auth` profile), waits until it answers, and opens it in the browser. First it adds to `.env` any secret this version needs that it lacks (such as `KILNMARK_SAMPLES_DB_PASSWORD`) |
 | `down` | Stops it. Every volume, so all data, is kept |
-| `restart [service]` | Restarts everything, or one service |
-| `status` | Version, containers, health, and the last backup |
+| `restart [service]` | Restarts everything (a stop, then `up`, so `keycloak-setup` and `samples-db` run again), or one service |
+| `status` | Version, containers, health, the last backup, and, with the bundled Keycloak, the hourly expiry of unused temporary passwords |
 | `logs [service] [-f]` | The last 200 lines of the logs, or follows them |
-| `check` | Checks the prerequisites, and lists settings in the version's `.env.example` that your `.env` does not mention. Changes nothing |
+| `check` | Checks the prerequisites, lists settings in the version's `.env.example` that your `.env` does not mention, and, with the bundled Keycloak, warns when the hourly expiry of unused temporary passwords is not set up. Changes nothing |
 | `verify FILE` | Checks a downloaded file against its signature |
 | `load-images FILE` | Checks and loads an offline images file |
 | `pull` | Pulls this version's images and checks their signatures |
@@ -177,6 +177,7 @@ written `-Offline`, `-Root`, `-SkipVerify` and so on.
 | `people import FILE` | Adds the people in a CSV file; never an admin. On a Starter Pack install, with one temporary password for the class; on production, each waits, disabled and with no password, for `people activate` |
 | `people activate EMAIL` | Gives one person waiting to be activated a temporary password of their own, typed (not shown) or piped in, and enables them |
 | `people list` | Lists the realm's people, their Kilnmark groups, whether they are active or waiting to be activated, and who has not yet chosen their own password |
+| `people expire` | Disables anyone whose temporary password went unused for longer than `KILNMARK_PEOPLE_ACTIVATION_HOURS`. `up` sets it to run every hour (a systemd timer on Linux, a scheduled task on Windows); you need not run it yourself |
 | `starter people [--new-password \| --remove]` | On a Starter Pack install, the five example people in the bundled Keycloak, with `KILNMARK_STARTER=allowed`: adds them, gives them all a new password, or removes them. You type the password (it is not shown) or pipe it in, and it is kept nowhere (below, "Try Kilnmark with the Starter Pack") |
 | `uninstall [--purge]` | Stops Kilnmark. `--purge` also deletes its volumes and images, once you type `DELETE` |
 
@@ -404,9 +405,11 @@ of its own, or only Active Directory or LDAP (which Keycloak can read). It is a 
    may not, so there add `--profile auth` yourself. The one-click scripts (below) always do. The `keycloak-setup` service waits for Keycloak,
    then makes the `kilnmark` realm: those groups, the client Kilnmark signs in with, a sign-in of a
    password and a one-time code, and Kilnmark's sign-in page. `podman compose logs keycloak-setup`
-   says what it did. Run it again after changing `KILNMARK_URL` or the client secret:
-   `podman compose --profile auth run --rm keycloak-setup`. It finishes anything an earlier run
-   left half done, and keeps what is there.
+   says what it did. Run it again after changing `KILNMARK_URL` or the client secret with
+   `kilnmark.sh restart` (`kilnmark.cmd restart`). It finishes anything an earlier run left half
+   done, and keeps what is there. It reads its two secrets from a file the control script writes
+   for that run alone and removes afterwards (never `.env` whole), so start it through the control
+   script rather than by hand.
 4. Make **Kilnmark's first admin**, so nobody has to make the first person by hand: install asks
    for one when it turns Keycloak on (press Enter at the email to skip it). It is `people add` with
    the group `kilnmark-admins`: below, "Adding people to the bundled Keycloak".
@@ -449,6 +452,7 @@ Kilnmark:
 | Add the people in a file | `kilnmark.sh people import people.csv` | `kilnmark.cmd people import people.csv` |
 | Activate one waiting person | `kilnmark.sh people activate ada@bank.example` | `kilnmark.cmd people activate ada@bank.example` |
 | List who is there | `kilnmark.sh people list` | `kilnmark.cmd people list` |
+| Expire unused temporary passwords now | `kilnmark.sh people expire` | `kilnmark.cmd people expire` |
 
 - **`people add`** asks for the person's email, which is their user name, their first and last
   name, their groups (separated by `;`), and a temporary password, typed twice and not shown. To
@@ -476,25 +480,43 @@ Kilnmark:
   sensitive values).
 - **`people activate EMAIL`** gives one person waiting to be activated (imported on production, or
   disabled because their temporary password went unused) a temporary password of their own, typed
-  twice and not shown, or piped in, and enables them. It refuses someone already active, and
-  anyone who has signed in and chosen their own password (disabled on purpose: enable them in
-  Keycloak's console).
+  twice and not shown, or piped in, and enables them. It takes only someone waiting for a first
+  password: no password at all, or only the temporary one these commands gave them, unused. It
+  refuses someone already active, anyone with a password of their own or a one-time code (they
+  have signed in, and were disabled on purpose: enable them in Keycloak's console), and anyone from
+  a directory or another identity provider.
 - **`people list`** shows each person in the realm with their Kilnmark groups, whether they are
   `active`, `waiting-to-be-activated` or `disabled`, and `must-choose-password=yes` while they have
   not yet signed in with their temporary password: for a trainer, who has not yet signed in. It
   shows no password.
 
 Each temporary password works once: at their first sign-in Keycloak has the person choose their
-own, and set up a one-time code. **Unused temporary passwords expire**: at every start, and at every
-`people` command, anyone still holding one more than `KILNMARK_PEOPLE_ACTIVATION_HOURS` (72 unless
-you set it, 1 to 720) after it was set is disabled, and Kilnmark's audit log says so
-(`auth.person_disabled`). That includes people made by `people add` and Kilnmark's first admin;
-`people activate` gives them a new one, and `KILNMARK_ADMIN_TOKEN` stays the way in meanwhile. The password goes to `keycloak-setup` on its input only:
+own, and set up a one-time code. **Unused temporary passwords expire**, at most an hour late: anyone
+still holding one more than `KILNMARK_PEOPLE_ACTIVATION_HOURS` (72 unless you set it, 1 to 720) after
+it was set is disabled, and Kilnmark's audit log says so (`auth.person_disabled`). That includes
+people made by `people add` and Kilnmark's first admin; `people activate` gives them a new one, and
+`KILNMARK_ADMIN_TOKEN` stays the way in meanwhile. Only the temporary passwords these commands set
+expire (each is marked `kilnmark-temporary` in Keycloak, and the mark goes when its person chooses
+their own): someone you asked in Keycloak's console to change their password is never disabled for
+it. The check runs at every start, at every `people` command, and every hour as `people expire`,
+which `up` sets up with the bundled Keycloak and `uninstall` removes:
+- on **Linux**, a systemd timer of the account that runs Kilnmark,
+  `kilnmark-<project>-people-expire.timer` (a system one when the script runs as root). Rootless
+  Podman keeps running while nobody is signed in once lingering is on, as `prepare` sets it;
+  without systemd, `up` says so: run `kilnmark.sh people expire` every hour from cron instead;
+- on **Windows**, a scheduled task of yours, `Kilnmark <project> people expire`, which runs while
+  you are signed in to Windows, as the Podman machine or Docker Desktop does.
+
+`status` and `check` say whether it is set up. While Keycloak is stopped nobody can sign in, so
+`people expire` does nothing then, and the next start expires them first. The password goes to `keycloak-setup` on its input only:
 never on the screen, in `.env`, a command line or `logs`. Someone already there with that email is
 left exactly as they are, their password and groups too, and reported as already there; running a
 command again changes nothing. Addresses at kilnmark.com, the Starter Pack's example people's, are
-refused, so a real person is never taken for an example one; on a Starter Pack install people
-added this way are never in the pack's group, so removing the example people never removes them.
+refused, so a real person is never taken for an example one; people added this way are never in
+the pack's group, so removing the example people never removes them: should someone made land in
+it (the realm has it as a default group, say), they are deleted again and the command stops. The
+commands act only where the mode Kilnmark recorded in its database is the one `.env` says, and stop
+when the database does not answer.
 Kilnmark's audit log records each person made (`auth.person_added`, with their groups), each import
 (`auth.people_imported`) and each activation (`auth.person_activated`), never a password; Keycloak
 records every change to people as an admin event too. The commands check that Kilnmark answers
@@ -504,8 +526,8 @@ commands refuse: add people there.
 On one machine, `http://localhost` works as it is: browsers treat localhost as secure, so
 Kilnmark's session cookie (sent over HTTPS only) still works there. Keycloak is published on this
 machine only. For other machines, put a proxy on this machine that ends TLS in front of both, set
-`KILNMARK_KEYCLOAK_URL` and `KILNMARK_URL` to their `https://` addresses, and run `keycloak-setup`
-again (above).
+`KILNMARK_KEYCLOAK_URL` and `KILNMARK_URL` to their `https://` addresses, and run
+`kilnmark.sh restart`, which runs `keycloak-setup` again (above).
 
 While Keycloak is on, `kilnmark.sh backup` backs its database up too (its people, groups and
 one-time code setups), and `restore` puts it back (below, "Back up and restore").
@@ -599,8 +621,9 @@ Anyone who has the password can sign in as an example admin or as a designer who
 values: that is why they are only for trials and training.
 
 To take them out, run `starter people --remove`, or remove `KILNMARK_STARTER=allowed` from `.env`
-and run `kilnmark.sh up`: `keycloak-setup` then deletes the members of the pack's group, whatever
-they are called now, and the group, and never anyone else.
+and run `kilnmark.sh up`: `keycloak-setup` then deletes the members of the pack's group at a
+kilnmark.com address, whatever they are called now, and the group. Anyone else someone put in the
+group is only taken out of it, and named; nobody outside it is touched.
 
 **Turn it off.** Under **Settings**, **Starter Pack**, choose **Turn off** and type `DELETE`.
 Kilnmark removes every sample in the Library, the pack's sources, the tables in `kilnmark_samples`

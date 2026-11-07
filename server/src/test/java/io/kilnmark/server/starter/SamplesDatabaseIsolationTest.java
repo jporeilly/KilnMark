@@ -89,8 +89,10 @@ class SamplesDatabaseIsolationTest {
      * recorded mode.
      */
     private static ExecResult provision(String samplesPassword) throws Exception {
-        PG.copyFileToContainer(org.testcontainers.images.builder.Transferable.of("KILNMARK_DB_PASSWORD=" + SUPER_PASSWORD
-            + "\r\nKILNMARK_SAMPLES_DB_PASSWORD=" + samplesPassword + "\r\n"), "/run/kilnmark/env");
+        // as compose reads .env: an export, spaces around =, quotes and comments, CR LF line ends
+        PG.copyFileToContainer(org.testcontainers.images.builder.Transferable.of("export KILNMARK_DB_PASSWORD = \""
+            + SUPER_PASSWORD + "\" # the database's\r\nKILNMARK_SAMPLES_DB_PASSWORD='" + samplesPassword
+            + "' # the samples login's\r\n"), "/run/kilnmark/env");
         return PG.execInContainer("sh", "-c", "PGHOST=127.0.0.1 PGUSER=kilnmark PGSSLMODE=require KILNMARK_SAMPLES_DB_WAIT=4 sh "
             + SCRIPT);
     }
@@ -271,5 +273,33 @@ class SamplesDatabaseIsolationTest {
         assertEquals(0, provision(SAMPLES_PASSWORD).getExitCode());
         assertEquals(before, grants(), "nothing revoked or granted again");
         assertTrue(before.get("kilnmark_samples").contains("reporting=c"), before.toString());
+    }
+
+    /**
+     * The statement that sets the samples login's password is never logged, whatever the server's
+     * own settings: here every statement is (log_statement = all), and any that fails would be.
+     */
+    @Test
+    @Order(6)
+    void theSamplesPasswordIsNeverInTheServersLog() throws Exception {
+        String another = "another-samples-0123456789-xyz";
+        try (Connection c = superuser("postgres")) {
+            exec(c, "ALTER SYSTEM SET log_statement = 'all'", "ALTER SYSTEM SET log_min_error_statement = 'error'",
+                "SELECT pg_reload_conf()");
+        }
+        Thread.sleep(500);
+        try {
+            assertEquals(0, provision(another).getExitCode());
+        } finally {
+            try (Connection c = superuser("postgres")) {
+                exec(c, "ALTER SYSTEM RESET log_statement", "ALTER SYSTEM RESET log_min_error_statement", "SELECT pg_reload_conf()");
+            }
+        }
+        as("kilnmark_samples", another, "kilnmark_samples").close();   // it was set
+        Thread.sleep(500);
+        String logs = PG.getLogs();
+        assertTrue(logs.contains("statement: SELECT value FROM kilnmark.server_setting"), "statements are logged here");
+        assertFalse(logs.contains(another), "the password was logged");
+        assertEquals(0, provision(SAMPLES_PASSWORD).getExitCode());
     }
 }
