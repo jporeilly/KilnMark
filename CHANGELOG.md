@@ -50,18 +50,26 @@ details.
   every connection that it is in `kilnmark_samples`, over TLS, as a login that is not a superuser.
 - **Example people made by Keycloak's own setup**: `kilnmark.sh starter people`
   (`kilnmark.cmd starter people`), with `KILNMARK_STARTER=allowed` and the bundled Keycloak, has
-  `keycloak-setup` make the five with Keycloak's own admin, marked with the attribute
-  `kilnmark_starter_pack` (which only admins can set: the realm's unmanaged attributes are
-  `ADMIN_EDIT` while people may be made), and shows their new password once on the terminal; it is
-  never in `.env`, `logs` or Kilnmark. A later run keeps an existing person's password unless
-  `--new-password`; `--remove` removes them, and so does the next `up` once `KILNMARK_STARTER` is
-  removed or the install is marked production, only people carrying the mark. Kilnmark holds no
+  `keycloak-setup` make the five with Keycloak's own admin, in the group `kilnmark-starter-pack`
+  (only admins put people in groups, and setup puts a person in it only as it makes them, so someone
+  else with one of the addresses is never adopted), and shows their new password once on the
+  terminal. The password reaches `keycloak-setup` on its standard input: never in `.env`, a
+  container's settings, a command line, `logs` or Kilnmark. A later run keeps an existing person's
+  password unless `--new-password`; `--remove` removes them, and so does the next `up` once
+  `KILNMARK_STARTER` is removed or the install is marked production, only the group's people. The
+  realm's own settings are left as they are, but for turning on admin events. Kilnmark holds no
   Keycloak credential in any setting. `KILNMARK_KEYCLOAK_DEMO_PASSWORD` is retired: `up` empties
   it, and people it made are left for an admin to remove.
-- **Guard rails**: the banner, the audit events `starter.added` and `starter.removed`, each with
-  every step's outcome (a failed attempt too), the access review's new
-  `example` column (kilnmark.com accounts, marked **Example account** on the page), and the new
-  setting `KILNMARK_PRODUCTION` (`kilnmark.production`, off by default).
+- **Guard rails**: the banner, the audit events `starter.added` (a refused attempt too) and
+  `starter.removed` (naming what it deleted; each schedule deleted with a sample is recorded as a
+  `schedule.deleted`), each with every step's outcome, the access review's new `example` column
+  (kilnmark.com accounts, marked **Example account** on the page), and the new setting
+  `KILNMARK_PRODUCTION` (`kilnmark.production`, off by default), `true` or `false` only: the server
+  and the control script refuse anything else, so it means the same to the server, the scripts and
+  `keycloak-setup`. On an install marked production, kilnmark.com sign-ins are refused, and at every
+  start the API tokens an example account made or approved the unmask grant of (and the tokens
+  those made) are revoked and their schedules paused, each recorded. A step's failure on the page
+  never names a host: what a called service said goes to the server's log.
 - **Control script**: `install --starter` (`-Starter`), with `--auth` also `starter people`;
   `starter people [--new-password | --remove]`; `up` adds secrets a newer version needs to `config/.env`
   before starting. `install --auth` with other ports now also sets `KILNMARK_KEYCLOAK_URL` and

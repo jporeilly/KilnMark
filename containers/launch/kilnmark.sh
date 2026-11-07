@@ -119,6 +119,17 @@ setting() {
   printf '%s' "$value"
 }
 
+# Whether the install is marked production: KILNMARK_PRODUCTION true or false, in any case, as the
+# server reads it; unset is false. The server refuses to start on any other value, and so does this.
+production() {
+  local v; v="$(setting KILNMARK_PRODUCTION | tr '[:upper:]' '[:lower:]')"
+  case "$v" in
+    ""|false) return 1 ;;
+    true) return 0 ;;
+    *) die "KILNMARK_PRODUCTION in config/.env is true or false: Kilnmark does not start with anything else. Nothing was changed." ;;
+  esac
+}
+
 # compose, always the kilnmark project, with this site's .env and the current version's file.
 compose=()
 set_compose() {
@@ -345,6 +356,7 @@ make_settings() {
 ensure_settings() {
   local env="$root/config/.env"
   [ -f "$env" ] || return 0
+  production || :   # stops here on a value the server would refuse
   if [ -z "$(setting KILNMARK_SAMPLES_DB_PASSWORD)" ]; then
     set_line "$env" KILNMARK_SAMPLES_DB_PASSWORD "$(random_value)"
     echo "Added KILNMARK_SAMPLES_DB_PASSWORD to config/.env: the Starter Pack's database login (ADR 0051)."
@@ -725,9 +737,9 @@ EOF
 
 # The Starter Pack's five example people, made and removed by keycloak-setup with Keycloak's own
 # admin: Kilnmark holds no Keycloak credential. Their password is new, made here, handed to that one
-# run of keycloak-setup through compose's environment (compose.yaml reads it from there; never a
-# command line, never config/.env), and shown once on the terminal, never in logs/. People already
-# there keep theirs unless --new-password.
+# run of keycloak-setup on its standard input (never its environment, a command line or
+# config/.env), and shown once on the terminal, never in logs/. People already there keep theirs
+# unless --new-password.
 cmd_starter() {
   local what="${1:-}" action=add a profiles password=""
   [ $# -eq 0 ] || shift
@@ -744,7 +756,7 @@ cmd_starter() {
   [[ ",$profiles," == *",auth,"* ]] \
     || die "The example people need the bundled Keycloak: the auth profile (INSTALL.md, \"Keycloak, if you have no identity provider\")."
   if [ "$action" != remove ]; then
-    [ "$(setting KILNMARK_PRODUCTION)" != true ] \
+    ! production \
       || die "This install is marked production (KILNMARK_PRODUCTION=true): no example people here. Nothing was changed."
     [ "$(setting KILNMARK_STARTER)" = allowed ] \
       || die "Set KILNMARK_STARTER=allowed in config/.env first: the example people are only for trials and training."
@@ -752,7 +764,7 @@ cmd_starter() {
   fi
   set_compose
   echo "Asking keycloak-setup to $( [ "$action" = remove ] && echo remove || echo add ) the example people ..."
-  if ! KILNMARK_STARTER_PEOPLE_ACTION="$action" KILNMARK_STARTER_PEOPLE_PASSWORD="$password" \
+  if ! printf '%s\n' "$password" | KILNMARK_STARTER_PEOPLE_ACTION="$action" \
     "${compose[@]}" run --rm -T keycloak-setup; then
     die "keycloak-setup did not finish: see what it said above. Nothing more was done."
   fi

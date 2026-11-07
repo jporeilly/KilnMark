@@ -35,10 +35,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 /**
  * The Starter Pack's example people (ADR 0051), made by keycloak-setup (containers/keycloak/setup.sh)
  * with Keycloak's own admin, against the Keycloak image compose pins: only with
- * KILNMARK_STARTER=allowed, never on an install marked production; each carries the pack's mark,
- * which a person cannot set on themselves; a run never resets an existing person's password unless
- * asked; and once the switch goes, exactly the marked people go, never someone else with one of the
- * addresses.
+ * KILNMARK_STARTER=allowed, never on an install marked production (KILNMARK_PRODUCTION anything but
+ * false, in any case); their password only on its standard input; each in the group
+ * kilnmark-starter-pack, which only setup puts people in as it makes them, so someone else with one
+ * of the addresses is never adopted, whatever they set on themselves; a run never resets an existing
+ * person's password unless asked; the realm's own settings are left as they are; and once the
+ * switch goes, exactly the people in the group go, whatever the realm lets admins see.
  */
 @Testcontainers
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -47,6 +49,8 @@ class StarterPeopleSetupTest {
     static final String ADMIN_PASSWORD = "kc-admin-0123456789";
     static final String FIRST = "first-people-password-0123";
     static final String SECOND = "second-people-password-4567";
+    static final String VERAS_OWN = "vera-own-password-0123";
+    static final String GROUP = "kilnmark-starter-pack";
     static final List<String> PEOPLE = List.of("vera.lane@kilnmark.com", "sam.okafor@kilnmark.com",
         "dana.reyes@kilnmark.com", "priya.shah@kilnmark.com", "alex.morgan@kilnmark.com");
     static final ObjectMapper JSON = new ObjectMapper();
@@ -64,13 +68,20 @@ class StarterPeopleSetupTest {
         return "http:" + "/" + "/" + KC.getHost() + ":" + KC.getMappedPort(8080);
     }
 
-    /** keycloak-setup as compose runs it, with these settings, and as the control script asks for people. */
+    /**
+     * keycloak-setup as compose runs it, with these settings, and as the control script asks for
+     * people: the password on its standard input, one line ending CR LF as Windows PowerShell sends it.
+     */
     private static ExecResult setup(String starter, String production, String action, String password) throws Exception {
-        String env = "export KEYCLOAK_URL=http:" + "/" + "/localhost:8080 KC_ADMIN_USER=admin KC_ADMIN_PASSWORD='"
+        return KC.execInContainer("bash", "-c", env(starter, production, action) + "; printf '%s\\r\\n' '" + password
+            + "' | bash /opt/kilnmark/setup.sh");
+    }
+
+    private static String env(String starter, String production, String action) {
+        return "export KEYCLOAK_URL=http:" + "/" + "/localhost:8080 KC_ADMIN_USER=admin KC_ADMIN_PASSWORD='"
             + ADMIN_PASSWORD + "' KILNMARK_OIDC_CLIENT_SECRET=oidc-0123456789 KILNMARK_URL=http:" + "/" + "/localhost:8780"
             + " KILNMARK_STARTER='" + starter + "' KILNMARK_PRODUCTION='" + production + "'"
-            + " KILNMARK_STARTER_PEOPLE_ACTION='" + action + "' KILNMARK_STARTER_PEOPLE_PASSWORD='" + password + "'";
-        return KC.execInContainer("bash", "-c", env + "; bash /opt/kilnmark/setup.sh");
+            + " KILNMARK_STARTER_PEOPLE_ACTION='" + action + "'";
     }
 
     private static void ok(ExecResult r) {
@@ -107,9 +118,22 @@ class StarterPeopleSetupTest {
         return list.size() == 0 ? null : list.get(0);
     }
 
-    private static boolean marked(JsonNode user) {
-        JsonNode v = user.path("attributes").path("kilnmark_starter_pack");
-        return v.isArray() && v.size() == 1 && "true".equals(v.get(0).asText());
+    /** The names of the groups the person is in. */
+    private static List<String> groups(JsonNode user) throws Exception {
+        List<String> out = new java.util.ArrayList<>();
+        for (JsonNode g : JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark/users/" + user.path("id").asText()
+            + "/groups", null).body())) {
+            out.add(g.path("name").asText());
+        }
+        return out;
+    }
+
+    private static JsonNode realm() throws Exception {
+        return JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark", null).body());
+    }
+
+    private static JsonNode profile() throws Exception {
+        return JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark/users/profile", null).body());
     }
 
     /** Whether the person signs in with the password (the realm's direct grant, with admin-cli). */
@@ -121,45 +145,57 @@ class StarterPeopleSetupTest {
     @Order(1)
     void noPeopleWithoutTheSwitchOrOnProduction() throws Exception {
         ok(setup("", "false", "", ""));
-        // A real person, made by an admin, with one of the addresses: never adopted, never deleted.
+        // The site lets people set attributes of their own, and keeps admin events' details: setup
+        // changes neither. Someone with one of the addresses put the old mark on themselves.
+        com.fasterxml.jackson.databind.node.ObjectNode p = (com.fasterxml.jackson.databind.node.ObjectNode) profile();
+        p.put("unmanagedAttributePolicy", "ENABLED");
+        assertEquals(200, call(admin(), "PUT", "/admin/realms/kilnmark/users/profile", p).statusCode());
+        assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark", Map.of("adminEventsDetailsEnabled", true))
+            .statusCode());
         assertEquals(201, call(admin(), "POST", "/admin/realms/kilnmark/users", Map.of("username",
-            "vera.lane@kilnmark.com", "email", "vera.lane@kilnmark.com", "enabled", true)).statusCode());
+            "vera.lane@kilnmark.com", "email", "vera.lane@kilnmark.com", "firstName", "Vera", "lastName", "Lane",
+            "enabled", true, "attributes", Map.of("kilnmark_starter_pack", List.of("true")), "credentials",
+            List.of(Map.of("type", "password", "value", VERAS_OWN, "temporary", false)))).statusCode());
+
         ExecResult r = setup("", "false", "add", FIRST);
         assertNotEquals(0, r.getExitCode(), "refused without KILNMARK_STARTER=allowed");
-        r = setup("allowed", "true", "add", FIRST);
-        assertNotEquals(0, r.getExitCode(), "refused on production");
-        assertTrue(r.getStderr().contains("not marked production"), r.getStderr());
-        for (String p : PEOPLE.subList(1, PEOPLE.size())) {
-            assertNull(user(p), p + " was not made");
+        // production as the server reads it (true in any case), and anything else but false
+        for (String production : List.of("true", "TRUE", "True", "1", "yes", "on")) {
+            r = setup("allowed", production, "add", FIRST);
+            assertNotEquals(0, r.getExitCode(), "refused on production: " + production);
+            assertTrue(r.getStderr().contains("not marked production"), r.getStderr());
+        }
+        // the password comes on standard input only, never from the environment
+        r = KC.execInContainer("bash", "-c", env("allowed", "false", "add") + " KILNMARK_STARTER_PEOPLE_PASSWORD='" + FIRST
+            + "'; bash /opt/kilnmark/setup.sh < /dev/null");
+        assertNotEquals(0, r.getExitCode(), "no password on its input: refused");
+        assertTrue(r.getStderr().contains("on standard input"), r.getStderr());
+        for (String person : PEOPLE.subList(1, PEOPLE.size())) {
+            assertNull(user(person), person + " was not made");
         }
     }
 
     @Test
     @Order(2)
-    void allowedTheyAreMadeMarkedInTheirGroupsLeavingSomeoneElseAlone() throws Exception {
-        // An admin had let people set their own unmanaged attributes: the run takes that back.
-        String profile = call(admin(), "GET", "/admin/realms/kilnmark/users/profile", null).body();
-        JsonNode p = JSON.readTree(profile);
-        ((com.fasterxml.jackson.databind.node.ObjectNode) p).put("unmanagedAttributePolicy", "ENABLED");
-        assertEquals(200, call(admin(), "PUT", "/admin/realms/kilnmark/users/profile", p).statusCode());
-
-        ok(setup("allowed", "false", "add", FIRST));
-        assertEquals("ADMIN_EDIT", JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark/users/profile", null).body())
-            .path("unmanagedAttributePolicy").asText(), "only admins see and set the mark");
-        assertFalse(marked(user("vera.lane@kilnmark.com")), "someone else's account is not taken over");
+    void allowedTheyAreMadeInTheGroupLeavingSomeoneElseAndTheRealmAlone() throws Exception {
+        ok(setup("allowed", "FALSE", "add", FIRST));   // false in any case: not production
+        JsonNode vera = user("vera.lane@kilnmark.com");
+        assertEquals(List.of(), groups(vera), "someone else with the address is not adopted, whatever they set");
         assertFalse(signsIn("vera.lane@kilnmark.com", FIRST));
+        assertTrue(signsIn("vera.lane@kilnmark.com", VERAS_OWN), "their own password is kept");
         for (String person : PEOPLE.subList(1, PEOPLE.size())) {
             JsonNode u = user(person);
             assertNotNull(u, person);
-            assertTrue(marked(u), person + " carries the mark");
-            assertTrue(signsIn(person, FIRST), person + " signs in with the password given");
+            assertTrue(groups(u).contains(GROUP), person + " is in " + GROUP);
+            assertTrue(signsIn(person, FIRST), person + " signs in with the password given, CR and all dropped");
         }
-        JsonNode priya = user("priya.shah@kilnmark.com");
-        JsonNode groups = JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark/users/" + priya.path("id").asText()
-            + "/groups", null).body());
-        assertEquals(2, groups.size(), "designers and sensitive data: " + groups);
-        assertTrue(JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark", null).body()).path("adminEventsEnabled")
-            .asBoolean(), "Keycloak records the changes as admin events");
+        assertEquals(java.util.Set.of(GROUP, "kilnmark-designers", "kilnmark-sensitive-data"),
+            java.util.Set.copyOf(groups(user("priya.shah@kilnmark.com"))));
+        assertEquals(java.util.Set.of(GROUP, "kilnmark-admins"), java.util.Set.copyOf(groups(user("alex.morgan@kilnmark.com"))));
+        JsonNode realm = realm();
+        assertTrue(realm.path("adminEventsEnabled").asBoolean(), "Keycloak records the changes as admin events");
+        assertTrue(realm.path("adminEventsDetailsEnabled").asBoolean(), "the site's own event setting is kept");
+        assertEquals("ENABLED", profile().path("unmanagedAttributePolicy").asText(), "the site's own policy is kept");
     }
 
     @Test
@@ -172,45 +208,37 @@ class StarterPeopleSetupTest {
         ok(setup("allowed", "false", "new-password", SECOND));
         assertTrue(signsIn("sam.okafor@kilnmark.com", SECOND), "--new-password gives them all the new one");
         assertFalse(signsIn("sam.okafor@kilnmark.com", FIRST));
+        assertTrue(signsIn("vera.lane@kilnmark.com", VERAS_OWN), "never someone else's");
     }
 
     @Test
     @Order(4)
-    void noOneCanPutTheMarkOnThemselves() throws Exception {
-        assertEquals(201, call(admin(), "POST", "/admin/realms/kilnmark/users", Map.of("username", "eve@example.com",
-            "email", "eve@example.com", "firstName", "Eve", "lastName", "Example", "enabled", true, "credentials",
-            List.of(Map.of("type", "password", "value", "eve-password-0123", "temporary", false)))).statusCode());
-        String eve = token("kilnmark", "eve@example.com", "eve-password-0123");
-        assertNotNull(eve);
-        HttpResponse<String> self = call(eve, "POST", "/realms/kilnmark/account", Map.of("username", "eve@example.com",
-            "email", "eve@example.com", "firstName", "Eve", "lastName", "Example", "attributes",
-            Map.of("kilnmark_starter_pack", List.of("true"))));
-        assertTrue(self.statusCode() < 500, self.statusCode() + " " + self.body());
-        assertFalse(marked(user("eve@example.com")), "the account console does not set the mark: " + self.statusCode());
-    }
+    void withoutTheSwitchExactlyThePeopleInTheGroupGo() throws Exception {
+        // the realm now hides unmanaged attributes from everyone (no policy): the group still marks them
+        com.fasterxml.jackson.databind.node.ObjectNode p = (com.fasterxml.jackson.databind.node.ObjectNode) profile();
+        p.remove("unmanagedAttributePolicy");
+        assertEquals(200, call(admin(), "PUT", "/admin/realms/kilnmark/users/profile", p).statusCode());
 
-    @Test
-    @Order(5)
-    void withoutTheSwitchExactlyTheMarkedPeopleGo() throws Exception {
-        // the people never made by the pack are kept: vera.lane (an admin's) and eve
-        ok(setup("allowed", "true", "", ""));   // marked production: they go at once
-        for (String p : PEOPLE.subList(1, PEOPLE.size())) {
-            assertNull(user(p), p + " removed once the install is marked production");
+        ok(setup("allowed", "1", "", ""));   // marked production (1 is not false): they go at once
+        for (String person : PEOPLE.subList(1, PEOPLE.size())) {
+            assertNull(user(person), person + " removed once the install is marked production");
         }
-        assertNotNull(user("vera.lane@kilnmark.com"), "the unmarked person stays");
-        assertNotNull(user("eve@example.com"));
+        assertNotNull(user("vera.lane@kilnmark.com"), "someone else stays");
 
         ok(setup("allowed", "false", "add", FIRST));
         assertNotNull(user("alex.morgan@kilnmark.com"));
         ok(setup("", "false", "", ""));         // KILNMARK_STARTER removed: the next up removes them
-        for (String p : PEOPLE.subList(1, PEOPLE.size())) {
-            assertNull(user(p), p + " removed once the switch went");
+        for (String person : PEOPLE.subList(1, PEOPLE.size())) {
+            assertNull(user(person), person + " removed once the switch went");
         }
-        assertNotNull(user("vera.lane@kilnmark.com"), "the unmarked person stays");
+        assertNotNull(user("vera.lane@kilnmark.com"), "someone else stays");
+        assertEquals(0, JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark/groups?exact=true&search=" + GROUP,
+            null).body()).size(), "the empty group goes too");
 
         ok(setup("allowed", "false", "add", FIRST));
         ok(setup("allowed", "false", "remove", ""));   // starter people --remove
         assertNull(user("dana.reyes@kilnmark.com"));
         assertNotNull(user("vera.lane@kilnmark.com"));
+        assertTrue(signsIn("vera.lane@kilnmark.com", VERAS_OWN));
     }
 }

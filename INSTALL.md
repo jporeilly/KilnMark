@@ -446,17 +446,19 @@ only: after a restore, turn the pack off and on again to recreate the samples.
 
 `keycloak-setup`, with Keycloak's own admin, adds `vera.lane` (viewer), `sam.okafor` (steward),
 `dana.reyes` (designer), `priya.shah` (designer, sees sensitive values) and `alex.morgan` (admin),
-all `@kilnmark.com`, which receives no mail from here, each marked as the pack's. They share one new
-password, which the command shows **once**, on the terminal only: it is never in `.env`, `logs` or
-Kilnmark. Adding them again keeps the password of anyone already there. Each sets up a one-time
+all `@kilnmark.com`, which receives no mail from here, in the Keycloak group
+`kilnmark-starter-pack`, which marks them as the pack's. They share one new password, which the
+command shows **once**, on the terminal only: it is handed to `keycloak-setup` on its input, never
+in `.env`, a container's settings, `logs` or Kilnmark. Someone already in Keycloak with one of
+those addresses is left as they are, never given the people's groups. Adding them again keeps the password of anyone already there. Each sets up a one-time
 code on first sign-in. Kilnmark holds no Keycloak credential, in any setting: its Settings page only
 shows these commands and which example accounts have signed in. Anyone who runs the command, or has
 the password, can sign in as an example admin or as a designer who sees sensitive values: that is
 why they are only for trials and training ([ADR 0051](docs/adr/0051-starter-pack.md)).
 
 To take them out for good, remove `KILNMARK_STARTER=allowed` from `.env` (or mark the install
-production) and run `kilnmark.sh up`: `keycloak-setup` then deletes the five people it marked, and
-never anyone else with one of those addresses. Keycloak records each change to the people as an
+production) and run `kilnmark.sh up`: `keycloak-setup` then deletes the five people in the group,
+and the group, and never anyone else with one of those addresses. Keycloak records each change to the people as an
 admin event (its console, realm **kilnmark**, **Events**, **Admin events**).
 
 **Turn it off.** Under **Settings**, **Starter Pack**, choose **Turn off** and type `DELETE`.
@@ -467,10 +469,15 @@ command above: the page says so if any has signed in. Both turning on and off ar
 and the access review marks kilnmark.com accounts as example accounts.
 
 **On production.** Set `KILNMARK_PRODUCTION=true` in `.env` on an install that holds real data.
-Kilnmark then refuses the Starter Pack's example data, and `keycloak-setup` refuses the example
-people and deletes any it made, at the next start. Through the API only, an admin can still force
-the example data (`POST /api/v1/starter-pack?force=true`), which the audit log records; nothing
-forces the people.
+It is `true` or `false`, in any case: Kilnmark does not start with anything else, such as `1` or
+`yes`, and the control script says so. Kilnmark then refuses the Starter Pack's example data, and
+`keycloak-setup` refuses the example people and deletes any it made, at the next start. Kilnmark
+also refuses every kilnmark.com sign-in, and at every start revokes the API tokens an example
+account made or approved the unmask grant of (and any token one of those made), and pauses the
+schedules they set: each is in the audit log with the reason. So an install that was a trial keeps
+nothing an example account could still use. Through the API only, an admin can still force the
+example data (`POST /api/v1/starter-pack?force=true`), which the audit log records; nothing forces
+the people.
 
 ### Review who has access
 

@@ -191,6 +191,16 @@ public class ScheduleService {
         }
     }
 
+    /**
+     * Pauses, at once, every schedule {@code person} set, whatever its role: they may no longer use
+     * Kilnmark, for {@code reason}. Waits for a schedule a fire holds. Each is recorded.
+     */
+    public void personBarred(String person, String reason, AuditLog.Actor actor) {
+        for (ScheduleStore.Schedule s : store.pauseSetBy(null, person, null)) {
+            paused(s, reason, actor);
+        }
+    }
+
     /** How long a sign-in's pause waits for a schedule a fire holds, before giving up to the fire-time check. */
     static final java.time.Duration SIGN_IN_LOCK_TIMEOUT = java.time.Duration.ofSeconds(2);
 

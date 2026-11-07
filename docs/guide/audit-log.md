@@ -17,9 +17,9 @@ it (behind a proxy, as its forwarding settings say).
 | Event | What it is | Details |
 | --- | --- | --- |
 | Token created (`token.created`) | An API token was made | Its name, role, whether it sees unmasked values, when it expires |
-| Token revoked (`token.revoked`) | A token was revoked | Its name and role |
+| Token revoked (`token.revoked`) | A token was revoked | Its name and role, and the reason when the server revoked it: on an install marked production, a Starter Pack example account made it, approved its unmask grant, or made the token that made it |
 | Signed in (`auth.sign_in`) | Someone signed in with your organisation's identity provider | The role their groups gave them, whether they see unmasked values, those of their groups that your settings map to a role (never their other groups, whose names can be sensitive), and an opaque key for the person (`person`). The groups and key are what schedules they set are checked by |
-| Sign-in given no role (`auth.sign_in_refused`) | Someone signed in with the provider but was given no role | Why: no second factor, or none of their groups has a role |
+| Sign-in given no role (`auth.sign_in_refused`) | Someone signed in with the provider but was given no role | Why: no second factor, none of their groups has a role, or a Starter Pack example account on an install marked production |
 | Signed out (`auth.sign_out`) | Someone signed out of a provider sign-in | |
 | Access review (`access.review`) | An admin viewed or downloaded the access review (Settings, Access review) | Its format and how many entries it had |
 | Sensitive values asked for (`unmask.requested`) | A designer token was made to see sensitive values, which waits for a second admin | The token's name |
@@ -29,8 +29,8 @@ it (behind a proxy, as its forwarding settings say).
 | Schedule set (`schedule.set`) | A designer or admin added or changed a schedule ([Running pipelines and flows on a schedule](schedules.md)); the event is on `schedule <id>` | The pipeline or flow, the cron expression, the zone, the role its runs act as, and whether it is on. Never the values its runs start with |
 | Schedule paused (`schedule.paused`) | A schedule stopped because whoever set it no longer has its role: their token was revoked or expired, or a sign-in gave them less of a role ([Running pipelines and flows on a schedule](schedules.md#when-the-person-who-set-it-loses-the-role)). By the admin who revoked the token, the person signing in, or the server at the schedule's time | As for Schedule set, with why |
 | Schedule deleted (`schedule.deleted`) | A schedule was deleted, by itself or with its pipeline or flow | As for Schedule set, and `via: pipeline deleted` or `via: flow deleted` when its pipeline or flow was deleted |
-| Starter Pack turned on (`starter.added`) | An admin turned the Starter Pack's example data on, or tried to (INSTALL.md, "Try Kilnmark with the Starter Pack") | How each step went, a failed one included, and whether it was forced on an install marked production. The example people are made outside Kilnmark, by Keycloak's setup: Keycloak records those changes as its admin events |
-| Starter Pack turned off (`starter.removed`) | An admin turned the Starter Pack off, removing what it added | How each step went |
+| Starter Pack turned on (`starter.added`) | An admin turned the Starter Pack's example data on, or tried to (INSTALL.md, "Try Kilnmark with the Starter Pack") | How each step went, a failed one included, and whether it was forced on an install marked production; or `refused` and why, when nothing was done (`production`, `samples not offered`, `not ready`). The example people are made outside Kilnmark, by Keycloak's setup: Keycloak records those changes as its admin events |
+| Starter Pack turned off (`starter.removed`) | An admin turned the Starter Pack off, removing what it added | How each step went, and the flows, pipelines, sources and variables it deleted. Each schedule deleted with a sample is a Schedule deleted event of its own |
 | Column marked sensitive (`mark.set`) | A column was marked | The column |
 | Sensitive mark cleared (`mark.cleared`) | A mark was cleared: the column's values are no longer masked | The column |
 | Source deleted (`source.deleted`) | A source and what was recorded about it were deleted | Its assets and runs, and whether it had marks (deleting it cleared them) |

@@ -15,15 +15,19 @@ Kilnmark with the Starter Pack".
 | `files` volume | the same | `/srv/files`, writable; `KILNMARK_FILES_DIR` replaces it with the site's folder |
 | `StarterPack` | `server/.../api` | Turns the example data on and off: each step caught and reported, the state in the server setting `starter_pack` (JSON: on, since, by, and the ids of the sources it made) |
 | `StarterPackResource` | `/api/v1/starter-pack` | `GET` (viewer, for the banner), `GET details`, `POST` and `DELETE` (admin) |
-| `ExampleAccounts` | `server/.../starter` | Tells a kilnmark.com sign-in apart, for the access review and the page. Kilnmark holds no Keycloak credential and makes no Keycloak call |
-| `keycloak-setup` | `containers/keycloak/setup.sh` | With Keycloak's own admin: makes the five people when the control script asks, while `KILNMARK_STARTER=allowed` and not production; deletes those carrying the mark when not; forces the realm's unmanaged attributes to `ADMIN_EDIT` and turns on admin events while allowed; deletes a `kilnmark-starter` client left by an earlier draft |
-| Control script | `containers/launch` | Before every start, adds `KILNMARK_SAMPLES_DB_PASSWORD` when missing and empties the retired `KILNMARK_KEYCLOAK_DEMO_PASSWORD`; `install --starter` calls `POST /api/v1/starter-pack` (and `starter people` with `--auth`); `starter people [--new-password \| --remove]` runs `keycloak-setup` once with the action and a new password in compose's environment |
+| `ExampleAccounts` | `server/.../starter` | Tells a kilnmark.com sign-in apart, for the access review, the page and production. Kilnmark holds no Keycloak credential and makes no Keycloak call |
+| `ProductionCheck` | `server/.../starter` | At every start: stops the server unless `kilnmark.production` is `true` or `false` (any case); on production, revokes the example accounts' tokens and pauses their schedules (below) |
+| `OidcAccess.decide` | `server/.../auth` | On production, refuses a kilnmark.com sign-in, renewal or session (`EXAMPLE_ON_PRODUCTION`) |
+| `keycloak-setup` | `containers/keycloak/setup.sh` | With Keycloak's own admin: makes the five people in the group `kilnmark-starter-pack` when the control script asks, while `KILNMARK_STARTER=allowed` and not production; deletes the group's people, then the group, when not; turns on admin events while allowed |
+| Control script | `containers/launch` | Before every start, refuses a `KILNMARK_PRODUCTION` that is not `true` or `false`, adds `KILNMARK_SAMPLES_DB_PASSWORD` when missing and empties the retired `KILNMARK_KEYCLOAK_DEMO_PASSWORD`; `install --starter` calls `POST /api/v1/starter-pack` (and `starter people` with `--auth`); `starter people [--new-password \| --remove]` runs `keycloak-setup` once with the action in compose's environment and a new password on its standard input |
 | Banner | `ui/src/shell/StarterPackBanner.tsx` | Above the top bar on every page while the server says the pack is on |
 
 ## Turning it on
 
 1. Refused (409, nothing changed) when `kilnmark.production` is true and `force` is not, when the
    samples are not offered, or when there is no password for the pack's database or no files root.
+   Each refusal is recorded as `starter.added` with `refused` saying why (`production`,
+   `samples not offered`, `not ready`): a 409 is not otherwise in the audit log.
 2. `database`: connects as `kilnmark_samples` and runs the guard (below). A failure stops here and
    is recorded as `starter.added` with that step failed.
 3. The state is set on, so the banner shows even if a later step fails.
@@ -37,6 +41,10 @@ Kilnmark with the Starter Pack".
 6. `samples`: `Samples.add` with every placeholder mapped to the pack's sources and schema `public`.
 7. `starter.added` in the audit log, with each step's outcome and whether it was forced.
 
+A step that fails says why in the pack's own words, which name no address, value or secret. What a
+service it calls says (a source's checks can name the host) goes to the server's log only, and the
+step says the log has it.
+
 ## Turning it off
 
 Only with `{"confirm": "DELETE"}`. The sample flows and pipelines (`library = 'sample'`), the
@@ -45,20 +53,46 @@ pipeline or flow outside the Library names it, in either YAML form), the `sample
 when the pack set it, the tables (as the pack's login: every schema it owns but `public`, and every
 table, view and sequence it owns in `public`, after the guard), and the folder `starter-pack`
 (never following a link). Every step runs even if one fails; the state goes off only when all
-worked. `starter.removed` records each step. The example people are not touched: the page shows the
+worked. `starter.removed` records each step's outcome and names the flows, pipelines, sources and
+variables it deleted; each schedule deleted with a sample is recorded as `schedule.deleted`, as a
+pipeline's or flow's own delete records it. The example people are not touched: the page shows the
 control script's command, and which example accounts have signed in, from the audit log.
 
 ## The example people
 
 `kilnmark.sh starter people` checks `KILNMARK_STARTER=allowed`, the `auth` profile and that the
 install is not marked production, makes a 43-character password, and runs
-`compose run --rm -T keycloak-setup` with `KILNMARK_STARTER_PEOPLE_ACTION` and
-`KILNMARK_STARTER_PEOPLE_PASSWORD` in compose's own environment only, which `compose.yaml` passes to
-`keycloak-setup` (podman-compose takes no `-e NAME` without a value). The password goes to `/dev/tty` (Windows:
-`[Console]::WriteLine`, past the transcript), never to `logs`. `setup.sh` checks the same rules
-itself, makes the missing people with the mark and their groups, never resets a marked person's
-password unless the action is `new-password`, never adopts or deletes a person without the mark,
-and on any run where the people are not allowed deletes the marked ones.
+`compose run --rm -T keycloak-setup` with `KILNMARK_STARTER_PEOPLE_ACTION` in compose's own
+environment (which `compose.yaml` passes to `keycloak-setup`) and the password as one line on its
+standard input (bash: `printf`, a builtin; Windows: the PowerShell pipeline). Never in the
+environment: compose would keep it in the container's settings, and podman-compose puts every
+setting on podman's command line as `-e NAME=value`. `setup.sh` reads the line, dropping a CR and a
+byte-order mark, which Windows PowerShell can add. The password goes to `/dev/tty` (Windows:
+`[Console]::WriteLine`, past the transcript), never to `logs`.
+
+`setup.sh` checks the same rules itself, before anything else, and refuses to add people otherwise.
+It makes each missing person with one call, already in the group `kilnmark-starter-pack` and their
+role's groups, and deletes them again if the group did not take. Only members of that group are
+ever changed or deleted: someone else with one of the addresses is left as they are, never given
+groups or a password, whatever attributes they set on themselves or the realm's user profile hides.
+It never resets a member's password unless the action is `new-password` (or a run stopped before
+giving one). On any run where the people are not allowed it deletes the members among the five, and
+the group once it is empty. It changes no realm setting but turning admin events on while allowed.
+
+## On production
+
+`KILNMARK_PRODUCTION` is `true` or `false`, in any case, everywhere: the server does not start with
+anything else (`ProductionCheck`), the control scripts refuse anything else, and `setup.sh` takes
+anything but `false` as production. On an install marked production:
+
+- a sign-in, renewal or session of a kilnmark.com account (by the name Kilnmark gives the sign-in,
+  or its email) is refused with `EXAMPLE_ON_PRODUCTION`, recorded as `auth.sign_in_refused`;
+- at every start, each API token whose maker, or whose unmask grant's approver, is such an account
+  is revoked, and so is each token one of those made (its maker is `token <id> (...)`), however far
+  down; each is `token.revoked` with the reason, and the schedules it set pause as for any revoked
+  token;
+- each schedule such an account set (by the person key their sign-ins recorded) is paused, each
+  `schedule.paused` with the reason.
 
 ## The guard
 
@@ -74,10 +108,17 @@ or the pack given Kilnmark's own login, is refused before anything is dropped.
   or `template1`; let in by mistake it reads and makes nothing, and the next start shuts it out; a
   database a restore made is closed at the next start.
 - `StarterPeopleSetupTest`: the pinned Keycloak image and `setup.sh`; no people without the switch
-  or on production; made marked, in their groups, leaving someone else with an address alone;
-  passwords kept unless `new-password`; the account console cannot set the mark; exactly the marked
-  people go once the switch does, or production is set, or `remove` is asked.
+  or on production (`true`, `TRUE`, `1`, `yes`, `on`); the password from standard input only, CR
+  dropped; made in the group and their groups, leaving someone else with an address alone though they
+  set the old mark on themselves; the realm's policy and event settings kept; passwords kept unless
+  `new-password`; exactly the group's people go, with the realm's attributes hidden, once the switch
+  does, or production is set, or `remove` is asked.
+- `ProductionCheckTest`, and `StarterPackProductionTest`: only `true` or `false`; on production the
+  example accounts' sign-in refused, their tokens and those down the line revoked, a real person's
+  kept, their schedules paused, each recorded; a refused turn-on recorded.
 - `StarterPackApiTest`, `StarterPackProductionTest`: the API end to end, the guard, production, a
-  team's own source of the pack's name left alone, and `sample-data` kept while a team's flow reads it.
-- `ControlScriptStarterTest`: both editions, run for real; and no Keycloak credential reaches the
-  kilnmark service in any setting.
+  team's own source of the pack's name left alone, `sample-data` kept while a team's flow reads it,
+  and turning off recording each schedule deleted and naming what went.
+- `ControlScriptStarterTest`: both editions, run for real, with `KILNMARK_PRODUCTION` `TRUE`, `1`
+  and the rest; the people's password on standard input and in no environment; and no Keycloak
+  credential reaches the kilnmark service in any setting.

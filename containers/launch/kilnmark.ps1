@@ -139,6 +139,15 @@ function Get-Setting([string]$Name) {
     return $value
 }
 
+# Whether the install is marked production: KILNMARK_PRODUCTION true or false, in any case, as the
+# server reads it; unset is false. The server refuses to start on any other value, and so does this.
+function Test-Production {
+    $v = (Get-Setting 'KILNMARK_PRODUCTION').ToLowerInvariant()
+    if ($v -eq '' -or $v -eq 'false') { return $false }
+    if ($v -eq 'true') { return $true }
+    Fail 'KILNMARK_PRODUCTION in config\.env is true or false: Kilnmark does not start with anything else. Nothing was changed.'
+}
+
 function Get-ComposeArgs {
     Select-Engine
     $env = Join-Path $script:Root 'config\.env'
@@ -434,6 +443,7 @@ function New-Settings([string]$Example) {
 function Update-Settings {
     $env = Join-Path $script:Root 'config\.env'
     if (-not (Test-Path $env)) { return }
+    [void](Test-Production)   # stops here on a value the server would refuse
     if (-not (Get-Setting 'KILNMARK_SAMPLES_DB_PASSWORD')) {
         Set-Line $env 'KILNMARK_SAMPLES_DB_PASSWORD' (New-RandomValue)
         Write-Host "Added KILNMARK_SAMPLES_DB_PASSWORD to config\.env: the Starter Pack's database login (ADR 0051)."
@@ -716,8 +726,9 @@ function Invoke-StarterOn {
 
 # The Starter Pack's five example people, made and removed by keycloak-setup with Keycloak's own
 # admin: Kilnmark holds no Keycloak credential. Their password is new, made here, handed to that one
-# run of keycloak-setup through compose's environment (never a command line, never config\.env), and shown once
-# on the console, past the transcript, never in logs\. People already there keep theirs unless -NewPassword.
+# run of keycloak-setup on its standard input (never its environment, a command line or config\.env), and
+# shown once on the console, past the transcript, never in logs\. People already there keep theirs unless
+# -NewPassword.
 function Invoke-Starter([string[]]$Options) {
     $what = $null; $action = 'add'
     foreach ($o in $Options) {
@@ -735,19 +746,18 @@ function Invoke-Starter([string[]]$Options) {
     if (-not $profiles.Contains(',auth,')) { Fail 'The example people need the bundled Keycloak: the auth profile (INSTALL.md, "Keycloak, if you have no identity provider").' }
     $password = ''
     if ($action -ne 'remove') {
-        if ((Get-Setting 'KILNMARK_PRODUCTION') -eq 'true') { Fail 'This install is marked production (KILNMARK_PRODUCTION=true): no example people here. Nothing was changed.' }
+        if (Test-Production) { Fail 'This install is marked production (KILNMARK_PRODUCTION=true): no example people here. Nothing was changed.' }
         if ((Get-Setting 'KILNMARK_STARTER') -ne 'allowed') { Fail 'Set KILNMARK_STARTER=allowed in config\.env first: the example people are only for trials and training.' }
         $password = New-RandomValue
     }
     if ($action -eq 'remove') { Write-Host 'Asking keycloak-setup to remove the example people ...' } else { Write-Host 'Asking keycloak-setup to add the example people ...' }
     $base = Get-ComposeArgs
     $env:KILNMARK_STARTER_PEOPLE_ACTION = $action
-    $env:KILNMARK_STARTER_PEOPLE_PASSWORD = $password
     try {
-        & $script:Engine @base run --rm -T keycloak-setup | Out-Host
+        # one line on its standard input (Windows PowerShell can put a byte-order mark first: setup drops it)
+        $password | & $script:Engine @base run --rm -T keycloak-setup | Out-Host
         $ok = ($LASTEXITCODE -eq 0)
     } finally {
-        Remove-Item Env:KILNMARK_STARTER_PEOPLE_PASSWORD -ErrorAction SilentlyContinue
         Remove-Item Env:KILNMARK_STARTER_PEOPLE_ACTION -ErrorAction SilentlyContinue
     }
     if (-not $ok) { Fail 'keycloak-setup did not finish: see what it said above. Nothing more was done.' }

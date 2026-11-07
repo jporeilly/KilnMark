@@ -838,7 +838,7 @@ function svg(name, height, title, sub, body) {
     card(X[1], y2 + 30, W + 236, { icon: "file", color: C.green, strong: true, title: "starter-pack/", sub: "the samples write here, and only here" }) +
     lane(y3, 96, "Keycloak, where .env allows it", C.violet) +
     card(X[0], y3 + 30, W, { icon: "terminal", color: C.violet, title: "starter people", sub: "keycloak-setup, as its admin" }) +
-    card(X[1], y3 + 30, W + 236, { icon: "person", color: C.violet, strong: true, title: "Five example people", sub: "kilnmark.com, one per role, marked; gone when .env says so" }) +
+    card(X[1], y3 + 30, W + 236, { icon: "person", color: C.violet, strong: true, title: "Five example people", sub: "kilnmark.com, one per role, in the pack's group; gone when .env says so" }) +
     arrow([[X[0] + W, y3 + 58], [X[1] - 2, y3 + 58]], C.violet) +
     foot(y3 + 112, "lock", "Admins turn the data on and off under Settings. Kilnmark holds no Keycloak credential; backups hold kilnmark only.");
   svg("starter-pack", y3 + 162, "What the Starter Pack adds", "Example data in a database of its own, files in a folder of its own, and example people where allowed", b);

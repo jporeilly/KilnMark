@@ -1,6 +1,7 @@
 # 0051 The Starter Pack: example data turned on and off by an admin in a database of its own, and example people made by Keycloak's setup
 
-Status: Accepted (6 November 2026; decision 5 amended the same day after a security review)
+Status: Accepted (6 November 2026; decision 5 amended the same day after a security review, and
+decisions 5 to 8 after a second)
 
 ## Context
 
@@ -94,19 +95,27 @@ are (ADR 0043).
    So, instead: the person who runs Kilnmark, who already holds Keycloak's admin password in
    `config/.env`, makes the people with the control script, `kilnmark.sh starter people`
    (`kilnmark.cmd starter people`). It makes a new password, hands it to that one run of
-   `keycloak-setup` in its environment (never a command line, never `config/.env`) and shows it once
-   on the terminal, never in `logs`. `keycloak-setup`, with Keycloak's own admin, makes the five
-   (one per role, one designer seeing sensitive values) in their groups, each carrying the attribute
-   `kilnmark_starter_pack`, only while `KILNMARK_STARTER=allowed` and the install is not marked
-   production, which it checks itself. A run never resets the password of someone already there;
-   `--new-password` gives them all a new one, `--remove` removes them. At every start
-   (`keycloak-setup` runs on every `up`), once `KILNMARK_STARTER` is unset or the install is marked
-   production, it deletes exactly the five that carry the mark: a real person with one of those
-   addresses is never touched. While people may be made it sets the realm's unmanaged attributes to
-   admins only (`ADMIN_EDIT`), so no one can put the mark on themselves, and turns on Keycloak's admin
-   events, which record each change to the people. `KILNMARK_KEYCLOAK_DEMO_PASSWORD`, the earlier way
-   to make the same five, is retired: the control script empties it, and people made that way carry
-   no mark and are left for an admin to remove in Keycloak's console.
+   `keycloak-setup` on its standard input and shows it once on the terminal, never in `logs`. Not in
+   the run's environment: compose would put it in the container's settings, which `inspect` shows,
+   and podman-compose passes each setting as `-e NAME=value` on podman's command line, which other
+   users of the machine can read and which it can print. `keycloak-setup`, with Keycloak's own
+   admin, makes the five (one per role, one designer seeing sensitive values) in their groups and in
+   the group `kilnmark-starter-pack`, only while `KILNMARK_STARTER=allowed` and the install is not
+   marked production, which it checks itself. That group is the mark. Only admins can put people in
+   a group, and setup puts a person in it only as it makes them, in the same step, so a person who
+   registered, or an admin's account, with one of the addresses is never adopted, given the people's
+   groups or deleted. (A first version marked them with a user attribute and set the realm's
+   unmanaged attributes to admins only; a review found that a person could set it before that, and
+   that an admin choosing a stricter policy later would hide it, so the people would never be
+   removed. A group depends on neither, and the realm's own settings are left as they are.) A run
+   never resets the password of someone already there; `--new-password` gives them all a new one,
+   `--remove` removes them. At every start (`keycloak-setup` runs on every `up`), once
+   `KILNMARK_STARTER` is unset or the install is marked production, it deletes exactly the five in
+   the group, then the group. While people may be made it turns on Keycloak's admin events, which
+   record each change to the people; their details setting stays the site's.
+   `KILNMARK_KEYCLOAK_DEMO_PASSWORD`, the earlier way to make the same five, is retired: the control
+   script empties it, and people made that way are not in the group and are left for an admin to
+   remove in Keycloak's console.
 
    Kilnmark's own part is to show, under Settings > Starter Pack, the commands and which kilnmark.com
    accounts have signed in, from its own audit log. It never learns or shows their password.
@@ -118,10 +127,28 @@ are (ADR 0043).
    are Keycloak's admin events. The access review marks every kilnmark.com account that has signed
    in as an example account. A new server setting,
    `KILNMARK_PRODUCTION=true` (`kilnmark.production`, off by default), marks an install as
-   production: turning the pack on is then refused by the server, with nothing changed, and
-   `keycloak-setup` refuses the example people and removes any it made. Only an admin calling the API
-   with `force=true` can add the example data there, which the audit event records; the page offers
-   no way to force, and nothing forces the people. Turning it off is never refused.
+   production: turning the pack on is then refused by the server, with nothing changed and the
+   refusal recorded, and `keycloak-setup` refuses the example people and removes any it made. Only
+   an admin calling the API with `force=true` can add the example data there, which the audit event
+   records; the page offers no way to force, and nothing forces the people. Turning it off is never
+   refused.
+
+7. **Production means one thing everywhere.** The server, the control scripts and
+   `keycloak-setup` all read `KILNMARK_PRODUCTION`. Read as an ordinary boolean the server would
+   take `1`, `yes` or `on` as true while a script comparing text took them as not production, and
+   the example people would be made on an install the server calls production. So the server starts
+   only with `true` or `false`, in any case; the control scripts read it the same way and refuse
+   anything else; and `keycloak-setup` takes anything but `false` as production, so a value the
+   server refuses never lets the people in.
+
+8. **Nothing an example account did outlives the trial on production.** Deleting the people in
+   Keycloak does not touch what they made in Kilnmark, and Kilnmark cannot see Keycloak. So on an
+   install marked production, Kilnmark refuses every sign-in, renewal and session of a kilnmark.com
+   account, and at every start revokes each API token one of them made or whose unmask grant one of
+   them approved (so a grant one person approved for themselves with an example admin does not
+   survive, ADR 0038), and each token such a token made, and pauses each schedule one of them set
+   (ADR 0046). Each revocation and pause is an audit event, with the reason. On an install not marked
+   production these stay, as the trial's own; the access review shows which accounts are examples.
 
 ## Consequences
 
@@ -138,5 +165,11 @@ are (ADR 0043).
   `KILNMARK_STARTER` is removed or the install is marked production.
 - Turning the pack off in Kilnmark does not remove the people: the page says so and gives the
   command.
+- A trial install that becomes production keeps nothing an example account left that acts: their
+  sign-ins are refused, and at the first start marked production their tokens (and any token one of
+  those made) are revoked and their schedules paused, each recorded. What they changed, such as a
+  source or a setting, stays as any admin's change does: the audit log says who did it.
+- `KILNMARK_PRODUCTION` set to anything but `true` or `false` stops the server at start, and the
+  control script says why.
 - The two samples that run SQL are not added by the pack (an admin may not see unmasked values,
   ADR 0027); a designer who may adds them under **Library > Add samples**.

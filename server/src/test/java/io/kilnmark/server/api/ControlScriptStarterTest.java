@@ -22,9 +22,10 @@ import org.junit.jupiter.api.Test;
 /**
  * The control script's part in the Starter Pack (ADR 0051), in both editions: before every start it
  * adds the samples' database password when config/.env has none and empties the retired
- * KILNMARK_KEYCLOAK_DEMO_PASSWORD; {@code starter people} refuses on production, without
- * KILNMARK_STARTER=allowed and without Keycloak, and hands the people's new password to that one
- * keycloak-setup run in its environment only, showing it on the terminal and never in logs. And the
+ * KILNMARK_KEYCLOAK_DEMO_PASSWORD, and refuses a KILNMARK_PRODUCTION that is not true or false (in
+ * any case, as the server reads it); {@code starter people} refuses on production (TRUE too),
+ * without KILNMARK_STARTER=allowed and without Keycloak, and hands the people's new password to that
+ * one keycloak-setup run on its standard input only, showing it on the terminal and never in logs. And the
  * release compose file: a writable files folder for every install, the samples-db one-off, no
  * default for any new secret, and no Keycloak credential for the kilnmark service in any setting.
  *
@@ -121,31 +122,38 @@ class ControlScriptStarterTest {
                     "KILNMARK_OIDC_CLIENT_SECRET").contains(from), "a secret reaches Kilnmark: " + code);
             }
         }
-        // the people's password goes to keycloak-setup only, from the control script's own environment
+        // the people's password never goes through compose (it is keycloak-setup's standard input), so
+        // it is in no container's settings, no podman command line and nothing compose prints
         String setup = c.substring(c.indexOf("\n  keycloak-setup:\n"), c.indexOf("\n  # AI models"));
-        assertTrue(setup.contains("KILNMARK_STARTER_PEOPLE_PASSWORD: ${KILNMARK_STARTER_PEOPLE_PASSWORD}\n"), "no default");
-        assertEquals(c.indexOf("KILNMARK_STARTER_PEOPLE_PASSWORD"), c.lastIndexOf("KILNMARK_STARTER_PEOPLE_PASSWORD: "),
-            "named once, as keycloak-setup's setting");
-        assertTrue(setup.contains("KILNMARK_STARTER_PEOPLE_PASSWORD: "), "keycloak-setup only");
-        for (String f : List.of("../containers/release.env.example")) {
-            assertFalse(Files.readString(Path.of(f)).contains("KILNMARK_STARTER_PEOPLE_PASSWORD"), "never a setting in .env");
+        assertFalse(c.contains("STARTER_PEOPLE_PASSWORD"), "the people's password is not a compose setting");
+        assertEquals(c.indexOf("KILNMARK_STARTER_PEOPLE_ACTION: "), c.lastIndexOf("KILNMARK_STARTER_PEOPLE_ACTION: "),
+            "the action, one service's setting");
+        assertTrue(setup.contains("KILNMARK_STARTER_PEOPLE_ACTION: ${KILNMARK_STARTER_PEOPLE_ACTION:-}\n"),
+            "keycloak-setup's alone");
+        for (String f : List.of("../containers/release.env.example", "../containers/keycloak/setup.sh")) {
+            assertFalse(Files.readString(Path.of(f)).contains("STARTER_PEOPLE_PASSWORD"), "never a setting: " + f);
         }
+        assertTrue(Files.readString(Path.of("../containers/keycloak/setup.sh")).contains("  IFS= read -r PEOPLE_PASSWORD"),
+            "setup reads it from its standard input");
         assertFalse(c.contains("KILNMARK_KEYCLOAK_DEMO_PASSWORD"), "the old way is gone");
         assertTrue(setup.contains("KILNMARK_STARTER: ${KILNMARK_STARTER:-}")
             && setup.contains("KILNMARK_PRODUCTION: ${KILNMARK_PRODUCTION:-false}"), "setup refuses on production itself");
     }
 
     @Test
-    void bothEditionsHandThePeoplesPasswordToSetupInItsEnvironmentAndShowItOnTheTerminalOnly() throws IOException {
+    void bothEditionsHandThePeoplesPasswordToSetupOnItsStandardInputAndShowItOnTheTerminalOnly() throws IOException {
         String sh = Files.readString(LAUNCH.resolve("kilnmark.sh"));
-        assertTrue(sh.contains("KILNMARK_STARTER_PEOPLE_ACTION=\"$action\" KILNMARK_STARTER_PEOPLE_PASSWORD=\"$password\" \\\n"
-            + "    \"${compose[@]}\" run --rm -T keycloak-setup"), "in compose's environment, never an argument");
+        assertTrue(sh.contains("  if ! printf '%s\\n' \"$password\" | KILNMARK_STARTER_PEOPLE_ACTION=\"$action\" \\\n"
+            + "    \"${compose[@]}\" run --rm -T keycloak-setup; then"),
+            "on keycloak-setup's standard input, from printf (a builtin: no command line)");
         assertTrue(sh.contains("echo \"shown only now and kept nowhere, not even in logs/: $password\"")
             && sh.contains("    } > /dev/tty\n  else"), "to the terminal, past logs/");
         String ps = Files.readString(LAUNCH.resolve("kilnmark.ps1")).replace("\r\n", "\n");
-        assertTrue(ps.contains("$env:KILNMARK_STARTER_PEOPLE_PASSWORD = $password")
-            && ps.contains("run --rm -T keycloak-setup")
-            && ps.contains("Remove-Item Env:KILNMARK_STARTER_PEOPLE_PASSWORD"), "in the environment of that one run");
+        assertTrue(ps.contains("        $password | & $script:Engine @base run --rm -T keycloak-setup | Out-Host"),
+            "on keycloak-setup's standard input");
+        for (String text : List.of(sh, ps)) {
+            assertFalse(text.contains("STARTER_PEOPLE_PASSWORD"), "never in an environment");
+        }
         assertTrue(ps.contains("[Console]::WriteLine('shown only now and kept nowhere, not even in logs\\: ' + $password)"),
             "to the console, past the transcript");
         for (String text : List.of(sh, ps)) {
@@ -184,11 +192,22 @@ class ControlScriptStarterTest {
     private static void peopleRules(People p) throws Exception {
         assertTrue(p.run(Map.of("KILNMARK_STARTER", "allowed")).contains("need the bundled Keycloak"), "no Keycloak");
         assertTrue(p.run(Map.of("COMPOSE_PROFILES", "auth")).contains("Set KILNMARK_STARTER=allowed"), "not allowed");
-        assertTrue(p.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed", "KILNMARK_PRODUCTION", "true"))
-            .contains("marked production"), "production");
-        // allowed, with Keycloak, not production: it goes on, to the engine
-        assertTrue(p.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed")).contains("does not work"),
-            "allowed: it would run keycloak-setup");
+        // production as the server reads it: true in any case
+        for (String v : List.of("true", "TRUE", "True")) {
+            assertTrue(p.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed", "KILNMARK_PRODUCTION", v))
+                .contains("marked production"), "production: " + v);
+        }
+        // a value the server refuses to start with is refused here too, never taken as not production
+        for (String v : List.of("1", "yes", "on")) {
+            String out = p.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed", "KILNMARK_PRODUCTION", v));
+            assertTrue(out.contains("KILNMARK_PRODUCTION in config") && out.contains("is true or false"), v + ": " + out);
+            assertFalse(out.contains("does not work"), v + ": it stopped before the engine");
+        }
+        // allowed, with Keycloak, not production (false in any case, or unset): it goes on, to the engine
+        for (String v : List.of("", "false", "FALSE")) {
+            assertTrue(p.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed", "KILNMARK_PRODUCTION", v))
+                .contains("does not work"), "allowed: it would run keycloak-setup (" + v + ")");
+        }
     }
 
     @Test

@@ -218,12 +218,28 @@ class StarterPackApiTest {
             connections:
               - { from: ready, to: done }
             """)).post("/api/v1/flows").then().statusCode(201);
+        // a schedule on a sample: deleted with it, and recorded as a pipeline's own delete records it
+        long schedule = admin().contentType(ContentType.JSON).body(Map.of("pipeline", "sample-limit", "cron", "0 6 * * *"))
+            .post("/api/v1/schedules").then().statusCode(201).extract().jsonPath().getLong("id");
         int removed = events(AuditLog.STARTER_PACK_REMOVED);
+        int schedulesDeleted = events(AuditLog.SCHEDULE_DELETED);
         JsonPath r = admin().contentType(ContentType.JSON).body(Map.of("confirm", "DELETE")).delete("/api/v1/starter-pack")
             .then().statusCode(200).extract().jsonPath();
         assertFalse(r.getBoolean("on"), r.prettify());
         assertEquals(List.of(), r.getList("steps.findAll { it.outcome == 'failed' }"), r.prettify());
         eventually(AuditLog.STARTER_PACK_REMOVED, removed + 1);
+        eventually(AuditLog.SCHEDULE_DELETED, schedulesDeleted + 1);
+        JsonPath gone = admin().get("/api/v1/audit?action=" + AuditLog.SCHEDULE_DELETED + "&limit=1").then().statusCode(200)
+            .extract().jsonPath();
+        assertEquals("schedule " + schedule, gone.getString("events[0].target"), gone.prettify());
+        assertEquals("sample-limit", gone.getString("events[0].detail.pipeline"), gone.prettify());
+        // starter.removed names what went
+        JsonPath ev = admin().get("/api/v1/audit?action=" + AuditLog.STARTER_PACK_REMOVED + "&limit=1").then().statusCode(200)
+            .extract().jsonPath();
+        assertTrue(ev.getList("events[0].detail.pipelines").contains("sample-limit"), ev.prettify());
+        assertTrue(ev.getList("events[0].detail.pipelines").contains(Samples.SETUP), ev.prettify());
+        assertFalse(ev.getList("events[0].detail.flows").isEmpty(), ev.prettify());
+        assertTrue(ev.getList("events[0].detail.sources").contains(StarterPack.DATABASE_SOURCE), ev.prettify());
         admin().get("/api/v1/starter-pack").then().body("on", equalTo(false));
         for (String s : List.of(StarterPack.DATABASE_SOURCE, StarterPack.FILES_SOURCE)) {
             admin().get("/api/v1/sources/" + s).then().statusCode(404);

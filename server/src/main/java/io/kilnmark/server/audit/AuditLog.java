@@ -278,6 +278,28 @@ public class AuditLog {
         return l.stream().filter(g -> g != null).map(String::valueOf).toList();
     }
 
+    /**
+     * The key of each person who has signed in with the identity provider (ADR 0046's opaque key,
+     * which a schedule they set names), with the name their latest sign-in went by.
+     */
+    public Map<String, String> signedInPeople() {
+        return db.tx(c -> {
+            Map<String, String> out = new LinkedHashMap<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT DISTINCT ON (detail ->> 'person') detail ->> 'person', "
+                + "actor FROM kilnmark.audit_event WHERE action IN (?, ?) AND detail ->> 'person' IS NOT NULL "
+                + "ORDER BY detail ->> 'person', id DESC")) {
+                ps.setString(1, SIGN_IN);
+                ps.setString(2, SIGN_IN_REFUSED);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.put(rs.getString(1), rs.getString(2));
+                    }
+                }
+            }
+            return out;
+        });
+    }
+
     /** Everyone who has signed in with the identity provider and been given a role, most recent first. */
     public List<ProviderAccess> providerAccess() {
         return db.tx(c -> {

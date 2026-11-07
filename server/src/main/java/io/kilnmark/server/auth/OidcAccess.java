@@ -47,7 +47,26 @@ public final class OidcAccess {
     /** Why a sign-in older than the longest session is refused. */
     public static final String TOO_OLD = "Your sign-in is older than Kilnmark allows. Sign in again.";
 
+    /** Why one of the Starter Pack's example accounts is refused on an install marked production (ADR 0051). */
+    public static final String EXAMPLE_ON_PRODUCTION = "This is one of the Starter Pack's example accounts, which "
+        + "an install marked production does not let in. Sign in with your own account.";
+
     private OidcAccess() {
+    }
+
+    /**
+     * Decides from the provider's ID token, as {@link #decide(KilnmarkConfig.Oidc, Function, Instant)}
+     * does, and refuses the Starter Pack's example accounts (by the name Kilnmark gives the sign-in, or
+     * its email) on an install marked production (ADR 0051): every sign-in, renewal and request with a
+     * session is decided here, so a session an example person had from a trial ends too.
+     */
+    public static Decision decide(KilnmarkConfig config, org.eclipse.microprofile.jwt.JsonWebToken token, Instant now) {
+        if (config.production() && (io.kilnmark.server.starter.ExampleAccounts.isExample(
+            OidcIdentityAugmentor.actorName(token)) || strings(token.getClaim("email")).stream()
+                .anyMatch(io.kilnmark.server.starter.ExampleAccounts::isExample))) {
+            return Decision.refused(EXAMPLE_ON_PRODUCTION);
+        }
+        return decide(config.auth().oidc(), token::getClaim, now);
     }
 
     /**

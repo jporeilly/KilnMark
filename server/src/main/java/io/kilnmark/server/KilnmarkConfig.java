@@ -87,8 +87,10 @@ public interface KilnmarkConfig {
 
     /**
      * Whether this install is production ({@code KILNMARK_PRODUCTION=true}): the Starter Pack's
-     * example data is then refused (ADR 0051), and keycloak-setup refuses its example people. Off
-     * unless set.
+     * example data is then refused, its example accounts may not sign in, and what they left is
+     * revoked or paused at start (ADR 0051); keycloak-setup refuses the example people. Off unless
+     * set. Only true or false, in any case: the server does not start with anything else
+     * ({@code ProductionCheck}), as the control scripts read it so.
      */
     @WithDefault("false")
     boolean production();

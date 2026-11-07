@@ -244,15 +244,13 @@ services:
       KILNMARK_URL: ${KILNMARK_URL:-http://localhost:8780}
       # The Starter Pack's five example people (ADR 0051), only for trials and training: made when
       # the control script asks (kilnmark.sh starter people, which hands this one run their new
-      # password), while KILNMARK_STARTER=allowed and the install is not marked production, and
-      # removed at the next start once either stops being so.
+      # password on standard input, never here), while KILNMARK_STARTER=allowed and the install is
+      # not marked production, and removed at the next start once either stops being so.
       KILNMARK_STARTER: ${KILNMARK_STARTER:-}
       KILNMARK_PRODUCTION: ${KILNMARK_PRODUCTION:-false}
       # Set by the control script's starter people for that one run only, from its own environment,
-      # never from .env: what to do (add, new-password, remove) and the people's new password. Unset
-      # on every other run, so compose may note that the password is not set; that is all.
+      # never from .env: add, new-password or remove.
       KILNMARK_STARTER_PEOPLE_ACTION: ${KILNMARK_STARTER_PEOPLE_ACTION:-}
-      KILNMARK_STARTER_PEOPLE_PASSWORD: ${KILNMARK_STARTER_PEOPLE_PASSWORD}
     volumes:
       - ./containers/keycloak/setup.sh:/opt/kilnmark/setup.sh:ro,Z
     depends_on:

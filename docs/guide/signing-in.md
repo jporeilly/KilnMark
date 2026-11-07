@@ -168,8 +168,10 @@ Each sets up their own one-time code on first sign-in, as above. They are for sh
 never add them where real data is. The access review marks each of them as an **Example account**,
 and Settings, Starter Pack lists those that have signed in. `kilnmark.sh starter people --remove`
 deletes the five again, as does removing `KILNMARK_STARTER=allowed`, at the next start; only people
-the pack made, never someone else with one of those addresses. While the Starter Pack's example
-data is on, every page says so in a banner:
+the pack made, never someone else with one of those addresses. On an install marked production
+(`KILNMARK_PRODUCTION=true`), Kilnmark refuses every kilnmark.com sign-in ("This is one of the
+Starter Pack's example accounts"), and revokes the tokens they made and pauses the schedules they
+set. While the Starter Pack's example data is on, every page says so in a banner:
 
 ![The banner every page shows while the Starter Pack is on: Starter Pack: example data and accounts, not for production](images/starter-pack-banner.png)
 

@@ -42,6 +42,9 @@ import io.kilnmark.server.pipelines.PipelineService;
 import io.kilnmark.server.pipelines.PipelineViews;
 import io.kilnmark.server.pipelines.Samples;
 import io.kilnmark.server.quality.Sights;
+import io.kilnmark.server.schedules.ScheduleService;
+import io.kilnmark.server.schedules.ScheduleStore;
+import io.kilnmark.server.sources.HostPolicy;
 import io.kilnmark.server.starter.ExampleAccounts;
 import io.kilnmark.server.variables.VariableService;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -231,17 +234,17 @@ public class StarterPack {
      */
     public Result turnOn(boolean force, String by, AccessRole role, Sights sights, AuditLog.Actor actor) {
         if (config.production() && !force) {
-            throw ApiError.of(Response.Status.CONFLICT, "This install is marked as production (KILNMARK_PRODUCTION=true): "
+            throw refused(actor, "production", "This install is marked as production (KILNMARK_PRODUCTION=true): "
                 + "the Starter Pack, with its example data, is not for production, so it was not "
                 + "turned on. Nothing was changed");
         }
         if (!settings.samplesOffered()) {
-            throw ApiError.of(Response.Status.CONFLICT, "The samples are not offered on this server: turn on Offer the "
+            throw refused(actor, "samples not offered", "The samples are not offered on this server: turn on Offer the "
                 + "samples under Settings, Administration first. Nothing was changed");
         }
         String notReady = notReady();
         if (notReady != null) {
-            throw ApiError.of(Response.Status.CONFLICT, notReady + ". Nothing was changed");
+            throw refused(actor, "not ready", notReady + ". Nothing was changed");
         }
         synchronized (lock) {
             List<Step> steps = new ArrayList<>();
@@ -249,7 +252,7 @@ public class StarterPack {
                 checkDatabase();
                 steps.add(new Step("database", "done", "kilnmark_samples answers its own login, over TLS"));
             } catch (RuntimeException e) {
-                steps.add(new Step("database", "failed", e.getMessage()));
+                steps.add(new Step("database", "failed", shown("database", e)));
                 audit.record(actor, AuditLog.STARTER_PACK_ADDED, "starter pack", Map.of("forced", force && config.production(),
                     "steps", outcomes(steps)));
                 return new Result(state().on(), steps, null);
@@ -288,7 +291,7 @@ public class StarterPack {
                         default -> k;
                     }));
                     if (counts.containsKey("failed")) {
-                        throw new IllegalStateException(String.join(", ", words));
+                        throw new Problem(String.join(", ", words));
                     }
                     return String.join(", ", words) + ", in the Library";
                 });
@@ -298,6 +301,12 @@ public class StarterPack {
             LOG.infof("Starter Pack turned on by %s%s", by, force && config.production() ? ", forced on a production install" : "");
             return new Result(true, steps, tables[0]);
         }
+    }
+
+    /** A refused turn-on, recorded as {@code starter.added} with why (a 409 is not otherwise recorded). */
+    private WebApplicationException refused(AuditLog.Actor actor, String why, String message) {
+        audit.record(actor, AuditLog.STARTER_PACK_ADDED, "starter pack", Map.of("refused", why));
+        return ApiError.of(Response.Status.CONFLICT, message);
     }
 
     private static Map<String, String> outcomes(List<Step> steps) {
@@ -318,10 +327,30 @@ public class StarterPack {
             steps.add(new Step(step, "failed", e.getResponse().getEntity() instanceof ApiError a ? a.error()
                 : "it could not be done (HTTP " + e.getResponse().getStatus() + ")"));
         } catch (RuntimeException e) {
-            LOG.warnf(e, "Starter Pack: %s failed", step);
-            steps.add(new Step(step, "failed", e.getMessage() == null ? "it could not be done" : e.getMessage()));
+            steps.add(new Step(step, "failed", shown(step, e)));
         }
         return false;
+    }
+
+    /**
+     * Why a step failed, as the page shows it: the pack's own words ({@link Problem}), which name no
+     * address, value or secret; anything else only in the server's log.
+     */
+    static String shown(String step, RuntimeException e) {
+        if (e instanceof Problem) {
+            return e.getMessage();
+        }
+        LOG.warnf(e, "Starter Pack: %s failed", step);
+        return "it could not be done: the server's log says why";
+    }
+
+    /** A step's failure in the pack's own words: shown on the page as it is. */
+    static final class Problem extends IllegalStateException {
+        private static final long serialVersionUID = 1L;
+
+        Problem(String message) {
+            super(message);
+        }
     }
 
     /** The one database the pack uses. */
@@ -332,7 +361,7 @@ public class StarterPack {
         try (Connection c = samplesConnection()) {
             guard(c);
         } catch (SQLException e) {
-            throw new IllegalStateException("Kilnmark could not reach the Starter Pack's database " + DATABASE + " with "
+            throw new Problem("Kilnmark could not reach the Starter Pack's database " + DATABASE + " with "
                 + "its own login. It is made at every start by the samples-db service: run the control script's up "
                 + "again, then see its logs (logs samples-db)");
         }
@@ -350,19 +379,19 @@ public class StarterPack {
                  + "pg_backend_pid()), (SELECT rolsuper FROM pg_roles WHERE rolname = current_user), "
                  + "to_regclass('kilnmark.flyway_schema_history') IS NOT NULL")) {
             if (!rs.next() || !DATABASE.equals(rs.getString(1))) {
-                throw new IllegalStateException("The Starter Pack's database setting does not name " + DATABASE
+                throw new Problem("The Starter Pack's database setting does not name " + DATABASE
                     + ": the pack works in that database only. Nothing was changed");
             }
             if (!rs.getBoolean(2)) {
-                throw new IllegalStateException("The connection to " + DATABASE + " is not encrypted: it must demand TLS "
+                throw new Problem("The connection to " + DATABASE + " is not encrypted: it must demand TLS "
                     + "(sslmode=require). Nothing was changed");
             }
             if (rs.getBoolean(3)) {
-                throw new IllegalStateException("The Starter Pack's login is a superuser: it must be its own login, "
+                throw new Problem("The Starter Pack's login is a superuser: it must be its own login, "
                     + "kilnmark_samples, which can open no other database. Nothing was changed");
             }
             if (rs.getBoolean(4)) {
-                throw new IllegalStateException(DATABASE + " holds Kilnmark's own tables: the pack never works there. "
+                throw new Problem(DATABASE + " holds Kilnmark's own tables: the pack never works there. "
                     + "Nothing was changed");
             }
         }
@@ -385,7 +414,7 @@ public class StarterPack {
     static String samplesUrl(String own) {
         java.util.regex.Matcher m = Pattern.compile("^(jdbc:postgresql:" + "/" + "/[^/?]+/)([^?]*)(\\?.*)?$").matcher(own);
         if (!m.matches()) {
-            throw new IllegalStateException("Kilnmark cannot tell where its own database server is, so the Starter "
+            throw new Problem("Kilnmark cannot tell where its own database server is, so the Starter "
                 + "Pack's database cannot be found: set KILNMARK_SAMPLES_DB_URL");
         }
         String query = m.group(3) == null ? "" : m.group(3);
@@ -422,7 +451,7 @@ public class StarterPack {
         try {
             Files.createDirectories(folder);
         } catch (IOException e) {
-            throw new IllegalStateException("Kilnmark could not make the folder " + FOLDER + " in the files folder: it "
+            throw new Problem("Kilnmark could not make the folder " + FOLDER + " in the files folder: it "
                 + "must be writable by Kilnmark (INSTALL.md, The files folder)");
         }
         Map<String, String> s = new LinkedHashMap<>();
@@ -442,12 +471,21 @@ public class StarterPack {
         Map<String, Long> own = ownSources();
         if (existing != null && (!kind.equals(existing.kind()) || own.get(name) == null
             || own.get(name) != existing.id())) {
-            throw new IllegalStateException("A source called " + name + " is here that the Starter Pack did not make: "
+            throw new Problem("A source called " + name + " is here that the Starter Pack did not make: "
                 + "it was left as it is. Rename it, then turn the pack on again");
         }
-        SourceService.Draft d = sources.draft(new SourceForm(name, kind, settingsWanted, password, null, null,
-            displayName), null, true, true);
-        sources.checkHosts(d.connector(), d.config());
+        SourceService.Draft d;
+        try {
+            d = sources.draft(new SourceForm(name, kind, settingsWanted, password, null, null, displayName), null, true,
+                true);
+            sources.checkHosts(d.connector(), d.config());
+        } catch (IllegalArgumentException | WebApplicationException e) {
+            // their words can name the host, which the page never shows: the log has them
+            LOG.warnf("Starter Pack: the settings of %s were refused: %s", name, e.getMessage());
+            throw new Problem("The settings of " + name + " were refused (the server's log says why). If this server "
+                + "lets sources reach only some hosts (" + HostPolicy.SETTING + "), add the server of Kilnmark's own "
+                + "database to them, then turn the pack on again");
+        }
         byte[] secret = d.newSecret() == null ? null : secrets.seal(d.newSecret());
         if (existing == null) {
             Records.Source s = store.addSource(new Records.NewSource(name, kind, d.config().settings(), secret,
@@ -458,7 +496,7 @@ public class StarterPack {
             return "added " + name + " (" + displayName + "), Allow writing on";
         }
         Records.Source s = store.updateSource(existing.id(), new Records.SourceChange(d.displayName(), d.config().settings(),
-            password != null, secret, Map.of())).orElseThrow(() -> new IllegalStateException(name + " was deleted meanwhile"));
+            password != null, secret, Map.of())).orElseThrow(() -> new Problem(name + " was deleted meanwhile"));
         audit.sourceSettings(actor, s.name(), existing.settings(), s.settings(), "starter pack");
         return name + " was there already: set as the pack needs it";
     }
@@ -475,29 +513,36 @@ public class StarterPack {
         }
         synchronized (lock) {
             List<Step> steps = new ArrayList<>();
+            // what went, named in starter.removed; each schedule deleted with a sample is recorded as a
+            // pipeline's or flow's own delete records it (ADR 0029, ADR 0046)
+            List<String> flowsGone = new ArrayList<>();
+            List<String> pipelinesGone = new ArrayList<>();
+            List<String> sourcesGone = new ArrayList<>();
+            List<String> variablesGone = new ArrayList<>();
             boolean ok = true;
             ok &= run(steps, "sample flows", () -> {
-                List<String> gone = new ArrayList<>();
                 for (FlowStore.Summary f : flowStore.summaries()) {
                     if (Samples.LIBRARY.equals(f.flow().library())) {
-                        flows.delete(f.flow().name(), by, role);
-                        gone.add(f.flow().name());
+                        String name = f.flow().name();
+                        ScheduleService.recordDeletedWith(audit, actor, ScheduleStore.Target.FLOW, name,
+                            flows.delete(name, by, role));
+                        flowsGone.add(name);
                     }
                 }
-                return gone.size() + " removed from the Library";
+                return flowsGone.size() + " removed from the Library";
             });
             ok &= run(steps, "sample pipelines", () -> {
-                List<String> gone = new ArrayList<>();
                 for (PipelineViews.PipelineSummary ps : pipelines.list(sights)) {
                     if (Samples.LIBRARY.equals(ps.library())) {
-                        pipelines.delete(ps.name(), by);
-                        gone.add(ps.name());
+                        ScheduleService.recordDeletedWith(audit, actor, ScheduleStore.Target.PIPELINE, ps.name(),
+                            pipelines.deleteWithSchedules(ps.name(), by));
+                        pipelinesGone.add(ps.name());
                     }
                 }
-                return gone.size() + " removed from the Library, " + Samples.SETUP + " among them";
+                return pipelinesGone.size() + " removed from the Library, " + Samples.SETUP + " among them";
             });
             ok &= run(steps, "sources", () -> {
-                List<String> gone = new ArrayList<>();
+                List<String> gone = sourcesGone;
                 List<String> left = new ArrayList<>();
                 Map<String, Long> own = ownSources();
                 for (String name : List.of(DATABASE_SOURCE, FILES_SOURCE, Samples.SAMPLE_DATA)) {
@@ -529,6 +574,7 @@ public class StarterPack {
                     ? variables.get(Samples.REGION_VARIABLE, role) : null;
                 if (v != null && v.description() != null && v.description().contains("starter pack")) {
                     variables.delete(Samples.REGION_VARIABLE, by, role);
+                    variablesGone.add(Samples.REGION_VARIABLE);
                     return Samples.REGION_VARIABLE + " removed";
                 }
                 return "nothing of the pack's";
@@ -538,7 +584,8 @@ public class StarterPack {
             if (ok) {
                 save(false, by, ownSources());
             }
-            audit.record(actor, AuditLog.STARTER_PACK_REMOVED, "starter pack", Map.of("steps", outcomes(steps)));
+            audit.record(actor, AuditLog.STARTER_PACK_REMOVED, "starter pack", Map.of("steps", outcomes(steps),
+                "flows", flowsGone, "pipelines", pipelinesGone, "sources", sourcesGone, "variables", variablesGone));
             LOG.infof("Starter Pack turned off by %s%s", by, ok ? "" : ", in part");
             return new Result(!ok, steps, null);
         }
@@ -554,14 +601,14 @@ public class StarterPack {
                 return store.deleteSource(s.id()).orElse(null);
             } catch (GraphStore.SourceBusyException e) {
                 if (i >= 60) {
-                    throw new IllegalStateException(s.name() + " is being scanned: wait for the scan, then turn the "
+                    throw new Problem(s.name() + " is being scanned: wait for the scan, then turn the "
                         + "pack off again");
                 }
                 try {
                     Thread.sleep(1000);
                 } catch (InterruptedException stop) {
                     Thread.currentThread().interrupt();
-                    throw new IllegalStateException(s.name() + " could not be removed: the server is stopping");
+                    throw new Problem(s.name() + " could not be removed: the server is stopping");
                 }
             }
         }
@@ -613,7 +660,7 @@ public class StarterPack {
      */
     String emptyDatabase() {
         if (config.samplesDb().password().filter(p -> !p.isBlank()).isEmpty()) {
-            throw new IllegalStateException("Kilnmark has no password for kilnmark_samples (KILNMARK_SAMPLES_DB_PASSWORD), "
+            throw new Problem("Kilnmark has no password for kilnmark_samples (KILNMARK_SAMPLES_DB_PASSWORD), "
                 + "so it could not empty it");
         }
         int schemas = 0;
@@ -657,7 +704,7 @@ public class StarterPack {
             c.commit();
         } catch (SQLException e) {
             LOG.warnf("Starter Pack: emptying kilnmark_samples failed: %s", e.getSQLState());
-            throw new IllegalStateException("Kilnmark could not empty kilnmark_samples (" + e.getSQLState() + "): a run "
+            throw new Problem("Kilnmark could not empty kilnmark_samples (" + e.getSQLState() + "): a run "
                 + "may still be writing there. Wait for it, then turn the pack off again");
         }
         return "kilnmark_samples emptied (" + relations + " tables and views" + (schemas > 0 ? ", " + schemas + " schemas"
@@ -675,7 +722,7 @@ public class StarterPack {
             return "none was left";
         }
         if (Files.isSymbolicLink(folder)) {
-            throw new IllegalStateException("The pack's folder " + FOLDER + " is a link: remove it yourself");
+            throw new Problem("The pack's folder " + FOLDER + " is a link: remove it yourself");
         }
         int[] count = {0};
         try {
@@ -697,7 +744,7 @@ public class StarterPack {
                 }
             });
         } catch (IOException e) {
-            throw new IllegalStateException("Kilnmark could not delete every file in " + FOLDER + ": a file there may be "
+            throw new Problem("Kilnmark could not delete every file in " + FOLDER + ": a file there may be "
                 + "open, or not Kilnmark's to delete");
         }
         return count[0] + " files removed with the folder " + FOLDER;
