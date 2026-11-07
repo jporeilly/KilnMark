@@ -126,6 +126,13 @@ role has not looked within three poll intervals and a minute. The log says what 
 its first word at INFO (`started`, `skipped`, `missed`, `failed`); the reason, which can be worked
 out from the run's values, only at DEBUG.
 
+**Retries and the next fire** (ADR 0053). A run's retry is a new try of the same run, never a new
+fire: `last_pipeline_run` or `last_flow_run` keeps naming it and its outcome stays `started`. While
+it waits for its next try it is queued, so a fire then is `skipped: a run was still going`. No try
+starts at or after `next_at` of the schedule whose last fire started the run
+(`RunTables.nextFire`): the run fails, "Not tried again: the next scheduled run is due first". A try
+acts as the first did, as `schedule <id> (set by <name>)` with the schedule's role.
+
 ## 6. Outcomes
 
 ![What happens when a schedule is due: a fire due more than an hour ago is missed; if whoever set it no longer has the role, the schedule is paused; a pipeline or flow with a run still going is skipped; a latest version that cannot run fails with the server's reason; otherwise the run starts. Either way the next fire is worked out from now](../guide/images/schedule-outcomes.svg)

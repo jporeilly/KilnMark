@@ -53,11 +53,13 @@ public final class FlowViews {
      * pipeline runs it has asked for (queued, running or ended), {@code rowsWritten} the rows they
      * wrote in all (null until one says) and {@code qualityScore} the lowest measured score (0 to 1)
      * among them, each the lowest of what that run wrote (null when nothing was measured).
+     * {@code tryNumber} is the try it is on or ended on, from 1, of {@code tries} it may have by itself;
+     * {@code retryAt} when its next try starts, while it waits for one (ADR 0053).
      */
     public record RunSummary(long id, String flow, int version, String status, String requestedBy,
                              String requestedRole, Instant requestedAt, Instant startedAt, Instant finishedAt,
                              boolean cancelRequested, String error, JsonNode parameters, int pipelineRuns,
-                             Long rowsWritten, Double qualityScore) {
+                             Long rowsWritten, Double qualityScore, int tryNumber, int tries, Instant retryAt) {
     }
 
     /**
@@ -140,7 +142,14 @@ public final class FlowViews {
                               Instant startedAt, Instant finishedAt) {
     }
 
-    /** A flow run with every node of its version, in the order the YAML gives them. */
-    public record RunDetail(RunSummary run, List<NodeRunView> nodes) {
+    /**
+     * A flow run with every node of its version, in the order the YAML gives them, and each try of the
+     * run that has ended (ADR 0053), the first first.
+     */
+    public record RunDetail(RunSummary run, List<NodeRunView> nodes, List<io.kilnmark.server.runs.RunTryView> tries) {
+    }
+
+    /** {@code PUT .../owners}: the owners, sign-in names and team addresses (ADR 0053). */
+    public record OwnersChange(List<String> owners) {
     }
 }

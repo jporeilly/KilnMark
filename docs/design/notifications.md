@@ -31,6 +31,15 @@ methods catches what goes wrong, so it never throws.
 | `connection_failed` | `SourceResource.test` and import batches (saved sources only) | `connection:<source>` | opens |
 | `pipeline_failed` | `NotificationPublisher.pipelineRunFinished` (see below) | `pipeline:<name>` | opens |
 | `pipeline_low_quality` | the same, a success scored below threshold | `pipeline-quality:<runId>` | once |
+| `pipeline_recovered` | the same, a success after a failure that was told (ADR 0053) | `pipeline:<name>` | closes |
+| `flow_failed` | `FlowService` after a flow run's last try | `flow:<name>` | opens |
+| `flow_recovered` | the same, a success after a failure that was told | `flow:<name>` | closes |
+| `flow_notice` | a flow's `notify` node | `flow-notice:<runId>:<node>` | once |
+| `run_taking_long` | the run watcher, at a run's `run: warn_after` (once a run, `warned_at`) | `run-long:<noun>:<runId>` | once |
+
+**Runs tried again** (ADR 0053): a try that is tried again tells nothing; the failure after the
+last try says how many tries were made and why there were no more. A success closes the problem as
+`pipeline_recovered` or `flow_recovered`, told to those who heard of the failure, and only then.
 
 A successful scan clears `scan:<source>` and `connection:<source>` quietly
 (`NotificationCleared`); a successful connection test clears only `connection:<source>`. So the
@@ -91,6 +100,20 @@ keeps its value; `allSources` clears it).
 can turn confirmation off. Allowed email domains, when listed, apply to people's and team
 addresses: outside ones are refused when saved, and existing ones are paused (`paused = 'domain'`)
 when the list changes, not deleted. A revoked or expired token gets nothing.
+
+**Owners** (ADR 0053). An event about a pipeline or a flow (`pipeline_failed`,
+`pipeline_recovered`, `flow_failed`, `flow_recovered`, `run_taking_long`) carries it in
+`NotificationEvent.ownedBy`, never stored. `NotificationStore.record` then reads its `owners` in the
+same transaction and, after the usual recipients, tells them by right
+(`NotificationStore.owners`): in the app, every working token of a person owner's sign-in name that
+counts as a person (as above), whatever its in-app kinds and sources; by email, every subscriber
+that is a person owner (by its token's name) or a team owner (by address), whatever its kinds,
+least severity and sources, when it is deliverable (`Subscriber.undeliverable`: email on,
+confirmed, allowed, its token working), immediately or in its digest as it chose. Each row is
+written for the recipient's role as any is (`InAppFeed`, `MailMessages`): owning widens nothing a
+role may see. A delivery already queued for someone is not queued twice. When no owner can be told
+at all, admins are told the same way, in their place. People who sign in through the identity
+provider have no tokens, so they are owners who cannot be told.
 
 ## Masking
 

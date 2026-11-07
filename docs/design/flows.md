@@ -138,7 +138,8 @@ clean.status = 'failed' or (clean.rows_written = 0 and region != 'APAC')
 
 **`FlowService`** (server) runs the engine on a worker:
 
-1. A flow run is queued as a job of kind `flow`, tried once. The worker holds the job's own advisory
+1. A flow run is queued as a job of kind `flow`, tried as many times as its `run: retries` allow
+   (ADR 0053; once without them). The worker holds the job's own advisory
    lock and **no worker slot**: it only watches, and the pipeline runs it queues need the slots
    (ADR 0026). The locks of every flow a worker watches are on **one connection**
    (`JobQueue.FlowLeases`), opened for the first and given back when the last ends, and so are their
@@ -167,11 +168,66 @@ clean.status = 'failed' or (clean.rows_written = 0 and region != 'APAC')
    A `stop` node does the same for nodes still going or waiting, and nodes that became ready in the
    same moment as the stop are not started.
 5. If the worker stops cleanly, it cancels the pipeline runs its flow had started, marks the nodes
-   failed and the run failed (not repeated), with the advice to check what those pipelines had
-   written. If the worker dies, recovery marks the run failed and the nodes still running failed; the
+   failed and ends the try as lost: tried again when its `run:` allows (below), else failed, with the
+   advice to check what those pipelines had written. If the worker dies, or loses its connection,
+   recovery queues the job again while the run has tries left and another worker takes the run over
+   (below); with none left, recovery marks the run failed and the nodes still running failed; the
    pipeline runs it had started are not cancelled, so check them.
 6. When a run ends (or its worker stops cleanly), every node of the version has a row: nodes that
    never ran are recorded as skipped.
+
+### Carrying on from a failure (ADR 0053)
+
+A flow's `run:` block (docs/design/pipelines.md, "Run retries and owners") tries a failed run again;
+each try starts from the nodes' rows of the try before (`CarryOn.plan`, pure, `CarryOnTest`):
+
+- **Kept**: a node that succeeded, every node with a connection into it kept too, is restored into
+  the engine as it ended (`FlowEngine.restore`), with its values, its start and its pipeline run;
+  it is never run again. A node that failed and cannot be run again is kept as it failed when a
+  `failure` or `always` connection handled it.
+- **Run again**: every other node, as its connections fall this time, so parallel branches carry on
+  each from its own state. Its row is removed first (`FlowStore.clearNodes`), so one not reached
+  reads as skipped. A run-pipeline node's pipeline run starts after its earlier tries' (`flow_try`
+  from the latest + 1, V35's unique index), and its own retries count from there (`tryBase`, so
+  they never multiply with the flow's); a for-each node runs only its items whose latest run did not
+  succeed.
+- **Not tried again** (the plan's blocker, which ends the run, naming the node): a node that ran and
+  is not kept that is not safe to run again: its pipeline's writes do not all replace or upsert
+  (against the version it would run), a sql node that committed or whose commit is in doubt
+  (`reported.in_doubt`), a stop node that ran. Tried again by itself only, also: a node with retries
+  of its own that did not succeed (its tries stand), and one whose pipeline run a quality gate
+  stopped or was refused (`pipeline_run.failed_as`). Run again from the failure, by hand, lets
+  those two run again.
+- **A takeover** (`FlowService.takeOver`, the run still running when a worker takes its job):
+  every node that had ended is restored as it ended; a node that was running starts again where it
+  was: a run-pipeline or for-each node finds its pipeline runs (`flowLatestTry`, `flowItemRuns`) and
+  watches them, a wait or wait-for keeps its start; a sql node that was running is failed with
+  `in_doubt`, since its statements ran on the worker that stopped. A node a later try runs again
+  records in its row where its pipeline runs start (`try_base`; a for-each node's `item_bases`), and a
+  node with no row whose pipeline ran in an earlier try is one that try runs again, so a takeover
+  never counts an earlier try's failed run as this try's. `RunRetriesApiTest` builds runs left by a
+  worker that stopped, on a first and a later try, recovers their jobs and sees another worker carry on.
+- **Handing over.** A worker that stops, or loses its lease, while it watches a flow whose run may be
+  taken over leaves it running, its pipeline runs going, and answers its job as waiting: put back in
+  the queue (or, with the lease gone, by recovery after `lost-after`). Otherwise it stops what the try
+  started (`abandon`: pipeline runs cancelled, a sql node failed and in doubt unless it is known to
+  have rolled back), as it does after an internal error, and ends the try as lost.
+- **Fencing.** Every end of a try (`RunTables.finishRun`, `retry`) checks that the run is still on
+  that try, and a retry that the job is held by the worker that held it as the try began; a worker
+  that finds its job no longer its own ends nothing and leaves the run to whoever takes it. So a
+  worker that lost its job to another changes nothing of the other's try.
+- **Left behind.** A flow run failed because its worker stopped with no tries left
+  (`failOrphanedRuns`), or whose takeover was declined, has its sql nodes that were running marked
+  in doubt and its pipeline runs still going cancelled. Run again from the failure is refused while
+  any of its pipeline runs is going, and for a run with no recorded try (one that failed before V39,
+  whose rows cannot say whether a sql node committed).
+- **Run again from the failure** (`POST /api/v1/flow-runs/{id}/run-again`, `FlowService.runAgain`):
+  stewards and above, never below the run's own role; a failed run only, with a recorded try; the
+  plan made by hand,
+  refused (409) with its blocker; then `RunTables.runAgain`, in one transaction with the flow's row
+  locked as a queue locks it (one run at a time: 409): the failed try's row says who asked, the run
+  is queued as its next try with `tries` = that try (so it is not tried again by itself), and its own
+  job (one a flow run, V20) is queued again, tried once. Recorded as `flow.run_again`.
 
 ### Values passed on (F2)
 
@@ -458,8 +514,8 @@ hands it out; holding it there keeps the engine's states true and lets kiln-core
   cancelled. Someone cancelling one item's run by hand does the same, and so stops the flow, as for a
   run-pipeline node. It reports `items`, `succeeded` and `failed` for conditions and `${...}`.
 - **The worker stopping** cancels the items still going and fails the node, as for other nodes.
-  Today a flow whose worker stopped is failed, not picked up again; should that change, a node that
-  starts again finds its items' runs by flow run, node and item rather than starting them twice.
+  A worker that takes the flow over finds its items' runs by flow run, node and item rather than
+  starting them twice; a later try of the flow runs only its items that did not succeed (ADR 0053).
 - **API and pages.** A for-each node's run (`NodeRunView.items`) lists each item: its place, its
   value (withheld from viewers when the items came from a run's parameter, which can hold server
   variables), its status (`pending` before it starts, `queued`, running, succeeded, failed or

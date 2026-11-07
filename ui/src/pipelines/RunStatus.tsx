@@ -1,4 +1,5 @@
 import type { PipelineRun } from "../api";
+import { triedWords } from "../components/RunTries";
 
 const LABEL: Record<PipelineRun["status"], string> = {
   queued: "Queued",
@@ -20,7 +21,14 @@ const CLASS: Record<PipelineRun["status"], string> = {
 export function RunStatus({ run }: { run: PipelineRun | null }) {
   if (!run) return <span className="badge badge-none">Never run</span>;
   const stopping = run.cancelRequested && (run.status === "queued" || run.status === "running");
-  return <span className={`badge ${CLASS[run.status]}`}>{stopping ? "Stopping" : LABEL[run.status]}</span>;
+  const waiting = !stopping && run.status === "queued" && run.retryAt;
+  const tried = triedWords(run);
+  return (
+    <>
+      <span className={`badge ${CLASS[run.status]}`}>{stopping ? "Stopping" : waiting ? "Retrying" : LABEL[run.status]}</span>
+      {tried && <span className="small muted"> {tried}</span>}
+    </>
+  );
 }
 
 /** Bytes in plain units. */

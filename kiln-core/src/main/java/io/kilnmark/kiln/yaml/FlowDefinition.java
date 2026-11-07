@@ -31,9 +31,10 @@ import io.kilnmark.kiln.flow.FlowEngine;
  * @param connections  the connections in the order written
  * @param queueTimeout how long a node waits for a pipeline that is already running before it fails
  * @param maxParallel  how many of its nodes run at once (a for-each node counts once), or null for no limit
+ * @param run          how its runs are tried ({@code run:}, ADR 0053); {@link RunOptions#NONE} when not written
  */
 public record FlowDefinition(String name, String description, List<Parameters.Parameter> parameters, List<Node> nodes,
-                             List<Connection> connections, Duration queueTimeout, Integer maxParallel) {
+                             List<Connection> connections, Duration queueTimeout, Integer maxParallel, RunOptions run) {
 
     /** The format this version reads. */
     public static final String FORMAT = "flow/v1";
@@ -132,7 +133,7 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
     static final int MAX_CONNECTIONS = 1_000;
 
     static final Set<String> TOP_LEVEL_KEYS = Set.of("kilnmark", "name", "description", "parameters", "queue_timeout",
-        "max_parallel", "nodes", "connections", "layout");
+        "max_parallel", "run", "nodes", "connections", "layout");
     static final Set<String> NODE_KEYS = Set.of("id", "type");
     /**
      * The settings each node type takes, besides {@code id} and {@code type}: what reading a flow
@@ -263,12 +264,12 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
 
     /**
      * How a node is tried again (ADR 0041): up to {@code retries} more times after a failure, waiting
-     * {@code delay} before the first, doubled before each one after.
+     * {@code delay} before the first, doubled before each one after, each wait at most an hour.
      */
     public record Retry(int retries, Duration delay) {
         /** The wait before try {@code n} (1 for the first try again): the delay, doubled each time. */
         public Duration before(int n) {
-            return delay.multipliedBy(1L << Math.max(0, Math.min(n - 1, 10)));
+            return RunOptions.wait(delay, n); // each wait at most an hour (ADR 0053), however often doubled
         }
     }
 
@@ -337,6 +338,13 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         nodes = List.copyOf(nodes);
         connections = List.copyOf(connections);
         queueTimeout = queueTimeout == null ? DEFAULT_QUEUE_TIMEOUT : queueTimeout;
+        run = run == null ? RunOptions.NONE : run;
+    }
+
+    /** A flow whose runs are tried once. */
+    public FlowDefinition(String name, String description, List<Parameters.Parameter> parameters, List<Node> nodes,
+                          List<Connection> connections, Duration queueTimeout, Integer maxParallel) {
+        this(name, description, parameters, nodes, connections, queueTimeout, maxParallel, RunOptions.NONE);
     }
 
     /** A flow with no limit on how many of its nodes run at once. */
@@ -406,7 +414,7 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
             if (!TOP_LEVEL_KEYS.contains(e.key()) && !Renamed.isOld(e.key(), TOP_LEVEL_KEYS)) {
                 problems.add(Problem.at(e.keyPosition(), null, "Unknown key '" + Suggest.clip(e.key()) + "'"
                     + Suggest.hint(e.key(), TOP_LEVEL_KEYS)
-                    + ": a flow has kilnmark, name, description, parameters, queue_timeout, max_parallel, nodes, "
+                    + ": a flow has kilnmark, name, description, parameters, queue_timeout, max_parallel, run, nodes, "
                     + "connections and layout"));
             }
         }
@@ -423,6 +431,7 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         Integer maxParallel = atOnce(top.entries().get("max_parallel"), null,
             "max_parallel is how many of the flow's nodes run at once", problems);
         List<Parameters.Parameter> parameters = Parameters.read(top.entries().get("parameters"), "flow", false, problems);
+        RunOptions run = RunOptions.read(top.entries().get("run"), problems);
         Set<String> names = new LinkedHashSet<>();
         parameters.forEach(p -> names.add(p.name()));
         Map<String, Parameters.Parameter> declared = new LinkedHashMap<>();
@@ -467,7 +476,8 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
                 connectionItems(list, byId, parameters, connections, problems);
             }
         }
-        FlowDefinition def = new FlowDefinition(name, description, parameters, nodes, connections, timeout, maxParallel);
+        FlowDefinition def = new FlowDefinition(name, description, parameters, nodes, connections, timeout, maxParallel,
+            run);
         loops(def, connectionsEntry, problems);
         nodeValues(def, problems);
         return new Parsed(def, problems);

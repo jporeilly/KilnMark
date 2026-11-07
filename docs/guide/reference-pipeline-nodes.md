@@ -24,6 +24,29 @@ variables](pipelines.md#parameters-and-server-variables) explains.
 Rows sent to a port that nothing reads are dropped. Every other key of a node is one of its
 settings; a key the node does not take is a problem, with its line.
 
+## The pipeline's own keys
+
+A pipeline's own keys are `kilnmark` (always `pipeline/v1`), `name`, `description`, `parameters`
+([Parameters and server variables](pipelines.md#parameters-and-server-variables)), `quality`
+(`min_score`, [Quality of what a run writes](pipelines.md#quality-of-what-a-run-writes)), `run`
+(below), `nodes` and `layout` (where the canvas draws each node).
+
+`run:` says how each run of the pipeline is tried, as in `run: { retries: 2, retry_delay: 5m }`
+([Trying a run again](pipelines.md#trying-a-run-again)):
+
+| Key | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `retries` | whole number | `0` | How many more tries a failed run gets, 0 to 5, before it fails and its owners are told. The server may allow fewer (`kilnmark.runs.max-retries`). |
+| `retry_delay` | time | `1m` | The wait before the second try, `10s` to `1h`, doubled before each later try. Each wait is at most an hour, and up to a tenth more is added at random. Needs `retries`. |
+| `retry_on` | choice | `any` | `any`: any failure a second try could change. `lost`: only a try lost with its worker or its connection to Kilnmark's database. Needs `retries`. |
+| `timeout` | time | no limit | How long each try may take, `90s` to `7d`. Past it the try is stopped and fails; it may be tried again. |
+| `warn_after` | time | none | How long a run may go before its owners are told it is taking longer than expected, `1m` to `7d`, less than `timeout`. It does not stop the run. |
+
+A pipeline tried again starts again from its beginning, so with `retries` above 0 every `write`
+must use `replace` or `upsert`, whatever `retry_on` says: the pipeline is refused when saved
+otherwise. A run that a flow node starts never uses the pipeline's own `run: retries`: the node's
+`retries` decide.
+
 Who may do what, for every node: designers save pipelines, stewards run them, and viewers see them
 and their runs. A run acts as the person who started it, or as the schedule that did
 ([Running pipelines and flows on a schedule](schedules.md)), so a pipeline that writes needs each

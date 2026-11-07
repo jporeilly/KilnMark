@@ -136,7 +136,7 @@ public class JobWorker {
      */
     void recover() {
         try {
-            JobQueue.Recovery r = queue.recoverStale(config.worker().staleAfter());
+            JobQueue.Recovery r = queue.recoverStale(config.worker().staleAfter(), config.runs().lostAfter());
             if (r.requeued() + r.failed() > 0) {
                 LOG.infof("Recovered jobs left by a stopped worker: %d queued again, %d failed", r.requeued(),
                     r.failed());
@@ -285,9 +285,11 @@ public class JobWorker {
     /**
      * Runs a pipeline or flow job while holding its own lock, taken by {@code lock} (no source lock:
      * runs of a pipeline may read sources being scanned; a flow's lock is on the connection its
-     * worker's flows share). A pipeline job is tried once; a run stopped by shutdown is marked
-     * failed rather than repeated, since its writes may have begun. A run waiting for a free place on
-     * a source ({@link ScanService.Outcome#WAITING}) goes back in the queue without using that attempt.
+     * worker's flows share). A pipeline or flow job is tried as many times as its run may be (ADR
+     * 0053), so an exception that escapes it is queued again while tries are left; a run stopped by
+     * shutdown ends its try as lost, tried again only when its run: options allow. A run waiting for
+     * a free place on a source, or a flow handed over as its worker stops
+     * ({@link ScanService.Outcome#WAITING}), goes back in the queue without using that attempt.
      */
     private void executeLocked(JobQueue.Job job, String what,
                                java.util.function.LongFunction<Optional<JobQueue.ScanLease>> lock, LockedRun body) {

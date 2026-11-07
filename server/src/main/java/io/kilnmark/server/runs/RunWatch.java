@@ -73,12 +73,24 @@ public class RunWatch {
     }
 
     RunWatch(CancelReader reader, Duration every) {
+        this(reader, every, java.time.InstantSource.system());
+    }
+
+    RunWatch(CancelReader reader, Duration every, java.time.InstantSource clock) {
         this.reader = reader;
         this.every = every;
+        this.clock = clock;
     }
+
+    /** The watcher's clock, for a try's timeout and warning (ADR 0053). */
+    private final java.time.InstantSource clock;
 
     /** The signals of one kind of run. */
     private record Watched(RunKind kind, Map<Long, Set<Signal>> byRun) {
+    }
+
+    /** A try's timeout and warning (ADR 0053). */
+    private record Limits(java.time.Instant start, Duration timeout, Duration warnAfter, Runnable warn) {
     }
 
     /**
@@ -89,6 +101,10 @@ public class RunWatch {
         private final RunKind kind;
         private final long id;
         private volatile boolean cancelled;
+        private volatile boolean timedOut;
+        /** When the try started, how long it may take, when to warn and how (ADR 0053); null for none. */
+        private volatile Limits limits;
+        private volatile boolean warned;
 
         private Signal(RunKind kind, long id) {
             this.kind = kind;
@@ -98,6 +114,47 @@ public class RunWatch {
         /** Whether someone has asked the run to stop: never a database call. */
         public boolean cancelled() {
             return cancelled;
+        }
+
+        /**
+         * Whether the try took longer than its {@code run.timeout} and is to stop (ADR 0053): set by the
+         * watcher, never a database call. A run reads it beside {@link #cancelled()}: a try stopped for
+         * its timeout fails, where one a person cancelled ends cancelled.
+         */
+        public boolean timedOut() {
+            return timedOut;
+        }
+
+        /**
+         * Watches this try's timeout and warning from {@code start}: past {@code timeout} (null for none)
+         * {@link #timedOut()} turns; past {@code warnAfter} (null for none) {@code warn} is called once,
+         * on a thread of its own.
+         */
+        public Signal limits(java.time.Instant start, Duration timeout, Duration warnAfter, Runnable warn) {
+            limits = timeout == null && warnAfter == null ? null : new Limits(start, timeout, warnAfter, warn);
+            return this;
+        }
+
+        /** Looks at the limits now: called by the watcher at each look. */
+        void check(java.time.Instant now) {
+            Limits l = limits;
+            if (l == null) {
+                return;
+            }
+            if (l.timeout() != null && !timedOut && Duration.between(l.start(), now).compareTo(l.timeout()) > 0) {
+                timedOut = true;
+            }
+            if (l.warnAfter() != null && !warned && Duration.between(l.start(), now).compareTo(l.warnAfter()) > 0) {
+                warned = true;
+                Thread.ofVirtual().name("kilnmark-run-warn").start(() -> {
+                    try {
+                        l.warn().run();
+                    } catch (RuntimeException e) {
+                        LOG.warnf("Could not tell that %s run %d is taking long (%s)", kind.noun(), id,
+                            e.getClass().getSimpleName());
+                    }
+                });
+            }
         }
 
         @Override
@@ -253,8 +310,12 @@ public class RunWatch {
         }
     }
 
-    /** One look: the cancels asked of the runs watched, then the rows flows watch. */
+    /** One look: each try's timeout and warning, the cancels asked of the runs watched, then the rows flows watch. */
     void tick() {
+        java.time.Instant now = clock.instant();
+        for (Watched w : watched.values()) {
+            w.byRun().values().forEach(set -> set.forEach(sig -> sig.check(now)));
+        }
         for (Watched w : watched.values()) {
             Set<Long> open = new HashSet<>();
             w.byRun().forEach((id, set) -> {

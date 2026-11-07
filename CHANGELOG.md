@@ -7,6 +7,23 @@ details.
 
 ### What's new
 
+- **A failed run can be tried again by itself** (a `run:` block on a pipeline or a flow, ADR 0053):
+  `retries` (0 to 5), `retry_delay` (doubled each time, each wait at most an hour, with a little
+  added at random), `retry_on` (`any`, or `lost`: only a run lost with its worker), a `timeout` for
+  each try and `warn_after`. A retry is a new try of the same run, never a new run, so a schedule
+  still fires at most once, and no try starts after its next fire. A cancel, a refusal, a quality
+  gate that stopped the run, and writes that would repeat are never tried again. The run page says
+  "Retrying: try 2 of 4, next at 14:05" and lists every try.
+  ([Trying a run again](docs/guide/pipelines.md#trying-a-run-again))
+- **A flow carries on from where it failed**: nodes that succeeded keep what they did, the rest run
+  again, and a for-each node runs only its failed items. A worker that stops no longer fails the
+  flows it was watching for good: another takes them over. A failed flow run can also be **run
+  again from the failure** by hand, from its page.
+  ([Trying a whole run again](docs/guide/flows.md#trying-a-whole-run-again))
+- **Owners** on pipelines and flows: people or team addresses, who are told when a run fails after
+  its last try, when it recovers, and when it takes longer than expected, whatever their own
+  choices. By default whoever first saved it; with no owner, admins are told. Owning gives no
+  rights. ([Owners](docs/guide/pipelines.md#owners))
 - **Sort rows** (a new `sort` node, ADR 0049): orders rows by one or more columns, each smallest or
   largest first, with empty values last unless a column says `nulls first`. Rows with equal values
   keep their order. Any number of rows can be sorted: past the node's memory limit it carries on on
@@ -53,6 +70,25 @@ details.
 
 ### Details
 
+- **Run retries, carrying on and owners** (ADR 0053; backlog item 1, done; migration V39): the
+  `run:` block (`RunOptions`), checked when saved (with retries, a pipeline's writes must replace or
+  upsert; so must a flow's pipelines with `retry_on: any`, unless a node has retries of its own); a
+  try's end decided in one place (`RunRetries`) and written with its job (`RunTables.retry`: the run
+  queued again, its job due at the next try, the attempt counted); `pipeline_run_try` and
+  `flow_run_try`; a pipeline or flow job tried as many times as its run may be, so stale recovery,
+  after the new `kilnmark.runs.lost-after` (2m), queues a lost run again and the next worker takes it
+  over; `kilnmark.runs.max-retries` (5; 0 turns run retries off); the carry-on plan (`CarryOn`) and
+  `FlowEngine.restore`; `POST /api/v1/flow-runs/{id}/run-again` (`flow.run_again` in the audit log);
+  `GET` and `PUT .../pipelines/{name}/owners` and `.../flows/{name}/owners`
+  (`pipeline.owners_set`, `flow.owners_set`); new notifications `pipeline_recovered`,
+  `flow_recovered` and `run_taking_long`, with owners told by right; and the per-try `timeout` and
+  `warn_after` watched by the run watcher. A node's own retries take the place of the run's, so
+  tries never multiply, and each node retry wait is now at most an hour too (five tries again from
+  `1h` waited 16 hours before). A failure the server refused before a run started (a version that
+  no longer compiles, say) is now told too. A worker that stops while it watches a flow that may be taken over hands it over
+  rather than failing it; a worker that lost its job never ends or queues again another worker's
+  try; a source's place given back never cuts a retry's wait short; and a pipeline run lost on its
+  last try is told.
 - **Research: what other tools offer** (docs/design/research): the settings about twenty data
   integration and orchestration tools give their nodes and their runs, from their own
   documentation, the 15 gaps that matter most for banks, and a migration map. The backlog takes
