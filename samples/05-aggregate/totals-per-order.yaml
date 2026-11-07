@@ -1,6 +1,11 @@
 # Aggregate: one row per group (a Kilnmark sample).
-# Totals each order's lines: how many lines, how many items and what they are worth.
-# Look for: group_by and values; without group_by everything becomes one row.
+# Totals each shop order's lines: how many lines, how many items, what they are worth and how many
+# different products they hold.
+# Why it matters: Totals per group are the backbone of most reporting, for example balances per
+# customer or payments per day. Totals that add up to the detail are what aggregation reviews check,
+# for example under BCBS 239 for risk data.
+# Look for: group_by and values. Without group_by, all the rows become one row of totals.
+# Needs: shop-db (the shop schema) and files.
 kilnmark: pipeline/v1
 name: sample-aggregate
 description: Each shop order's lines, items and value.

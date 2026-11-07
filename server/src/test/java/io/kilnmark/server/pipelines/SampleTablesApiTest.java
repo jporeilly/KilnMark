@@ -75,6 +75,19 @@ class SampleTablesApiTest {
         throw new AssertionError("Run " + id + " did not finish: " + (run == null ? null : run.prettify()));
     }
 
+    private static JsonPath waitForFlowRun(String token, long id) throws InterruptedException {
+        long deadline = System.nanoTime() + Duration.ofMinutes(2).toNanos();
+        JsonPath run = null;
+        while (System.nanoTime() < deadline) {
+            run = as(token).get("/api/v1/flow-runs/" + id).then().statusCode(200).extract().jsonPath();
+            if (List.of("succeeded", "failed", "cancelled").contains(run.getString("run.status"))) {
+                return run;
+            }
+            Thread.sleep(250);
+        }
+        throw new AssertionError("Flow run " + id + " did not finish: " + (run == null ? null : run.prettify()));
+    }
+
     private void source(String name, String kind, Map<String, String> settings, String password) {
         Map<String, Object> body = new java.util.HashMap<>(Map.of("name", name, "kind", kind, "settings", settings));
         if (password != null) {
@@ -91,6 +104,12 @@ class SampleTablesApiTest {
         try {
             run(out);
         } finally {
+            // The flows first, then the pipelines they run.
+            for (Samples.Sample s : Samples.bundled()) {
+                if ("flow".equals(s.type())) {
+                    admin().delete("/api/v1/flows/" + s.name());
+                }
+            }
             for (Samples.Sample s : Samples.bundled()) {
                 admin().delete("/api/v1/pipelines/" + s.name());
             }
@@ -130,10 +149,12 @@ class SampleTablesApiTest {
         JsonPath added = as(designer).body(Map.of("sources", Map.of("crm-db", "e2e-db", "shop-db", "e2e-db",
             "files", "e2e-files"), "schema", SCHEMA)).post("/api/v1/samples").then().statusCode(200)
             .extract().jsonPath();
-        // 23 pipelines, then the sample flows that run them (ADR 0043). The one with sql nodes needs a
-        // source with Allow SQL on, which e2e-db does not have: skipped, saying so, never a draft.
-        assertEquals(26, added.getInt("added"), added.prettify());
-        assertEquals(List.of("sample-for-each-region", "sample-passing-values", "sample-quality-decides"),
+        // 25 pipelines (all but the one reading with a query), then the sample flows that run them (ADR
+        // 0043). The one with sql nodes needs a source with Allow SQL on, which e2e-db does not have:
+        // skipped, saying so, never a draft. The one that checks a source and waits for a file needs none.
+        assertEquals(30, added.getInt("added"), added.prettify());
+        assertEquals(List.of("sample-checks-and-waits", "sample-for-each-region", "sample-passing-values",
+                "sample-quality-decides", "sample-retries"),
             added.getList("samples.findAll { it.outcome == 'added' && it.file.startsWith('08-flows/') }.name"),
             added.prettify());
         assertEquals("it runs SQL: choose a PostgreSQL source with Allow SQL on for shop-db",
@@ -147,6 +168,10 @@ class SampleTablesApiTest {
         String yaml = as(designer).get("/api/v1/pipelines/sample-limit").then().statusCode(200).extract()
             .jsonPath().getString("latest.yaml");
         assertTrue(yaml.contains("asset: " + SCHEMA + ".billing_transactions"), yaml);
+        // A flow's check-source node looks for the sample tables where they were created.
+        String flowYaml = as(designer).get("/api/v1/flows/sample-checks-and-waits").then().statusCode(200).extract()
+            .jsonPath().getString("latest.yaml");
+        assertTrue(flowYaml.contains("tables: [" + SCHEMA + ".crm_customers, " + SCHEMA + ".crm_accounts]"), flowYaml);
 
         JsonPath setup = waitForRun(designer, made.getLong("run.id"));
         assertEquals("succeeded", setup.getString("run.status"), setup.prettify());
@@ -205,6 +230,50 @@ class SampleTablesApiTest {
         assertEquals("succeeded", volume.getString("run.status"), volume.prettify());
         assertTrue(Files.exists(out.resolve("samples/volume/takings_by_category_and_channel.csv")));
         assertTrue(volume.getLong("run.rowsWritten") > 24, volume.prettify());
+
+        // The functions sample: padded numbers, a split reference, dates, bands and a hashed email, never the email.
+        JsonPath functions = waitForRun(designer, as(designer).body(Map.of())
+            .post("/api/v1/pipelines/sample-functions/runs").then().statusCode(202).extract().jsonPath().getLong("id"));
+        assertEquals("succeeded", functions.getString("run.status"), functions.prettify());
+        List<String> invoices = Files.readAllLines(out.resolve("samples/transform/invoices_with_functions.csv"));
+        assertEquals(count(Samples.tableIn(SCHEMA, "billing.invoices")) + 1, invoices.size());
+        List<String> header = List.of(invoices.get(0).split(","));
+        assertTrue(header.containsAll(List.of("invoice_no", "customer_number", "due_on", "band", "days_overdue",
+            "short_no", "email_hash", "in_bristol")) && !header.contains("email"), header.toString());
+        java.util.Map<String, String> first = new java.util.HashMap<>();
+        String[] row = invoices.get(1).split(",");
+        for (int i = 0; i < header.size(); i++) {
+            first.put(header.get(i), row[i]);
+        }
+        assertEquals("0000007001", first.get("invoice_no"), first.toString());
+        assertEquals("7001", first.get("short_no"), first.toString());
+        assertTrue(first.get("email_hash").matches("[0-9a-f]{64}"), first.toString());
+
+        // Which row wins: one customer per email, the latest created; each product's latest delivery price.
+        JsonPath which = waitForRun(designer, as(designer).body(Map.of())
+            .post("/api/v1/pipelines/sample-which-row/runs").then().statusCode(202).extract().jsonPath().getLong("id"));
+        assertEquals("succeeded", which.getString("run.status"), which.prettify());
+        long customers = count(Samples.tableIn(SCHEMA, "crm.customers"));
+        long latestCustomers = Files.readAllLines(out.resolve("samples/transform/customers_latest_per_email.csv"))
+            .size() - 1L;
+        long older = Files.readAllLines(out.resolve("samples/transform/customers_older_repeats.csv")).size() - 1L;
+        assertTrue(older > 0 && latestCustomers + older == customers, latestCustomers + " + " + older);
+        List<String> prices = Files.readAllLines(out.resolve("samples/transform/products_latest_cost.csv"));
+        assertEquals(count(Samples.tableIn(SCHEMA, "stock.products")) + 1, prices.size());
+        // The feed lists KIT-1005 twice: 16.68, then a later delivery at 18.35, which wins.
+        assertTrue(prices.stream().anyMatch(l -> l.contains(",KIT-1005,") && l.contains(",18.35,")),
+            String.join("\n", prices));
+
+        // The flows that check a source and wait for a file, and that try again: both run through.
+        JsonPath checks = waitForFlowRun(designer, as(designer).body(Map.of())
+            .post("/api/v1/flows/sample-checks-and-waits/runs").then().statusCode(202).extract().jsonPath()
+            .getLong("id"));
+        assertEquals("succeeded", checks.getString("run.status"), checks.prettify());
+        assertEquals(List.of("succeeded"), checks.getList("nodes.findAll { it.node in ['ready', 'accounts', "
+            + "'landed', 'customers'] }.status").stream().distinct().toList(), checks.prettify());
+        JsonPath retried = waitForFlowRun(designer, as(designer).body(Map.of())
+            .post("/api/v1/flows/sample-retries/runs").then().statusCode(202).extract().jsonPath().getLong("id"));
+        assertEquals("succeeded", retried.getString("run.status"), retried.prettify());
 
         // The gate that is meant to stop does: two shipping fees are out of range.
         JsonPath stop = waitForRun(designer, as(designer).body(Map.of()).post("/api/v1/pipelines/sample-gate-stop/runs")

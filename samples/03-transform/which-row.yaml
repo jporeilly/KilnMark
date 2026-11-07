@@ -1,0 +1,76 @@
+# Which row wins: the latest of each key (a Kilnmark sample).
+# Keeps one CRM customer for each email address: the one created most recently, not the first to
+# arrive. Then it gives each product the cost price of its latest supplier delivery, where the
+# supplier feed lists a SKU more than once.
+# Why it matters: Customer and price tables often hold several versions of a record, and a report
+# must use the current one, for example the latest address for a letter to a customer or a
+# policyholder. Choosing by a date, not by the order rows arrive in, gives the same answer every
+# time.
+# Look for: duplicates: latest with duplicates_by on the dedupe and on the lookup, and the rule on
+# each node's card on the canvas ("latest by created_at kept"). The older repeats of each email go
+# to a file of their own; customers with no email share one empty key. A write in upsert mode takes
+# the same rule, to keep the latest row of each key in a table. This sample writes only files, so it
+# has no upsert.
+# Needs: crm-db (the crm schema), shop-db (the stock schema) and files.
+kilnmark: pipeline/v1
+name: sample-which-row
+description: The latest CRM customer per email, and each product's latest cost price.
+
+nodes:
+  - id: customers
+    type: read
+    source: crm-db
+    asset: crm.customers
+
+  - id: keyed
+    type: compute
+    input: customers
+    columns:
+      email_key: "lower(trim(email))"
+
+  - id: latest_customer
+    type: dedupe
+    input: keyed
+    key: [email_key]
+    duplicates: latest          # first (the default), last, latest, earliest or error
+    duplicates_by: created_at   # the newest created_at wins; a tie goes to the first to arrive
+
+  - id: customers_out
+    type: write
+    input: latest_customer
+    source: files
+    path: samples/transform/customers_latest_per_email.csv
+    mode: replace
+
+  - id: older_out
+    type: write
+    input: latest_customer.rejected
+    source: files
+    path: samples/transform/customers_older_repeats.csv
+    mode: replace
+
+  - id: products
+    type: read
+    source: shop-db
+    asset: stock.products
+    columns: [product_id, sku, name, category, list_price]
+
+  - id: feed
+    type: read
+    source: shop-db
+    asset: stock.supplier_feed
+
+  - id: priced
+    type: lookup
+    inputs: { main: products, lookup: feed }
+    on: { sku: sku }
+    keep: [supplier, cost_price, received_on]
+    duplicates: latest
+    duplicates_by: received_on  # the latest delivery's price, not the first listed
+
+  - id: prices_out
+    type: write
+    input: priced
+    source: files
+    path: samples/transform/products_latest_cost.csv
+    mode: replace

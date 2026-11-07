@@ -1,7 +1,12 @@
 # Template: check rows on the way and set failing ones aside (a Kilnmark template).
-# Replace each <...> with your own, and the rules with the checks your data needs. Rows that pass
-# go to the target table; rows that fail go to a table of their own, to look at and fix. More than
-# the share in max_failing_share failing stops the run.
+# Rows that pass the rules go to the target table; rows that fail go to a table of their own, to
+# look at and fix. If more than the share in max_failing_share fail, the run stops instead. Replace
+# each <...> with your own, and the rules with the checks your data needs.
+# Why it matters: Stewards and data engineers start here to put a data-quality control in front of a
+# table. Failing rows kept in a table of their own give the evidence a review typically asks for.
+# Look for: on_fail, which can also be stop (nothing is written) or warn (every row goes through and
+# the failures are recorded), and the check.quarantine output.
+# Needs: a source to read, and a database source with Allow writing on for both tables.
 kilnmark: pipeline/v1
 name: template-quality-gate
 description: Rows checked on the way; failing rows set aside.

@@ -9,6 +9,7 @@ import {
   type FlowSummary,
   type PipelineSummary,
   type SampleCatalogue,
+  type SampleExplanation,
   type SampleInfo,
   type Template,
 } from "../api";
@@ -39,6 +40,38 @@ export function groupSamples(samples: SampleInfo[]): [string, SampleInfo[]][] {
     groups.set(g, [...(groups.get(g) ?? []), s]);
   }
   return [...groups.entries()];
+}
+
+/** Whether an explanation has anything to show beyond its title. */
+export function explains(e: SampleExplanation | null): e is SampleExplanation {
+  return !!e && !!(e.shows || e.why || e.lookFor || e.needs);
+}
+
+/**
+ * A sample's or template's explanation, from the comment its file starts with: what it shows (for a
+ * template, what it is for), why it matters, what to look for, and what it needs. Parts left out are
+ * not shown.
+ */
+export function Explanation({ explanation: e, template = false }: { explanation: SampleExplanation | null; template?: boolean }) {
+  if (!explains(e)) return null;
+  const parts: [string, string | null][] = [
+    [template ? "What it is for" : "What it shows", e.shows],
+    ["Why it matters", e.why],
+    [template ? "Look for" : "Look for when it runs", e.lookFor],
+    ["Needs", e.needs],
+  ];
+  return (
+    <dl className="lib-explain">
+      {parts
+        .filter((p): p is [string, string] => !!p[1])
+        .map(([label, text]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>{text}</dd>
+          </div>
+        ))}
+    </dl>
+  );
 }
 
 /**
@@ -166,6 +199,14 @@ function SampleRow({ sample: s, pipeline, flow }: { sample: SampleInfo; pipeline
         <span className={`lib-kind lib-kind--${s.type}`}>{s.type === "flow" ? "Flow" : "Pipeline"}</span>
         {link ? <a href={link}>{s.name}</a> : <span className="mono">{s.name}</span>}
         {s.description && <div className="small muted">{s.description}</div>}
+        {explains(s.explanation) && (
+          <details className="lib-about">
+            <summary>
+              About this sample<span className="visually-hidden">: {s.name}</span>
+            </summary>
+            <Explanation explanation={s.explanation} />
+          </details>
+        )}
       </div>
       <div className="lib-item-state small">
         {!s.exists && <span className="muted">Not added</span>}
@@ -202,6 +243,7 @@ function TemplatesTab({ designer }: { designer: boolean }) {
               <span className={`lib-kind lib-kind--${t.type}`}>{t.type === "flow" ? "Flow" : "Pipeline"}</span>
               <h2 id={`tpl-${t.name}`}>{t.description ?? t.name}</h2>
               <p className="small muted mono">{t.name}</p>
+              <Explanation explanation={t.explanation} template />
               <details>
                 <summary>Show the YAML</summary>
                 <pre className="lib-yaml">{t.yaml}</pre>

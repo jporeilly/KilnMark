@@ -2,8 +2,13 @@
 # Works out the number in each supplier SKU. A badly shaped SKU cannot be cast to a number, so its
 # row goes to the compute node's errors port and on to a quarantine file, with what went wrong.
 # More than 5% of rows failing would stop the run.
+# Why it matters: Banks and insurers typically need to keep every rejected row with the reason it
+# was rejected, and reconcile rows read against rows loaded and rows set aside. One bad value from a
+# partner no longer stops the whole overnight load, and the tolerance still stops a feed that has
+# gone badly wrong.
 # Look for: the errors port, max_error_share, the error_code and error_message columns in the
 # quarantine file, and the line in the run's log that counts the rows set aside.
+# Needs: shop-db (the stock schema) and files.
 kilnmark: pipeline/v1
 name: sample-rows-that-fail
 description: Supplier feed with each SKU's number; rows whose SKU cannot be read set aside.

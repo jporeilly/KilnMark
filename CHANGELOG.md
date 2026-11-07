@@ -7,6 +7,20 @@ details.
 
 ### What's new
 
+- **Every sample and template explains itself in the Library**: **About this sample** on each
+  sample's row, and each template's card, show what it shows (or is for), why it matters (the
+  real need it meets, in banking and other regulated work, and who typically has it), what to look
+  for when it runs, and what it needs, read from the comment its file starts with. The API gives the same, as
+  `explanation`, and a test fails the build if a sample or template lacks a part. Every explanation
+  has been rewritten in shorter, plainer sentences.
+  ([The Library](docs/guide/library.md#samples))
+- **Four new samples**: `sample-functions` (padding, splitting a reference, due dates and days
+  overdue, `if`, `contains` and a `sha256` of an email as a key that stays marked sensitive),
+  `sample-which-row` (`duplicates: latest` on a dedupe and a lookup), `sample-retries` (a flow's
+  `run:` block and a node's own `timeout` and `retries`) and `sample-checks-and-waits` (a
+  `check-source` node, a `wait-for` node waiting for a file, and `priority`). The sample supplier
+  feed's repeated SKUs are now later deliveries at new prices, so which row wins can be seen.
+  ([The samples](samples/README.md#the-samples))
 - **A failed run can be tried again by itself** (a `run:` block on a pipeline or a flow, ADR 0053):
   `retries` (0 to 5), `retry_delay` (doubled each time, each wait at most an hour, with a little
   added at random), `retry_on` (`any`, or `lost`: only a run lost with its worker), a `timeout` for
@@ -84,6 +98,14 @@ details.
 
 ### Details
 
+- **Samples explained** (ADR 0043): `Samples.explanation` reads a file's opening comment into a
+  title, what it shows, `# Why it matters:`, `# Look for:` and `# Needs:`; `GET /api/v1/samples` and
+  `GET /api/v1/templates` return it as `explanation`, and `SamplesExplainedTest` fails the build when
+  a sample or template lacks a part. Adding a flow sample now asks for a PostgreSQL source with Allow
+  SQL on only for its sql nodes and wait-for queries, not for a check-source node or a wait-for node
+  waiting for a file, and points a check-source node's `tables` at the sample tables when they were
+  created in a schema, as a pipeline's `asset` is. `sample-limit` no longer says its table holds
+  100,000 rows (it holds 1,200), and the samples' README no longer says the flows are skipped.
 - **Run retries, carrying on and owners** (ADR 0053; backlog item 1, done; migration V39): the
   `run:` block (`RunOptions`), checked when saved (with retries, a pipeline's writes must replace or
   upsert; so must a flow's pipelines with `retry_on: any`, unless a node has retries of its own); a

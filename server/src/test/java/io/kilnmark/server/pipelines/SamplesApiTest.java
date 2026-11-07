@@ -112,7 +112,9 @@ class SamplesApiTest {
         String yaml = as(viewer).get("/api/v1/pipelines/sample-read-write-csv").then().statusCode(200)
             .extract().jsonPath().getString("latest.yaml");
         assertTrue(yaml.contains("source: samples-crm") && yaml.contains("source: samples-files"), yaml);
-        assertFalse(yaml.contains("crm-db") || yaml.contains("source: files"), yaml);
+        // The explanation at the top still names the placeholders it needs; no setting does.
+        String settings = String.join("\n", yaml.lines().filter(l -> !l.startsWith("#")).toList());
+        assertFalse(settings.contains("crm-db") || settings.contains("source: files"), yaml);
 
         // Again: what is there is left as it is.
         as(designer).body(body).post("/api/v1/samples").then().statusCode(200)
