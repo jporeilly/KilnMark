@@ -118,12 +118,26 @@ public final class Aggregation {
             }
             arg = inner.compile(call.args().getFirst());
         }
-        Type t = arg == null ? Type.INT64 : arg.type;
-        Type result = switch (fn) {
+        Type result = resultType(fn, arg == null ? Type.INT64 : arg.type, call.pos());
+        String column = "\u0000agg" + calls.size();
+        calls.add(new AggCall(fn, arg, result, column));
+        return new Ev.Column(column, result, call.pos());
+    }
+
+    /**
+     * The type an aggregate gives for an argument of type {@code t}: a count is an int64, a sum keeps
+     * whole numbers and floats as they are and decimals at their scale, an average is a decimal for
+     * decimals and a float otherwise, and min and max keep the type. Shared with the window node's
+     * running totals ({@link Windowing}).
+     *
+     * @throws ExprException when a sum or average is given something other than numbers
+     */
+    static Type resultType(String fn, Type t, int pos) throws ExprException {
+        return switch (fn) {
             case "count", "count_distinct" -> Type.INT64;
             case "sum", "avg" -> {
                 if (!t.isNumeric() && !t.isNull()) {
-                    throw new ExprException(fn + " needs numbers, not " + Compiler.article(t), call.pos());
+                    throw new ExprException(fn + " needs numbers, not " + Compiler.article(t), pos);
                 }
                 if (fn.equals("sum")) {
                     yield t.isNull() ? Type.INT64 : t.kind() == Kind.DECIMAL ? Type.decimal(t.scale()) : t;
@@ -132,9 +146,6 @@ public final class Aggregation {
             }
             default -> t; // min, max
         };
-        String column = "\u0000agg" + calls.size();
-        calls.add(new AggCall(fn, arg, result, column));
-        return new Ev.Column(column, result, call.pos());
     }
 
     /** The columns of the result: the group-by columns as they arrive, then each value. */
@@ -295,17 +306,25 @@ public final class Aggregation {
     }
 
     private static Acc newAcc(AggCall call) {
-        return switch (call.fn) {
-            case "count" -> new Count(call.arg == null);
+        return newAcc(call.fn, call.arg == null ? null : call.arg.type, call.type);
+    }
+
+    /**
+     * A fresh running value of {@code fn} over an argument of type {@code arg} (null for
+     * {@code count(*)}), giving {@code result} ({@link #resultType}).
+     */
+    static Acc newAcc(String fn, Type arg, Type result) {
+        return switch (fn) {
+            case "count" -> new Count(arg == null);
             case "count_distinct" -> new Distinct();
-            case "sum" -> new Sum(call.type);
-            case "avg" -> new Avg(call.arg.type, call.type);
-            default -> new MinMax(call.fn.equals("min"), call.type);
+            case "sum" -> new Sum(result);
+            case "avg" -> new Avg(arg, result);
+            default -> new MinMax(fn.equals("min"), result);
         };
     }
 
-    /** One aggregate's running value for one group. */
-    private abstract static class Acc {
+    /** One aggregate's running value for one group (or, in a window node, for the rows so far). */
+    abstract static class Acc {
         /** Takes row {@code i} of {@code c}; returns the bytes this added to memory, roughly. */
         abstract long add(Col c, int i) throws ExprException;
 

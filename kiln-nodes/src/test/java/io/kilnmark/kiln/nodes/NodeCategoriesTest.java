@@ -26,7 +26,8 @@ class NodeCategoriesTest {
         assertEquals(Map.ofEntries(Map.entry("aggregate", "Aggregate"), Map.entry("compute", "Transform"),
             Map.entry("dedupe", "Filter and route"), Map.entry("filter", "Filter and route"), Map.entry("join", "Combine"),
             Map.entry("limit", "Filter and route"), Map.entry("lookup", "Combine"), Map.entry("route", "Filter and route"),
-            Map.entry("select", "Transform"), Map.entry("sort", "Transform"), Map.entry("union", "Combine")), got);
+            Map.entry("select", "Transform"), Map.entry("sort", "Transform"), Map.entry("union", "Combine"),
+            Map.entry("window", "Transform")), got);
     }
 
     @Test
