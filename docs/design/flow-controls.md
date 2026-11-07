@@ -210,7 +210,9 @@ flowchart TD
   (0 for the first), migration V35, with the unique index on all four so each try starts once. The
   node's row and `flowNodeRun`/`flowItemRun(s)` give the latest try; a worker that takes a flow over
   carries on from it (`flowLatestTry`), and a failed latest try found again is tried again then if
-  tries are left (the delay starts again).
+  tries are left (the delay starts again). Today no worker takes a flow over: a flow job is tried
+  once, so a flow whose worker stopped fails (docs/design/flows.md, item 5). This path is for
+  run-level retries (backlog item 1), which will try a flow job again.
 - While it waits, the node stays **running**, with "Try 1 of 4 failed; trying again in 2m". It holds
   no worker and no place. A cancel or stop of the flow while it waits ends it cancelled ("Not tried
   again: the flow was stopped").
