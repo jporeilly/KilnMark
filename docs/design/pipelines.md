@@ -427,7 +427,8 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
   else … end`, and `cast(x as type)`.
 - Functions: `trim lower upper length substring replace coalesce nullif abs round floor ceil
   concat regex_match regex_replace (with time and size limits) now today date_trunc
-  date_part parse_date parse_timestamp format_date`. Aggregates in `aggregate` only: `count
+  date_part parse_date parse_timestamp format_date`, and since ADR 0049 `if lpad rpad left right
+  split_part starts_with ends_with contains greatest least date_add date_diff sha256`. Aggregates in `aggregate` only: `count
   count_distinct sum min max avg`. Window functions in `window` only: `row_number rank dense_rank
   lag lead` and running `count sum avg min max` (section 4, "Window functions").
 - SQL null rules. Types are checked against the input schema before the run: an unknown column or
@@ -476,9 +477,32 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
   `parse_date` and `parse_timestamp` give null instead.
 - **Functions as built:** `trim lower upper length substring replace coalesce nullif abs round
   floor ceil concat regex_match regex_replace now today date_trunc date_part parse_date
-  parse_timestamp format_date`. `now()` is fixed when the node starts. Date patterns use
+  parse_timestamp format_date if lpad rpad left right split_part starts_with ends_with contains
+  greatest least date_add date_diff sha256`. `now()` is fixed when the node starts. Date patterns use
   `DateTimeFormatter` letters, read strictly (31 February is rejected) and must be written out;
   so must `date_trunc` / `date_part` units and `round`'s digits, so mistakes are found before a run.
+- **The functions of ADR 0049, 6.3** (decisions):
+  - `if(cond, a, b)` is a function, not new syntax: `case` was already in the language, and a
+    function call needs no new keyword (so no column called `if` has to be quoted). It compiles to
+    the same lazy `case` node, so only the branch taken is worked out; an empty condition takes `b`,
+    as SQL's `case` does.
+  - Text functions count Unicode code points, as `length` and `substring` do. `lpad`, `rpad`,
+    `left`, `right` and `split_part` follow PostgreSQL (padding cuts longer text to `n`; negative
+    counts for `left`, `right` and `split_part` count from the other end), so a reader who knows SQL
+    is not surprised; `lpad` and `rpad` are capped at 1,000,000 characters and count against the
+    batch's text budget.
+  - `date_add(d, n, 'unit')` moves by calendar units with Java's `plus` (31 January plus a month is
+    the end of February); `date_diff('unit', a, b)` counts whole units elapsed (`ChronoUnit.between`),
+    not boundaries crossed: the guide shows both on a month. Units are written out, as for
+    `date_trunc`. A date with a time unit is refused in `date_add` and read as its midnight in
+    `date_diff`.
+  - `greatest` and `least` skip nulls (PostgreSQL's rule, not SQL Server's), widening to one type.
+  - `sha256` hashes the UTF-8 bytes and gives lower-case hex. `md5` is left out: a bank's reviewers
+    would rightly question it, and anyone who needs one to match another system can be given it
+    then, labelled as not for security. A hash is a value worked out from its column, so marks
+    follow it as they follow any computed column (`NodePreview.marked`), and a preview refuses to
+    hash a hidden column: a hash of a sensitive value is still sensitive (ADR 0027), as a hash of a
+    short value such as a date of birth can be reversed by trying every value.
 - **Regular expressions** are safe on any data and pattern. Refused: a repeated group that itself
   repeats (`(a+)+`, `(\w+\s?)*`), with one exception: an unbounded repeat (`+` or `*`, never a
   counted `{n}` or `{n,m}`, which defeats the matcher's own caching) of a group that starts with
@@ -497,7 +521,7 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
   function call. Compiled patterns are cached, 128 per call. `regex_match` finds the pattern
   anywhere (anchor with `^ $`). `like` is matched without regular expressions, with the same value
   cap and a budget of 50 million steps per value.
-- **Text results** (`||`, `concat`, `replace`, `regex_replace`) are capped at 1,000,000 characters
+- **Text results** (`||`, `concat`, `replace`, `regex_replace`, `lpad`, `rpad`) are capped at 1,000,000 characters
   per value, checked while they are built, and at 64,000,000 characters per batch for each
   operator or call, so a modest result repeated over a full batch cannot exhaust memory. Text compares in Unicode code point order (the order of
   UTF-8 bytes). `trim` strips characters Java counts as whitespace (spaces, tabs, line breaks and
