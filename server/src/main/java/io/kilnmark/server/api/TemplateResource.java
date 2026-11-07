@@ -24,19 +24,25 @@ import jakarta.ws.rs.core.MediaType;
 @RolesAllowed(AccessRole.VIEWER_ROLE)
 public class TemplateResource {
 
-    /** One template: its file under samples/, name, type (pipeline or flow), what it is for, and its YAML. */
-    public record Template(String file, String name, String type, String description, String yaml) {
+    /**
+     * One template: its file under samples/, name, type (pipeline or flow), what it is for, its YAML,
+     * and its explanation, read from the comment it starts with.
+     */
+    public record Template(String file, String name, String type, String description, String yaml,
+                           Samples.Explanation explanation) {
     }
 
     @GET
     @Operation(summary = "List the templates", description = "The pipelines and flows to start one's own from, each "
-        + "with its YAML, which has <...> where a source, table or pipeline of one's own goes. Open one in the "
-        + "editor, give it a name and replace the gaps; saving checks it as any pipeline or flow. Role: viewer.")
+        + "with its explanation (what it is for, why, what to look for, what it needs) and its YAML, which has <...> "
+        + "where a source, table or pipeline of one's own goes. Open one in the editor, give it a name and replace "
+        + "the gaps; saving checks it as any pipeline or flow. Role: viewer.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "The templates"),
         @APIResponse(responseCode = "401", description = "Not signed in")})
     public List<Template> list() {
         return Samples.templates().stream()
-            .map(s -> new Template(s.file(), s.name(), s.type(), s.description(), s.yaml())).toList();
+            .map(s -> new Template(s.file(), s.name(), s.type(), s.description(), s.yaml(), s.explanation()))
+            .toList();
     }
 }

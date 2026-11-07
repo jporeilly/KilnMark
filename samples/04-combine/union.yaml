@@ -1,7 +1,12 @@
 # Union: rows of several inputs together (a Kilnmark sample).
-# Appends the 2023 customer archive to today's customers, matching columns by name, and marks
+# Appends the 2023 customer archive to today's CRM customers, matching columns by name, and marks
 # where each row came from.
-# Look for: input: [a, b] takes several inputs on one port.
+# Why it matters: Regulated firms and public bodies often keep records for years, and a review may
+# need current and archived records together, for example in a remediation exercise. Marking where
+# each row came from keeps that plain.
+# Look for: input: [a, b], which takes several inputs on one port, and the came_from column each
+# side adds before the union.
+# Needs: crm-db (the crm schema) and files.
 kilnmark: pipeline/v1
 name: sample-union
 description: Current and archived CRM customers in one file.

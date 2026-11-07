@@ -1,12 +1,16 @@
 # Flow: SQL before and after a pipeline (a Kilnmark sample).
-# A sql node makes sure a totals table is there and empties it, the orders pipeline runs, then a
-# second sql node fills the table with a total per status and refreshes its statistics. Each sql node
-# runs its statements in order in one transaction: all of them change the database, or none does.
-# Needs: a PostgreSQL source for shop-db with Allow SQL and Allow writing on, whose login may create
-# tables in its schema and is limited to what the SQL needs (never a superuser); the sample tables in
-# a schema on that login's search path; and a designer who may see unmasked values to add or change it.
-# Look for: totals.rows_affected in the condition and the notice, and each sql node's message on the
-# run, which says how many statements ran and rows changed but never quotes the SQL.
+# A sql node makes sure a totals table is there and empties it. Then the orders pipeline runs, and a
+# second sql node fills the table with a total per status and refreshes its statistics. Each sql
+# node runs its statements in order in one transaction: all of them change the database, or none.
+# Why it matters: Warehouses often need a table emptied before a load and refreshed after it. One
+# transaction for each step, and a record of what changed that never holds the SQL, keep the work
+# repeatable and the record clean.
+# Look for: totals.rows_affected in the condition and the notice, and each sql node's message on
+# the run, which says how many statements ran and rows changed but never quotes the SQL.
+# Needs: sample-orders-by-status, and shop-db as a PostgreSQL source with Allow SQL and Allow writing
+# on. Its login may create tables in its schema, has only the rights the SQL needs (never a
+# superuser), and has the sample tables' schema on its search path. Only a designer who may see
+# unmasked values adds or changes it.
 kilnmark: flow/v1
 name: sample-sql-before-and-after
 description: Empty the totals table, run the orders pipeline, then total the orders by status in SQL.

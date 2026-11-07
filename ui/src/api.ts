@@ -1568,6 +1568,20 @@ export type NodeType = {
 
 /** A source name the bundled samples use in place of a real source, and what it stands for. */
 export type SamplePlaceholder = { name: string; category: string; description: string };
+/**
+ * What a sample or template explains about itself, read from the comment its file starts with: what it
+ * shows (for a template, what it is for), why it matters, what to look for when it runs, and what it
+ * needs. A part the comment leaves out is null. Lines are joined into sentences; an example to copy has
+ * a line of its own.
+ */
+export type SampleExplanation = {
+  title: string | null;
+  shows: string | null;
+  /** Why it matters: the need it meets, and who typically has it. */
+  why: string | null;
+  lookFor: string | null;
+  needs: string | null;
+};
 /** One bundled sample; exists: a pipeline or flow of its name is already there. */
 export type SampleInfo = {
   file: string;
@@ -1576,6 +1590,7 @@ export type SampleInfo = {
   description: string | null;
   sources: string[];
   exists: boolean;
+  explanation: SampleExplanation | null;
 };
 /** Where the sample tables were last created, and the run that created them. */
 export type SampleTables = { source: string; schema: string; lastRun: PipelineRun | null };
@@ -1589,7 +1604,14 @@ export type SampleOutcome = {
 };
 
 /** A template in the Library: a pipeline or flow to start one's own from, with <...> gaps (ADR 0043). */
-export type Template = { file: string; name: string; type: "pipeline" | "flow"; description: string | null; yaml: string };
+export type Template = {
+  file: string;
+  name: string;
+  type: "pipeline" | "flow";
+  description: string | null;
+  yaml: string;
+  explanation: SampleExplanation | null;
+};
 
 /** The samples that ship with Kilnmark (GET/POST /api/v1/samples), and the templates (GET /api/v1/templates). */
 export const samplesApi = {

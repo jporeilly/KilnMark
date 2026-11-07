@@ -1,0 +1,42 @@
+# Flow: try again after a failure, only where it is safe (a Kilnmark sample).
+# Runs sample-aggregate. If its run fails, the node tries it twice more, 30 seconds and then a
+# minute later, and each try may take 15 minutes. If a try of the whole flow is lost with its worker
+# or its connection to Kilnmark's database, the flow is tried again, up to twice, carrying on from
+# where it stopped. If a run is still going after 10 minutes, its owners are told once.
+# Why it matters: Overnight batches often meet brief outages, such as a database restart or a lost
+# connection. Trying again only where a repeat is safe gets the batch through without loading
+# anything twice, and the owners are told only when it really failed or runs long.
+# Look for: the run: block (retries, retry_delay, retry_on: lost, timeout, warn_after) and the
+# node's own timeout and retries. Tries never multiply: a node's own retries take the place of the
+# flow's for that node, so it is tried at most three times, never nine. Only work that is safe to
+# repeat is tried again: sample-aggregate replaces its file, and a pipeline that appends is refused
+# node retries. A cancel, a stop node or a quality gate that stopped a run is never tried again. A
+# run that failed for good can be run again from the failure, with the button on its page: the
+# nodes that succeeded keep what they did. The owners, who are told, are set on the flow's page by
+# a designer or an admin, not in the YAML.
+# Needs: sample-aggregate, so shop-db and files. Running it needs a steward or above.
+kilnmark: flow/v1
+name: sample-retries
+description: The order totals, tried again after a failure, never more than is safe.
+
+run:
+  retries: 2          # more tries of the whole flow, 0 to 5
+  retry_delay: 1m     # before the second try, doubled before each later one
+  retry_on: lost      # only a try lost with its worker or its connection; any is the default
+  timeout: 1h         # each try of the flow is stopped after this
+  warn_after: 10m     # the owners are told once if a run is still going
+
+nodes:
+  - id: totals
+    type: run-pipeline
+    pipeline: sample-aggregate
+    timeout: 15m      # each try of this node is stopped, and fails, after this
+    retries: 2        # this node's own tries take the place of the flow's
+    retry_delay: 30s
+
+  - id: done
+    type: notify
+    title: "Order totals written for ${totals.rows_written} orders"
+
+connections:
+  - { from: totals, to: done }

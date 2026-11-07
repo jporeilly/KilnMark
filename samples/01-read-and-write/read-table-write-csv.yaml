@@ -1,6 +1,13 @@
 # Read a table, write a CSV file (a Kilnmark sample).
-# Reads the CRM accounts table and writes every row to a CSV file in the files source.
-# Look for: the run's rows read and written, and the file's own page in the catalogue after the next scan.
+# Reads every row of the CRM accounts table and writes it to a CSV file. It is the smallest useful
+# pipeline: one read node and one write node.
+# Why it matters: A table copied to a file is often how data is handed to another team, a partner or
+# a reporting portal. The run's record of the rows read and written is evidence that the extract was
+# complete.
+# Look for: the rows read and written, on the run's page. After the next scan of files, the CSV has
+# its own page in the catalogue. mode: replace swaps the file in on each run; create, the default,
+# fails if the file is already there.
+# Needs: crm-db (the crm schema) and files.
 kilnmark: pipeline/v1
 name: sample-read-write-csv
 description: Every CRM account, as a CSV file.

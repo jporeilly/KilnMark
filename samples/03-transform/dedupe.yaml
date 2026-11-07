@@ -1,7 +1,13 @@
 # Dedupe: one row per key (a Kilnmark sample).
-# Keeps the first customer for each email address (tidied first, so case and spaces do not hide
-# a repeat); the repeats go to their own file.
-# Look for: the rejected output holds every repeat after the first.
+# Keeps the first customer for each email address. The email is tidied first, so a difference in
+# case or in spaces at either end does not hide a repeat. The repeats go to a file of their own, to look at.
+# Why it matters: Duplicate customers inflate counts and break single-customer views, which KYC and
+# customer-risk reporting often rely on. Hospitals meet the same problem with one patient recorded
+# in several systems. Keeping the repeats in their own file lets a steward review them.
+# Look for: the rejected output, which holds every repeat after the first. Customers with no email
+# share one empty key, so all but one of them are there too. sample-which-row keeps the latest row
+# of each key instead of the first.
+# Needs: crm-db (the crm schema) and files.
 kilnmark: pipeline/v1
 name: sample-dedupe
 description: One CRM customer per email address.

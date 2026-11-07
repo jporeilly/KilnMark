@@ -1,6 +1,12 @@
 # Write Parquet (a Kilnmark sample).
-# Reads the invoices and writes them as a Parquet file: columnar, typed and compressed.
-# Look for: format: parquet; the profile of what was written (Quality of what a run writes).
+# Reads the billing invoices and writes them as a Parquet file. Parquet keeps each column's type and
+# is compressed, so it suits files that other tools read.
+# Why it matters: Parquet is a common format for data lakes and analytics platforms, for example to
+# keep years of billing history cheaply. Keeping each column's type avoids the dates and amounts a
+# CSV can garble.
+# Look for: format: parquet on the write node, and the profile of what was written, on the run's
+# page.
+# Needs: crm-db (the billing schema) and files.
 kilnmark: pipeline/v1
 name: sample-write-parquet
 description: Billing invoices as Parquet.

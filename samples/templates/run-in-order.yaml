@@ -1,6 +1,11 @@
 # Template: run pipelines one after another, then say so (a Kilnmark template).
-# Replace each <...> with one of your pipelines. The second starts only when the first has
-# succeeded; the notice reports how many rows the second wrote. Add a schedule, or run it by hand.
+# The second pipeline starts only when the first has succeeded; then a notice says how many rows the
+# second wrote. Replace each <...> with one of your pipelines. Add a schedule, or run it by hand.
+# Why it matters: Teams typically start here when one load depends on another, such as customers
+# before accounts, and teams moving from another ETL tool start here to rebuild loads that run in
+# order. A flow keeps the order in Kilnmark and says when it is done.
+# Look for: the connections, which set the order, and ${second.rows_written} in the notice's title.
+# Needs: two saved pipelines of your own. Running it needs a steward or above.
 kilnmark: flow/v1
 name: template-run-in-order
 description: Two pipelines in order, then a notice.
