@@ -66,4 +66,5 @@ Owner, 7 November 2026:
   tolerance and which row wins first.
 - **Audit reporting tables** for standard audit reports, and **dashboards and reports about
   Kilnmark itself** (runs, schedules, volume, quality, capacity, people and access, AI) on the same
-  tables: backlog item 18.
+  tables, with AI to ask about them in plain words, spot the unusual and write a weekly summary,
+  on those figures only: backlog item 18.

@@ -181,6 +181,17 @@ dependency verification (ADR 0042, #99) and signed images with an offline instal
     Each chart filters by time, pipeline, flow, source and owner, and downloads as CSV for an
     auditor. The same figures as metrics a monitoring system can collect (OpenTelemetry or
     Prometheus) are a separate choice, for an ADR.
+
+    **With AI** (owner, 7 November 2026), on these figures only, never on data values (ADR 0027,
+    ADR 0050), and proposing, never acting (ADR 0052):
+    - **Asking in plain words** in the Ask panel ("which flows failed most last week?", "why are
+      the nightly loads slower?"), as a new knowledge domain beside the documentation, answered
+      from the reporting tables with the figures and a link to the chart;
+    - **Spotting the unusual**: a run several times slower than its usual, rows read that drop or
+      jump, a schedule that starts slipping, retries climbing, told to owners as one notice;
+    - **A weekly summary** for each owner and for admins: what failed, what got slower, what
+      recovered, what needs a look;
+    - **Explaining a trend** on a chart, and suggesting what to look at, with the evidence.
 19. **A full export in open formats** (for exit), and a FIPS mode when a federal customer needs it.
 
 ## 5. Housekeeping
