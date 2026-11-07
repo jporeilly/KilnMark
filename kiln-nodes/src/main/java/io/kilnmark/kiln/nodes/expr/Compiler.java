@@ -26,7 +26,8 @@ final class Compiler {
     /** Functions, for "did you mean" and the reference. */
     static final Set<String> FUNCTIONS = Set.of("trim", "lower", "upper", "length", "substring", "replace", "coalesce",
         "nullif", "abs", "round", "floor", "ceil", "concat", "regex_match", "regex_replace", "now", "today",
-        "date_trunc", "date_part", "parse_date", "parse_timestamp", "format_date");
+        "date_trunc", "date_part", "parse_date", "parse_timestamp", "format_date", "if", "lpad", "rpad", "left", "right",
+        "split_part", "starts_with", "ends_with", "contains", "greatest", "least", "date_add", "date_diff", "sha256");
     static final Set<String> AGGREGATES = Set.of("count", "count_distinct", "sum", "min", "max", "avg");
 
     /** The deepest an expression's operations may sit inside each other, counting chains like a + b + c. */
@@ -397,6 +398,9 @@ final class Compiler {
             throw new ExprException("unknown function '" + fn + "'", c.pos(), near != null ? "did you mean " + near + "?"
                 : null);
         }
+        if (fn.equals("if")) {
+            return ifOf(c);
+        }
         List<Ev> args = new ArrayList<>();
         for (Node a : c.args()) {
             args.add(compile(a));
@@ -582,8 +586,129 @@ final class Compiler {
                     }
                 }, pos);
             }
+            case "lpad", "rpad" -> {
+                arity(c, 2, 3);
+                List<Ev> in = new ArrayList<>(List.of(text(c, args, 0), whole(c, args, 1)));
+                if (args.size() == 3) {
+                    in.add(text(c, args, 2));
+                }
+                boolean left = fn.equals("lpad");
+                TextBudget budget = new TextBudget();
+                yield new Ev.Call(in, Type.UTF8, true, a -> Texts.pad((String) a[0], (Long) a[1],
+                    a.length > 2 ? (String) a[2] : " ", left, pos, budget), pos, budget::newBatch);
+            }
+            case "left", "right" -> {
+                arity(c, 2, 2);
+                boolean left = fn.equals("left");
+                yield new Ev.Call(List.of(text(c, args, 0), whole(c, args, 1)), Type.UTF8, true,
+                    a -> Texts.side((String) a[0], (Long) a[1], left), pos);
+            }
+            case "split_part" -> {
+                arity(c, 3, 3);
+                yield new Ev.Call(List.of(text(c, args, 0), text(c, args, 1), whole(c, args, 2)), Type.UTF8, true,
+                    a -> Texts.splitPart((String) a[0], (String) a[1], (Long) a[2], pos), pos);
+            }
+            case "starts_with", "ends_with", "contains" -> {
+                arity(c, 2, 2);
+                yield new Ev.Call(List.of(text(c, args, 0), text(c, args, 1)), Type.BOOLEAN, true, switch (fn) {
+                    case "starts_with" -> a -> ((String) a[0]).startsWith((String) a[1]);
+                    case "ends_with" -> a -> ((String) a[0]).endsWith((String) a[1]);
+                    default -> a -> ((String) a[0]).contains((String) a[1]);
+                }, pos);
+            }
+            case "greatest", "least" -> {
+                arity(c, 1, Integer.MAX_VALUE);
+                Type t = commonOf(c, args);
+                List<Ev> w = new ArrayList<>();
+                for (Ev e : args) {
+                    w.add(Ev.widen(e, t));
+                }
+                boolean greatest = fn.equals("greatest");
+                Col probe = Col.blank(t, 2);
+                yield new Ev.Call(w, t, false, a -> {
+                    Object best = null;
+                    for (Object v : a) {
+                        if (v == null) {
+                            continue;
+                        }
+                        if (best == null) {
+                            best = v;
+                            continue;
+                        }
+                        probe.set(0, v);
+                        probe.set(1, best);
+                        int cmp = Ev.compare(probe, 0, probe, 1);
+                        if (greatest ? cmp > 0 : cmp < 0) {
+                            best = v;
+                        }
+                    }
+                    return best;
+                }, pos);
+            }
+            case "date_add" -> {
+                arity(c, 3, 3);
+                Ev x = temporal(c, args, 0);
+                Ev n = whole(c, args, 1);
+                String u = stepUnit(c, 2);
+                boolean isDate = x.type.kind() == Kind.DATE;
+                if (isDate && Temporal.TIME_UNITS.contains(u)) {
+                    throw new ExprException("date_add: a date has no " + u + "s", c.args().get(2).pos(),
+                        "cast it to a timestamp first");
+                }
+                yield new Ev.Call(List.of(x, n), x.type, true, a -> isDate
+                    ? Temporal.addDate(u, (Long) a[0], (Long) a[1], pos)
+                    : Temporal.addTimestamp(u, (Long) a[0], (Long) a[1], pos), pos);
+            }
+            case "date_diff" -> {
+                arity(c, 3, 3);
+                String u = stepUnit(c, 0);
+                Ev a0 = temporal(c, args, 1);
+                Ev b0 = temporal(c, args, 2);
+                boolean dates = a0.type.kind() == Kind.DATE && b0.type.kind() == Kind.DATE
+                    && !Temporal.TIME_UNITS.contains(u);
+                Type t = dates ? Type.DATE : Type.TIMESTAMP;
+                yield new Ev.Call(List.of(Ev.widen(a0, t), Ev.widen(b0, t)), Type.INT64, true, a -> dates
+                    ? Temporal.diffDate(u, (Long) a[0], (Long) a[1])
+                    : Temporal.diffTimestamp(u, (Long) a[0], (Long) a[1]), pos);
+            }
+            case "sha256" -> {
+                arity(c, 1, 1);
+                yield new Ev.Call(List.of(text(c, args, 0)), Type.UTF8, true, a -> Texts.sha256((String) a[0]), pos);
+            }
             default -> throw new IllegalStateException("function without a body: " + fn);
         };
+    }
+
+    /**
+     * {@code if(cond, a, b)}: {@code a} where {@code cond} is true, {@code b} where it is false or
+     * empty, as {@code case when cond then a else b end}; only the branch a row takes is worked out.
+     */
+    private Ev ifOf(Node.Call c) throws ExprException {
+        arity(c, 3, 3);
+        Ev cond = compile(c.args().get(0));
+        if (cond.type.kind() != Kind.BOOLEAN && !cond.type.isNull()) {
+            throw new ExprException("if needs a condition that is true or false as its first argument, not "
+                + article(cond.type), c.args().get(0).pos(), "compare it, like if(status = 'open', ...)");
+        }
+        Ev a = compile(c.args().get(1));
+        Ev b = compile(c.args().get(2));
+        Type t = Type.common(a.type, b.type);
+        if (t == null) {
+            throw new ExprException("if needs its two results to have one type, but one is " + article(a.type)
+                + " and the other " + article(b.type), c.args().get(2).pos(), "cast them to one type");
+        }
+        return new Ev.Case(null, new Col[1], List.of(Ev.widen(cond, Type.BOOLEAN)), List.of(Ev.widen(a, t)),
+            Ev.widen(b, t), t, c.pos());
+    }
+
+    /** The unit {@code date_add} or {@code date_diff} names, written out in quotes. */
+    private static String stepUnit(Node.Call c, int i) throws ExprException {
+        String unit = literalText(c, i);
+        if (unit == null || !Temporal.STEP_UNITS.contains(unit.toLowerCase(Locale.ROOT))) {
+            throw new ExprException(c.name() + " needs a unit in quotes as argument " + (i + 1) + ": one of "
+                + String.join(", ", Temporal.STEP_UNITS.stream().sorted().toList()), c.args().get(i).pos());
+        }
+        return unit.toLowerCase(Locale.ROOT);
     }
 
     private Ev round(Node.Call c, List<Ev> args) throws ExprException {
