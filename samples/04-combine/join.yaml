@@ -1,7 +1,12 @@
 # Join: rows of two inputs with equal keys (a Kilnmark sample).
-# Every shop order beside its customer, and also the orders with no customer and the customers with
-# no order (a full join), each with the other side's columns empty.
-# Look for: inputs: left and right; the right's customer_id comes out as right_customer_id.
+# Puts every shop order beside its customer. It is a full join, so it also keeps the orders with no
+# customer and the customers with no order, with the other side's columns empty.
+# Why it matters: Reconciling two systems, for example a ledger against the system that feeds it,
+# typically means finding what is on one side and missing on the other. A full join shows both gaps
+# at once.
+# Look for: inputs: left and right, and how: full. The right side's customer_id comes out as
+# right_customer_id, so neither is lost.
+# Needs: shop-db (the shop schema) and files.
 kilnmark: pipeline/v1
 name: sample-join
 description: Shop orders and customers side by side, with those that have no partner.

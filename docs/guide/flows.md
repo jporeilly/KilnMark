@@ -87,7 +87,9 @@ Every node type, with each setting it takes, its type and default, and an exampl
 
 Nodes with no connection between them run at the same time. The full format, the condition
 language and how a run decides what starts next are in the design notes (`docs/design/flows.md`). The sample flows that ship with Kilnmark, in `samples/08-flows`,
-show one idea each.
+show one idea each, and each says in the Library what it shows, what to look for and what it needs:
+`sample-retries` tries a run and a node again only where it is safe, and `sample-checks-and-waits`
+checks a source and waits for a file before the work, with a priority on each pipeline.
 
 ## Running one pipeline for each item
 

@@ -1,6 +1,10 @@
-# Aggregate: a whole-table summary (a Kilnmark sample).
-# Summarises the product catalogue by category: how many products, the price range and its width.
+# Aggregate: a summary per category (a Kilnmark sample).
+# Summarises the product catalogue by category: how many products, the cheapest and the dearest
+# price, and the width of the range between them.
+# Why it matters: A summary by category, such as products by range or exposure by sector, is a
+# typical first look at a dataset and a quick check that a load looks right.
 # Look for: a value can be any expression over the group, such as max(x) - min(x).
+# Needs: shop-db (the stock schema) and files.
 kilnmark: pipeline/v1
 name: sample-catalogue-summary
 description: Products by category.

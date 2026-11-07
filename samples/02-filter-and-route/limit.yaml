@@ -1,6 +1,10 @@
 # Limit: the first rows only (a Kilnmark sample).
-# Passes on the first 100 transactions and stops the read once it has them.
-# Look for: the run reads far fewer than the 100,000 rows the table holds.
+# Passes on the first 100 billing transactions and stops reading once it has them. Use it to try a
+# pipeline on a few rows before you run it on all of them.
+# Why it matters: Trying a pipeline on a few rows first is a cheap check before a long run against a
+# production source, and it keeps test extracts small.
+# Look for: the rows read, on the run's page: far fewer than the table holds.
+# Needs: crm-db (the billing schema) and files.
 kilnmark: pipeline/v1
 name: sample-limit
 description: The first 100 billing transactions.

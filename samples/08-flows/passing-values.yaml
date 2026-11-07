@@ -1,8 +1,12 @@
 # Flow: values passed on (a Kilnmark sample).
-# statuses is inherited by sample-orders-by-status (both declare it); label is given with with:,
-# built from the flow's own parameter; a wait spaces the runs out; the notice reads what an earlier
-# node reported.
-# Look for: inheritance by name, with:, ${orders.rows_written}, wait and notify.
+# Runs sample-orders-by-status with values from the flow, waits five seconds, then sends a notice
+# saying how many orders were written.
+# Why it matters: A batch typically runs with values decided in one place, such as the business date
+# or the batch name. Passing them on by name keeps every pipeline in the batch on the same values.
+# Look for: statuses, which the pipeline inherits because both declare it; label, given with with:
+# from the flow's own batch parameter; and ${orders.rows_written}, what an earlier node reported,
+# in the notice.
+# Needs: sample-orders-by-status, so shop-db and files. Running it needs a steward or above.
 kilnmark: flow/v1
 name: sample-passing-values
 description: Pull the orders asked for, then say how many.

@@ -1,12 +1,16 @@
 # Read with a query (a Kilnmark sample).
 # Runs one SELECT on the CRM database: each customer with the number of accounts they hold, joined
-# and counted by the database, and writes the result to a CSV file.
-# Needs: a PostgreSQL source with Allow SQL on for crm-db, and a designer who may see unmasked
-# values to add or change it. Adding the samples skips it otherwise.
+# and counted by the database. Writes the result to a CSV file. Use a query when the database can
+# do the work, such as a join or a count, before the rows reach Kilnmark.
+# Why it matters: Banks often let the database do a join or a count, such as accounts per customer,
+# where the detail is held. Because whatever a query returns is marked sensitive, a query a person
+# writes never becomes a way round masking.
 # Look for: the run's reads. Before reading a row, Kilnmark asks the database which tables the query
-# reads (without running it) and records them for lineage. Every column the query returns is treated
-# as marked sensitive, since a column cannot be followed through SQL, so the CSV it writes is masked
-# for everyone but designers who may see unmasked values.
+# reads, without running it, and records them for lineage. Every column a query returns is marked
+# sensitive, since a column cannot be followed through SQL, so the CSV is masked for everyone but
+# designers who may see unmasked values.
+# Needs: crm-db as a PostgreSQL source with Allow SQL on, and files. Only a designer who may see
+# unmasked values adds or changes it; adding the samples skips it otherwise.
 kilnmark: pipeline/v1
 name: sample-read-query
 description: Customers with their number of accounts, counted by the database.

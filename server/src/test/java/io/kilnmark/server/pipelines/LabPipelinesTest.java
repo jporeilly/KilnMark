@@ -249,11 +249,15 @@ class LabPipelinesTest {
             if (!isFlow(file)) {
                 assertFalse(Samples.sourcesOf(text).isEmpty(), file + ": a pipeline names placeholders");
             } else {
-                // A flow names a source only for a sql node to run on (ADR 0028).
+                // A flow names a source only for a sql node to run on (ADR 0028), or for a check-source or
+                // wait-for node to look at (ADR 0041).
                 FlowDefinition flow = FlowDefinition.parse(text).definition();
-                List<String> sql = flow.nodes().stream().filter(n -> FlowDefinition.SQL.equals(n.type()))
-                    .map(FlowDefinition.Node::source).distinct().toList();
-                assertEquals(sql, Samples.sourcesOf(text), file + ": a flow names sources only in sql nodes");
+                java.util.Set<String> looks = java.util.Set.of(FlowDefinition.SQL, FlowDefinition.CHECK_SOURCE,
+                    FlowDefinition.WAIT_FOR);
+                java.util.Set<String> named = new java.util.HashSet<>(flow.nodes().stream()
+                    .filter(n -> looks.contains(n.type())).map(FlowDefinition.Node::source).toList());
+                assertEquals(placeholders.stream().filter(named::contains).toList(), Samples.sourcesOf(text),
+                    file + ": a flow names sources only in sql, check-source and wait-for nodes");
             }
         }
     }

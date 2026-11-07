@@ -1,10 +1,15 @@
-# Parameters: values given per run (a Kilnmark sample).
-# Reads the shop orders in the statuses asked for (a list), above a shipping fee (a number), and
-# names the file after the run (text). Run it as it is, or with values through the API:
+# Parameters: values given for each run (a Kilnmark sample).
+# Reads the shop orders in the statuses asked for (a text list) with at least a given shipping fee
+# (a number), and names the file after a label (text). Run it as it is, or give other values
+# through the API:
 #   POST /api/v1/pipelines/sample-orders-by-status/runs
 #   {"parameters": {"statuses": ["shipped", "delivered"], "min_fee": 5, "label": "both"}}
-# Look for: the read node picks the columns and the rows, so the database sends only those, with
-# status in ${statuses} becoming status in (?) and the value bound; a value only ever fills a value.
+# Why it matters: One pipeline that takes values for each run replaces many near-copies, so a change
+# is made and reviewed once, which helps where change control needs evidence, for example under SOX.
+# Bound values also keep what a person types out of the SQL.
+# Look for: the note under the read node. status in ${statuses} becomes status in (?) with the
+# value bound, so the database sends only those rows. A value only ever fills a value.
+# Needs: shop-db (the shop schema) and files.
 kilnmark: pipeline/v1
 name: sample-orders-by-status
 description: Shop orders in the statuses asked for.

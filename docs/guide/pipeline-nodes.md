@@ -306,7 +306,9 @@ in time, text by Unicode code point, `false` before `true`. The canvas shows eac
 its card ("first kept", "latest by updated_at kept"), the default too, so the rule is always in
 sight.
 
-Upsert writes are in [Writing data](writing-data.md#which-row-an-upsert-keeps).
+Upsert writes are in [Writing data](writing-data.md#which-row-an-upsert-keeps). The sample
+`sample-which-row` keeps the latest customer of each email with a dedupe, and the latest delivery
+price of each product with a lookup.
 
 ## route
 
@@ -639,7 +641,8 @@ Whole numbers that overflow, and division by zero, stop the run. Guard a divisio
 Functions take empty (null) values as operators do: an empty argument gives an empty result, except
 `if`, `coalesce`, `nullif`, `concat`, `greatest` and `least`, which say what they do with them.
 Function names are not case-sensitive (`IF` and `if` are one). There is no `md5`: it is not safe
-for anything that matters, so `sha256` is the hash to use.
+for anything that matters, so `sha256` is the hash to use. The sample `sample-functions` uses most
+of these functions on the sample invoices and customers.
 
 Date patterns use letters such as `yyyy` (year), `MM` (month), `MMM` (Jan), `dd` (day), `HH`
 (hour), `mm` (minute), `ss` (second) and `XXX` (offset); put other words in single quotes, as in

@@ -1,6 +1,13 @@
 # Template: load a file into a database table (a Kilnmark template).
-# Replace each <...> with your own: the file storage and the file's path, and a database that
-# allows writing. CSV, TSV, JSON, Parquet and Excel files can be read.
+# Reads one file and appends its rows to a database table. CSV, TSV, JSON, Parquet and Excel files
+# can be read. Replace each <...> with your own: the file storage, the file's path, and the database
+# and table to load.
+# Why it matters: Files from partners, regulators or other teams typically arrive on a schedule and
+# have to land in a table. Data engineers start here for that daily load.
+# Look for: mode: append adds the file's rows on each run. Use replace to swap the table's rows, or
+# upsert with a key to change rows already there.
+# Needs: a file or object-store source holding the file, and a database source with Allow writing
+# on.
 kilnmark: pipeline/v1
 name: template-file-to-table
 description: A file loaded into a database table.

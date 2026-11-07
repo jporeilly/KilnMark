@@ -1,6 +1,13 @@
 # Template: copy a table from one database to another (a Kilnmark template).
-# Replace each <...> with your own: the source to read, its table, and a database that allows
-# writing. Choose the mode: create makes the table once, replace swaps every row on each run.
+# Reads one table and writes it to a table in another database. Replace each <...> with your own:
+# the source to read, its table, and the database and table to write to. Choose the mode: create
+# makes the table once, and replace swaps every row on each run.
+# Why it matters: Data engineers, and teams moving from another ETL tool, often start here to copy
+# reference or ledger tables into a reporting database. Copying only the columns needed keeps
+# personal data out of places that do not need it.
+# Look for: the columns and where lines under the read node. Remove the # to copy only some columns
+# or rows, which the database leaves out as it reads.
+# Needs: a database source to read, and a database source with Allow writing on.
 kilnmark: pipeline/v1
 name: template-copy-table
 description: One table copied from one database to another.

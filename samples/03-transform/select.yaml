@@ -1,6 +1,11 @@
-# Select: keep, rename, order and retype columns (a Kilnmark sample).
-# Keeps the shop customer columns wanted, renames two, puts the key first and makes the code text.
-# Look for: keep or drop first, then cast, then rename, then order.
+# Select: keep, retype, rename and order columns (a Kilnmark sample).
+# Keeps the shop customer columns wanted, makes the id text, renames two columns and puts the
+# customer code first. Use it to give a file or a table exactly the columns it should have.
+# Why it matters: Files and tables handed to another system usually have an agreed layout. Shaping
+# the columns in one node keeps that agreement in one place, and dropping the columns no one needs
+# keeps personal data out.
+# Look for: the order the settings apply in: keep or drop first, then cast, then rename, then order.
+# Needs: shop-db (the shop schema) and files.
 kilnmark: pipeline/v1
 name: sample-select
 description: Shop customers, shaped.

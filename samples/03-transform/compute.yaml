@@ -1,6 +1,11 @@
 # Compute: new and tidied columns (a Kilnmark sample).
-# Adds a full name, tidies the email and works out a rough age, from the CRM customers.
-# Look for: the expressions; the node's columns on the canvas show each new column's type.
+# Adds a full name, a tidy email, a rough age and the postcode area to the CRM customers, each from
+# an expression. Tidy the text once, here, and every node after it sees the same values.
+# Why it matters: Names, emails and postcodes typically arrive untidy from many systems. Tidying
+# them once, early, means every report and every match after it sees the same values.
+# Look for: the expressions, and the node's columns on the canvas, which show each new column's
+# type. sample-functions shows more of the functions.
+# Needs: crm-db (the crm schema) and files.
 kilnmark: pipeline/v1
 name: sample-compute
 description: CRM customers with a full name, a tidy email and a rough age.
