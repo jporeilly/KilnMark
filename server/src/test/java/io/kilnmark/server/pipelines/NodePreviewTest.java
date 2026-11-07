@@ -389,11 +389,9 @@ class NodePreviewTest {
             """, """
               - {id: x, type: sort, input: people, by: [name nulls first]}
             """, """
-              - {id: x, type: aggregate, input: people, group_by: "id, name", values: {n: "count(*)"}}
-            """, """
               - {id: x, type: window, input: people, partition_by: [name], order_by: [id], columns: {n: "row_number()"}}
             """, """
-              - {id: x, type: window, input: people, partition_by: "id, name", order_by: [id], columns: {n: "row_number()"}}
+              - {id: x, type: window, input: people, partition_by: [id, name], order_by: [id], columns: {n: "row_number()"}}
             """, """
               - {id: x, type: window, input: people, order_by: [name desc], columns: {n: "rank()"}}
             """, """
@@ -478,7 +476,7 @@ class NodePreviewTest {
         String y = yaml("""
               - {id: people, type: read, source: small, asset: lab.people}
               - {id: w, type: window, input: people, order_by: [id], columns: {n: "row_number()", before: "lag(name)", next_id: "lead(id)"}}
-              - {id: r, type: window, input: people, partition_by: "id, name", order_by: [id], columns: {k: "row_number()"}}
+              - {id: r, type: window, input: people, partition_by: [id, name], order_by: [id], columns: {k: "row_number()"}}
               - {id: o, type: window, input: people, order_by: [name], columns: {k: "rank()"}}
             """);
         PipelineCompilerPort.Compilation c = KilnPipelineCompiler.compile(NodePreview.plan(y, "w").definition(),

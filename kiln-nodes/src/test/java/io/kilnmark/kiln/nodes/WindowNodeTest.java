@@ -228,7 +228,7 @@ class WindowNodeTest {
             problem(TXNS, config("order_by", "dya", "columns", columns("n", "row_number()"))));
         assertEquals("partition_by: the input has no column 'acount'; did you mean account?",
             problem(TXNS, config("partition_by", "acount", "order_by", "day", "columns", columns("n", "row_number()"))));
-        assertEquals("columns.Amount: the input already has a column called 'amount'; give the new column another "
+        assertEquals("column Amount: the input already has a column called 'amount'; give the new column another "
             + "name, or drop that column with a select node first",
             problem(TXNS, config("order_by", "day", "columns", columns("Amount", "sum(amount)"))));
         assertTrue(problem(TXNS, config("order_by", "day", "columns", columns("x", "upper(account)")))
@@ -248,6 +248,12 @@ class WindowNodeTest {
             problem(TXNS, config("order_by", "day", "columns", columns("x", "lag(amount, 1, 'none')"))));
         assertEquals("column x: row_number takes no arguments, not 1 at 1",
             problem(TXNS, config("order_by", "day", "columns", columns("x", "row_number(day)"))));
+        assertEquals("column x: a window function's arguments cannot hold another window or aggregate function "
+            + "(row_number) at 5; work it out in a window node before this one",
+            problem(TXNS, config("order_by", "day", "columns", columns("x", "sum(row_number())"))));
+        assertEquals("column x: a window function's arguments cannot hold another window or aggregate function "
+            + "(sum) at 13; work it out in a window node before this one",
+            problem(TXNS, config("order_by", "day", "columns", columns("x", "lag(1 + abs(sum(amount)))"))));
         assertEquals("column x: only count(*) takes a star at 1; write sum(column)",
             problem(TXNS, config("order_by", "day", "columns", columns("x", "sum(*)"))));
         Schema withBinary = schema(field("id", INT64), field("blob", org.apache.arrow.vector.types.pojo.ArrowType.Binary
@@ -307,6 +313,59 @@ class WindowNodeTest {
             NodeException e = assertThrows(NodeException.class, () -> h.run(new WindowFactory(), config("order_by", "id",
                 "columns", columns("ahead", "lead(text, 1000)"), "memory_limit_mb", 8)));
             assertTrue(e.getMessage().contains("the rows held for lag and lead take more than 8 MB"), e.getMessage());
+            // the harness checks every byte was freed; and the files it wrote are gone
+            Path folder = ((WindowFactory.WindowNode) h.node).spillFolder();
+            assertNotNull(folder, "it had sorted on disk before it stopped");
+            assertFalse(Files.exists(folder));
+        }
+    }
+
+    /**
+     * Wide rows and a small limit give the window many small batches, so partitions, ties, and lags
+     * and leads of up to 1,000 rows all cross batch boundaries, while the batches are let go.
+     */
+    @Test
+    void farLagsAndLeadsAcrossManySmallBatches() throws Exception {
+        Schema s = schema(field("seq", INT64), field("g", INT32), field("o", INT32), field("pad", UTF8));
+        String pad = "p".repeat(1_500);
+        Random random = new Random(11);
+        int rows = 6_000;
+        List<Object[]> data = new ArrayList<>();
+        for (int i = 0; i < rows; i++) {
+            data.add(row((long) i, random.nextInt(3), random.nextInt(50), pad));
+        }
+        try (Harness h = new Harness()) {
+            List<VectorSchemaRoot> batches = new ArrayList<>();
+            for (int from = 0; from < rows; from += 500) {
+                batches.add(h.batch(s, data.subList(from, from + 500).toArray(Object[][]::new)));
+            }
+            h.input("in", batches.toArray(VectorSchemaRoot[]::new)).connect("out");
+            h.run(new WindowFactory(), config("partition_by", List.of("g"), "order_by", List.of("o"), "columns",
+                columns("back", "lag(seq, 1000)", "on", "lead(seq, 999, -1)", "r", "rank()", "d", "dense_rank()"),
+                "memory_limit_mb", 4));
+            assertTrue(h.batches.get("out") > 10, "many small batches: " + h.batches.get("out"));
+            List<Object[]> sorted = new ArrayList<>(data);
+            sorted.sort(Comparator.comparing((Object[] r) -> (Integer) r[1]).thenComparing(r -> (Integer) r[2]));
+            List<Map<String, Object>> got = h.rows.get("out");
+            int start = 0;
+            for (int i = 0; i < rows; i++) {
+                if (i > 0 && !sorted.get(i)[1].equals(sorted.get(i - 1)[1])) {
+                    start = i;
+                }
+                int end = i;
+                while (end < rows && sorted.get(end)[1].equals(sorted.get(i)[1])) {
+                    end++;
+                }
+                Map<String, Object> r = got.get(i);
+                assertEquals(sorted.get(i)[0], r.get("seq"), "row " + i);
+                assertEquals(i - 1000 >= start ? sorted.get(i - 1000)[0] : null, r.get("back"), "row " + i);
+                assertEquals(i + 999 < end ? sorted.get(i + 999)[0] : -1L, r.get("on"), "row " + i);
+                int first = i;
+                while (first > start && sorted.get(first - 1)[2].equals(sorted.get(i)[2])) {
+                    first--;
+                }
+                assertEquals((long) (first - start + 1), r.get("r"), "row " + i);
+            }
         }
     }
 

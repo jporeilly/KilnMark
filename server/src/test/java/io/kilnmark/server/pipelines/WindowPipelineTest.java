@@ -115,7 +115,7 @@ class WindowPipelineTest {
             .body("problems.message", hasItems("Node numbered: order_by: the input has no column 'ib'; did you mean id?"));
         as(designer).body(Map.of("yaml", YAML.replace("total: \"sum(id)\"", "name: \"sum(id)\"")))
             .post("/api/v1/pipelines/validate").then().statusCode(200).body("valid", equalTo(false))
-            .body("problems.message", hasItems("Node numbered: columns.name: the input already has a column called "
+            .body("problems.message", hasItems("Node numbered: column name: the input already has a column called "
                 + "'name'; give the new column another name, or drop that column with a select node first"));
         as(designer).body(Map.of("yaml", YAML.replace("\"sum(id)\"", "\"sum(name)\"")))
             .post("/api/v1/pipelines/validate").then().statusCode(200).body("valid", equalTo(false))

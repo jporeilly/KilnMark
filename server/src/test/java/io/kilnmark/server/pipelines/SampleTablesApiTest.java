@@ -173,6 +173,18 @@ class SampleTablesApiTest {
         assertEquals(100, limit.getLong("run.rowsWritten"));
         assertTrue(Files.exists(out.resolve("samples/filter-and-route/first_transactions.csv")));
 
+        // The window sample: every transaction with its account's running balance, and one latest row per account.
+        JsonPath window = waitForRun(designer, as(designer).body(Map.of()).post("/api/v1/pipelines/sample-window/runs")
+            .then().statusCode(202).extract().jsonPath().getLong("id"));
+        assertEquals("succeeded", window.getString("run.status"), window.prettify());
+        long transactions = count(Samples.tableIn(SCHEMA, "billing.transactions"));
+        List<String> balances = Files.readAllLines(out.resolve("samples/transform/running_balances.csv"));
+        List<String> latest = Files.readAllLines(out.resolve("samples/transform/latest_per_account.csv"));
+        assertEquals(transactions + 1, balances.size(), "every transaction, and the header");
+        assertTrue(latest.size() > 1 && latest.size() < balances.size(), "one row per account: " + latest.size());
+        assertEquals(latest.size() - 1, latest.stream().skip(1).map(l -> l.split(",")[1]).distinct().count(),
+            "each account once");
+
         // The volume sample: four million rows from the sample data itself, totalled and the large lines set
         // apart, in one run.
         JsonPath volume = waitForRun(designer, as(designer).body(Map.of()).post("/api/v1/pipelines/sample-volume/runs")

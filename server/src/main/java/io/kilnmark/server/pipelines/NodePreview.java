@@ -562,7 +562,8 @@ final class NodePreview {
                 for (String expr : texts(config.get("columns")).values()) {
                     uses(id, t, main, refs(expr), "works out a value from");
                 }
-                // nothing it adds may name a hidden column, and a new name may not be an input's
+                // nothing it adds is worked out from a hidden column; a new column sharing a hidden
+                // column's name (one an earlier node dropped, say) is masked too
                 return main;
             }
             case "limit", "union" -> {
@@ -736,19 +737,11 @@ final class NodePreview {
         return out;
     }
 
-    /**
-     * A setting naming columns, as the nodes read it: a list, or one text listing them with commas
-     * ({@code group_by: region, ssn} names two columns, so both are looked at).
-     */
     private static List<String> list(Object value) {
         if (value instanceof List<?> l) {
             return l.stream().filter(java.util.Objects::nonNull).map(String::valueOf).toList();
         }
-        if (value == null) {
-            return List.of();
-        }
-        return java.util.Arrays.stream(String.valueOf(value).split(",")).map(String::strip).filter(x -> !x.isEmpty())
-            .toList();
+        return value == null ? List.of() : List.of(String.valueOf(value));
     }
 
     private static String text(Object value) {

@@ -100,17 +100,14 @@ details.
   the row before. Running totals use the `rows` frame (each row its own total, ties in arrival
   order) and the aggregate node's accumulators and types. `lag` and `lead` take a written-out offset
   from 0 to 1,000 and any expression as a default; a batch waits until the rows its leads reach have
-  arrived, and only the values a lag reaches are kept after it is passed on, counted against
-  `memory_limit_mb`. A column must be one window function, and its name must not be an input's or
+  arrived, and only the values a lag reaches are kept after it is passed on, within a limit of
+  `memory_limit_mb` of its own (so a window can hold about twice the limit in all). A column must be one window function, and its name must not be an input's or
   another new column's, ignoring case. `row_number`, `rank`, `dense_rank`, `lag` and `lead` are
   refused outside a window node. New columns are marked sensitive when their arguments, partition or
   order columns are; a preview refuses a window that looks at a hidden column. The quality predictor
   passes rows through and leaves the new columns unestimated. The canvas shows a Function for each
   new column and "balance, n · per account_id" on the node. The function index of the components
   reference lists the window functions, and the build checks the guide's tables name them all.
-- **Previews read a list of columns written as one text** (`group_by: region, ssn`) as the nodes
-  do, as two columns: an aggregate grouping or a dedupe keyed by a hidden column written that way
-  was previewed with the column's values shown, where a list (`[region, ssn]`) was refused.
 - **A node can say how much it wrote to disk.** `NodeContext.spilled(bytes)` adds to the run's
   `NodeResult.spilledBytes` (not yet stored in the database), and `NodeContext.note(text)` adds a
   line in the node's own words to the run's log (`node_note`, through `RunListener.nodeNote`).

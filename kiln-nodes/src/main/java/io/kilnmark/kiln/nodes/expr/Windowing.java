@@ -83,6 +83,13 @@ public final class Windowing {
         if (call.star() && !fn.equals("count")) {
             throw new ExprException("only count(*) takes a star", pos, "write " + fn + "(column)");
         }
+        for (Node a : call.args()) {
+            Node.Call inner = nestedCall(a);
+            if (inner != null) {
+                throw new ExprException("a window function's arguments cannot hold another window or aggregate "
+                    + "function (" + inner.name() + ")", inner.pos(), "work it out in a window node before this one");
+            }
+        }
         Compiler compiler = new Compiler(scope, null);
         List<Node> args = call.args();
         switch (fn) {
@@ -135,6 +142,47 @@ public final class Windowing {
                 fns.put(name, new Fn(name, fn, arg, null, 0, result));
             }
         }
+    }
+
+    /** The first window or aggregate call inside {@code n}, or null. */
+    private static Node.Call nestedCall(Node n) {
+        return switch (n) {
+            case Node.Call c -> FUNCTIONS.contains(c.name()) || Compiler.AGGREGATES.contains(c.name()) ? c
+                : first(c.args());
+            case Node.Unary u -> nestedCall(u.operand());
+            case Node.Binary b -> first(List.of(b.left(), b.right()));
+            case Node.IsNull i -> nestedCall(i.operand());
+            case Node.In i -> {
+                Node.Call c = nestedCall(i.operand());
+                yield c != null ? c : first(i.items());
+            }
+            case Node.Between b -> first(List.of(b.operand(), b.low(), b.high()));
+            case Node.Like l -> first(List.of(l.operand(), l.pattern()));
+            case Node.Case c -> {
+                List<Node> parts = new ArrayList<>();
+                if (c.operand() != null) {
+                    parts.add(c.operand());
+                }
+                parts.addAll(c.whens());
+                parts.addAll(c.thens());
+                if (c.otherwise() != null) {
+                    parts.add(c.otherwise());
+                }
+                yield first(parts);
+            }
+            case Node.Cast c -> nestedCall(c.operand());
+            case Node.Literal _, Node.Column _ -> null;
+        };
+    }
+
+    private static Node.Call first(List<Node> nodes) {
+        for (Node n : nodes) {
+            Node.Call c = nestedCall(n);
+            if (c != null) {
+                return c;
+            }
+        }
+        return null;
     }
 
     private static void arity(Node.Call c, int min, int max) throws ExprException {
@@ -290,7 +338,13 @@ public final class Windowing {
                 return null;
             }
             VectorSchemaRoot out = build(e, allocator);
-            e.root = null;
+            // from now on only what a later row's lag reads is needed
+            for (int f = 0; f < list.length; f++) {
+                if (!list[f].fn().equals("lag")) {
+                    e.args[f] = null;
+                }
+                e.fallbacks[f] = null;
+            }
             bytes -= e.bytes;
             e.bytes = estimateKept(e);
             bytes += e.bytes;
@@ -360,6 +414,7 @@ public final class Windowing {
                 throw ex;
             } finally {
                 rows.close();
+                e.root = null;
             }
         }
 

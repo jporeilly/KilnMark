@@ -467,8 +467,9 @@ Good to know:
 - Any number of rows can be used: rows are put in order as a `sort` puts them, in memory up to
   `memory_limit_mb` and on disk past it, in a temporary folder only the server can read, encrypted
   and deleted when the node ends. The run's log says how much was written. The rows a `lead` looks
-  ahead to, and the values a `lag` looks back to, are held too and count against the same limit;
-  with very wide rows and a large offset the run stops and says so.
+  ahead to, and the values a `lag` looks back to, are held too, within a limit of the same size, so
+  a window may hold up to about twice `memory_limit_mb` in all; with very wide rows and a large
+  offset the run stops and says so.
 - `lag`, `lead`, `row_number`, `rank` and `dense_rank` work only in a window node.
 
 ## Expressions

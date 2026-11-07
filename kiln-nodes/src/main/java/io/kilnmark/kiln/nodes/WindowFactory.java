@@ -34,7 +34,9 @@ import io.kilnmark.kiln.nodes.expr.Windowing;
  * ({@link ExternalSorter}): up to {@code memory_limit_mb} in memory, past it on disk, encrypted, in a
  * private temporary folder deleted when the node ends, fails or is stopped. Nothing is passed on
  * until the input has ended. While the rows are passed on, those a {@code lead} looks ahead to and the
- * values a {@code lag} looks back to are held too, counted against the same limit.
+ * values a {@code lag} looks back to are held too, within a limit of the same size: with nothing on
+ * disk, the sorted rows stay in memory until the node ends, so it can hold up to about twice
+ * {@code memory_limit_mb} in all.
  */
 public final class WindowFactory implements NodeFactory {
 
@@ -171,7 +173,7 @@ public final class WindowFactory implements NodeFactory {
             String name = col.getKey();
             String clash = inputNames.get(name.toLowerCase(Locale.ROOT));
             if (clash != null) {
-                throw new NodeException("columns." + name + ": the input already has a column called '" + clash
+                throw new NodeException("column " + name + ": the input already has a column called '" + clash
                     + "'; give the new column another name, or drop that column with a select node first");
             }
             try {

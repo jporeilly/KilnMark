@@ -949,7 +949,8 @@ ones, in order of group and then of `order_by`; a new column cannot have an inpu
 any case. Nothing is passed on until every row has arrived. Rows are put in order within
 `memory_limit_mb`, and on disk past it, as a sort does (encrypted, in a private temporary folder
 deleted when the node ends); the run's log says when that happened and how much was written. The
-rows a `lead` looks ahead to and the values a `lag` looks back to count against the same limit.
+rows a `lead` looks ahead to and the values a `lag` looks back to are held within a limit of the
+same size, so a window may hold up to about twice `memory_limit_mb` in all.
 
 ```yaml
 kilnmark: pipeline/v1

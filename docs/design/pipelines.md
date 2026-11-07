@@ -719,9 +719,12 @@ found through `ServiceLoader`. Settings, with defaults:
   passed on with its new columns (its own vectors moved, not copied); after that only its argument
   values are kept, as long as a later row's `lag` can reach them. A row looks at another only when
   both carry the same partition number, given as partitions start. What is held (the batches waiting
-  and the values kept, estimated in bytes) counts against `memory_limit_mb`; past it the run stops
-  with "the rows held for lag and lead take more than N MB", which only very wide rows and a large
-  offset reach.
+  and the lag values kept, estimated in bytes) is checked against `memory_limit_mb` on its own; past
+  it the run stops with "the rows held for lag and lead take more than N MB", which only very wide
+  rows and a large offset reach. The sorter's own rows are not counted in it: with nothing on disk
+  they stay in memory until the node ends, so a window can hold about twice the limit, where a sort
+  holds about one and an eighth. Counting both against one budget would make a window that fits in
+  memory spill as soon as it has a lead.
 - **Names and types.** The input's columns come out as they were, then the new ones, written with the
   expression types (`int64` for numbers and ranks, `decimal(38,s)`, `float64`, `utf8`, `date`,
   `timestamp`). A new name equal to an input column's or another new column's, ignoring case (as a
