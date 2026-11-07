@@ -247,6 +247,17 @@ class RunRetriesApiTest {
         as(steward).body(Map.of()).post("/api/v1/pipelines/rr-copy/runs").then().statusCode(409);
         Thread.sleep(1500);
         assertEquals(0, events("pipeline_failed", "pipeline:rr-copy"), "no notice on a try that is tried again");
+        // A place on a limited source given back wakes the runs waiting for one, never a run waiting for its next
+        // try: its wait is its retry_delay (a retry storm otherwise).
+        long source = count("SELECT id FROM kilnmark.data_source WHERE name = 'rr-out'");
+        try (JobQueue.ScanLease lease = queue.lockSource(source).orElseThrow()) {
+            JobQueue.Places places = lease.takePlaces(List.of(new JobQueue.SourceLimit(source, "rr-out", 1)));
+            assertTrue(places.taken());
+            lease.givePlaces(places.keys());
+        }
+        assertEquals(1, count("SELECT count(*) FROM kilnmark.job WHERE kind = 'pipeline' AND "
+            + "(payload ->> 'pipelineRunId')::bigint = ? AND run_after > now() + interval '3 seconds'", id),
+            "the retry's wait was not cut short");
 
         now("pipeline", id);
         PipelineStore.Run done = pipelineRun(id, r -> r.finished(), "try 2");
@@ -483,6 +494,21 @@ class RunRetriesApiTest {
         assertEquals(1, count("SELECT count(*) FROM kilnmark.audit_event WHERE action = 'flow.run_again' AND target = ?",
             String.valueOf(id)));
         as(steward).post("/api/v1/flow-runs/" + id + "/run-again").then().statusCode(409);
+
+        // A run that failed before Kilnmark recorded its tries: its rows cannot say whether a sql node committed.
+        long old = db.tx(c -> {
+            try (java.sql.PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.flow_run (flow, version, "
+                + "status, requested_by, requested_role, started_at, finished_at, error) VALUES ('rr-again', 1, "
+                + "'failed', 'tester', 'steward', now(), now(), 'Node second failed') RETURNING id")) {
+                try (java.sql.ResultSet rs = ps.executeQuery()) {
+                    rs.next();
+                    return rs.getLong(1);
+                }
+            }
+        });
+        String refused = as(steward).post("/api/v1/flow-runs/" + old + "/run-again").then().statusCode(409).extract()
+            .jsonPath().getString("error");
+        assertTrue(refused.contains("before Kilnmark recorded"), refused);
     }
 
     @Test

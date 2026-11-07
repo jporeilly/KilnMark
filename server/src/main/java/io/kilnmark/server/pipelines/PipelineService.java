@@ -1537,6 +1537,13 @@ public class PipelineService {
                 told = tried > 0 ? RunRetries.afterTries(tried) : null;
                 return ended;
             }
+            if (holder != null && !holder.equals(store.jobHolder(jobId))) {
+                // Its job is no longer this worker's: recovery queued it again, for another to take the run over.
+                LOG.infof("Run %d of pipeline %s: this worker lost its job; the run is left to the worker that takes it",
+                    id, run.pipeline());
+                ended = false;
+                return false;
+            }
             RunRetries.Decision d = decide(ending);
             if (d.again()) {
                 if (holder != null && store.retry(id, jobId, holder, tried, d.at(), error, RunRetries.waiting(tried,

@@ -4,12 +4,13 @@
 SET search_path = kilnmark, public;
 
 -- A run's tries: run_try counts them from 0; tries is how many it may have by itself (1 + its
--- retries, after the server's cap; 1 for a run a flow node starts). While a run waits for its next
+-- retries, after the server's cap; 1 for a run a flow node starts; the try's own number + 1 after Run
+-- again from the failure, which is not tried again by itself). While a run waits for its next
 -- try it is queued again, and retry_at says when that try starts. warned_at is when its owners were
 -- told it was taking longer than expected (once a run).
 ALTER TABLE pipeline_run
     ADD COLUMN run_try    smallint NOT NULL DEFAULT 0 CHECK (run_try BETWEEN 0 AND 50),
-    ADD COLUMN tries      smallint NOT NULL DEFAULT 1 CHECK (tries BETWEEN 1 AND 6),
+    ADD COLUMN tries      smallint NOT NULL DEFAULT 1 CHECK (tries BETWEEN 1 AND 51),
     ADD COLUMN retry_at   timestamptz,
     ADD COLUMN warned_at  timestamptz,
     -- What ended a failed run, so a flow knows whether running its node again could change anything:
@@ -18,7 +19,7 @@ ALTER TABLE pipeline_run
         'error', 'cancelled'));
 ALTER TABLE flow_run
     ADD COLUMN run_try    smallint NOT NULL DEFAULT 0 CHECK (run_try BETWEEN 0 AND 50),
-    ADD COLUMN tries      smallint NOT NULL DEFAULT 1 CHECK (tries BETWEEN 1 AND 6),
+    ADD COLUMN tries      smallint NOT NULL DEFAULT 1 CHECK (tries BETWEEN 1 AND 51),
     ADD COLUMN retry_at   timestamptz,
     ADD COLUMN warned_at  timestamptz;
 

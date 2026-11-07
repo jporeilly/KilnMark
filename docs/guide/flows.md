@@ -316,7 +316,8 @@ from the failure** (stewards and above, never someone whose role is below the ru
   runs only its items that did not succeed. A node with retries of its own runs again with them.
 - It is refused, saying which node and why, when a node that would run again is not safe to: its
   pipeline appends, or a `sql` node committed or its commit is in doubt. It is refused too while
-  another run of the flow is queued or running.
+  another run of the flow is queued or running, while pipeline runs it started are still going, and
+  for a run that failed before this version of Kilnmark, which did not record how each try ended.
 - It is recorded against the run (**Tries** says who asked) and in the [audit log](audit-log.md).
   A try started by hand is not tried again by itself.
 - A pipeline has no Run again from the failure: it starts again from its beginning. To carry on

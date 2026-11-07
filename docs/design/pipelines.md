@@ -1069,7 +1069,9 @@ What the lifecycle above does when a try fails, and who is told. Pipelines and f
   lost` only a lost try. To try again, `RunTables.retry` does in one transaction what a new try needs:
   the try's row, the run queued again with `run_try + 1`, `retry_at` and "Try 1 of 3 failed; trying
   again at 14:05" as its message, and the job (still this worker's) queued again for then, the
-  attempt counted. So a schedule's fire is never repeated, one run at a time holds while it waits
+  attempt counted. A source's place given back wakes the runs waiting for a place, never one waiting
+  for its next try (`JobQueue.wakeWaiting`), so a wait is never cut short. So a schedule's fire is
+  never repeated, one run at a time holds while it waits
   (a fire then is skipped), `?wait=` and `kilnmark-run` keep waiting, and a request key gives back
   the same run. A cancel while it waits cancels it at once and takes the job off the queue.
 - **A later try of a pipeline** starts from its beginning: `clearTry` removes the earlier try's node

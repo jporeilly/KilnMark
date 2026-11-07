@@ -511,7 +511,9 @@ public class FlowStore implements io.kilnmark.server.runs.RunStore<FlowStore.Run
             // Nodes of those runs still marked running will never end: say so.
             try (PreparedStatement ps = c.prepareStatement("""
                 UPDATE kilnmark.flow_node_run s SET status = 'failed', finished_at = now(),
-                    message = 'The worker running this flow stopped'
+                    message = 'The worker running this flow stopped',
+                    -- its statements ran on the worker that stopped: whether they committed is not known (ADR 0053)
+                    reported = CASE WHEN s.type = 'sql' THEN s.reported || '{"in_doubt": true}'::jsonb ELSE s.reported END
                 FROM kilnmark.flow_run r, kilnmark.job j
                 WHERE s.run_id = r.id AND s.status = 'running' AND r.status IN ('queued', 'running')
                   AND j.kind = 'flow' AND j.status IN ('failed', 'done')

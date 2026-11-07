@@ -849,6 +849,23 @@ public class PipelineStore implements io.kilnmark.server.runs.RunStore<PipelineS
         return RunTables.tries(db, KIND, id);
     }
 
+    /** The pipeline runs flow run {@code flowRunId} started that are still queued or running. */
+    public List<Long> unfinishedForFlow(long flowRunId) {
+        return db.tx(c -> {
+            List<Long> out = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT id FROM kilnmark.pipeline_run WHERE flow_run_id = ? "
+                + "AND status IN ('queued', 'running')")) {
+                ps.setLong(1, flowRunId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add(rs.getLong(1));
+                    }
+                }
+            }
+            return out;
+        });
+    }
+
     /** The worker holding job {@code jobId} now, or null. */
     public String jobHolder(long jobId) {
         return RunTables.jobHolder(db, jobId);

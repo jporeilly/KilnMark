@@ -544,8 +544,11 @@ public class JobQueue {
          */
         private static void wakeWaiting(Connection c) {
             try (Statement st = c.createStatement()) {
-                st.executeUpdate("UPDATE kilnmark.job SET run_after = now() WHERE kind = '"
-                    + io.kilnmark.server.pipelines.PipelineStore.JOB_KIND + "' AND status = 'queued' AND run_after > now()");
+                // Not a run waiting for its next try (ADR 0053): its wait is its retry_delay, never cut short.
+                st.executeUpdate("UPDATE kilnmark.job j SET run_after = now() WHERE j.kind = '"
+                    + io.kilnmark.server.pipelines.PipelineStore.JOB_KIND + "' AND j.status = 'queued' AND j.run_after > now() "
+                    + "AND NOT EXISTS (SELECT 1 FROM kilnmark.pipeline_run r WHERE r.id = (j.payload ->> 'pipelineRunId')::bigint "
+                    + "AND r.retry_at > now())");
                 st.execute("NOTIFY " + CHANNEL);
             } catch (SQLException e) {
                 LOG.debugf("Could not wake the runs waiting for a place; they look again within seconds");

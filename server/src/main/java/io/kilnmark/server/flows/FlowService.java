@@ -583,8 +583,26 @@ public class FlowService {
     /** Marks failed the runs whose worker stopped, and tells of each; called by workers. */
     public int failOrphanedRuns() {
         List<FlowStore.Run> failed = store.failOrphanedRuns();
-        failed.forEach(r -> told(r.flow(), r.id(), "failed", r.error()));
+        failed.forEach(r -> {
+            stopPipelineRuns(r);
+            told(r.flow(), r.id(), "failed", r.error());
+        });
         return failed.size();
+    }
+
+    /**
+     * Cancels the pipeline runs a flow run started that are still going, once the flow run has ended
+     * without its worker (ADR 0053): nothing watches them any more, and a later try must never run one of
+     * its nodes beside them.
+     */
+    private void stopPipelineRuns(FlowStore.Run r) {
+        for (long id : pipelineStore.unfinishedForFlow(r.id())) {
+            try {
+                pipelines.cancel(id, r.requestedBy());
+            } catch (RuntimeException e) {
+                // ended meanwhile
+            }
+        }
     }
 
     public Optional<FlowStore.Flow> find(String name) {
@@ -2488,6 +2506,12 @@ public class FlowService {
                 }
                 return;
             }
+            if (holder != null && !holder.equals(store.jobHolder(jobId))) {
+                // Its job is no longer this worker's: recovery queued it again, for another to take the run over.
+                LOG.infof("Flow run %d of %s: this worker lost its job; the run is left to the worker that takes it",
+                    id, run.flow());
+                return;
+            }
             RunRetries.Decision d = RunRetries.decide(options, run.tries(), tried, ending, null,
                 store.nextFire(id), Instant.now(), java.util.concurrent.ThreadLocalRandom.current());
             if (d.again() && def != null) {
@@ -2631,7 +2655,10 @@ public class FlowService {
             boolean byHand = !tried.isEmpty() && tried.getLast().askedBy() != null;
             CarryOn.Plan plan = CarryOn.plan(def, store.nodeRuns(run.id()), facts(), byHand);
             if (plan.blocker() != null) {
-                endTry("failed", "Not run again: " + plan.blocker(), RunRetries.Ending.REFUSED, null);
+                String why = "Not run again: " + plan.blocker();
+                if (store.finishRun(run.id(), "failed", why, why, run.runTry())) {
+                    told(run.flow(), run.id(), "failed", why);
+                }
                 return false;
             }
             store.clearNodes(run.id(), plan.keep().keySet());
@@ -2771,13 +2798,16 @@ public class FlowService {
         }
         for (FlowStore.NodeRun n : store.nodeRuns(run.id())) {
             if ("running".equals(n.status())) {
+                // A sql node's statements ran on the worker that stopped: whether they committed is not known.
+                String reported = FlowDefinition.SQL.equals(n.type()) ? "{\"" + IN_DOUBT + "\": true}" : n.reported();
                 store.saveNode(run.id(), new FlowStore.NodeRun(n.nodeId(), n.type(), n.position(), "failed",
-                    n.startedAt(), Instant.now(), n.pipelineRunId(), "The worker running this flow stopped", n.reported()));
+                    n.startedAt(), Instant.now(), n.pipelineRunId(), "The worker running this flow stopped", reported));
             }
         }
         String why = "The worker running this flow stopped before it finished" + RunRetries.afterTries(run.runTry())
             + ". " + d.why() + ". Check what the pipelines it had started had written.";
         if (store.finishRun(run.id(), "failed", why, d.why(), run.runTry())) {
+            stopPipelineRuns(run);
             told(run.flow(), run.id(), "failed", why);
         }
         return false;
@@ -2844,6 +2874,15 @@ public class FlowService {
         }
         if (!sqlChecked(def, r.flow(), r.version())) {
             throw fail(Response.Status.CONFLICT, SQL_NOT_CHECKED.formatted(r.version(), r.flow()));
+        }
+        if (store.tries(id).isEmpty()) {
+            // Failed before Kilnmark recorded tries (V39): its rows do not say whether a sql node committed.
+            throw fail(Response.Status.CONFLICT, "Run " + id + " failed before Kilnmark recorded how each try ended, so "
+                + "it cannot be run again from its failure: run the flow again");
+        }
+        if (!pipelineStore.unfinishedForFlow(id).isEmpty()) {
+            throw fail(Response.Status.CONFLICT, "Not run again yet: pipeline runs it started are still going. Wait for "
+                + "them, or cancel them, then try again");
         }
         CarryOn.Plan plan = CarryOn.plan(def, store.nodeRuns(id), facts(id), true);
         if (plan.blocker() != null) {

@@ -547,10 +547,13 @@ public final class RunTables {
             ps.setString(2, by);
             ps.setLong(3, id);
             ps.setLong(4, id);
-            ps.executeUpdate();
+            if (ps.executeUpdate() != 1) {
+                // The worker reads that the try is by hand from this row: without it, nothing is started.
+                return false;
+            }
         }
         try (PreparedStatement ps = c.prepareStatement("UPDATE " + k.runTable() + " SET status = 'queued', "
-            + "run_try = run_try + 1, tries = least(6, run_try + 2), retry_at = NULL, started_at = NULL, "
+            + "run_try = run_try + 1, tries = run_try + 2, retry_at = NULL, started_at = NULL, "
             + "finished_at = NULL, error = NULL, cancel_requested = false WHERE id = ?")) {
             ps.setLong(1, id);
             ps.executeUpdate();

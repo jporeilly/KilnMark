@@ -213,10 +213,17 @@ each try starts from the nodes' rows of the try before (`CarryOn.plan`, pure, `C
   started (`abandon`: pipeline runs cancelled, a sql node failed and in doubt unless it is known to
   have rolled back), as it does after an internal error, and ends the try as lost.
 - **Fencing.** Every end of a try (`RunTables.finishRun`, `retry`) checks that the run is still on
-  that try, and a retry that the job is held by the worker that held it as the try began, so a
+  that try, and a retry that the job is held by the worker that held it as the try began; a worker
+  that finds its job no longer its own ends nothing and leaves the run to whoever takes it. So a
   worker that lost its job to another changes nothing of the other's try.
+- **Left behind.** A flow run failed because its worker stopped with no tries left
+  (`failOrphanedRuns`), or whose takeover was declined, has its sql nodes that were running marked
+  in doubt and its pipeline runs still going cancelled. Run again from the failure is refused while
+  any of its pipeline runs is going, and for a run with no recorded try (one that failed before V39,
+  whose rows cannot say whether a sql node committed).
 - **Run again from the failure** (`POST /api/v1/flow-runs/{id}/run-again`, `FlowService.runAgain`):
-  stewards and above, never below the run's own role; a failed run only; the plan made by hand,
+  stewards and above, never below the run's own role; a failed run only, with a recorded try; the
+  plan made by hand,
   refused (409) with its blocker; then `RunTables.runAgain`, in one transaction with the flow's row
   locked as a queue locks it (one run at a time: 409): the failed try's row says who asked, the run
   is queued as its next try with `tries` = that try (so it is not tried again by itself), and its own

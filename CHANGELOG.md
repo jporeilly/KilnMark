@@ -60,7 +60,10 @@ details.
   `warn_after` watched by the run watcher. A node's own retries take the place of the run's, so
   tries never multiply, and each node retry wait is now at most an hour too (five tries again from
   `1h` waited 16 hours before). A failure the server refused before a run started (a version that
-  no longer compiles, say) is now told too.
+  no longer compiles, say) is now told too. A worker that stops while it watches a flow that may be taken over hands it over
+  rather than failing it; a worker that lost its job never ends or queues again another worker's
+  try; a source's place given back never cuts a retry's wait short; and a pipeline run lost on its
+  last try is told.
 - **Research: what other tools offer** (docs/design/research): the settings about twenty data
   integration and orchestration tools give their nodes and their runs, from their own
   documentation, the 15 gaps that matter most for banks, and a migration map. The backlog takes
