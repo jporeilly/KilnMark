@@ -271,7 +271,10 @@ public class Samples {
         return out.toString();
     }
 
-    /** A check-source node's {@code tables: [...]}, written on one line: the names in group 2. */
+    /**
+     * A check-source node's {@code tables: [...]}, written on one line as the bundled samples write it,
+     * the names unquoted, in group 2. A list in another form is left as it is.
+     */
     private static final Pattern TABLES_LINE = Pattern.compile("(?m)^(\\s*tables:\\s*\\[)([^\\]\\n]*)(\\].*)$");
 
     /** Each check-source {@code tables: [...]} with the sample tables it names as created in {@code schema}. */
@@ -378,9 +381,11 @@ public class Samples {
      * query name. A check-source node, or a wait-for node waiting for a file, runs none.
      */
     static List<String> sqlSources(String yaml) {
-        io.kilnmark.kiln.yaml.FlowDefinition def = io.kilnmark.kiln.yaml.FlowDefinition.parse(yaml).definition();
-        if (def == null) {
-            return List.of();
+        io.kilnmark.kiln.yaml.FlowDefinition.Parsed parsed = io.kilnmark.kiln.yaml.FlowDefinition.parse(yaml);
+        io.kilnmark.kiln.yaml.FlowDefinition def = parsed.definition();
+        if (def == null || !parsed.problems().isEmpty()) {
+            // A flow that does not read cleanly is checked as if every source it names ran SQL: never less.
+            return sourcesOf(yaml);
         }
         Set<String> named = new LinkedHashSet<>();
         for (io.kilnmark.kiln.yaml.FlowDefinition.Node n : def.nodes()) {

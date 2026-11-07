@@ -42,13 +42,18 @@ export function groupSamples(samples: SampleInfo[]): [string, SampleInfo[]][] {
   return [...groups.entries()];
 }
 
+/** Whether an explanation has anything to show beyond its title. */
+export function explains(e: SampleExplanation | null): e is SampleExplanation {
+  return !!e && !!(e.shows || e.why || e.lookFor || e.needs);
+}
+
 /**
  * A sample's or template's explanation, from the comment its file starts with: what it shows (for a
  * template, what it is for), why it matters, what to look for, and what it needs. Parts left out are
  * not shown.
  */
 export function Explanation({ explanation: e, template = false }: { explanation: SampleExplanation | null; template?: boolean }) {
-  if (!e || !(e.shows || e.why || e.lookFor || e.needs)) return null;
+  if (!explains(e)) return null;
   const parts: [string, string | null][] = [
     [template ? "What it is for" : "What it shows", e.shows],
     ["Why it matters", e.why],
@@ -194,7 +199,7 @@ function SampleRow({ sample: s, pipeline, flow }: { sample: SampleInfo; pipeline
         <span className={`lib-kind lib-kind--${s.type}`}>{s.type === "flow" ? "Flow" : "Pipeline"}</span>
         {link ? <a href={link}>{s.name}</a> : <span className="mono">{s.name}</span>}
         {s.description && <div className="small muted">{s.description}</div>}
-        {s.explanation && (
+        {explains(s.explanation) && (
           <details className="lib-about">
             <summary>
               About this sample<span className="visually-hidden">: {s.name}</span>

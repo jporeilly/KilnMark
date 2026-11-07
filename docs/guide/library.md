@@ -25,8 +25,8 @@ shows:
 - one line on what it does;
 - **About this sample**, which opens its explanation in four parts:
   - **What it shows**: what it does, in two or three sentences;
-  - **Why it matters**: the real need it meets and who typically has it, such as banks reporting
-    each account's latest balance;
+  - **Why it matters**: the real need it meets and who typically has it, such as banks typically
+    reporting each account's latest balance;
   - **Look for when it runs**: what to notice on the canvas or on the run's page;
   - **Needs**: the sources it reads and writes (`crm-db`, `shop-db`, `files`), and any setting or
     right it relies on, such as Allow SQL or a server variable;

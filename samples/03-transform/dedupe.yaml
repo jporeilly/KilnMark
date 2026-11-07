@@ -1,6 +1,6 @@
 # Dedupe: one row per key (a Kilnmark sample).
 # Keeps the first customer for each email address. The email is tidied first, so a difference in
-# case or spaces does not hide a repeat. The repeats go to a file of their own, to look at.
+# case or in spaces at either end does not hide a repeat. The repeats go to a file of their own, to look at.
 # Why it matters: Duplicate customers inflate counts and break single-customer views, which KYC and
 # customer-risk reporting often rely on. Hospitals meet the same problem with one patient recorded
 # in several systems. Keeping the repeats in their own file lets a steward review them.

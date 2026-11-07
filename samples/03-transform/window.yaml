@@ -2,9 +2,9 @@
 # Gives every billing transaction a running balance for its account, numbers each account's
 # transactions and shows the amount before. Then it keeps each account's latest transaction, with
 # the account's balance after it.
-# Why it matters: Banks report each account's latest balance and its running balance through the
-# day, for example for statements, overdraft checks and end-of-day positions. The latest row per key
-# is also how current customer details are typically picked from a history table.
+# Why it matters: Banks typically report each account's latest balance and its running balance
+# through the day, for example for statements, overdraft checks and end-of-day positions. The latest
+# row per key is also how current customer details are typically picked from a history table.
 # Look for: partition_by starts the balance again for each account. The second window numbers the
 # rows newest first, so row number 1 is the latest, and the filter keeps only those.
 # Needs: crm-db (the billing schema) and files.

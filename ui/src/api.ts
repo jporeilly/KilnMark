@@ -1568,11 +1568,11 @@ export type NodeType = {
 
 /** A source name the bundled samples use in place of a real source, and what it stands for. */
 export type SamplePlaceholder = { name: string; category: string; description: string };
-/** One bundled sample; exists: a pipeline or flow of its name is already there. */
 /**
  * What a sample or template explains about itself, read from the comment its file starts with: what it
- * shows (for a template, what it is for), why it matters, what to look for when it runs, and what it needs. A part the
- * comment leaves out is null. Lines are joined into sentences; an example to copy has a line of its own.
+ * shows (for a template, what it is for), why it matters, what to look for when it runs, and what it
+ * needs. A part the comment leaves out is null. Lines are joined into sentences; an example to copy has
+ * a line of its own.
  */
 export type SampleExplanation = {
   title: string | null;
@@ -1582,6 +1582,7 @@ export type SampleExplanation = {
   lookFor: string | null;
   needs: string | null;
 };
+/** One bundled sample; exists: a pipeline or flow of its name is already there. */
 export type SampleInfo = {
   file: string;
   name: string;

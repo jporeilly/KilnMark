@@ -7,10 +7,12 @@
 # first and waiting for a file turns a confusing failure halfway through into a clear notice at the
 # start, and priority lets the work a deadline depends on start first.
 # Look for: the check-source node and the missing value it reports, the wait-for node (file, every,
-# timeout) and its waited_s value, and priority on the two run-pipeline nodes: when every worker is
-# busy, a free worker takes the high-priority run first. A wait-for node can also wait for a query
-# to be true, such as a row count, on a PostgreSQL source with Allow SQL on. This sample waits for a
-# file, so it needs no SQL.
+# timeout) and its waited_s value, and priority on the two run-pipeline nodes. Here the file waited
+# for is the one the node before writes, so it is there at once; in real work it is a file another
+# system delivers. Priority orders a run against other runs waiting for a worker, not against the
+# other node here, which runs after it. A wait-for node can also wait for a query to be true, such
+# as a row count, on a PostgreSQL source with Allow SQL on. This sample waits for a file, so it
+# needs no SQL.
 # Needs: sample-read-write-csv and sample-dedupe, so crm-db and files. Running it needs a steward or
 # above.
 kilnmark: flow/v1
@@ -44,8 +46,8 @@ nodes:
   - id: missing
     type: notify
     severity: high
-    title: "The CRM tables are not ready: ${ready.missing} missing"
-    message: Nothing else ran. Open the run to see which tables.
+    title: The CRM tables are not ready
+    message: "Tables missing: ${ready.missing} (unknown when the database could not be reached). Nothing else ran."
 
   - id: late
     type: notify

@@ -5,7 +5,7 @@
 # where it stopped. If a run is still going after 10 minutes, its owners are told once.
 # Why it matters: Overnight batches often meet brief outages, such as a database restart or a lost
 # connection. Trying again only where a repeat is safe gets the batch through without loading
-# anything twice, and the owners hear only when it really failed.
+# anything twice, and the owners are told only when it really failed or runs long.
 # Look for: the run: block (retries, retry_delay, retry_on: lost, timeout, warn_after) and the
 # node's own timeout and retries. Tries never multiply: a node's own retries take the place of the
 # flow's for that node, so it is tried at most three times, never nine. Only work that is safe to

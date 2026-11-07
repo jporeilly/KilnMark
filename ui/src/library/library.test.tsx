@@ -35,7 +35,9 @@ const catalogue: SampleCatalogue = {
         needs: "A PostgreSQL crm-db with Allow SQL on.\nPOST /api/v1/samples",
       },
     },
-    { file: "02-filter-and-route/filter.yaml", name: "sample-filter", type: "pipeline", description: "Filter", sources: [], exists: false, explanation: null },
+    { file: "02-filter-and-route/filter.yaml", name: "sample-filter", type: "pipeline", description: "Filter", sources: [], exists: false,
+      // only a title: nothing to open
+      explanation: { title: "Filter", shows: null, why: null, lookFor: null, needs: null } },
     {
       file: "08-flows/passing-values.yaml",
       name: "sample-passing-values",

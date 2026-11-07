@@ -3,14 +3,15 @@
 # reference, a due date 30 days after it was issued and the days it is overdue. It puts each
 # invoice in a band with if, and adds a hash of the customer's email: a key two teams can join on
 # without either keeping the email.
-# Why it matters: Hashing an email gives a join key that never shows the address, so two teams can
-# match customers without sharing personal data. Hospitals and health insurers typically do the same
-# with a patient identifier, to match a patient across systems. Padding numbers, splitting
-# references and counting days overdue are everyday tidying for account numbers and arrears reports.
+# Why it matters: A hashed email gives a join key that does not show the address, so two teams can
+# match customers without either showing it. Hospitals and health insurers typically do the same
+# with a patient identifier, to match a patient across systems. A hash is still personal data, so it
+# stays marked sensitive.
 # Look for: lpad, split_part, left and right, date_add and date_diff, greatest and least, if,
 # contains and starts_with, and sha256. A hash of a column marked sensitive stays marked sensitive,
 # so email_hash is masked wherever the email would be: anyone who knows an email can hash it and
-# find the person.
+# find the person. Padding numbers, splitting references and counting days overdue are everyday
+# tidying for account numbers and arrears reports.
 # Needs: crm-db (the crm and billing schemas) and files.
 kilnmark: pipeline/v1
 name: sample-functions
@@ -33,7 +34,7 @@ nodes:
     input: customers
     columns:
       cust_ref: "'C-' || lpad(cast(customer_id as utf8), 5, '0')"   # 170 becomes C-00170, as invoices write it
-      email_hash: "sha256(lower(trim(email)))"                       # tidied first, so case and spaces do not change it
+      email_hash: "sha256(lower(trim(email)))"                       # tidied first: case and outer spaces do not change it
       email_has_spaces: "contains(email, ' ')"
       in_bristol: "starts_with(upper(trim(postcode)), 'BS')"
 

@@ -2,9 +2,10 @@
 # Reads five columns of the CRM customers, and only the Premier and Business customers who opted in
 # to marketing and whose last name starts with S. Writes them to a CSV file. Reading less makes the
 # run quicker, and keeps the columns you do not need out of the file.
-# Why it matters: Reading only the columns and rows a job needs is a typical data-minimisation step
-# under GDPR, and in US healthcare under HIPAA's minimum necessary standard: personal data a report
-# does not use never leaves the source. It also keeps extracts small and quick.
+# Why it matters: Reading only what a job needs is a typical data-minimisation step under GDPR, and
+# in US healthcare under HIPAA's minimum necessary standard: columns a report does not use never
+# leave the source, and the database leaves out most of the rows. It also keeps extracts small and
+# quick.
 # Look for: the note under the read node. It says who applies each part of the where: the database
 # applies the segment and opt-in part as it reads, with each value bound rather than written into
 # the SQL, and Kilnmark applies lower(...) as the rows arrive. The rows are the same either way.

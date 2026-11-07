@@ -49,7 +49,7 @@ to a source you have saved:
 | --- | --- | --- |
 | `crm-db` | A database with schemas `crm` (customers, customers_archive_2023, accounts) and `billing` (transactions, invoices) | read and write, Parquet, read some columns and rows, read with a query (PostgreSQL with Allow SQL on), limit, compute, functions, dedupe, which row wins, window, union, quarantine gate; the flow that checks a source |
 | `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed) | filter, route, select, sort, lookup, join, which row wins, both aggregates, warn and stop gates, both parameter samples; the sql flow |
-| `files` | File storage the samples write to, under `samples/`; it must allow writing | every pipeline |
+| `files` | File storage the samples write to, under `samples/`; it must allow writing | every pipeline, and the flow that waits for a file |
 
 A placeholder you do not map skips the samples that use it. Each sample is checked against what
 Kilnmark has scanned of your sources, so scan them first: a table a sample reads that the scan did
@@ -113,7 +113,7 @@ bank or person.
 | | `sample-select` | Keep, retype, rename and order columns | A file or table in the layout another system expects |
 | | `sample-dedupe` | One row per key; the repeats through `rejected` | Duplicate customers (or patients) break single-customer views that KYC reporting often relies on |
 | | `sample-sort` | Rows in order: several columns, largest first, empty values last | Statements and reports in a set order, the same on every run |
-| | `sample-functions` | Tidy values and work out new ones: `lpad`, `split_part`, `left` and `right`, `date_add` and `date_diff`, `greatest` and `least`, `if`, `contains` and `starts_with`, and a `sha256` of the email as a key, which stays marked sensitive | A hashed email or patient identifier as a join key: records matched without showing it |
+| | `sample-functions` | Tidy values and work out new ones: `lpad`, `split_part`, `left` and `right`, `date_add` and `date_diff`, `greatest` and `least`, `if`, `contains` and `starts_with`, and a `sha256` of the email as a key, which stays marked sensitive | A hashed email or patient identifier as a join key, still marked sensitive |
 | | `sample-which-row` | Which row of a key wins: `duplicates: latest` with `duplicates_by` on a dedupe (the latest customer per email) and on a lookup (each product's latest delivery price) | The current version of a record, such as a customer's latest address |
 | | `sample-window` | A running balance per account, and each account's latest row: row number 1, then a filter | Each account's latest and running balance, for statements and end-of-day positions |
 | `04-combine` | `sample-lookup` | Add columns from another input, like a join; no match through `rejected` | Reference data added, with a missing reference shown, not left empty |
@@ -162,7 +162,8 @@ kilnmark: pipeline/v1
   `# Why it matters:`, one to three sentences. Lead with banking and other regulated work. Say
   "often", "typically" or "for example": never state a purpose as fact for an organisation. Name a
   regulation only where the link is direct and well known (BCBS 239 for aggregating risk data,
-  GDPR for keeping personal data to a minimum, SOX for evidence of changes), and never a clause. For
+  GDPR for keeping personal data to a minimum, SOX for evidence of changes, HIPAA for health
+  data in the US), and never a clause. For
   a template, say who typically starts from it, and why.
 - **Look for**: what to notice when it runs, starting `# Look for:`.
 - **Needs**: the placeholders, settings and rights it relies on, starting `# Needs:`.

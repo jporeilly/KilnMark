@@ -14,8 +14,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Every sample and template explains itself, in the comment it starts with: what it shows, why it
- * matters, what to look for when it runs, and what it needs. The Library shows these on each sample's and
- * template's card, so one without all three fails the build.
+ * matters, what to look for when it runs, and what it needs. The Library shows these on each
+ * sample's row and template's card, so one without every part fails the build.
  */
 class SamplesExplainedTest {
 
@@ -115,5 +115,11 @@ class SamplesExplainedTest {
                 query: SELECT count(*) > 0 FROM shop.orders
             """;
         assertEquals(List.of("shop-db"), Samples.sqlSources(sql));
+        // A wait-for query is pointed at the sample tables too, as a read's query is.
+        assertTrue(Samples.withTables(sql, "s1").contains("query: SELECT count(*) > 0 FROM s1.shop_orders"),
+            Samples.withTables(sql, "s1"));
+        // A flow that does not read is checked as if every source it names ran SQL.
+        assertEquals(List.of("crm-db", "files"), Samples.sqlSources("kilnmark: flow/v1\nnodes: [\n  - source: crm-db\n"
+            + "  - source: files\n"));
     }
 }
