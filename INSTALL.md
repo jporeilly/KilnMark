@@ -264,8 +264,9 @@ which caps the runs using it whichever worker runs them
 and the database connections below.
 
 More running at once needs more connections to Kilnmark's own database. Each running job holds one
-for its lease and uses one or two more while it works; each watched flow holds one; and each worker
-keeps one open to hear of new jobs. So each Kilnmark process needs a pool
+for its lease and uses one or two more while it works; the flows a worker watches share one for their
+locks, and each uses one now and then while it looks; and each worker keeps one open to hear of new
+jobs. So each Kilnmark process needs a pool
 (`QUARKUS_DATASOURCE_JDBC_MAX_SIZE`, 30 by default) of at least
 
 ```

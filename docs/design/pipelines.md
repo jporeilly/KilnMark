@@ -974,12 +974,65 @@ asset's previous profile.
   why.
 - **Cancelling.** A queued run is cancelled at once and its job taken off the queue; a running one
   is interrupted within about half a second, and one asked to stop while its nodes are being set
-  up stops before they run. A cancel asked for too late to stop a run is cleared when it ends. A
+  up stops before they run. A running run reads whether it is asked to stop in memory, from its
+  signal in the process's run watcher (`RunWatch`, below), never from the database itself. A cancel asked for too late to stop a run is cleared when it ends. A
   run left running by a worker that stopped is finished by a cancel, and by workers' recovery once
   its job is done or failed, so it never blocks its pipeline. A worker shutting down marks its runs failed rather
   than queueing them again.
 
-## 6. API and UI in step 1
+### One run lifecycle (decisions, backlog 22.1)
+
+Pipelines and flows share one run lifecycle, in `io.kilnmark.server.runs`, so a change to how runs
+are checked, queued, cancelled, started on a worker or deleted is made once (it had been made
+twice: #124, #128 and the scheduler). Nothing a person sees changed with it: the API, the tables,
+the audit events, the messages and the status codes are as they were.
+
+- **`RunKind`** says what differs: the noun (`pipeline`, `flow`), from which the tables
+  (`kilnmark.<noun>`, `kilnmark.<noun>_run`), the job kind and the job's payload key follow; the
+  schedule's column; the store's own refusals (`Busy`, `Missing`); and three ways the runs differ.
+  A queued pipeline run may say what it waits for (a source's place), which starting it clears; a
+  pipeline run records a result; and deleting a flow also waits for a run's job to end, after the
+  run has (ADR 0048, decision 1), where deleting a pipeline does not (decision 5).
+- **`RunTables`** holds the SQL both stores run, inside their own transactions: lock the row a
+  run is queued for, refuse while a run is going (with the for-each exception, ADR 0040), add the
+  run's job and wake the workers, start, finish and cancel a run, find a job's run, and delete what
+  runs with its schedules, the locks in the order a fire takes them.
+- **`RunStore`** is what the lifecycle needs of a store; `PipelineStore` and `FlowStore` implement
+  it with `RunTables`. Inserting a run stays in each store: their columns differ.
+- **`RunLifecycle`** is held by `PipelineService` and `FlowService`, each over its own store: what a
+  queue, a cancel and a delete refuse and say (409, 404), a job's first steps on a worker (its run
+  found, started, or finished as cancelled before it started), the check of a schedule's values,
+  and the small readings both make (a recorded role, stored values).
+- **`RunStarter`** is a run started in two steps, check then queue, as a request key (ADR 0047) and
+  a schedule's fire (ADR 0046) need. Each service gives one (`starter()`); the scheduler uses them.
+  Request keys and waits were already shared, in `RunRequests` and `RunRequestKeys`. What is
+  checked (a pipeline's version compiled, a flow's pipelines read) and what a run does on a worker
+  stay in the services.
+- **`RunWatch`**, one per process, is below.
+
+**The run watcher** (efficiency review, 6 November 2026). One virtual thread per process looks
+every half a second (`RunWatch.EVERY`), and asks the database only for what is watched:
+
+- **Cancels.** A pipeline or flow run that is running holds a `RunWatch.Signal`, read once from the
+  database as the run starts its work, then in memory. A cancel asked on the same process turns it
+  at once (`RunLifecycle.cancel` tells the watcher); one asked on another process is seen in the
+  database at the watcher's next look, in one query per kind whatever the number of runs
+  (`RunTables.cancelledAmong`). A running pipeline looks at its signal ten times a second, a flow at
+  each of its looks. Before, each running pipeline asked the database twice a second, and each flow
+  at every look; a cancel was seen within about half a second, and still is (at most about 0.6 s
+  from another process). A look that fails is logged once and tried again; the signals stand as
+  they were meanwhile.
+- **The pipeline runs flows watch.** A flow reads the pipeline runs its nodes and items started
+  through a session of the watcher (`RunWatch.Rows`): the first time it asks for one, it reads it
+  itself; from then on the watcher reads every unfinished run that any flow on the process watches,
+  in one query a look (`PipelineStore.runs`), then wakes the flows (`awaitTick`), which look at
+  their nodes with what it read. Before, each flow read each of its running nodes' runs at every
+  look: a for-each node of 500 items asked 500 times a look.
+- **Tests.** `RunWatchTest` counts the watcher's queries: fifty runs are one query a look, a signal
+  read a thousand times is none, ten flows watching fifty runs are one. `RunLifecycleTest` writes a
+  cancel straight into a running pipeline's and flow's rows, as another process would, and sees each
+  stop within seconds.
+
 
 - `GET/POST /api/v1/pipelines`, `GET/PUT/DELETE /api/v1/pipelines/{name}` (PUT saves a new
   version), `GET .../versions`, `GET .../versions/{n}`, `POST .../validate` (YAML in, problems

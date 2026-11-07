@@ -165,6 +165,30 @@ details.
   `config/.env` with no `KILNMARK_MODE`; `upgrade` refuses before it changes anything; `restore`
   refuses a backup with no mode recorded, or of the other mode, before it stops anything. A Windows
   backup to a folder you name is made yours only.
+- **Dependencies updated** (Dependabot's npm and GitHub Actions groups, redone on an owner branch,
+  since Dependabot's own branches get no runner): `@xyflow/react` 12.12.1, `marked` 18.1.3,
+  `@vitejs/plugin-react` 6.2.1, `vitest` 5.1.0, and `gradle/actions/wrapper-validation` 6.4.1,
+  pinned by commit as before. mime4j stays at 0.8.12, which the Quarkus BOM holds.
+- **One run lifecycle for pipelines and flows** (backlog 22.1; docs/design/pipelines.md, "One run
+  lifecycle"). Checking, queueing, cancelling, a run's first steps on a worker and deleting, written
+  twice before, in `PipelineService` and `FlowService` and their stores, are now in
+  `io.kilnmark.server.runs` (`RunLifecycle`, `RunTables`, `RunStarter`), with what differs between
+  the two in `RunKind`. Nothing changes for anyone using Kilnmark: the API, the tables, the audit
+  events, the messages and the status codes are as they were. No migration. It also takes three
+  findings of the efficiency review of 6 November 2026, none of which changes what anyone sees:
+  - **The flows a worker watches share one database connection** for their locks and their sql
+    nodes' places (`JobQueue.FlowLeases`), where each held one of its own.
+  - **Runs read whether they are asked to stop in memory** (`RunWatch`): a cancel asked on the same
+    process is seen at once, one asked on another by one query a look for every run going on there,
+    every half a second, where each running pipeline and flow asked the database itself. The pipeline
+    runs flows watch are read the same way, in one query for every flow, where each flow read each
+    of its nodes' runs at every look. A cancel still stops a run within about half a second.
+  - **A schedule's fire checks its run with no lock held**: the schedule's row is locked only to
+    check its setter, queue the checked run and record the outcome, where it was held through the
+    run's checks too (a version compiled, the catalogue read). A schedule still fires at most once
+    across schedulers, and a pause or a revoke still comes either before the run (nothing runs) or
+    after it is queued and recorded.
+
 - **`sort` is an external merge sort** (`ExternalSorter` in `kiln-nodes`; docs/design/pipelines.md,
   "Sorting, and spilling to disk"). Each row's key is encoded once into bytes that order as the
   values do (`KeyCodec`), as the expression language's `<` orders them: numbers by value, -0.0 equal

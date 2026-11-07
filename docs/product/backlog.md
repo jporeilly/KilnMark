@@ -124,7 +124,9 @@ dependency verification (ADR 0042, #99) and signed images with an offline instal
     server tests run only in CI there.
 22. **Refactoring, in small steps** (owner, 6 November 2026): each its own pull request that changes
     no behaviour, with every test green before and after. In order:
-    1. **One run lifecycle for pipelines and flows**: checking, queueing, request keys, schedules
+    1. **Done** (refactor 22.1, `io.kilnmark.server.runs`, with the three efficiency findings
+       below; docs/design/pipelines.md, "One run lifecycle"). **One run lifecycle for pipelines and
+       flows**: checking, queueing, request keys, schedules
        and deleting are written twice today, in `PipelineService` (about 2,000 lines) and
        `FlowService` (about 2,400), and every change to one had to be made to the other
        (#124, #128 and the scheduler). First, before the `sort` and `join` nodes (item 9), which
