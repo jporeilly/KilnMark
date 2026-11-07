@@ -218,6 +218,19 @@ class StarterPackApiTest {
             connections:
               - { from: ready, to: done }
             """)).post("/api/v1/flows").then().statusCode(201);
+        // a column of the pack's database marked sensitive: its delete is recorded as clearing marks
+        String urn;
+        String field;
+        try (Connection c = db.getConnection(); Statement st = c.createStatement(); ResultSet rs = st.executeQuery(
+            "SELECT f.asset_urn, f.name FROM kilnmark.field f JOIN kilnmark.asset a ON a.urn = f.asset_urn "
+                + "JOIN kilnmark.data_source s ON s.id = a.source_id WHERE s.name = '" + StarterPack.DATABASE_SOURCE
+                + "' ORDER BY f.asset_urn, f.name LIMIT 1")) {
+            assertTrue(rs.next(), "the sample tables are catalogued");
+            urn = rs.getString(1);
+            field = rs.getString(2);
+        }
+        admin().contentType(ContentType.JSON).body(Map.of("field", field, "sensitive", true))
+            .put("/api/v1/quality/asset/sensitive?urn=" + urn).then().statusCode(204);
         // a schedule on a sample: deleted with it, and recorded as a pipeline's own delete records it
         long schedule = admin().contentType(ContentType.JSON).body(Map.of("pipeline", "sample-limit", "cron", "0 6 * * *"))
             .post("/api/v1/schedules").then().statusCode(201).extract().jsonPath().getLong("id");
@@ -240,6 +253,10 @@ class StarterPackApiTest {
         assertTrue(ev.getList("events[0].detail.pipelines").contains(Samples.SETUP), ev.prettify());
         assertFalse(ev.getList("events[0].detail.flows").isEmpty(), ev.prettify());
         assertTrue(ev.getList("events[0].detail.sources").contains(StarterPack.DATABASE_SOURCE), ev.prettify());
+        JsonPath deleted = admin().get("/api/v1/audit?action=" + AuditLog.SOURCE_DELETED + "&limit=10").then()
+            .statusCode(200).extract().jsonPath();
+        assertTrue(deleted.getBoolean("events.find { it.target == '" + StarterPack.DATABASE_SOURCE
+            + "' }.detail.marked"), deleted.prettify());
         admin().get("/api/v1/starter-pack").then().body("on", equalTo(false));
         for (String s : List.of(StarterPack.DATABASE_SOURCE, StarterPack.FILES_SOURCE)) {
             admin().get("/api/v1/sources/" + s).then().statusCode(404);

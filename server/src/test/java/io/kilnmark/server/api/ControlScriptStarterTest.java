@@ -149,7 +149,7 @@ class ControlScriptStarterTest {
         assertTrue(sh.contains("echo \"shown only now and kept nowhere, not even in logs/: $password\"")
             && sh.contains("    } > /dev/tty\n  else"), "to the terminal, past logs/");
         String ps = Files.readString(LAUNCH.resolve("kilnmark.ps1")).replace("\r\n", "\n");
-        assertTrue(ps.contains("        $password | & $script:Engine @base run --rm -T keycloak-setup | Out-Host"),
+        assertTrue(ps.contains("        $password | & $script:Engine @base run --rm -T keycloak-setup 2>&1 |"),
             "on keycloak-setup's standard input");
         for (String text : List.of(sh, ps)) {
             assertFalse(text.contains("STARTER_PEOPLE_PASSWORD"), "never in an environment");
@@ -187,6 +187,38 @@ class ControlScriptStarterTest {
     /** What {@code starter people} says, run with the given settings, by edition: its output. */
     interface People {
         String run(Map<String, String> settings) throws Exception;
+    }
+
+    /** What a command of the script prints, run with these settings and this outside environment. */
+    interface Scripted {
+        String run(Map<String, String> settings, Map<String, String> outside) throws Exception;
+    }
+
+    /** The leaked secret the fake engine prints as podman-compose 1.0.x prints a podman command. */
+    static final String LEAKED = "leaked-0123456789";
+
+    /**
+     * What reaches compose and logs/, through an engine that prints what podman-compose 1.0.x prints
+     * (each podman command, settings and all) and the settings it was handed, then fails: the
+     * outside environment never decides production or the switch, and no command line reaches logs/.
+     */
+    private static void composeRules(Scripted s, Path[] root) throws Exception {
+        String out = s.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed"),
+            Map.of("KILNMARK_PRODUCTION", "from-the-shell", "KILNMARK_STARTER", "from-the-shell"));
+        assertTrue(out.contains("keycloak-setup: seen"), out);
+        assertFalse(out.contains("from-the-shell"), "the outside environment reached compose: " + out);
+        assertFalse(out.contains(LEAKED), "a podman command line was shown: " + out);
+        StringBuilder logs = new StringBuilder();
+        try (var files = Files.list(root[0].resolve("logs"))) {
+            for (Path f : files.toList()) {
+                logs.append(Files.readString(f, StandardCharsets.ISO_8859_1));
+            }
+        }
+        assertTrue(logs.toString().contains("keycloak-setup: seen"), "what setup says is kept: " + logs);
+        assertFalse(logs.toString().contains(LEAKED), "a podman command line was kept in logs: " + logs);
+        // an export in front, which compose reads too
+        assertTrue(s.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed", "export KILNMARK_PRODUCTION",
+            "TRUE"), Map.of()).contains("marked production"), "export KILNMARK_PRODUCTION=TRUE is production");
     }
 
     private static void peopleRules(People p) throws Exception {
@@ -229,6 +261,14 @@ class ControlScriptStarterTest {
             return run(List.of(shell, LAUNCH.resolve("kilnmark.sh").toAbsolutePath().toString(), "starter", "people"),
                 root, "false");
         });
+        Path engine = fakeEngine(false);
+        Path[] last = new Path[1];
+        composeRules((settings, outside) -> {
+            last[0] = installRoot(false);
+            writeEnv(last[0], settings);
+            return run(List.of(shell, LAUNCH.resolve("kilnmark.sh").toAbsolutePath().toString(), "starter", "people"),
+                last[0], engine.toString().replace('\\', '/'), outside);
+        }, last);
     }
 
     @Test
@@ -249,6 +289,45 @@ class ControlScriptStarterTest {
             return run(List.of(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
                 LAUNCH.resolve("kilnmark.ps1").toAbsolutePath().toString(), "starter", "people"), root, "where.exe");
         });
+        Path engine = fakeEngine(true);
+        Path[] last = new Path[1];
+        composeRules((settings, outside) -> {
+            last[0] = installRoot(true);
+            writeEnv(last[0], settings);
+            return run(List.of(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+                LAUNCH.resolve("kilnmark.ps1").toAbsolutePath().toString(), "starter", "people"), last[0],
+                engine.toString(), outside);
+        }, last);
+    }
+
+    /**
+     * An engine that says compose works, then for anything else prints a podman command line with a
+     * secret on it (to its error output, as podman-compose 1.0.x does), and the Starter Pack settings
+     * compose was handed, as keycloak-setup's line, and fails.
+     */
+    private static Path fakeEngine(boolean windows) throws IOException {
+        Path dir = Files.createTempDirectory("kilnmark-fake-engine");
+        if (windows) {
+            Path f = dir.resolve("engine.cmd");
+            Files.writeString(f, "@echo off\r\n"
+                + "if \"%1 %2\"==\"compose version\" exit /b 0\r\n"
+                + "echo podman run --name kilnmark_x -e KC_ADMIN_PASSWORD=" + LEAKED + " quay.io/keycloak/keycloak 1>&2\r\n"
+                + "echo keycloak-setup: seen [%KILNMARK_PRODUCTION%] [%KILNMARK_STARTER%]\r\n"
+                + "exit /b 1\r\n");
+            return f;
+        }
+        Path f = dir.resolve("engine.sh");
+        Files.writeString(f, "#!/bin/bash\n"
+            + "if [ \"$1 $2\" = \"compose version\" ]; then exit 0; fi\n"
+            + "echo \"podman run --name kilnmark_x -e KC_ADMIN_PASSWORD=" + LEAKED + " quay.io/keycloak/keycloak\" >&2\n"
+            + "echo \"keycloak-setup: seen [${KILNMARK_PRODUCTION-}] [${KILNMARK_STARTER-}]\"\n"
+            + "exit 1\n");
+        try {
+            Files.setPosixFilePermissions(f, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+        } catch (UnsupportedOperationException e) {
+            // Windows: Git Bash runs it by its first line
+        }
+        return f;
     }
 
     /** An install root with one version in it, as install leaves it; Windows marks it in current.txt. */
@@ -292,10 +371,17 @@ class ControlScriptStarterTest {
 
     /** Runs a command of the script with an engine that cannot start anything; it must fail. Its output. */
     private static String run(List<String> command, Path root, String engine) throws Exception {
+        return run(command, root, engine, Map.of());
+    }
+
+    /** As {@link #run(List, Path, String)}, with these in the script's own environment too. */
+    private static String run(List<String> command, Path root, String engine, Map<String, String> outside)
+        throws Exception {
         ProcessBuilder pb = new ProcessBuilder(new ArrayList<>(command)).redirectErrorStream(true);
         pb.environment().put("KILNMARK_ROOT", root.toString());
         pb.environment().put("KILNMARK_ENGINE", engine);
         pb.environment().remove("KILNMARK_PROJECT");
+        pb.environment().putAll(outside);
         Process p = pb.start();
         String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         assertTrue(p.waitFor(60, TimeUnit.SECONDS), "it stopped");

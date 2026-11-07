@@ -18,6 +18,9 @@ registry="ghcr.io/jporeilly"
 # machine, or a developer's machine whose source checkout already uses kilnmark).
 project="${KILNMARK_PROJECT:-kilnmark}"
 default_root="/opt/kilnmark"
+# Compose fills ${NAME} from this shell's environment before config/.env. These must mean what
+# config/.env says, as this script reads them (ADR 0051), so a value exported here never counts.
+unset KILNMARK_PRODUCTION KILNMARK_STARTER KILNMARK_STARTER_PEOPLE_ACTION
 
 # Rootless Podman needs the account's systemd session; sudo -iu and su do not set it up, but its
 # runtime folder exists once lingering is on (prepare turns it on).
@@ -104,11 +107,11 @@ pick_engine() {
     || die "'$engine compose' does not work. Install the compose plugin (Docker) or podman-compose (Podman)."
 }
 
-# A setting from config/.env as compose reads it; empty when it is not set.
+# A setting from config/.env as compose reads it (an export in front too); empty when it is not set.
 setting() {
   local line value file="$root/config/.env"
   [ -f "$file" ] || { printf ''; return; }
-  line="$( { grep -E "^[[:space:]]*$1[[:space:]]*=" "$file" || true; } | tail -n 1 | tr -d '\r')"
+  line="$( { grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" "$file" || true; } | tail -n 1 | tr -d '\r')"
   value="${line#*=}"
   value="$(sed -e 's/^[[:space:]]*//' <<< "$value")"
   case "$value" in
@@ -154,10 +157,15 @@ images_present() {
 
 # --- logging -----------------------------------------------------------------------------------
 
+# podman-compose 1.0.x (Ubuntu 24.04's) prints each podman command it runs, with every setting of
+# the container on it (-e NAME=value: database passwords, Keycloak's admin password, the client
+# secret). Those lines are never shown or kept in logs/.
+hide_compose_commands() { grep --line-buffered -v -E '(^|[/[:space:]])podman(\.exe)? .*(-e|--env)[[:space:]=]' || true; }
+
 start_log() {
   [ -n "$root" ] && [ -d "$root/logs" ] || return 0
   local log; log="$root/logs/$1-$(date -u +%Y%m%dT%H%M%SZ).log"
-  exec > >(tee -a "$log") 2>&1
+  exec > >(hide_compose_commands | tee -a "$log") 2>&1
 }
 
 # --- signatures --------------------------------------------------------------------------------

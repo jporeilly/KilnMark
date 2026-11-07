@@ -116,9 +116,13 @@ if ! kc get "realms/$REALM" > /dev/null 2>&1; then
     -s ssoSessionIdleTimeout=7200 -s ssoSessionMaxLifespan=28800
 fi
 
+# A top-level group's id by its path, or nothing: never by search, which also answers with the parent
+# of any subgroup that has the name.
+group_id() { kc get "group-by-path/$1" -r "$REALM" --fields id --format csv --noquotes 2> /dev/null | one || true; }
+
 # The groups.
 for g in $ROLE_GROUPS; do
-  if [ -z "$(kc get groups -r "$REALM" -q search="$g" -q exact=true --fields id --format csv --noquotes | one)" ]; then
+  if [ -z "$(group_id "$g")" ]; then
     kc create groups -r "$REALM" -s name="$g" > /dev/null
     say "added the group $g"
   fi
@@ -209,7 +213,6 @@ priya.shah@kilnmark.com:Priya:Shah:kilnmark-designers,kilnmark-sensitive-data
 alex.morgan@kilnmark.com:Alex:Morgan:kilnmark-admins"
 
 user_id() { kc get users -r "$REALM" -q username="$1" -q exact=true --fields id --format csv --noquotes | one; }
-group_id() { kc get groups -r "$REALM" -q search="$1" -q exact=true --fields id --format csv --noquotes | one; }
 # Whether person $1 is in group $2 (ids).
 in_group() { kc get "users/$1/groups" -r "$REALM" --fields id --format csv --noquotes | grep -qx "$2"; }
 set_password() {

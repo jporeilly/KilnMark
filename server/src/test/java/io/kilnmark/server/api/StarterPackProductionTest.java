@@ -117,7 +117,8 @@ class StarterPackProductionTest {
         String alex = "sso:alex.morgan@kilnmark.com (sub-alex)";
         String rita = "sso:Rita Real (sub-rita)";
         AccessRole admin = AccessRole.ADMIN;
-        long ex = tokens.create("pc-ex", admin, null, alex).token().id();
+        io.kilnmark.server.auth.ApiTokens.Issued exIssued = tokens.create("pc-ex", admin, null, alex);
+        long ex = exIssued.token().id();
         long child = tokens.create("pc-child", admin, null, "token " + ex + " (pc-ex)").token().id();
         long grandchild = tokens.create("pc-grandchild", AccessRole.VIEWER, null, "token " + child + " (pc-child)").token().id();
         long approved = tokens.create("pc-approved", AccessRole.DESIGNER, null, rita).token().id();
@@ -127,7 +128,15 @@ class StarterPackProductionTest {
             ps.setLong(2, approved);
             assertEquals(1, ps.executeUpdate());
         }
-        long own = tokens.create("pc-own", admin, null, rita).token().id();
+        io.kilnmark.server.auth.ApiTokens.Issued ownIssued = tokens.create("pc-own", admin, null, rita);
+        long own = ownIssued.token().id();
+        // Before any sweep: on production such a token never works, and sets no schedule to run.
+        io.restassured.RestAssured.given().header("Authorization", "Bearer " + exIssued.secret())
+            .get("/api/v1/starter-pack").then().statusCode(401);
+        io.restassured.RestAssured.given().header("Authorization", "Bearer " + ownIssued.secret())
+            .get("/api/v1/starter-pack").then().statusCode(200);
+        assertTrue(tokens.workingRole(child).isEmpty(), "a token an example token made has no role on production");
+        assertTrue(tokens.workingRole(own).isPresent());
         long ownChild = tokens.create("pc-own-child", AccessRole.VIEWER, null, "token " + own + " (pc-own)").token().id();
 
         // An example person signs in: refused on production, the refusal recorded with their key.
@@ -166,6 +175,94 @@ class StarterPackProductionTest {
         // again: nothing more to do
         assertEquals(List.of(), check.sweep().tokens());
         schedules.delete(schedule.id(), "test", AccessRole.ADMIN);
+    }
+
+    @jakarta.inject.Inject
+    io.kilnmark.server.flows.FlowStore flowStore;
+
+    @jakarta.inject.Inject
+    io.kilnmark.server.pipelines.PipelineStore pipelineStore;
+
+    private static void flow(String name) {
+        admin().contentType(ContentType.JSON).body(Map.of("yaml", """
+            kilnmark: flow/v1
+            name: %s
+            nodes:
+              - { id: pause, type: wait, for: 1s }
+            """.formatted(name), "message", "first")).post("/api/v1/flows").then().statusCode(201);
+    }
+
+    /** A queued run with no job, as a worker would never take it: only the sweep can stop it. */
+    private long queuedWithoutJob(String table, String what, String column, String by) throws Exception {
+        try (var c = db.getConnection(); var ps = c.prepareStatement("INSERT INTO kilnmark." + table + " (" + column
+            + ", version, status, requested_by, requested_role) VALUES (?, 1, 'queued', ?, 'admin') RETURNING id")) {
+            ps.setString(1, what);
+            ps.setString(2, by);
+            try (var rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getLong(1);
+            }
+        }
+    }
+
+    private String status(String table, long id) throws Exception {
+        try (var c = db.getConnection(); var ps = c.prepareStatement("SELECT status || ': ' || coalesce(error, '') FROM "
+            + "kilnmark." + table + " WHERE id = ?")) {
+            ps.setLong(1, id);
+            try (var rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getString(1);
+            }
+        }
+    }
+
+    private String eventually(String table, long id) throws Exception {
+        long deadline = System.nanoTime() + java.time.Duration.ofSeconds(30).toNanos();
+        String s = status(table, id);
+        while ((s.startsWith("queued") || s.startsWith("running")) && System.nanoTime() < deadline) {
+            Thread.sleep(200);
+            s = status(table, id);
+        }
+        return s;
+    }
+
+    @Test
+    void runsTheExampleAccountsAskedForNeverRun() throws Exception {
+        String alex = "sso:alex.morgan@kilnmark.com (sub-alex)";
+        for (String f : List.of("pr-flow-a", "pr-flow-b", "pr-flow-own")) {
+            flow(f);
+        }
+        // A pipeline that cannot run (its source is not here): it is never meant to start.
+        admin().contentType(ContentType.JSON).body(Map.of("yaml", """
+            kilnmark: pipeline/v1
+            name: pr-pipe
+            nodes:
+              - { id: people, type: read, source: pr-nowhere, asset: lab.people }
+            """, "name", "pr-pipe", "message", "first")).post("/api/v1/pipelines").then().statusCode(201);
+
+        // As a trial left them, queued with a job: a worker takes each and cancels it when it would start.
+        long f = flowStore.queueRun("pr-flow-a", 1, alex, "admin", "{}", "{}").id();
+        long p = pipelineStore.queueRun("pr-pipe", 1, "schedule 9 (set by " + alex + ")", "admin").id();
+        String expected = "cancelled: " + io.kilnmark.server.starter.ExampleAccounts.RUN_CANCELLED;
+        assertEquals(expected, eventually("flow_run", f));
+        assertEquals(expected, eventually("pipeline_run", p));
+
+        // Queued with no job, so no worker would ever take them: the start-up sweep cancels them.
+        long f2 = queuedWithoutJob("flow_run", "pr-flow-b", "flow", alex);
+        long p2 = queuedWithoutJob("pipeline_run", "pr-pipe", "pipeline", alex);
+        long own = queuedWithoutJob("flow_run", "pr-flow-own", "flow", "sso:Rita Real (sub-rita)");
+        io.kilnmark.server.starter.ProductionCheck.Swept swept = check.sweep();
+        assertTrue(swept.runs().containsAll(List.of("flow run " + f2, "pipeline run " + p2)), swept.toString());
+        assertTrue(status("flow_run", f2).startsWith("cancelled"));
+        assertTrue(status("pipeline_run", p2).startsWith("cancelled"));
+        assertTrue(status("flow_run", own).startsWith("queued"), "a real person's run is left");
+        audit.awaitStored(5000);
+        JsonPath ev = admin().get("/api/v1/audit?action=" + AuditLog.RUN_CANCELLED + "&limit=20").then().statusCode(200)
+            .extract().jsonPath();
+        for (String target : List.of("flow run " + f, "pipeline run " + p, "flow run " + f2, "pipeline run " + p2)) {
+            assertTrue(ev.getList("events.target").contains(target), target + ": " + ev.prettify());
+        }
+        flowStore.requestCancel(own, "test");
     }
 
     @AfterAll

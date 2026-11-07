@@ -130,12 +130,14 @@ public class AuditLog {
     public static final String STARTER_PACK_ADDED = "starter.added";
     /** An admin turned the Starter Pack off, removing what it added; detail: steps. */
     public static final String STARTER_PACK_REMOVED = "starter.removed";
+    /** A run cancelled by the server: on production, a Starter Pack example account asked for it (ADR 0051). */
+    public static final String RUN_CANCELLED = "run.cancelled";
 
     /** Every kind of event, for the API's filter. */
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
         SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, MAX_RUNS_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
         SIGN_OUT, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED, SCHEDULE_SET,
-        SCHEDULE_DELETED, SCHEDULE_PAUSED, STARTER_PACK_ADDED, STARTER_PACK_REMOVED);
+        SCHEDULE_DELETED, SCHEDULE_PAUSED, STARTER_PACK_ADDED, STARTER_PACK_REMOVED, RUN_CANCELLED);
 
     /** The most events one request returns. */
     public static final int MAX_LIMIT = 500;

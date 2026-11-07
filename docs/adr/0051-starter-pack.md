@@ -139,16 +139,23 @@ are (ADR 0043).
    the example people would be made on an install the server calls production. So the server starts
    only with `true` or `false`, in any case; the control scripts read it the same way and refuse
    anything else; and `keycloak-setup` takes anything but `false` as production, so a value the
-   server refuses never lets the people in.
+   server refuses never lets the people in. Compose would take `KILNMARK_PRODUCTION`,
+   `KILNMARK_STARTER` and the people's action from the shell's environment before `config/.env`, so
+   the control scripts remove them from their own environment first, and read an `export` in front
+   of a line as compose does: `config/.env` alone decides.
 
 8. **Nothing an example account did outlives the trial on production.** Deleting the people in
    Keycloak does not touch what they made in Kilnmark, and Kilnmark cannot see Keycloak. So on an
    install marked production, Kilnmark refuses every sign-in, renewal and session of a kilnmark.com
-   account, and at every start revokes each API token one of them made or whose unmask grant one of
-   them approved (so a grant one person approved for themselves with an example admin does not
-   survive, ADR 0038), and each token such a token made, and pauses each schedule one of them set
-   (ADR 0046). Each revocation and pause is an audit event, with the reason. On an install not marked
-   production these stay, as the trial's own; the access review shows which accounts are examples.
+   account, and at every start cancels each pipeline and flow run one of them (or a token or
+   schedule of one) asked for that has not finished, revokes each API token one of them made or
+   whose unmask grant one of them approved (so a grant one person approved for themselves with an
+   example admin does not survive, ADR 0038), and each token such a token made, and pauses each
+   schedule one of them set (ADR 0046). Each cancellation, revocation and pause is an audit event,
+   with the reason. The start-up sweep is not the only line: such a token is refused whenever it is
+   presented, and such a run is cancelled when a worker would start it, so nothing acts in the
+   moments before the sweep has run. On an install not marked production these stay, as the trial's
+   own; the access review shows which accounts are examples.
 
 ## Consequences
 
@@ -166,9 +173,12 @@ are (ADR 0043).
 - Turning the pack off in Kilnmark does not remove the people: the page says so and gives the
   command.
 - A trial install that becomes production keeps nothing an example account left that acts: their
-  sign-ins are refused, and at the first start marked production their tokens (and any token one of
-  those made) are revoked and their schedules paused, each recorded. What they changed, such as a
-  source or a setting, stays as any admin's change does: the audit log says who did it.
+  sign-ins are refused, their unfinished runs cancelled, their tokens (and any token one of those
+  made) refused and revoked, and their schedules paused, each recorded. What they changed, such as a
+  source, a setting or which tokens a local assistant uses, stays as any admin's change does: the
+  audit log says who did it. A run started by a token is known by the token's name, so a run of a
+  real token sharing an example token's name is cancelled too, which is the safe side. Quality runs
+  are not cancelled: they run with no one's role, whoever asked.
 - `KILNMARK_PRODUCTION` set to anything but `true` or `false` stops the server at start, and the
   control script says why.
 - The two samples that run SQL are not added by the pack (an admin may not see unmasked values,

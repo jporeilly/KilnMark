@@ -48,6 +48,10 @@ group("the audit log page", () => {
     expect(describe(event("flow.sql", { source: "warehouse", statements: 2, version: 3 }))).toBe(
       "2 statements on warehouse, version 3",
     );
+    expect(describe(event("starter.added", { refused: "production" }))).toBe("Refused, nothing changed: production");
+    expect(describe(event("run.cancelled", { pipeline: "nightly", reason: "Cancelled: marked production" }))).toBe(
+      "Pipeline nightly: Cancelled: marked production",
+    );
   });
 
   test("offers every action the server records", () => {
@@ -68,6 +72,7 @@ group("the audit log page", () => {
         "schedule.paused",
         "starter.added",
         "starter.removed",
+        "run.cancelled",
         "flow.sql",
         "mark.cleared",
         "mark.set",

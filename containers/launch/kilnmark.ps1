@@ -17,6 +17,11 @@ $DefaultRoot = 'C:\Kilnmark'
 # The compose project: kilnmark, unless KILNMARK_PROJECT names another (a second install on one
 # machine, or a developer's machine whose source checkout already uses kilnmark).
 $Project = 'kilnmark'; if ($env:KILNMARK_PROJECT) { $Project = $env:KILNMARK_PROJECT }
+# Compose fills ${NAME} from this process's environment before config\.env. These must mean what
+# config\.env says, as this script reads them (ADR 0051), so a value set outside never counts.
+foreach ($n in @('KILNMARK_PRODUCTION', 'KILNMARK_STARTER', 'KILNMARK_STARTER_PEOPLE_ACTION')) {
+    Remove-Item ('Env:' + $n) -ErrorAction SilentlyContinue
+}
 $Launchers = @('kilnmark.ps1', 'kilnmark.cmd', 'start-kilnmark.cmd', 'stop-kilnmark.cmd', 'create-shortcut.ps1', 'kilnmark.ico')
 
 $Command = 'up'
@@ -124,13 +129,13 @@ function Select-Engine {
     if ($LASTEXITCODE -ne 0) { Fail ("'" + $script:Engine + " compose' does not work. Install Docker Compose or podman-compose.") }
 }
 
-# A setting from config\.env as compose reads it; empty when it is not set.
+# A setting from config\.env as compose reads it (an export in front too); empty when it is not set.
 function Get-Setting([string]$Name) {
     $file = Join-Path $script:Root 'config\.env'
     if (-not (Test-Path $file)) { return '' }
     $value = ''
     foreach ($line in [IO.File]::ReadAllLines($file)) {
-        if ($line -match ('^\s*' + $Name + '\s*=(.*)$')) { $value = $Matches[1] }
+        if ($line -match ('^\s*(export\s+)?' + $Name + '\s*=(.*)$')) { $value = $Matches[2] }
     }
     $value = $value.Trim()
     if ($value.StartsWith('"')) { $value = $value.Substring(1); $i = $value.IndexOf('"'); if ($i -ge 0) { $value = $value.Substring(0, $i) } }
@@ -160,10 +165,14 @@ function Get-ComposeArgs {
     return $list
 }
 
+# podman-compose 1.0.x prints each podman command it runs, with every setting of the container on
+# it (-e NAME=value: passwords, the client secret). Those lines are never shown or kept in logs\.
+function Test-ComposeCommand([string]$Line) { return ($Line -match '(^|[\\/\s])podman(\.exe)? .*(-e|--env)[\s=]') }
+
 # Runs compose with the given arguments; its output reaches the screen and the log.
 function Invoke-Compose {
     $base = Get-ComposeArgs
-    & $script:Engine @base @args | Out-Host
+    & $script:Engine @base @args 2>&1 | ForEach-Object { '' + $_ } | Where-Object { -not (Test-ComposeCommand $_) } | Out-Host
     return ($LASTEXITCODE -eq 0)
 }
 
@@ -173,7 +182,7 @@ function Invoke-ComposeQuietly {
     $base = Get-ComposeArgs
     $out = & $script:Engine @base @args 2>&1 | ForEach-Object { '' + $_ }
     if ($LASTEXITCODE -eq 0) { return $true }
-    $out | Out-Host
+    $out | Where-Object { -not (Test-ComposeCommand $_) } | Out-Host
     return $false
 }
 
@@ -755,7 +764,8 @@ function Invoke-Starter([string[]]$Options) {
     $env:KILNMARK_STARTER_PEOPLE_ACTION = $action
     try {
         # one line on its standard input (Windows PowerShell can put a byte-order mark first: setup drops it)
-        $password | & $script:Engine @base run --rm -T keycloak-setup | Out-Host
+        $password | & $script:Engine @base run --rm -T keycloak-setup 2>&1 | ForEach-Object { '' + $_ } |
+            Where-Object { -not (Test-ComposeCommand $_) } | Out-Host
         $ok = ($LASTEXITCODE -eq 0)
     } finally {
         Remove-Item Env:KILNMARK_STARTER_PEOPLE_ACTION -ErrorAction SilentlyContinue

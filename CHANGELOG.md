@@ -74,8 +74,14 @@ details.
   `KILNMARK_PRODUCTION` (`kilnmark.production`, off by default), `true` or `false` only: the server
   and the control script refuse anything else, so it means the same to the server, the scripts and
   `keycloak-setup`. On an install marked production, kilnmark.com sign-ins are refused, and at every
-  start the API tokens an example account made or approved the unmask grant of (and the tokens
-  those made) are revoked and their schedules paused, each recorded. A step's failure on the page
+  start their unfinished pipeline and flow runs are cancelled (`run.cancelled`), the API tokens an
+  example account made or approved the unmask grant of (and the tokens those made) are revoked and
+  their schedules paused, each recorded; such a token is refused and such a run cancelled at any
+  time, not only at the start. The control scripts ignore those settings in the shell's
+  environment, read `export` lines in `config/.env` as compose does, and never show or log the
+  podman command lines podman-compose 1.0.x prints, secrets and all. `keycloak-setup` finds groups by
+  path, so a subgroup named like one of its groups is never taken for it. A source the pack deletes
+  says in the audit log whether it had columns marked sensitive. A step's failure on the page
   never names a host: what a called service said goes to the server's log.
 - **Control script**: `install --starter` (`-Starter`), with `--auth` also `starter people`;
   `starter people [--new-password | --remove]`; `up` adds secrets a newer version needs to `config/.env`

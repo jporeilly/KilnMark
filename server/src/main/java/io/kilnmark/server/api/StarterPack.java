@@ -556,10 +556,12 @@ public class StarterPack {
                         left.add(name); // not the pack's, or Kilnmark's sample data that your own work reads
                         continue;
                     }
+                    // its columns marked sensitive go with it, which is clearing those marks: recorded as such
+                    boolean marked = sources.hasMarks(name);
                     Records.Deleted d = deleteWhenIdle(s);
                     if (d != null) {
                         audit.record(actor, AuditLog.SOURCE_DELETED, d.name(), Map.of("assets", d.assets(), "runs",
-                            d.runs(), "marked", false, "via", "starter pack"));
+                            d.runs(), "marked", marked, "via", "starter pack"));
                         gone.add(name);
                     }
                     own.remove(name);

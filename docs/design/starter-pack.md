@@ -55,7 +55,8 @@ table, view and sequence it owns in `public`, after the guard), and the folder `
 (never following a link). Every step runs even if one fails; the state goes off only when all
 worked. `starter.removed` records each step's outcome and names the flows, pipelines, sources and
 variables it deleted; each schedule deleted with a sample is recorded as `schedule.deleted`, as a
-pipeline's or flow's own delete records it. The example people are not touched: the page shows the
+pipeline's or flow's own delete records it, and a source's `source.deleted` says whether it had
+columns marked sensitive, as the sources page's own delete does. The example people are not touched: the page shows the
 control script's command, and which example accounts have signed in, from the audit log.
 
 ## The example people
@@ -70,7 +71,16 @@ setting on podman's command line as `-e NAME=value`. `setup.sh` reads the line, 
 byte-order mark, which Windows PowerShell can add. The password goes to `/dev/tty` (Windows:
 `[Console]::WriteLine`, past the transcript), never to `logs`.
 
+The control scripts remove `KILNMARK_PRODUCTION`, `KILNMARK_STARTER` and
+`KILNMARK_STARTER_PEOPLE_ACTION` from their own environment before anything, since compose prefers
+the environment to `config/.env`, and read `export NAME=` lines as compose does. podman-compose
+1.0.x prints each podman command it runs, every container setting on it; those lines never reach
+the screen or `logs`: the bash edition drops them from everything it shows and logs, the Windows
+edition from all it passes on from compose.
+
 `setup.sh` checks the same rules itself, before anything else, and refuses to add people otherwise.
+It finds groups by their path (`group-by-path`), never by search, which also answers with the parent
+of a subgroup of that name.
 It makes each missing person with one call, already in the group `kilnmark-starter-pack` and their
 role's groups, and deletes them again if the group did not take. Only members of that group are
 ever changed or deleted: someone else with one of the addresses is left as they are, never given
@@ -87,6 +97,14 @@ anything but `false` as production. On an install marked production:
 
 - a sign-in, renewal or session of a kilnmark.com account (by the name Kilnmark gives the sign-in,
   or its email) is refused with `EXAMPLE_ON_PRODUCTION`, recorded as `auth.sign_in_refused`;
+- `ApiTokens.madeByExample` is the one rule for tokens: made by such an account, or its unmask
+  grant approved by one, or made by a token that was (`token <id> (...)`), however far up. On
+  production such a token is refused by `ApiTokens.authenticate` whenever it is presented, and has
+  no working role for a schedule, before and after the sweep;
+- at every start, each unfinished pipeline and flow run whose asker is such an account, a token the
+  rule finds (a run names a token by its name), or a schedule one of them set (`schedule <id> (set
+  by ...)`) is cancelled, each `run.cancelled`; and a worker cancels such a run instead of starting
+  it, should one be queued before the sweep;
 - at every start, each API token whose maker, or whose unmask grant's approver, is such an account
   is revoked, and so is each token one of those made (its maker is `token <id> (...)`), however far
   down; each is `token.revoked` with the reason, and the schedules it set pause as for any revoked
@@ -110,15 +128,19 @@ or the pack given Kilnmark's own login, is refused before anything is dropped.
 - `StarterPeopleSetupTest`: the pinned Keycloak image and `setup.sh`; no people without the switch
   or on production (`true`, `TRUE`, `1`, `yes`, `on`); the password from standard input only, CR
   dropped; made in the group and their groups, leaving someone else with an address alone though they
-  set the old mark on themselves; the realm's policy and event settings kept; passwords kept unless
+  set the old mark on themselves, and a team's own group with a subgroup of the pack's group's name
+  left alone; the realm's policy and event settings kept; passwords kept unless
   `new-password`; exactly the group's people go, with the realm's attributes hidden, once the switch
   does, or production is set, or `remove` is asked.
 - `ProductionCheckTest`, and `StarterPackProductionTest`: only `true` or `false`; on production the
-  example accounts' sign-in refused, their tokens and those down the line revoked, a real person's
-  kept, their schedules paused, each recorded; a refused turn-on recorded.
+  example accounts' sign-in refused, their tokens refused before any sweep and, with those down the
+  line, revoked, a real person's kept, their schedules paused, their runs cancelled by a worker and,
+  with no job, by the sweep, each recorded; a refused turn-on recorded.
 - `StarterPackApiTest`, `StarterPackProductionTest`: the API end to end, the guard, production, a
   team's own source of the pack's name left alone, `sample-data` kept while a team's flow reads it,
   and turning off recording each schedule deleted and naming what went.
 - `ControlScriptStarterTest`: both editions, run for real, with `KILNMARK_PRODUCTION` `TRUE`, `1`
-  and the rest; the people's password on standard input and in no environment; and no Keycloak
+  and the rest, an `export` in front, and the settings in the outside environment, which never reach
+  compose; through an engine that prints what podman-compose 1.0.x prints, no command line on the
+  screen or in `logs`; the people's password on standard input and in no environment; and no Keycloak
   credential reaches the kilnmark service in any setting.

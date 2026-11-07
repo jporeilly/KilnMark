@@ -97,6 +97,14 @@ public class PipelineService {
     @Inject
     io.kilnmark.server.ai.EgressPolicy egress;
 
+    /** API tokens, to refuse on production a run a Starter Pack example account asked for (ADR 0051). */
+    @Inject
+    io.kilnmark.server.auth.ApiTokens tokens;
+
+    /** The audit log; null in tests that build the service by hand. */
+    @Inject
+    io.kilnmark.server.audit.AuditLog audit;
+
     /** The server's variables (${vars.name}); null in tests that build the service by hand. */
     @Inject
     io.kilnmark.server.variables.VariableService variables;
@@ -1201,6 +1209,12 @@ public class PipelineService {
         PipelineStore.Run run = found.get();
         if (run.finished()) {
             return new ScanService.Result(ScanService.Outcome.SKIPPED, "Pipeline run " + id + " had already finished");
+        }
+        if (config.production() && tokens != null && tokens.actsForExample(run.requestedBy())) {
+            // ADR 0051: on production, nothing a Starter Pack example account asked for runs
+            store.finishRun(id, "cancelled", io.kilnmark.server.starter.ExampleAccounts.RUN_CANCELLED, null);
+            io.kilnmark.server.starter.ExampleAccounts.recordCancelled(audit, "pipeline", run.pipeline(), id);
+            return new ScanService.Result(ScanService.Outcome.FINISHED, null);
         }
         // A place on every source it reads or writes that limits runs at once, before it starts (ADR 0040).
         // A run asked to stop ends below without one.

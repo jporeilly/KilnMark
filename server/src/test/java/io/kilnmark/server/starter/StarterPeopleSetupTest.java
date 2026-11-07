@@ -50,7 +50,9 @@ class StarterPeopleSetupTest {
     static final String FIRST = "first-people-password-0123";
     static final String SECOND = "second-people-password-4567";
     static final String VERAS_OWN = "vera-own-password-0123";
-    static final String GROUP = "kilnmark-starter-pack";
+    static final String GROUP = "/kilnmark-starter-pack";
+    /** A team's own group, with a subgroup of the pack's group's name: never taken for it. */
+    static final String DECOY = "A real team";
     static final List<String> PEOPLE = List.of("vera.lane@kilnmark.com", "sam.okafor@kilnmark.com",
         "dana.reyes@kilnmark.com", "priya.shah@kilnmark.com", "alex.morgan@kilnmark.com");
     static final ObjectMapper JSON = new ObjectMapper();
@@ -118,14 +120,28 @@ class StarterPeopleSetupTest {
         return list.size() == 0 ? null : list.get(0);
     }
 
-    /** The names of the groups the person is in. */
+    /** The paths of the groups the person is in. */
     private static List<String> groups(JsonNode user) throws Exception {
         List<String> out = new java.util.ArrayList<>();
         for (JsonNode g : JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark/users/" + user.path("id").asText()
             + "/groups", null).body())) {
-            out.add(g.path("name").asText());
+            out.add(g.path("path").asText());
         }
         return out;
+    }
+
+    /** The status of the group at {@code path} ("/a/b"): 200 when it is there. */
+    private static int group(String path) throws Exception {
+        return call(admin(), "GET", "/admin/realms/kilnmark/group-by-path" + path.replace(" ", "%20"), null).statusCode();
+    }
+
+    /** Makes a group (under {@code parent}'s id, or at the top); its id. */
+    private static String makeGroup(String parent, String name) throws Exception {
+        HttpResponse<String> r = call(admin(), "POST", "/admin/realms/kilnmark/groups"
+            + (parent == null ? "" : "/" + parent + "/children"), Map.of("name", name));
+        assertEquals(201, r.statusCode(), r.body());
+        String at = r.headers().firstValue("Location").orElseThrow();
+        return at.substring(at.lastIndexOf('/') + 1);
     }
 
     private static JsonNode realm() throws Exception {
@@ -156,6 +172,12 @@ class StarterPeopleSetupTest {
             "vera.lane@kilnmark.com", "email", "vera.lane@kilnmark.com", "firstName", "Vera", "lastName", "Lane",
             "enabled", true, "attributes", Map.of("kilnmark_starter_pack", List.of("true")), "credentials",
             List.of(Map.of("type", "password", "value", VERAS_OWN, "temporary", false)))).statusCode());
+        // A team's own group holds a subgroup named as the pack's group, and Vera: Keycloak's group
+        // search answers the pack's name with this parent, which setup must never take for its own.
+        String team = makeGroup(null, DECOY);
+        makeGroup(team, GROUP.substring(1));
+        assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark/users/" + user("vera.lane@kilnmark.com")
+            .path("id").asText() + "/groups/" + team, null).statusCode());
 
         ExecResult r = setup("", "false", "add", FIRST);
         assertNotEquals(0, r.getExitCode(), "refused without KILNMARK_STARTER=allowed");
@@ -180,7 +202,7 @@ class StarterPeopleSetupTest {
     void allowedTheyAreMadeInTheGroupLeavingSomeoneElseAndTheRealmAlone() throws Exception {
         ok(setup("allowed", "FALSE", "add", FIRST));   // false in any case: not production
         JsonNode vera = user("vera.lane@kilnmark.com");
-        assertEquals(List.of(), groups(vera), "someone else with the address is not adopted, whatever they set");
+        assertEquals(List.of("/" + DECOY), groups(vera), "someone else with the address is not adopted, whatever they set");
         assertFalse(signsIn("vera.lane@kilnmark.com", FIRST));
         assertTrue(signsIn("vera.lane@kilnmark.com", VERAS_OWN), "their own password is kept");
         for (String person : PEOPLE.subList(1, PEOPLE.size())) {
@@ -189,9 +211,9 @@ class StarterPeopleSetupTest {
             assertTrue(groups(u).contains(GROUP), person + " is in " + GROUP);
             assertTrue(signsIn(person, FIRST), person + " signs in with the password given, CR and all dropped");
         }
-        assertEquals(java.util.Set.of(GROUP, "kilnmark-designers", "kilnmark-sensitive-data"),
+        assertEquals(java.util.Set.of(GROUP, "/kilnmark-designers", "/kilnmark-sensitive-data"),
             java.util.Set.copyOf(groups(user("priya.shah@kilnmark.com"))));
-        assertEquals(java.util.Set.of(GROUP, "kilnmark-admins"), java.util.Set.copyOf(groups(user("alex.morgan@kilnmark.com"))));
+        assertEquals(java.util.Set.of(GROUP, "/kilnmark-admins"), java.util.Set.copyOf(groups(user("alex.morgan@kilnmark.com"))));
         JsonNode realm = realm();
         assertTrue(realm.path("adminEventsEnabled").asBoolean(), "Keycloak records the changes as admin events");
         assertTrue(realm.path("adminEventsDetailsEnabled").asBoolean(), "the site's own event setting is kept");
@@ -232,8 +254,10 @@ class StarterPeopleSetupTest {
             assertNull(user(person), person + " removed once the switch went");
         }
         assertNotNull(user("vera.lane@kilnmark.com"), "someone else stays");
-        assertEquals(0, JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark/groups?exact=true&search=" + GROUP,
-            null).body()).size(), "the empty group goes too");
+        assertEquals(404, group(GROUP), "the empty group goes too");
+        assertEquals(200, group("/" + DECOY), "a team's own group stays");
+        assertEquals(200, group("/" + DECOY + GROUP), "and its subgroup of that name");
+        assertEquals(List.of("/" + DECOY), groups(user("vera.lane@kilnmark.com")));
 
         ok(setup("allowed", "false", "add", FIRST));
         ok(setup("allowed", "false", "remove", ""));   // starter people --remove

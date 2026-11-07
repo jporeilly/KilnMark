@@ -472,9 +472,11 @@ and the access review marks kilnmark.com accounts as example accounts.
 It is `true` or `false`, in any case: Kilnmark does not start with anything else, such as `1` or
 `yes`, and the control script says so. Kilnmark then refuses the Starter Pack's example data, and
 `keycloak-setup` refuses the example people and deletes any it made, at the next start. Kilnmark
-also refuses every kilnmark.com sign-in, and at every start revokes the API tokens an example
-account made or approved the unmask grant of (and any token one of those made), and pauses the
-schedules they set: each is in the audit log with the reason. So an install that was a trial keeps
+also refuses every kilnmark.com sign-in and every API token an example account made or approved
+the unmask grant of (and any token one of those made), and at every start cancels the runs they
+asked for that have not finished, revokes those tokens and pauses the schedules they set: each is in
+the audit log with the reason. `config/.env` alone decides: a `KILNMARK_PRODUCTION` or
+`KILNMARK_STARTER` in the shell's environment is ignored. So an install that was a trial keeps
 nothing an example account could still use. Through the API only, an admin can still force the
 example data (`POST /api/v1/starter-pack?force=true`), which the audit log records; nothing forces
 the people.
