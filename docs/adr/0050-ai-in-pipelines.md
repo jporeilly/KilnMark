@@ -1,6 +1,6 @@
 # 0050 AI in pipelines
 
-Status: Accepted (6 November 2026)
+Status: Accepted (6 November 2026); amended 7 November 2026: one node per task (ADR 0049, "Revised: about 55 nodes")
 
 ## Context
 
@@ -33,6 +33,14 @@ examples; and a pipeline that fetches an asset's recent history itself and then 
 call per row, rather than handing the work to an agent.
 
 ## Decision
+
+**Amended 7 November 2026.** The tasks below become a node each (classify, extract, AI filter,
+score, summarise, translate, ask, diagnose, detect personal data), beside `embed`, rather than one
+`ai` node with a `task` setting. People look for them by name in the palette, each has settings of
+its own, and `diagnose` and `ask` need context and limits that `translate` does not. Everything
+else in this record holds for each of them as written for the `ai` node: local models by default,
+never unmasked values, proposals with a confidence, flagged when unreadable, scored before it
+ships, context from other records, findings kept, inferring never acting.
 
 1. **Two nodes, coarse as ADR 0049 asks:**
    - **`ai`**, with a `task`:

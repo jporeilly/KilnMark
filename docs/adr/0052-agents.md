@@ -12,7 +12,7 @@ works row by row ([ADR 0050](0050-ai-in-pipelines.md)).
 Agents already appear in the plans: a steward agent that works the queue overnight and an MCP
 server agents act through (docs/product/architecture-spec.md), agents people build themselves,
 an optimisation agent, and "agents that choose the next step in a flow"
-(docs/product/plan-and-scope.md, "Beyond v0.1"). ADR 0050 lists explaining failed runs,
+(the plan and scope, "Beyond v0.1"). ADR 0050 lists explaining failed runs,
 drafting a pipeline and suggesting quality rules as work beyond nodes. The MCP server is read-only:
 `search_assets`, `get_asset`, `list_sources` and `search_docs`, under the caller's token.
 
