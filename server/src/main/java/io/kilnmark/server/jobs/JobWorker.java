@@ -136,7 +136,7 @@ public class JobWorker {
      */
     void recover() {
         try {
-            JobQueue.Recovery r = queue.recoverStale(config.worker().staleAfter());
+            JobQueue.Recovery r = queue.recoverStale(config.worker().staleAfter(), config.runs().lostAfter());
             if (r.requeued() + r.failed() > 0) {
                 LOG.infof("Recovered jobs left by a stopped worker: %d queued again, %d failed", r.requeued(),
                     r.failed());

@@ -36,6 +36,16 @@ public record RunKind(String noun, ScheduleStore.Target target, Supplier<? exten
         return "kilnmark." + noun + "_run";
     }
 
+    /** The table of its runs' tries (ADR 0053): {@code kilnmark.<noun>_run_try}. */
+    public String tryTable() {
+        return "kilnmark." + noun + "_run_try";
+    }
+
+    /** The schedule's column naming the run its last fire started (V36). */
+    public String scheduleRunColumn() {
+        return "last_" + noun + "_run";
+    }
+
     /** The kind of its runs' jobs. */
     public String jobKind() {
         return noun;

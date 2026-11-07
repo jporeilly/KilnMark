@@ -410,7 +410,7 @@ public class NotificationStore {
             }
             NotificationEvent told = d.severity() == e.severity() ? e : new NotificationEvent(e.kind(), d.severity(),
                 e.subjectUrn(), e.title(), e.detail(), e.link(), e.source(), e.field(), e.restrictedDetail(),
-                e.dedupeKey(), e.occurredAt());
+                e.dedupeKey(), e.occurredAt(), e.ownedBy());
             long id = insertEvent(c, told);
             saveState(c, e.dedupeKey(), d.next(), id);
             Exposure exposure = exposure(c, told);
@@ -428,8 +428,142 @@ public class NotificationStore {
                     n++;
                 }
             }
+            if (told.ownedBy() != null) {
+                Forced f = owners(c, id, told, exposure, o, now);
+                shown += f.inApp();
+                n += f.emails();
+            }
             return new Recorded(true, id, n, shown);
         });
+    }
+
+    /** What telling owners by right added: in-app notifications and emails not already there. */
+    private record Forced(int inApp, int emails) {
+    }
+
+    /**
+     * Tells an event's owners by right (ADR 0053, decision 11): the owners of the pipeline or flow it
+     * is about, in the app and by email, whatever kinds, severity and sources they chose. A person
+     * owner is told through each working token of that sign-in name that has used the app lately (in
+     * the app), and its subscription when email is on, confirmed and allowed (by email); a team address
+     * owner through the team address an admin added, when its email is on. Each gets what their role
+     * may see, as anyone does; a team what a viewer gets. When no owner can be told at all, admins are
+     * told the same way. Owning gives no rights: nothing here reads or widens what a recipient's role
+     * may see.
+     */
+    private Forced owners(Connection c, long event, NotificationEvent e, Exposure x, Options o, Instant now)
+        throws SQLException {
+        Set<String> people = new HashSet<>();
+        Set<String> teams = new HashSet<>();
+        for (String owner : ownersOf(c, e.ownedBy())) {
+            if (io.kilnmark.server.runs.Owners.team(owner)) {
+                teams.add(owner.toLowerCase(java.util.Locale.ROOT));
+            } else {
+                people.add(owner);
+            }
+        }
+        List<Long> inApp = people.isEmpty() ? List.of() : reachable(c, people, false, o.personActiveFor());
+        List<Subscriber> mail = new ArrayList<>();
+        if (o.deliver() && !(people.isEmpty() && teams.isEmpty())) {
+            for (Subscriber s : all(c)) {
+                boolean owner = s.team()
+                    ? s.subscription().email() != null
+                        && teams.contains(s.subscription().email().toLowerCase(java.util.Locale.ROOT))
+                    : s.tokenName() != null && people.contains(s.tokenName());
+                if (owner && s.undeliverable(o.requireConfirmation(), o.allowedDomains()) == null) {
+                    mail.add(s);
+                }
+            }
+        }
+        if (inApp.isEmpty() && mail.isEmpty()) {
+            // Nobody who answers for it can be told: admins are, in their place.
+            inApp = reachable(c, Set.of(), true, o.personActiveFor());
+            if (o.deliver()) {
+                for (Subscriber s : all(c)) {
+                    if (!s.team() && s.role() == AccessRole.ADMIN
+                        && s.undeliverable(o.requireConfirmation(), o.allowedDomains()) == null) {
+                        mail.add(s);
+                    }
+                }
+            }
+        }
+        int shown = forcedInbox(c, event, e, x, inApp);
+        int queued = 0;
+        for (Subscriber s : mail) {
+            Subscription sub = s.subscription();
+            boolean digest = sub.mode() == Subscription.Mode.DIGEST;
+            queued += queue(c, s.id(), event, digest, digest ? Digest.nextAt(now, sub.digestHour(), o.zone()) : now);
+        }
+        return new Forced(shown, queued);
+    }
+
+    /** The owners of {@code ownedBy} ({@code pipeline:<name>} or {@code flow:<name>}); none when it is gone. */
+    private static List<String> ownersOf(Connection c, String ownedBy) throws SQLException {
+        boolean pipeline = ownedBy.startsWith("pipeline:");
+        String name = ownedBy.substring(ownedBy.indexOf(':') + 1);
+        try (PreparedStatement ps = c.prepareStatement("SELECT owners FROM kilnmark." + (pipeline ? "pipeline" : "flow")
+            + " WHERE name = ?")) {
+            ps.setString(1, name);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return List.of();
+                }
+                Array a = rs.getArray(1);
+                return a == null ? List.of() : List.of((String[]) a.getArray());
+            }
+        }
+    }
+
+    /**
+     * The tokens that count as a person in the app (working, not an AI assistant's, seen lately): those
+     * named in {@code names}, or with {@code admins} every admin's.
+     */
+    private List<Long> reachable(Connection c, Set<String> names, boolean admins, Duration activeFor)
+        throws SQLException {
+        List<Long> out = new ArrayList<>();
+        String sql = """
+            SELECT t.id FROM kilnmark.notify_person p JOIN kilnmark.api_token t ON t.id = p.token_id
+            WHERE TOKEN_WORKS AND NOT t.local_assistant AND p.last_seen_at > now() - make_interval(secs => ?)
+              AND WHO""".replace("TOKEN_WORKS", works("t")).replace("WHO", admins ? "t.role = 'admin'" : "t.name = ANY (?)");
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setDouble(1, (double) activeFor.toSeconds());
+            if (!admins) {
+                ps.setArray(2, c.createArrayOf("text", names.toArray()));
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(rs.getLong(1));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** In-app notifications for these tokens, whatever their choices, each written for its role. */
+    private static int forcedInbox(Connection c, long event, NotificationEvent e, Exposure x, List<Long> tokens)
+        throws SQLException {
+        if (tokens.isEmpty()) {
+            return 0;
+        }
+        NotificationStore.InAppWriter.Item admin = InAppFeed.write(e, AccessRole.ADMIN, x);
+        NotificationStore.InAppWriter.Item steward = InAppFeed.write(e, AccessRole.STEWARD, x);
+        NotificationStore.InAppWriter.Item viewer = InAppFeed.write(e, AccessRole.VIEWER, x);
+        try (PreparedStatement ps = c.prepareStatement("""
+            INSERT INTO kilnmark.notify_inbox (token_id, event_id, kind, severity, title, detail, link)
+            SELECT t.id, ?, ?, ?, ?, CASE WHEN t.role IN ('admin', 'designer') THEN ? WHEN t.role = 'steward' THEN ? ELSE ? END, ?
+            FROM kilnmark.api_token t WHERE t.id = ANY (?)
+            ON CONFLICT (token_id, event_id) DO NOTHING""")) {
+            ps.setLong(1, event);
+            ps.setString(2, e.kind().id());
+            ps.setString(3, viewer.severity().id());
+            ps.setString(4, e.title());
+            ps.setString(5, clip(admin.detail()));
+            ps.setString(6, clip(steward.detail()));
+            ps.setString(7, clip(viewer.detail()));
+            ps.setString(8, e.link());
+            ps.setArray(9, c.createArrayOf("bigint", tokens.toArray()));
+            return ps.executeUpdate();
+        }
     }
 
     /** What an event touches that is marked sensitive: its asset's columns, and whether its source has any. */
@@ -586,14 +720,14 @@ public class NotificationStore {
         }
     }
 
-    private static void queue(Connection c, long subscriber, long event, boolean digest, Instant due) throws SQLException {
+    private static int queue(Connection c, long subscriber, long event, boolean digest, Instant due) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.notify_delivery (subscriber_id, event_id, "
             + "digest, due_at) VALUES (?, ?, ?, ?) ON CONFLICT (subscriber_id, event_id) DO NOTHING")) {
             ps.setLong(1, subscriber);
             ps.setLong(2, event);
             ps.setBoolean(3, digest);
             ps.setTimestamp(4, Db.timestamp(due));
-            ps.executeUpdate();
+            return ps.executeUpdate();
         }
     }
 

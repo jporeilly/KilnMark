@@ -541,7 +541,7 @@ const blankTeam = (): EmailChoices & { name: string; email: string; enabled: boo
   email: "",
   enabled: true,
   kinds: ["rule_failed", "rule_recovered", "scan_failed", "drift", "connection_failed", "pipeline_failed", "pipeline_low_quality",
-    "flow_failed", "flow_notice"],
+    "flow_failed", "flow_notice", "pipeline_recovered", "flow_recovered", "run_taking_long"],
   minSeverity: "high",
   mode: "digest",
   digestHour: 8,

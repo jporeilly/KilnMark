@@ -18,6 +18,7 @@ import { RunRates } from "./RunRates";
 import { RunLogPanel } from "./RunLogPanel";
 import { runOrigin } from "./timeline";
 import { RunFacts, RunNodes, ScoreChip, useRunDetail } from "./RunSummary";
+import { retrying, RunTriesList } from "../components/RunTries";
 import "./pipelines.css";
 
 const FILL: Record<string, FillTone> = { good: "good", fair: "warn", poor: "bad" };
@@ -259,7 +260,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
         )}
       </div>
       <p role="status" className="notice">
-        {notice}
+        {retrying(r) ?? notice}
       </p>
       {error && (
         <p role="alert" className="error">
@@ -270,6 +271,13 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
         <h2 id="run-h">Summary</h2>
         <RunFacts run={r} />
       </section>
+      <RunTriesList tries={detail.tries} run={r} />
+      {r.status === "failed" && (
+        <p className="small muted">
+          A pipeline starts again from its beginning: there is no Run again from the failure for one. To carry on
+          from part-way, make its stages the nodes of a flow.
+        </p>
+      )}
 
       <section aria-labelledby="spent-h" className="panel">
         <h2 id="spent-h">Where each node spent its time</h2>

@@ -26,6 +26,7 @@ import io.kilnmark.kiln.yaml.Parameters;
 import io.kilnmark.kiln.yaml.PipelineDefinition;
 import io.kilnmark.kiln.yaml.Position;
 import io.kilnmark.kiln.yaml.Problem;
+import io.kilnmark.kiln.yaml.RunOptions;
 import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.jobs.JobQueue;
 import io.kilnmark.server.notify.NotificationPublisher;
@@ -34,6 +35,8 @@ import io.kilnmark.server.pipelines.PipelineSources;
 import io.kilnmark.server.pipelines.PipelineStore;
 import io.kilnmark.server.pipelines.WriteNodeFactory;
 import io.kilnmark.server.runs.RunLifecycle;
+import io.kilnmark.server.runs.RunRetries;
+import io.kilnmark.server.runs.RunTryView;
 import io.kilnmark.server.runs.RunStarter;
 import io.kilnmark.server.runs.RunWatch;
 import io.kilnmark.server.scan.ScanService;
@@ -100,6 +103,10 @@ public class FlowService {
     /** Each sql node run is recorded here (ADR 0029); null in tests that build the service by hand. */
     @Inject
     io.kilnmark.server.audit.AuditLog audit;
+
+    /** The server's cap on run retries (ADR 0053); null in tests that build the service by hand: the defaults. */
+    @Inject
+    io.kilnmark.server.runs.RunSettings runSettings;
 
     @Inject
     public FlowService(FlowStore store, PipelineService pipelines, PipelineStore pipelineStore, ObjectMapper json) {
@@ -206,6 +213,17 @@ public class FlowService {
             problems.add(new Problem(r.line(), r.column(), s.id(), "Node " + s.id() + " is tried again after a "
                 + "failure, so every write in " + s.pipeline() + " must replace or upsert: " + unsafe));
         }
+        // The flow's own retries (ADR 0053) run a failed node again, unless the node has retries of its own,
+        // which take their place. With retry_on: lost a try is only ever taken over: no pipeline run starts again.
+        RunOptions run = def.run();
+        String unsafeRun = s.retries() == 0 && run.retries() > 0 && run.retryOn() == RunOptions.RetryOn.ANY
+            ? unsafeWrite(pd) : null;
+        if (unsafeRun != null) {
+            problems.add(new Problem(run.at().line(), run.at().column(), s.id(), "run.retries tries the flow again "
+                + "after a failure and runs node " + s.id() + " again, so every write in " + s.pipeline() + " must "
+                + "replace or upsert: " + unsafeRun + ". Or give the node retries of its own, or set run.retry_on: "
+                + "lost"));
+        }
     }
 
     /**
@@ -214,20 +232,7 @@ public class FlowService {
      * not known until the run, so it counts as unsafe.
      */
     static String unsafeWrite(PipelineDefinition pipeline) {
-        if (pipeline == null) {
-            return "it could not be read";
-        }
-        for (PipelineDefinition.NodeDefinition n : pipeline.nodes()) {
-            if (!WriteNodeFactory.TYPE.equals(n.type())) {
-                continue;
-            }
-            String mode = WriteNodeFactory.mode(n.config());
-            if (!"replace".equals(mode) && !"upsert".equals(mode)) {
-                return n.id() + (mode == null ? " has a mode set by a value" : " " + (mode.equals("create")
-                    ? "creates its target" : mode.equals("append") ? "appends" : "uses " + mode));
-            }
-        }
-        return null;
+        return PipelineService.unsafeToRepeat(pipeline);
     }
 
     /** Whether a node runs a pipeline: a run-pipeline node, or a for-each node once per item. */
@@ -542,8 +547,12 @@ public class FlowService {
         try {
             // sql_checked records whether the saver may write a person's SQL: a version saved without the grant
             // never runs SQL, even if a later Kilnmark reads a node in it that this one did not know.
-            return store.save(check.name(), expected, !exists, check.name(), description, yaml, message, by,
-                check.valid(), problems, library, mayUnmask);
+            FlowStore.Flow saved = store.save(check.name(), expected, !exists, check.name(), description, yaml, message,
+                by, check.valid(), problems, library, mayUnmask);
+            if (!exists) {
+                store.setOwners(saved.name(), io.kilnmark.server.runs.Owners.defaultFor(by)); // the first saver (ADR 0053)
+            }
+            return saved;
         } catch (FlowStore.Exists e) {
             throw fail(Response.Status.CONFLICT, "A flow called " + check.name() + " exists already");
         } catch (FlowStore.Changed e) {
@@ -614,7 +623,11 @@ public class FlowService {
      * reads the flow's pipelines on connections of their own, so it is done before any transaction
      * that queues the run (ADR 0047: a request key and its run commit together).
      */
-    public record CheckedRun(String name, int version, String parameters, String variables) {
+    public record CheckedRun(String name, int version, String parameters, String variables, int tries) {
+        /** A run tried once. */
+        public CheckedRun(String name, int version, String parameters, String variables) {
+            this(name, version, parameters, variables, 1);
+        }
     }
 
     /**
@@ -641,7 +654,8 @@ public class FlowService {
         Map<String, Object> vars = variables();
         Map<String, Object> resolved = resolveParameters(def, parameters, vars);
         try {
-            return new CheckedRun(name, n, json.writeValueAsString(resolved), json.writeValueAsString(vars));
+            return new CheckedRun(name, n, json.writeValueAsString(resolved), json.writeValueAsString(vars),
+                runSettings().tries(def.run()));
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("parameters: could not be read");
         }
@@ -656,7 +670,7 @@ public class FlowService {
      */
     public FlowStore.Run queueChecked(CheckedRun checked, String by, AccessRole role) {
         return lifecycle.queue(checked.name(), () -> store.queueRun(checked.name(), checked.version(), by, role.id(),
-            checked.parameters(), checked.variables()));
+            checked.parameters(), checked.variables(), checked.tries()));
     }
 
     /** Running a flow in two steps, as a schedule's fire does (ADR 0046): check, then queue. */
@@ -817,12 +831,13 @@ public class FlowService {
             nodes.add(s == null
                 ? new FlowViews.NodeRunView(n.id(), n.type(), position, "pending", null, null, null, n.pipeline(), null,
                     null, items, null)
-                : nodeView(s, n.pipeline(), values, items, pipelineRunTimes(s, times), runsPipeline(n) && n.retries() > 0
+                : nodeView(s, n.pipeline(), values, items, pipelineRunTimes(s, times), runsPipeline(n)
                     ? tries(r.id(), n.id()) : null));
             position++;
         }
         recorded.values().forEach(s -> nodes.add(nodeView(s, null, values, null, pipelineRunTimes(s, times), null)));
-        return new FlowViews.RunDetail(view(r, values, pipelineStore.flowTotals(List.of(r.id()))), nodes);
+        return new FlowViews.RunDetail(view(r, values, pipelineStore.flowTotals(List.of(r.id()))), nodes,
+            RunTryView.of(store.tries(id), true));
     }
 
     /**
@@ -970,7 +985,8 @@ public class FlowService {
         PipelineStore.FlowTotals t = totals.getOrDefault(r.id(), new PipelineStore.FlowTotals(0, null, null));
         return new FlowViews.RunSummary(r.id(), r.flow(), r.version(), r.status(), r.requestedBy(), r.requestedRole(),
             r.requestedAt(), r.startedAt(), r.finishedAt(), r.cancelRequested(), r.error(),
-            values ? tree(r.parameters()) : null, t.pipelineRuns(), t.rowsWritten(), t.lowestScore());
+            values ? tree(r.parameters()) : null, t.pipelineRuns(), t.rowsWritten(), t.lowestScore(), r.runTry() + 1,
+            r.tries(), r.retryAt());
     }
 
     private com.fasterxml.jackson.databind.JsonNode tree(String text) {
@@ -1027,14 +1043,25 @@ public class FlowService {
         }
         FlowStore.Run run = found.run();
         long id = run.id();
-        ScanService.Result notStarted = lifecycle.start(id);
-        if (notStarted != null) {
-            return notStarted;
+        boolean takeover = run.status().equals("running");
+        if (takeover) {
+            // Its worker was lost and stale recovery queued its job again (ADR 0053, decision 6): it carries on
+            // here, watching the pipeline runs still going, when it may; else it ends here.
+            if (!takeOver(run)) {
+                return new ScanService.Result(ScanService.Outcome.FINISHED, null);
+            }
+            run = store.run(id).orElse(run);
+        } else {
+            ScanService.Result notStarted = lifecycle.start(id);
+            if (notStarted != null) {
+                return notStarted;
+            }
+            run = store.run(id).orElse(run);
         }
         RunWatch.Signal signal = lifecycle.signal(id);
         RunWatch.Rows<PipelineStore.Run> rows = watchedRuns();
         RunWatch.Rows<PipelineStore.Run>.Session watched = rows == null ? null : rows.session();
-        Execution execution = new Execution(run, shutdown, lease, signal, watched);
+        Execution execution = new Execution(run, shutdown, lease, signal, watched, jobId, takeover);
         try {
             execution.run();
         } catch (RuntimeException e) {
@@ -1044,9 +1071,8 @@ public class FlowService {
             execution.lookThreads.values().forEach(Thread::interrupt);
             // Not the exception's text: it could quote anything. The class is enough for the log.
             LOG.errorf("Flow run %d failed with %s", id, e.getClass().getName());
-            String why = "The flow could not be run to the end: an internal error. Look at the server's log.";
-            store.finishRun(id, "failed", why);
-            told(run.flow(), id, "failed", why);
+            execution.endTry("failed", "The flow could not be run to the end: an internal error. Look at the server's "
+                + "log.", RunRetries.Ending.ERROR, null);
         } finally {
             if (signal != null) {
                 signal.close();
@@ -1108,13 +1134,39 @@ public class FlowService {
         /** The for-each nodes started, each with its items' runs. */
         private final Map<String, Fan> fans = new HashMap<>();
 
+        /** The run's job, queued again for the next try when the run is tried again (ADR 0053). */
+        private final long jobId;
+        /** Whether this worker took the run over from one that was lost: it carries on where that one was. */
+        private final boolean takeover;
+        /** The flow's run options, from its version (ADR 0053). */
+        private RunOptions options = RunOptions.NONE;
+        /** Whether this try took longer than its run.timeout and is stopping. */
+        private boolean runTimedOut;
+        /**
+         * The pipeline-run try number each node runs from in this try of the flow (ADR 0053): a node run
+         * again by a later try of the flow starts after its earlier tries' pipeline runs, and counts its own
+         * retries from there, so they never multiply with the flow's.
+         */
+        private final Map<String, Integer> tryBase = new HashMap<>();
+        /** For-each nodes run again by this try of the flow: only their items that did not succeed run. */
+        private final Set<String> rerun = new HashSet<>();
+        /** When each node first started, from the row of a node taken over (a wait keeps its start). */
+        private final Map<String, Instant> resumedStart = new HashMap<>();
+
         Execution(FlowStore.Run run, BooleanSupplier shutdown, JobQueue.ScanLease lease, RunWatch.Signal cancel,
-                  RunWatch.Rows<PipelineStore.Run>.Session watched) {
+                  RunWatch.Rows<PipelineStore.Run>.Session watched, long jobId, boolean takeover) {
             this.run = run;
             this.shutdown = shutdown;
             this.lease = lease;
             this.cancel = cancel;
             this.watched = watched;
+            this.jobId = jobId;
+            this.takeover = takeover;
+        }
+
+        /** The try of node {@code node} within this try of the flow, from 0: its own retries count from it. */
+        private int localTry(String node) {
+            return tries.getOrDefault(node, 0) - tryBase.getOrDefault(node, 0);
         }
 
         /** Whether someone asked the flow run to stop. */
@@ -1132,25 +1184,21 @@ public class FlowService {
             FlowDefinition.Parsed parsed = version == null ? null : FlowDefinition.parse(version.yaml());
             FlowDefinition def = parsed == null ? null : parsed.definition();
             if (def == null || !parsed.problems().isEmpty()) {
-                String why = "The flow could not start: version " + run.version() + " of " + run.flow()
-                    + " no longer reads as a flow";
-                store.finishRun(run.id(), "failed", why);
-                told(run.flow(), run.id(), "failed", why);
+                endTry("failed", "The flow could not start: version " + run.version() + " of " + run.flow()
+                    + " no longer reads as a flow", RunRetries.Ending.REFUSED, null);
                 return;
             }
             if (!sqlChecked(def, run.flow(), run.version())) {
-                String why = "The flow could not start: " + SQL_NOT_CHECKED.formatted(run.version(), run.flow());
-                store.finishRun(run.id(), "failed", why);
-                told(run.flow(), run.id(), "failed", why);
+                endTry("failed", "The flow could not start: " + SQL_NOT_CHECKED.formatted(run.version(), run.flow()),
+                    RunRetries.Ending.REFUSED, null);
                 return;
             }
             Map<String, Object> params = readParameters(run.parameters());
             runVariables = readParameters(run.variables());
             if (params == null || runVariables == null) {
                 // Never run on defaults in place of the values the run was started with.
-                String why = "The flow could not start: the values it was started with could not be read";
-                store.finishRun(run.id(), "failed", why);
-                told(run.flow(), run.id(), "failed", why);
+                endTry("failed", "The flow could not start: the values it was started with could not be read",
+                    RunRetries.Ending.REFUSED, null);
                 return;
             }
             scope = Parameters.scope(params, runVariables);
@@ -1162,6 +1210,15 @@ public class FlowService {
             FlowEngine engine = new FlowEngine(ids, def.engineConnections(), params,
                 def.maxParallel() == null ? 0 : def.maxParallel(), stops);
             AccessRole role = role(run.requestedRole());
+            options = def.run();
+            if (cancel != null) {
+                cancel.limits(Instant.now(), options.timeout(), options.warnAfter(), this::warnLong);
+            }
+            if (takeover) {
+                restoreAll(def, engine);
+            } else if (run.runTry() > 0 && !carryOn(def, engine)) {
+                return;
+            }
             boolean cancelling = false;
             while (true) {
                 if (shutdown.getAsBoolean()) {
@@ -1191,13 +1248,18 @@ public class FlowService {
                         save(def, s, "failed", prId, Instant.now(), "The worker running this flow stopped", Map.of());
                     }
                     recordSkipped(def);
-                    String why = "The worker running this flow was stopped before it finished. Run it again; check "
-                        + "what the pipelines it had started had written first.";
-                    store.finishRun(run.id(), "failed", why);
-                    told(run.flow(), run.id(), "failed", why);
+                    endTry("failed", "The worker running this flow was stopped before it finished, or lost its "
+                        + "connection. Check what the pipelines it had started had written.", RunRetries.Ending.LOST,
+                        def);
                     return;
                 }
                 if (!cancelling && cancelAskedFor()) {
+                    cancelling = true;
+                    engine.cancel();
+                }
+                if (!cancelling && cancel != null && cancel.timedOut()) {
+                    // Took longer than its run.timeout (ADR 0053): it stops as a cancel would, and fails.
+                    runTimedOut = true;
                     cancelling = true;
                     engine.cancel();
                 }
@@ -1280,7 +1342,7 @@ public class FlowService {
         private void begin(FlowDefinition def, FlowEngine engine, String node, AccessRole role) {
             FlowDefinition.Node s = def.node(node);
             Instant now = Instant.now();
-            started.put(node, now);
+            started.put(node, resumedStart.getOrDefault(node, now));
             if (FlowDefinition.STOP.equals(s.type())) {
                 boolean failed = "failed".equals(s.status());
                 engine.halt(failed, s.message() == null ? "" : s.message());
@@ -1350,6 +1412,8 @@ public class FlowService {
             /** Each item's try, from 0, and the items waiting to be tried again and when (ADR 0041). */
             final Map<Integer, Integer> tries = new HashMap<>();
             final java.util.SortedMap<Integer, Instant> retryAt = new java.util.TreeMap<>();
+            /** Items run again by a later try of the flow: the try they start from (ADR 0053). */
+            final Map<Integer, Integer> base = new HashMap<>();
             int next;
             Instant waitingSince;
             /** Nothing more starts: the flow was cancelled or stopped, a run was cancelled by hand, or it gave up waiting. */
@@ -1398,12 +1462,27 @@ public class FlowService {
             Fan fan = new Fan(s, items);
             fans.put(s.id(), fan);
             // Found again by flow run, node and item, so no item starts twice.
-            pipelineStore.flowItemRuns(run.id(), s.id()).forEach((i, pr) -> fan.runs.put(i, pr.id()));
+            boolean again = rerun.contains(s.id());
+            pipelineStore.flowItemRuns(run.id(), s.id()).forEach((i, pr) -> {
+                if (!again || "succeeded".equals(pr.status())) {
+                    fan.runs.put(i, pr.id());
+                }
+            });
             pipelineStore.flowTries(run.id(), s.id()).forEach(t -> {
                 if (t.item() != null) {
                     fan.tries.merge(t.item(), t.number(), Math::max);
                 }
             });
+            if (again) {
+                // Run again by this try of the flow (ADR 0053): an item that did not succeed starts after its
+                // earlier tries, and counts its own retries from there.
+                fan.tries.forEach((i, t) -> {
+                    if (!fan.runs.containsKey(i)) {
+                        fan.base.put(i, t + 1);
+                    }
+                });
+                fan.base.forEach(fan.tries::put);
+            }
             save(def, s.id(), "running", null, null, fan.progress(), Map.of());
             fan.said = fan.progress();
             fill(def, engine, fan, role);
@@ -1452,7 +1531,8 @@ public class FlowService {
                     fan.next++;
                     continue;
                 }
-                Optional<PipelineStore.Run> again = pipelineStore.flowItemRun(run.id(), s.id(), i);
+                Optional<PipelineStore.Run> again = fan.base.containsKey(i) ? Optional.empty()
+                    : pipelineStore.flowItemRun(run.id(), s.id(), i);
                 if (again.isPresent()) {
                     fan.runs.put(i, again.get().id());
                     fan.next++;
@@ -1461,7 +1541,7 @@ public class FlowService {
                 try {
                     PipelineStore.Run queued = pipelines.queueRunForFlow(s.pipeline(), s.version(), run.requestedBy(),
                         role, run.id(), s.id(), i, itemValues(engine, def, s, fan.items.get(i)), runVariables,
-                        s.priority());
+                        s.priority(), fan.tries.getOrDefault(i, 0));
                     fan.runs.put(i, queued.id());
                     fan.next++;
                     fan.waitingSince = null;
@@ -1494,7 +1574,7 @@ public class FlowService {
          */
         private boolean retryItem(Fan fan, int i, PipelineStore.Run pr) {
             int t = fan.tries.getOrDefault(i, 0);
-            if (t >= fan.node.retries() || !mayRetry(pr)) {
+            if (t - fan.base.getOrDefault(i, 0) >= fan.node.retries() || !mayRetry(pr)) {
                 return false;
             }
             fan.tries.put(i, t + 1);
@@ -1976,6 +2056,9 @@ public class FlowService {
                 return;
             }
             Map<String, Object> recorded = new LinkedHashMap<>(triesRecord(node));
+            if (o.inDoubt()) {
+                recorded.put(IN_DOUBT, true); // never run again by a later try of the flow (ADR 0053)
+            }
             if (o.succeeded()) {
                 end(def, engine, node, FlowEngine.State.SUCCEEDED, null, o.message(),
                     Map.of("rows_affected", (double) o.rowsAffected()), recorded);
@@ -2085,7 +2168,7 @@ public class FlowService {
         private void tryQueue(FlowDefinition def, FlowEngine engine, FlowDefinition.Node s, AccessRole role) {
             // Found again after the worker running the flow changed: the latest try, and so its number.
             int latest = pipelineStore.flowLatestTry(run.id(), s.id(), null);
-            int t = Math.max(tries.getOrDefault(s.id(), 0), latest);
+            int t = Math.max(tries.getOrDefault(s.id(), tryBase.getOrDefault(s.id(), 0)), latest);
             tries.put(s.id(), t);
             Optional<PipelineStore.Run> existing = latest == t ? pipelineStore.flowNodeRun(run.id(), s.id())
                 : Optional.empty();
@@ -2217,11 +2300,12 @@ public class FlowService {
             boolean ownTimeout = timedOut.contains(node) && cancelAsked.contains(node);
             boolean late = !status.equals("succeeded") && (timedOut.contains(node)
                 || (!cancelAsked.contains(node) && ranPast(s.timeout(), pr.get())));
-            int t = tries.getOrDefault(node, 0);
+            int g = tries.getOrDefault(node, 0);
+            int t = localTry(node);
             if ((ownTimeout || status.equals("failed")) && !status.equals("succeeded") && !cancelling && !engine.halted() && t < s.retries()
                 && mayRetry(pr.get())) {
                 // Tried again (ADR 0041): never after a cancel by a person or the flow.
-                tries.put(node, t + 1);
+                tries.put(node, g + 1);
                 retryAt.put(node, Instant.now().plus(s.retry().before(t + 1)));
                 pipelineRuns.remove(node);
                 timedOut.remove(node);
@@ -2251,13 +2335,13 @@ public class FlowService {
 
         /** What a node's row records of its tries, which conditions never read: {@code tries} once tried again. */
         private Map<String, Object> triesRecord(String node) {
-            int t = tries.getOrDefault(node, 0);
+            int t = localTry(node);
             return t == 0 ? Map.of() : Map.of("tries", (double) (t + 1));
         }
 
         /** ", after 3 tries" for a node that was tried again; empty for one that was not. */
         private String afterTries(String node) {
-            int t = tries.getOrDefault(node, 0);
+            int t = localTry(node);
             return t == 0 ? "" : ", after " + (t + 1) + " tries";
         }
 
@@ -2338,15 +2422,172 @@ public class FlowService {
         private void finish(FlowDefinition def, FlowEngine engine) {
             recordSkipped(def);
             FlowEngine.Outcome outcome = engine.outcome();
+            LOG.infof("Flow run %d of %s, try %d: %s", run.id(), run.flow(), run.runTry() + 1,
+                outcome.name().toLowerCase(Locale.ROOT));
             switch (outcome) {
-                case SUCCEEDED -> store.finishRun(run.id(), "succeeded", engine.halted() && !engine.haltMessage().isBlank()
-                    ? engine.haltMessage() : null);
-                case CANCELLED -> store.finishRun(run.id(), "cancelled", "Cancelled");
-                default -> store.finishRun(run.id(), "failed", failure(def, engine));
+                case SUCCEEDED -> endTry("succeeded", engine.halted() && !engine.haltMessage().isBlank()
+                    ? engine.haltMessage() : null, RunRetries.Ending.ERROR, def);
+                case CANCELLED -> {
+                    if (runTimedOut && !personCancelled()) {
+                        endTry("failed", "The flow " + RunRetries.tookTooLong(options.timeout()).toLowerCase(Locale.ROOT),
+                            RunRetries.Ending.TIMED_OUT, def);
+                    } else {
+                        endTry("cancelled", "Cancelled", RunRetries.Ending.CANCELLED, def);
+                    }
+                }
+                default -> endTry("failed", failure(def, engine), engine.halted() ? RunRetries.Ending.STOPPED
+                    : RunRetries.Ending.ERROR, def);
             }
-            LOG.infof("Flow run %d of %s %s", run.id(), run.flow(), outcome.name().toLowerCase(Locale.ROOT));
-            store.run(run.id()).ifPresent(r -> told(run.flow(), run.id(), r.status(), r.error()));
         }
+
+        /** Whether a person (or another flow's cancel) asked the run to stop, as opposed to its own timeout. */
+        private boolean personCancelled() {
+            return cancel == null ? store.cancelRequested(run.id()) : cancel.cancelled();
+        }
+
+        /**
+         * Ends this try of the run (ADR 0053): a success or a cancel for good, told; a failure tried again
+         * when it may be, carrying on from where it failed (the run is queued for its next try with its
+         * job, and nobody is told), else for good, told with how many tries were made and why no more.
+         * {@code def} is null when the version could not be read.
+         */
+        void endTry(String status, String error, RunRetries.Ending ending, FlowDefinition def) {
+            long id = run.id();
+            FlowStore.Run now = store.run(id).orElse(run);
+            if (!status.equals("failed")) {
+                store.finishRun(id, status, error, null);
+                told(run.flow(), id, status, error);
+                return;
+            }
+            RunRetries.Decision d = RunRetries.decide(options, now.tries(), now.runTry(), ending, null,
+                store.nextFire(id), Instant.now(), java.util.concurrent.ThreadLocalRandom.current());
+            if (d.again() && def != null) {
+                CarryOn.Plan plan = CarryOn.plan(def, store.nodeRuns(id), facts(), false);
+                if (plan.blocker() != null) {
+                    d = new RunRetries.Decision(false, null, "Not tried again: " + plan.blocker());
+                }
+            }
+            if (d.again()) {
+                String holder = jobId < 0 ? null : store.jobHolder(jobId);
+                if (holder != null && store.retry(id, jobId, holder, d.at(), error, RunRetries.waiting(now.runTry(),
+                    now.tries(), d.at(), java.time.ZoneId.systemDefault()))) {
+                    LOG.infof("Flow run %d of %s: try %d of %d failed; trying again at %s", id, run.flow(),
+                        now.runTry() + 1, now.tries(), d.at());
+                    return;
+                }
+                d = new RunRetries.Decision(false, null, "Not tried again: the run was asked to stop, or its worker "
+                    + "lost its job");
+            }
+            String message = (error == null ? "The flow failed" : error)
+                + (now.tries() > 1 ? RunRetries.afterTries(now.runTry()) + ". " + d.why() : "");
+            store.finishRun(id, "failed", message, d.why());
+            told(run.flow(), id, "failed", message);
+        }
+
+        /** What a run's carry-on plan needs about the pipelines its nodes run. */
+        private CarryOn.Facts facts() {
+            return FlowService.this.facts(run.id());
+        }
+
+        /**
+         * A run taken over from a worker that was lost (ADR 0053, decision 6): every node that had ended
+         * is restored as it ended; nodes that were running start again where they were: a run-pipeline or
+         * for-each node finds the pipeline runs it started and watches them, never starting one again; a
+         * wait keeps its start. A sql node that was running is failed: its statements ran on the worker
+         * that stopped, so whether they committed is not known.
+         */
+        private void restoreAll(FlowDefinition def, FlowEngine engine) {
+            for (FlowStore.NodeRun r : store.nodeRuns(run.id())) {
+                FlowDefinition.Node s = def.node(r.nodeId());
+                if (s == null || engine.state(s.id()) != FlowEngine.State.PENDING) {
+                    continue;
+                }
+                Instant start = r.startedAt() == null ? Instant.now() : r.startedAt();
+                switch (r.status()) {
+                    case "succeeded", "failed", "cancelled" -> keep(engine, s, r);
+                    case "running" -> {
+                        if (FlowDefinition.SQL.equals(s.type())) {
+                            started.put(s.id(), start);
+                            engine.restore(s.id(), FlowEngine.State.FAILED, Map.of());
+                            save(def, s.id(), "failed", null, Instant.now(), "The worker running this flow stopped while "
+                                + "this node ran, so whether its statements committed is not known. Check its source",
+                                Map.of(IN_DOUBT, true));
+                        } else {
+                            resumedStart.put(s.id(), start);
+                        }
+                    }
+                    default -> {
+                        // skipped: worked out again from the nodes before it
+                    }
+                }
+            }
+            LOG.infof("Flow run %d of %s taken over: carrying on as try %d", run.id(), run.flow(), run.runTry() + 1);
+        }
+
+        /**
+         * The next try of a failed run (ADR 0053, decision 7): the nodes the plan keeps keep what they did;
+         * the rest run again, a run-pipeline node's pipeline run after its earlier tries', a for-each node's
+         * items that did not succeed. False, with the run ended, when it must not be run again after all
+         * (a pipeline changed since, say).
+         */
+        private boolean carryOn(FlowDefinition def, FlowEngine engine) {
+            List<io.kilnmark.server.runs.RunTables.Try> tried = store.tries(run.id());
+            boolean byHand = !tried.isEmpty() && tried.getLast().askedBy() != null;
+            CarryOn.Plan plan = CarryOn.plan(def, store.nodeRuns(run.id()), facts(), byHand);
+            if (plan.blocker() != null) {
+                endTry("failed", "Not run again: " + plan.blocker(), RunRetries.Ending.REFUSED, null);
+                return false;
+            }
+            store.clearNodes(run.id(), plan.keep().keySet());
+            plan.keep().values().forEach(r -> keep(engine, def.node(r.nodeId()), r));
+            for (FlowDefinition.Node s : def.nodes()) {
+                if (plan.keep().containsKey(s.id()) || !runsPipeline(s)) {
+                    continue;
+                }
+                if (FlowDefinition.FOR_EACH.equals(s.type())) {
+                    rerun.add(s.id());
+                } else {
+                    int latest = pipelineStore.flowLatestTry(run.id(), s.id(), null);
+                    if (latest >= 0) {
+                        tryBase.put(s.id(), latest + 1);
+                    }
+                }
+            }
+            LOG.infof("Flow run %d of %s, try %d: keeping %d nodes, running %s again", run.id(), run.flow(),
+                run.runTry() + 1, plan.keep().size(), CarryOn.againInOrder(def, plan));
+            return true;
+        }
+
+        /** Restores a node as its row says it ended, without running it: its values are read as before. */
+        private void keep(FlowEngine engine, FlowDefinition.Node s, FlowStore.NodeRun r) {
+            FlowEngine.State state = switch (r.status()) {
+                case "succeeded" -> FlowEngine.State.SUCCEEDED;
+                case "failed" -> FlowEngine.State.FAILED;
+                default -> FlowEngine.State.CANCELLED;
+            };
+            started.put(s.id(), r.startedAt() == null ? Instant.now() : r.startedAt());
+            Map<String, Object> values = Optional.ofNullable(readParameters(r.reported())).orElse(new HashMap<>());
+            if (Boolean.TRUE.equals(values.get(TIMED_OUT))) {
+                timedOut.add(s.id());
+            }
+            values.keySet().removeAll(RECORDED);
+            engine.restore(s.id(), state, values);
+            if (r.pipelineRunId() != null) {
+                pipelineRuns.put(s.id(), r.pipelineRunId());
+            }
+            nodeWasCancelled |= state == FlowEngine.State.CANCELLED;
+            if (FlowDefinition.STOP.equals(s.type())) {
+                engine.halt("failed".equals(s.status()), s.message() == null ? "" : s.message());
+            }
+        }
+
+        /** Tells the run's owners, once a run, that it is taking longer than its warn_after (ADR 0053). */
+        private void warnLong() {
+            if (notifications != null && options.warnAfter() != null && store.markWarned(run.id())) {
+                notifications.runTakingLong("flow", run.flow(), run.id(), FlowDefinition.written(options.warnAfter()));
+            }
+        }
+
 
         /** Nodes that never ran are recorded, so a run shows every node of its version. */
         private void recordSkipped(FlowDefinition def) {
@@ -2375,6 +2616,141 @@ public class FlowService {
             }
             return "The flow failed";
         }
+    }
+
+    // ---- run retries, Run again from the failure, owners (ADR 0053) ----
+
+    /** Where a sql node's row says its commit is in doubt: never run again by a later try of the flow. */
+    static final String IN_DOUBT = "in_doubt";
+
+    /** What a node's row records beside what it reported, which a kept node's values leave out. */
+    private static final Set<String> RECORDED = Set.of("tries", TIMED_OUT, NOT_STARTED, TIMED_OUT_ITEMS, RETRYING_ITEMS,
+        IN_DOUBT);
+
+    /** The server's cap on run retries; the defaults in tests that build the service by hand. */
+    private io.kilnmark.server.runs.RunSettings runSettings() {
+        return runSettings == null ? io.kilnmark.server.runs.RunSettings.defaults() : runSettings;
+    }
+
+    /** The run options of the version a run uses; none when it cannot be read. */
+    private RunOptions runOptions(FlowStore.Run run) {
+        return store.version(run.flow(), run.version()).map(v -> FlowDefinition.parse(v.yaml()).definition())
+            .map(FlowDefinition::run).orElse(RunOptions.NONE);
+    }
+
+    /**
+     * Takes over a run whose worker was lost, when its options allow another try (ADR 0053, decision 6);
+     * otherwise ends it here, failed, with its nodes still marked running failed, and tells of it.
+     */
+    private boolean takeOver(FlowStore.Run run) {
+        RunRetries.Decision d = RunRetries.decide(runOptions(run), run.tries(), run.runTry(), RunRetries.Ending.LOST,
+            null, store.nextFire(run.id()), Instant.now(), java.util.concurrent.ThreadLocalRandom.current());
+        if (d.again() && store.takeOver(run.id())) {
+            return true;
+        }
+        for (FlowStore.NodeRun n : store.nodeRuns(run.id())) {
+            if ("running".equals(n.status())) {
+                store.saveNode(run.id(), new FlowStore.NodeRun(n.nodeId(), n.type(), n.position(), "failed",
+                    n.startedAt(), Instant.now(), n.pipelineRunId(), "The worker running this flow stopped", n.reported()));
+            }
+        }
+        String why = "The worker running this flow stopped before it finished" + RunRetries.afterTries(run.runTry())
+            + ". " + d.why() + ". Check what the pipelines it had started had written.";
+        store.finishRun(run.id(), "failed", why, d.why());
+        told(run.flow(), run.id(), "failed", why);
+        return false;
+    }
+
+    /** What a run's carry-on plan needs about the pipelines its nodes run, read from the pipelines' store. */
+    private CarryOn.Facts facts(long runId) {
+        return new CarryOn.Facts() {
+            @Override
+            public String unsafe(FlowDefinition.Node s) {
+                return pipelineStore.pipeline(s.pipeline())
+                    .flatMap(p -> pipelineStore.version(s.pipeline(), s.version() == null ? p.latestVersion()
+                        : s.version()))
+                    .map(v -> unsafeWrite(PipelineDefinition.parse(v.yaml()).definition()))
+                    .orElse("its pipeline is gone");
+            }
+
+            @Override
+            public String unchangeable(FlowDefinition.Node s) {
+                Map<Integer, PipelineStore.Try> latest = new HashMap<>();
+                for (PipelineStore.Try t : pipelineStore.flowTries(runId, s.id())) {
+                    latest.merge(t.item() == null ? -1 : t.item(), t, (a, b) -> b.number() > a.number() ? b : a);
+                }
+                for (PipelineStore.Try t : latest.values()) {
+                    if ("gate".equals(t.run().failedAs())) {
+                        return "ran " + s.pipeline() + ", which a quality gate stopped, and would stop again";
+                    }
+                    if ("refused".equals(t.run().failedAs())) {
+                        return "ran " + s.pipeline() + ", whose run was refused as it was set up, and would be again";
+                    }
+                }
+                return null;
+            }
+        };
+    }
+
+    /**
+     * Runs a failed flow run again from its failure, by hand (ADR 0053, decision 9): one more try of the
+     * same run, with its version, parameters and variables, acting as the run did; the nodes that
+     * succeeded keep what they did and the rest run again. Stewards and above, never someone whose role
+     * is below the run's.
+     *
+     * @throws WebApplicationException 403 for a role too low; 404 when there is no such run; 409 when the run
+     *                                 did not fail, another run of the flow is going, or a node that would
+     *                                 run again is not safe to (naming it and why)
+     */
+    public FlowViews.RunSummary runAgain(long id, String by, AccessRole role) {
+        requireSteward(role, "Running a flow again from its failure");
+        FlowStore.Run r = store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No flow run " + id));
+        if (role(r.requestedRole()).compareTo(role) > 0) {
+            throw fail(Response.Status.FORBIDDEN, "This run acts as a " + r.requestedRole() + ": running it again takes "
+                + "that role or above");
+        }
+        if (!"failed".equals(r.status())) {
+            throw fail(Response.Status.CONFLICT, "Only a failed run can be run again from its failure; run " + id + " is "
+                + r.status());
+        }
+        FlowDefinition def = store.version(r.flow(), r.version()).map(v -> FlowDefinition.parse(v.yaml()))
+            .filter(p -> p.problems().isEmpty()).map(FlowDefinition.Parsed::definition).orElse(null);
+        if (def == null) {
+            throw fail(Response.Status.CONFLICT, "Version " + r.version() + " of " + r.flow() + " no longer reads as a "
+                + "flow, so it cannot run again");
+        }
+        if (!sqlChecked(def, r.flow(), r.version())) {
+            throw fail(Response.Status.CONFLICT, SQL_NOT_CHECKED.formatted(r.version(), r.flow()));
+        }
+        CarryOn.Plan plan = CarryOn.plan(def, store.nodeRuns(id), facts(id), true);
+        if (plan.blocker() != null) {
+            throw fail(Response.Status.CONFLICT, "Not run again: " + plan.blocker());
+        }
+        boolean queued = lifecycle.queue(r.flow(), () -> store.runAgain(id, r.flow(), by));
+        if (!queued) {
+            throw fail(Response.Status.CONFLICT, "Run " + id + " is no longer failed");
+        }
+        LOG.infof("Flow run %d of %s run again from its failure by %s", id, r.flow(), by);
+        return view(store.run(id).orElseThrow(), true);
+    }
+
+    /** A flow's owners for a reader: team addresses only for designers and admins. 404 when there is no such flow. */
+    public io.kilnmark.server.runs.Owners.Shown owners(String name, AccessRole role) {
+        flow(name);
+        return io.kilnmark.server.runs.Owners.shown(store.owners(name), role.atLeast(AccessRole.DESIGNER));
+    }
+
+    /**
+     * Sets a flow's owners (designers and admins); returns those it had before, for the audit log. A
+     * team address must be one an admin added ({@code teams}).
+     */
+    public List<String> setOwners(String name, List<String> owners, java.util.Set<String> teams, AccessRole role) {
+        if (!role.atLeast(AccessRole.DESIGNER)) {
+            throw fail(Response.Status.FORBIDDEN, "Setting a flow's owners takes the designer role");
+        }
+        List<String> checked = io.kilnmark.server.runs.Owners.check(owners, teams);
+        return store.setOwners(name, checked).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No flow called "
+            + name));
     }
 
     /** Tells of a run's end: a failed run notifies, a run that succeeds clears that. */

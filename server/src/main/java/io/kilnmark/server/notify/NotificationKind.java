@@ -25,7 +25,7 @@ public enum NotificationKind {
         + "or spike, data that stops arriving", Repeat.ONCE),
     /** Testing a saved source's connection failed. */
     CONNECTION_FAILED("Connection test failed", "Testing a source's connection fails", Repeat.OPENS),
-    /** A pipeline run failed (wired up by the pipelines change; see NotificationPublisher#pipelineRunFinished). */
+    /** A pipeline run failed after its last try (wired up by the pipelines change; see NotificationPublisher#pipelineRunFinished). */
     PIPELINE_FAILED("Pipeline run failed", "A pipeline run fails", Repeat.OPENS),
     /** A pipeline run succeeded, but the quality of what it wrote is below its threshold. */
     PIPELINE_LOW_QUALITY("Pipeline quality below threshold", "A pipeline run succeeds but what it wrote scores "
@@ -33,7 +33,15 @@ public enum NotificationKind {
     /** A flow run failed (docs/design/flows.md). */
     FLOW_FAILED("Flow run failed", "A flow run fails", Repeat.OPENS),
     /** A flow's notify node sent its message. */
-    FLOW_NOTICE("Flow notice", "A flow's notify node sends a message", Repeat.ONCE);
+    FLOW_NOTICE("Flow notice", "A flow's notify node sends a message", Repeat.ONCE),
+    /** A pipeline run succeeded after a failure that was told (ADR 0053). */
+    PIPELINE_RECOVERED("Pipeline run recovered", "A pipeline run succeeds after a failed run that was told",
+        Repeat.CLOSES),
+    /** A flow run succeeded after a failure that was told (ADR 0053). */
+    FLOW_RECOVERED("Flow run recovered", "A flow run succeeds after a failed run that was told", Repeat.CLOSES),
+    /** A pipeline or flow run is still going past its run: warn_after (ADR 0053). */
+    RUN_TAKING_LONG("Run taking longer than expected", "A pipeline or flow run is still going past the time its "
+        + "warn_after allows", Repeat.ONCE);
 
     /** How repeats of one problem are handled. */
     public enum Repeat {

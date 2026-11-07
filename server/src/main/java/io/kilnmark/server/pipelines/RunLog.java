@@ -73,10 +73,19 @@ final class RunLog implements RunListener {
     private final Set<String> ended = new HashSet<>();        // nodes said to have ended; guarded by this
 
     RunLog(PipelineStore store, long runId, RunContext context, ObjectMapper json) {
+        this(store, runId, context, json, 0);
+    }
+
+    /**
+     * A log that carries on after event {@code after}: a later try of the run (ADR 0053) adds its
+     * events after the earlier tries', which stay. The 10,000 events are the run's, all tries together.
+     */
+    RunLog(PipelineStore store, long runId, RunContext context, ObjectMapper json, int after) {
         this.store = store;
         this.runId = runId;
         this.context = context;
         this.json = json;
+        this.seq = Math.max(0, after);
     }
 
     /** The pipeline's gate nodes: the first rows a gate sends anywhere but on {@code out} are it setting rows aside. */

@@ -197,6 +197,24 @@ public final class FlowEngine {
         }
     }
 
+    /**
+     * Sets a node that has not started to how it ended before: in an earlier try of the run, or on a
+     * worker that stopped (ADR 0053). Its connections then fall as they did, and later nodes read its
+     * values; it is never started.
+     *
+     * @param outcome SUCCEEDED, FAILED or CANCELLED
+     */
+    public void restore(String node, State outcome, Map<String, Object> values) {
+        if (state(node) != State.PENDING) {
+            throw new IllegalStateException("Node " + node + " is " + state(node) + ", not waiting to start");
+        }
+        if (outcome != State.SUCCEEDED && outcome != State.FAILED && outcome != State.CANCELLED) {
+            throw new IllegalArgumentException("A node is kept as succeeded, failed or cancelled, not " + outcome);
+        }
+        states.put(node, State.RUNNING);
+        finish(node, outcome, values);
+    }
+
     private static Map<String, Object> withoutNulls(Map<String, Object> m) {
         Map<String, Object> out = new LinkedHashMap<>();
         m.forEach((k, v) -> {

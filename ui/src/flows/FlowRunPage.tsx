@@ -16,6 +16,7 @@ import { FlowRunFacts, FlowTimeSpent, took } from "./FlowRunSummary";
 import { readFlowGraph, TYPE_WORDS, type FlowGraphResult } from "./graph";
 import { FlowStatus } from "./RunFlow";
 import { reportedWords, timedOut, timedOutItems } from "./runFacts";
+import { retrying, RunTriesList } from "../components/RunTries";
 import "../pipelines/pipelines.css";
 
 const FlowDiagram = lazy(() => import("./FlowDiagram"));
@@ -79,6 +80,7 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [cancelling, setCancelling] = useState(false);
+  const [again, setAgain] = useState(false);
   // The diagram's YAML: the run's own version, read once.
   const [graph, setGraph] = useState<FlowGraphResult | null>(null);
   // The page's clock, read when an answer arrives, so running bars and times move with each look.
@@ -148,6 +150,24 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
     }
   };
 
+  // One more try of a failed run, keeping what succeeded (ADR 0053). The server refuses, saying which node
+  // and why, when a node that would run again is not safe to.
+  const runAgain = async () => {
+    if (!window.confirm(`Run flow run ${id} again from its failure? The nodes that succeeded keep what they did; the rest run again, with the same version and values.`))
+      return;
+    setAgain(true);
+    try {
+      await flowsApi.runAgain(id);
+      setNotice("Queued as its next try.");
+      setError(null);
+      load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setAgain(false);
+    }
+  };
+
   if (!detail) {
     return (
       <>
@@ -182,9 +202,16 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
             </button>
           </div>
         )}
+        {steward && run.status === "failed" && (
+          <div className="pl-head-actions">
+            <button type="button" onClick={runAgain} disabled={again}>
+              {again ? "Queuing…" : "Run again from the failure"}
+            </button>
+          </div>
+        )}
       </div>
       <p role="status" className="notice">
-        {going ? notice : ""}
+        {going ? retrying(run) ?? notice : notice}
       </p>
       {error && (
         <p role="alert" className="error">
@@ -195,6 +222,7 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
         <h2 id="fr-run-h">Summary</h2>
         <FlowRunFacts detail={detail} now={now} />
       </section>
+      <RunTriesList tries={detail.tries} run={run} />
       {values.length > 0 && (
         <section aria-labelledby="fr-values-h" className="panel">
           <h2 id="fr-values-h">Values it ran with</h2>
