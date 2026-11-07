@@ -85,6 +85,9 @@ class RunRetriesApiTest {
     NotificationPublisher notifications;
 
     @Inject
+    io.kilnmark.server.pipelines.PipelineService pipelineService;
+
+    @Inject
     Db db;
 
     static String designer;
@@ -553,6 +556,85 @@ class RunRetriesApiTest {
         assertEquals(1, pipelineRuns(id, "first"), "first was not run again");
         assertEquals(1, pipelineRuns(id, "second"), "second's run was watched to its end, never started again");
         assertEquals("lost", flowStore.tries(id).get(0).status());
+    }
+
+    @Test
+    @Order(16)
+    void aTakeoverOnALaterTryRunsAgainWhatThatTryRunsAgain() throws Exception {
+        flows.save(TWO.replace("NAME", "rr-lost2").replace("RUN\n", "run: { retries: 2, retry_delay: 10s }\n"), "test",
+            "tester", AccessRole.DESIGNER, null);
+        // Try 2 of a run whose second node failed in try 1: try 2 kept first and cleared second's row, then its
+        // worker was lost before second started again.
+        long id = db.tx(c -> {
+            try (java.sql.PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.flow_run (flow, version, "
+                + "status, requested_by, requested_role, started_at, tries, run_try) VALUES ('rr-lost2', 1, 'running', "
+                + "'tester', 'steward', now(), 3, 1) RETURNING id")) {
+                try (java.sql.ResultSet rs = ps.executeQuery()) {
+                    rs.next();
+                    return rs.getLong(1);
+                }
+            }
+        });
+        PipelineStore.Run a = pipelineStore.queueRun("rr-plain", 1, "tester", "steward", id, "first", "{}", "{}");
+        pipelineRun(a.id(), PipelineStore.Run::finished, "first's run");
+        flowStore.saveNode(id, new FlowStore.NodeRun("first", "run-pipeline", 0, "succeeded", java.time.Instant.now(),
+            java.time.Instant.now(), a.id(), null, "{}"));
+        HoldingGraphRunner.failNext = "rr-plain2";
+        PipelineStore.Run b = pipelineStore.queueRun("rr-plain2", 1, "tester", "steward", id, "second", "{}", "{}");
+        assertEquals("failed", pipelineRun(b.id(), PipelineStore.Run::finished, "try 1's run of second").status());
+        update("INSERT INTO kilnmark.job (kind, payload, status, attempts, max_attempts, locked_by, locked_at, "
+            + "heartbeat_at) VALUES ('flow', jsonb_build_object('flowRunId', ?::bigint), 'running', 2, 3, 'gone-worker', "
+            + "now() - interval '10 minutes', now() - interval '10 minutes')", id);
+        queue.recoverStale(Duration.ofMinutes(2), Duration.ofSeconds(30));
+        FlowStore.Run done = waitForFlow(id, FlowStore.Run::finished, "the flow taken over");
+        assertEquals("succeeded", done.status(), String.valueOf(done.error()));
+        assertEquals(2, pipelineRuns(id, "second"), "second ran again, never counted as try 1's failed run");
+        assertEquals(1, pipelineStore.flowLatestTry(id, "second", null));
+        assertEquals(1, pipelineRuns(id, "first"));
+    }
+
+    @Test
+    @Order(17)
+    void aWorkerThatLostItsJobChangesNothingOfAnothersTry() throws Exception {
+        HoldingGraphRunner.hold = true;
+        long id = startPipeline("rr-region", steward);
+        PipelineStore.Run running = pipelineRun(id, r -> r.status().equals("running"), "a running try");
+        long job = count("SELECT id FROM kilnmark.job WHERE kind = 'pipeline' AND (payload ->> 'pipelineRunId')::bigint = ?",
+            id);
+        String holder = pipelineStore.jobHolder(job);
+        assertFalse(pipelineStore.finishRun(id, "failed", "a stale worker's end", null, "error", null,
+            running.runTry() + 1), "ending another try is refused");
+        assertFalse(pipelineStore.retry(id, job, holder, running.runTry() + 1, java.time.Instant.now(), "x", "y"),
+            "so is queueing it again");
+        assertFalse(pipelineStore.retry(id, job, "another-worker", running.runTry(), java.time.Instant.now(), "x", "y"),
+            "and by a worker that does not hold the job");
+        assertEquals("running", pipelineStore.run(id).orElseThrow().status());
+        HoldingGraphRunner.hold = false;
+        assertEquals("succeeded", pipelineRun(id, PipelineStore.Run::finished, "the try").status());
+    }
+
+    @Test
+    @Order(18)
+    void aPipelineRunLostOnItsLastTryIsTold() throws Exception {
+        as(designer).body(Map.of("owners", List.of("rr-owner"))).put("/api/v1/pipelines/rr-region/owners").then()
+            .statusCode(200);
+        // A run whose worker stopped, and whose job recovery failed: no tries left.
+        long id = db.tx(c -> {
+            try (java.sql.PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.pipeline_run (pipeline, "
+                + "version, status, requested_by, requested_role, started_at) VALUES ('rr-region', 1, 'running', "
+                + "'tester', 'steward', now()) RETURNING id")) {
+                try (java.sql.ResultSet rs = ps.executeQuery()) {
+                    rs.next();
+                    return rs.getLong(1);
+                }
+            }
+        });
+        update("INSERT INTO kilnmark.job (kind, payload, status, attempts, max_attempts, locked_by) VALUES ('pipeline', "
+            + "jsonb_build_object('pipelineRunId', ?::bigint), 'failed', 1, 1, 'gone-worker')", id);
+        pipelineService.failOrphanedRuns();
+        assertEquals("failed", pipelineStore.run(id).orElseThrow().status());
+        await("the owner told", () -> feed(owner, "rr-region"), k -> k.contains("pipeline_failed"));
+        assertEquals("lost", pipelineStore.tries(id).get(0).status());
     }
 
     // ---- owners and the long-run notice ----

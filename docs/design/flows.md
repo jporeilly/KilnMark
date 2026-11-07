@@ -202,8 +202,19 @@ each try starts from the nodes' rows of the try before (`CarryOn.plan`, pure, `C
   every node that had ended is restored as it ended; a node that was running starts again where it
   was: a run-pipeline or for-each node finds its pipeline runs (`flowLatestTry`, `flowItemRuns`) and
   watches them, a wait or wait-for keeps its start; a sql node that was running is failed with
-  `in_doubt`, since its statements ran on the worker that stopped. `RunRetriesApiTest` builds a run
-  left by a worker that stopped, recovers its job and sees another worker carry on.
+  `in_doubt`, since its statements ran on the worker that stopped. A node a later try runs again
+  records in its row where its pipeline runs start (`try_base`; a for-each node's `item_bases`), and a
+  node with no row whose pipeline ran in an earlier try is one that try runs again, so a takeover
+  never counts an earlier try's failed run as this try's. `RunRetriesApiTest` builds runs left by a
+  worker that stopped, on a first and a later try, recovers their jobs and sees another worker carry on.
+- **Handing over.** A worker that stops, or loses its lease, while it watches a flow whose run may be
+  taken over leaves it running, its pipeline runs going, and answers its job as waiting: put back in
+  the queue (or, with the lease gone, by recovery after `lost-after`). Otherwise it stops what the try
+  started (`abandon`: pipeline runs cancelled, a sql node failed and in doubt unless it is known to
+  have rolled back), as it does after an internal error, and ends the try as lost.
+- **Fencing.** Every end of a try (`RunTables.finishRun`, `retry`) checks that the run is still on
+  that try, and a retry that the job is held by the worker that held it as the try began, so a
+  worker that lost its job to another changes nothing of the other's try.
 - **Run again from the failure** (`POST /api/v1/flow-runs/{id}/run-again`, `FlowService.runAgain`):
   stewards and above, never below the run's own role; a failed run only; the plan made by hand,
   refused (409) with its blocker; then `RunTables.runAgain`, in one transaction with the flow's row

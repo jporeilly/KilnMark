@@ -115,10 +115,6 @@ public class PipelineService {
     @Inject
     io.kilnmark.server.runs.RunSettings runSettings;
 
-    /** Each change of a pipeline's owners is recorded here (ADR 0029); null in tests that build the service by hand. */
-    @Inject
-    io.kilnmark.server.audit.AuditLog audit;
-
 
     @Inject
     public PipelineService(PipelineStore store, PipelineCompilerPort compiler, NodeFactories nodes, GraphRunner runner,
@@ -1125,10 +1121,13 @@ public class PipelineService {
     /** Marks failed the runs whose worker stopped without finishing them; called by workers' recovery. */
     public void failOrphanedRuns() {
         try {
-            int n = store.failOrphanedRuns();
-            if (n > 0) {
-                LOG.infof("%d pipeline runs were left by a stopped worker and are now marked failed", n);
+            List<PipelineStore.Run> failed = store.failOrphaned();
+            if (!failed.isEmpty()) {
+                LOG.infof("%d pipeline runs were left by a stopped worker and are now marked failed", failed.size());
             }
+            // A run lost on its last try is told, as one that failed on it is (ADR 0053).
+            failed.forEach(r -> finished(r.pipeline(), r.id(), "failed", null, null, null, r.runTry() > 0
+                || r.tries() > 1 ? RunRetries.afterTries(r.runTry()) + ". Not tried again: it has no tries left" : null));
         } catch (RuntimeException e) {
             LOG.debugf(e, "Could not check for pipeline runs left by a stopped worker");
         }
@@ -1505,6 +1504,8 @@ public class PipelineService {
         final PipelineStore.Run run;
         final long jobId;
         final RunOptions options;
+        /** The worker holding the job as this try starts: only it may queue the job again (ADR 0053). */
+        final String holder;
         /** Whether the run has ended for good (its owners and followers are told then), not queued again. */
         boolean ended;
         /** How it ended, for the notice. */
@@ -1516,56 +1517,61 @@ public class PipelineService {
             this.run = run;
             this.jobId = jobId;
             this.options = options;
+            this.holder = store.jobHolder(jobId);
         }
 
         /**
          * Ends this try: a success or a cancel for good; a failure tried again when it may be (the run is
-         * then queued for its next try with its job), else for good, saying why not.
+         * then queued for its next try with its job), else for good, saying why not. Only while the run is
+         * still on this try: a worker that lost its job, whose run another worker took over, changes nothing.
          *
-         * @return whether the run has ended for good
+         * @return whether the run has ended for good, here
          */
         boolean end(String status, String error, String result, RunRetries.Ending ending) {
             this.status = status;
             long id = run.id();
-            PipelineStore.Run now = store.run(id).orElse(run);
+            int tried = run.runTry();
             if (status.equals("succeeded") || status.equals("cancelled")) {
-                store.finishRun(id, status, error, result, status.equals("cancelled") ? "cancelled" : null, null);
-                ended = true;
-                told = now.runTry() > 0 ? RunRetries.afterTries(now.runTry()) : null;
-                return true;
+                ended = store.finishRun(id, status, error, result, status.equals("cancelled") ? "cancelled" : null, null,
+                    tried);
+                told = tried > 0 ? RunRetries.afterTries(tried) : null;
+                return ended;
             }
-            RunRetries.Decision d = decide(now, ending);
+            RunRetries.Decision d = decide(ending);
             if (d.again()) {
-                String holder = store.jobHolder(jobId);
-                if (holder != null && store.retry(id, jobId, holder, d.at(), error, RunRetries.waiting(now.runTry(),
-                    now.tries(), d.at(), java.time.ZoneId.systemDefault()))) {
+                if (holder != null && store.retry(id, jobId, holder, tried, d.at(), error, RunRetries.waiting(tried,
+                    run.tries(), d.at(), java.time.ZoneId.systemDefault()))) {
                     LOG.infof("Run %d of pipeline %s: try %d of %d failed; trying again at %s", id, run.pipeline(),
-                        now.runTry() + 1, now.tries(), d.at());
+                        tried + 1, run.tries(), d.at());
                     ended = false;
                     return false;
                 }
-                d = new RunRetries.Decision(false, null, "Not tried again: the run was asked to stop, or its worker "
-                    + "lost its job");
+                if (store.cancelRequested(id)) {
+                    // Asked to stop as it was about to be tried again: it ends cancelled, as a cancel does.
+                    this.status = "cancelled";
+                    ended = store.finishRun(id, "cancelled", "Cancelled", result, "cancelled", null, tried);
+                    told = null;
+                    return ended;
+                }
+                d = new RunRetries.Decision(false, null, "Not tried again: its worker lost its job");
             }
-            String more = now.tries() > 1 ? RunRetries.afterTries(now.runTry()) + ". " + d.why() : null;
-            store.finishRun(id, "failed", more == null ? error : withTries(error, more), result, ending.recorded(),
-                d.why());
-            ended = true;
+            String more = run.tries() > 1 ? RunRetries.afterTries(tried) + ". " + d.why() : null;
+            ended = store.finishRun(id, "failed", more == null ? error : withTries(error, more), result,
+                ending.recorded(), d.why(), tried);
             told = more;
-            return true;
+            return ended;
         }
 
         /** Whether this run, lost with its worker, may be taken over as its next try; if not, it ends here. */
         boolean mayTakeOver() {
-            RunRetries.Decision d = decide(run, RunRetries.Ending.LOST);
+            RunRetries.Decision d = decide(RunRetries.Ending.LOST);
             if (d.again() && store.takeOver(run.id())) {
                 LOG.infof("Run %d of pipeline %s was lost with its worker; taken over as try %d", run.id(),
                     run.pipeline(), run.runTry() + 2);
                 return true;
             }
-            store.finishRun(run.id(), "failed", "The worker running this pipeline stopped before it finished"
-                + RunRetries.afterTries(run.runTry()) + ". " + d.why(), null, "lost", d.why());
-            ended = true;
+            ended = store.finishRun(run.id(), "failed", "The worker running this pipeline stopped before it finished"
+                + RunRetries.afterTries(run.runTry()) + ". " + d.why(), null, "lost", d.why(), run.runTry());
             status = "failed";
             told = RunRetries.afterTries(run.runTry()) + ". " + d.why();
             tell();
@@ -1573,11 +1579,11 @@ public class PipelineService {
         }
 
         /** Whether the try may be tried again now; a lost one is decided without its wait (it has waited). */
-        private RunRetries.Decision decide(PipelineStore.Run now, RunRetries.Ending ending) {
+        private RunRetries.Decision decide(RunRetries.Ending ending) {
             Optional<PipelineStore.Version> v = store.version(run.pipeline(), run.version());
             String unsafe = v.isEmpty() ? "its version is gone"
                 : unsafeToRepeat(PipelineDefinition.parse(v.get().yaml()).definition());
-            return RunRetries.decide(options, now.tries(), now.runTry(), ending, unsafe, store.nextFire(run.id()),
+            return RunRetries.decide(options, run.tries(), run.runTry(), ending, unsafe, store.nextFire(run.id()),
                 Instant.now(), java.util.concurrent.ThreadLocalRandom.current());
         }
 

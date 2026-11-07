@@ -544,8 +544,8 @@ public class FlowStore implements io.kilnmark.server.runs.RunStore<FlowStore.Run
     // ---- tries (ADR 0053) ----
 
     /** Queues a run for its next try at {@code at} with its job, held by {@code holder} (RunTables#retry). */
-    public boolean retry(long id, long jobId, String holder, Instant at, String error, String waiting) {
-        return RunTables.retry(db, KIND, id, jobId, holder, at, "failed", error, waiting);
+    public boolean retry(long id, long jobId, String holder, int onTry, Instant at, String error, String waiting) {
+        return RunTables.retry(db, KIND, id, jobId, holder, onTry, at, "failed", error, waiting);
     }
 
     /** Takes over a run whose worker was lost: it carries on, still running, as its next try. */
@@ -574,8 +574,8 @@ public class FlowStore implements io.kilnmark.server.runs.RunStore<FlowStore.Run
     }
 
     /** Gives an unfinished run its final status, recording why it is not tried again ({@code next}, or null). */
-    public void finishRun(long id, String status, String error, String next) {
-        RunTables.finishRun(db, KIND, id, status, error, null, next);
+    public boolean finishRun(long id, String status, String error, String next, Integer onTry) {
+        return RunTables.finishRun(db, KIND, id, status, error, null, next, onTry);
     }
 
     /**

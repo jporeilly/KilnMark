@@ -1071,8 +1071,10 @@ public class FlowService {
             execution.lookThreads.values().forEach(Thread::interrupt);
             // Not the exception's text: it could quote anything. The class is enough for the log.
             LOG.errorf("Flow run %d failed with %s", id, e.getClass().getName());
+            // What it started is stopped and recorded first, so a later try never runs it a second time beside it.
+            execution.abandon("The flow stopped with an internal error");
             execution.endTry("failed", "The flow could not be run to the end: an internal error. Look at the server's "
-                + "log.", RunRetries.Ending.ERROR, null);
+                + "log.", RunRetries.Ending.ERROR, execution.def);
         } finally {
             if (signal != null) {
                 signal.close();
@@ -1081,7 +1083,9 @@ public class FlowService {
                 watched.close();
             }
         }
-        return new ScanService.Result(ScanService.Outcome.FINISHED, null);
+        // Handed over as its worker stops (ADR 0053): back in the queue, its run still running, for another to take over.
+        return new ScanService.Result(execution.handedOver ? ScanService.Outcome.WAITING : ScanService.Outcome.FINISHED,
+            null);
     }
 
     /** One flow run on a worker: the engine, and the pipeline runs its nodes started. */
@@ -1152,6 +1156,15 @@ public class FlowService {
         private final Set<String> rerun = new HashSet<>();
         /** When each node first started, from the row of a node taken over (a wait keeps its start). */
         private final Map<String, Instant> resumedStart = new HashMap<>();
+        /** The try each item of a for-each node run again starts from, from the row of a node taken over. */
+        private final Map<String, Map<Integer, Integer>> resumedItemBases = new HashMap<>();
+        /** The worker holding the run's job as this try starts: only it may queue the job again. */
+        private final String holder;
+        /** The version and engine of this try, once read: what {@link #abandon} stops. */
+        FlowDefinition def;
+        private FlowEngine engine;
+        /** Whether the run was left running for another worker to take over, as this one stopped. */
+        boolean handedOver;
 
         Execution(FlowStore.Run run, BooleanSupplier shutdown, JobQueue.ScanLease lease, RunWatch.Signal cancel,
                   RunWatch.Rows<PipelineStore.Run>.Session watched, long jobId, boolean takeover) {
@@ -1162,6 +1175,7 @@ public class FlowService {
             this.watched = watched;
             this.jobId = jobId;
             this.takeover = takeover;
+            this.holder = jobId < 0 ? null : store.jobHolder(jobId);
         }
 
         /** The try of node {@code node} within this try of the flow, from 0: its own retries count from it. */
@@ -1209,6 +1223,8 @@ public class FlowService {
             def.nodes().stream().filter(n -> FlowDefinition.STOP.equals(n.type())).forEach(n -> stops.add(n.id()));
             FlowEngine engine = new FlowEngine(ids, def.engineConnections(), params,
                 def.maxParallel() == null ? 0 : def.maxParallel(), stops);
+            this.def = def;
+            this.engine = engine;
             AccessRole role = role(run.requestedRole());
             options = def.run();
             if (cancel != null) {
@@ -1222,32 +1238,17 @@ public class FlowService {
             boolean cancelling = false;
             while (true) {
                 if (shutdown.getAsBoolean()) {
-                    sqlControls.values().forEach(SqlAction.Control::stop);
-                    checkThreads.values().forEach(Thread::interrupt);
-                    lookThreads.values().forEach(Thread::interrupt);
-                    for (String s : engine.running()) {
-                        if (sqlRuns.containsKey(s)) {
-                            save(def, s, "failed", null, Instant.now(), stoppedSql(s), Map.of());
-                            continue;
-                        }
-                        Fan fan = fans.get(s);
-                        if (fan != null) {
-                            fan.running().forEach(this::cancelPipelineRun);
-                            save(def, s, "failed", null, Instant.now(), "The worker running this flow stopped",
-                                recorded(fan, Map.of()));
-                            continue;
-                        }
-                        Long prId = pipelineRuns.get(s);
-                        if (prId != null) {
-                            try {
-                                pipelines.cancel(prId, run.requestedBy());
-                            } catch (RuntimeException e) {
-                                // already finished
-                            }
-                        }
-                        save(def, s, "failed", prId, Instant.now(), "The worker running this flow stopped", Map.of());
+                    if (mayHandOver()) {
+                        // Another worker takes it over (ADR 0053): the pipeline runs going are left to it, and its
+                        // sql nodes, stopped here, are counted in doubt there.
+                        sqlControls.values().forEach(SqlAction.Control::stop);
+                        checkThreads.values().forEach(Thread::interrupt);
+                        lookThreads.values().forEach(Thread::interrupt);
+                        handedOver = true;
+                        LOG.infof("Flow run %d of %s handed over as its worker stops", run.id(), run.flow());
+                        return;
                     }
-                    recordSkipped(def);
+                    abandon("The worker running this flow stopped");
                     endTry("failed", "The worker running this flow was stopped before it finished, or lost its "
                         + "connection. Check what the pipelines it had started had written.", RunRetries.Ending.LOST,
                         def);
@@ -1463,17 +1464,31 @@ public class FlowService {
             fans.put(s.id(), fan);
             // Found again by flow run, node and item, so no item starts twice.
             boolean again = rerun.contains(s.id());
-            pipelineStore.flowItemRuns(run.id(), s.id()).forEach((i, pr) -> {
-                if (!again || "succeeded".equals(pr.status())) {
-                    fan.runs.put(i, pr.id());
-                }
-            });
+            Map<Integer, Integer> resumed = resumedItemBases.getOrDefault(s.id(), Map.of());
+            Map<Integer, PipelineStore.Try> latest = new HashMap<>();
             pipelineStore.flowTries(run.id(), s.id()).forEach(t -> {
                 if (t.item() != null) {
-                    fan.tries.merge(t.item(), t.number(), Math::max);
+                    latest.merge(t.item(), t, (a, b) -> b.number() > a.number() ? b : a);
                 }
             });
-            if (again) {
+            latest.forEach((i, t) -> {
+                fan.tries.put(i, t.number());
+                Integer base = resumed.get(i);
+                // Taken over: an item run again by this try keeps the run this try started for it, never an earlier
+                // try's. Otherwise, run again: only an item whose last run succeeded is kept.
+                boolean keep = base != null ? t.number() >= base : !again || "succeeded".equals(t.run().status());
+                if (keep) {
+                    fan.runs.put(i, t.run().id());
+                }
+            });
+            if (!resumed.isEmpty()) {
+                fan.base.putAll(resumed);
+                resumed.forEach((i, b) -> {
+                    if (!fan.runs.containsKey(i)) {
+                        fan.tries.put(i, b);
+                    }
+                });
+            } else if (again) {
                 // Run again by this try of the flow (ADR 0053): an item that did not succeed starts after its
                 // earlier tries, and counts its own retries from there.
                 fan.tries.forEach((i, t) -> {
@@ -1483,7 +1498,7 @@ public class FlowService {
                 });
                 fan.base.forEach(fan.tries::put);
             }
-            save(def, s.id(), "running", null, null, fan.progress(), Map.of());
+            save(def, s.id(), "running", null, null, fan.progress(), recorded(fan, Map.of()));
             fan.said = fan.progress();
             fill(def, engine, fan, role);
         }
@@ -1648,6 +1663,12 @@ public class FlowService {
             }
             if (!fan.retryAt.isEmpty()) {
                 out.put(RETRYING_ITEMS, List.copyOf(fan.retryAt.keySet()));
+            }
+            if (!fan.base.isEmpty()) {
+                // The try each item run again starts from: read again by a takeover (ADR 0053).
+                Map<String, Integer> bases = new java.util.TreeMap<>();
+                fan.base.forEach((i, b) -> bases.put(String.valueOf(i), b));
+                out.put(ITEM_BASES, bases);
             }
             return out;
         }
@@ -2410,8 +2431,14 @@ public class FlowService {
             FlowDefinition.Node s = def.node(node);
             int position = def.nodes().indexOf(s);
             String values = "{}";
+            Map<String, Object> row = reported;
+            if (tryBase.getOrDefault(node, 0) > 0) {
+                // Where this try of the flow started the node's pipeline runs: read again by a takeover (ADR 0053).
+                row = new LinkedHashMap<>(reported);
+                row.put(TRY_BASE, tryBase.get(node));
+            }
             try {
-                values = json.writeValueAsString(reported);
+                values = json.writeValueAsString(row);
             } catch (JsonProcessingException e) {
                 // keep {}
             }
@@ -2453,13 +2480,15 @@ public class FlowService {
          */
         void endTry(String status, String error, RunRetries.Ending ending, FlowDefinition def) {
             long id = run.id();
-            FlowStore.Run now = store.run(id).orElse(run);
+            int tried = run.runTry();
+            // Only while the run is still on this try: a worker that lost its job changes nothing of another's.
             if (!status.equals("failed")) {
-                store.finishRun(id, status, error, null);
-                told(run.flow(), id, status, error);
+                if (store.finishRun(id, status, error, null, tried)) {
+                    told(run.flow(), id, status, error);
+                }
                 return;
             }
-            RunRetries.Decision d = RunRetries.decide(options, now.tries(), now.runTry(), ending, null,
+            RunRetries.Decision d = RunRetries.decide(options, run.tries(), tried, ending, null,
                 store.nextFire(id), Instant.now(), java.util.concurrent.ThreadLocalRandom.current());
             if (d.again() && def != null) {
                 CarryOn.Plan plan = CarryOn.plan(def, store.nodeRuns(id), facts(), false);
@@ -2468,20 +2497,67 @@ public class FlowService {
                 }
             }
             if (d.again()) {
-                String holder = jobId < 0 ? null : store.jobHolder(jobId);
-                if (holder != null && store.retry(id, jobId, holder, d.at(), error, RunRetries.waiting(now.runTry(),
-                    now.tries(), d.at(), java.time.ZoneId.systemDefault()))) {
+                if (holder != null && store.retry(id, jobId, holder, tried, d.at(), error, RunRetries.waiting(tried,
+                    run.tries(), d.at(), java.time.ZoneId.systemDefault()))) {
                     LOG.infof("Flow run %d of %s: try %d of %d failed; trying again at %s", id, run.flow(),
-                        now.runTry() + 1, now.tries(), d.at());
+                        tried + 1, run.tries(), d.at());
                     return;
                 }
-                d = new RunRetries.Decision(false, null, "Not tried again: the run was asked to stop, or its worker "
-                    + "lost its job");
+                if (store.cancelRequested(id)) {
+                    // Asked to stop as it was about to be tried again: it ends cancelled, as a cancel does.
+                    if (store.finishRun(id, "cancelled", "Cancelled", null, tried)) {
+                        told(run.flow(), id, "cancelled", "Cancelled");
+                    }
+                    return;
+                }
+                d = new RunRetries.Decision(false, null, "Not tried again: its worker lost its job");
             }
             String message = (error == null ? "The flow failed" : error)
-                + (now.tries() > 1 ? RunRetries.afterTries(now.runTry()) + ". " + d.why() : "");
-            store.finishRun(id, "failed", message, d.why());
-            told(run.flow(), id, "failed", message);
+                + (run.tries() > 1 ? RunRetries.afterTries(tried) + ". " + d.why() : "");
+            if (store.finishRun(id, "failed", message, d.why(), tried)) {
+                told(run.flow(), id, "failed", message);
+            }
+        }
+
+        /** Whether a lost try of this run would be taken over: then a worker that stops hands it over. */
+        private boolean mayHandOver() {
+            return holder != null && RunRetries.decide(options, run.tries(), run.runTry(), RunRetries.Ending.LOST, null,
+                store.nextFire(run.id()), Instant.now(), java.util.concurrent.ThreadLocalRandom.current()).again();
+        }
+
+        /**
+         * Stops everything this try started and records how each running node ended, before the try ends
+         * for good or is tried again: its pipeline runs are cancelled, and a sql node is failed, in doubt
+         * unless its statements are known to have been rolled back, so a later try never runs it again.
+         */
+        void abandon(String why) {
+            if (def == null || engine == null) {
+                return;
+            }
+            sqlControls.values().forEach(SqlAction.Control::stop);
+            checkThreads.values().forEach(Thread::interrupt);
+            lookThreads.values().forEach(Thread::interrupt);
+            for (String s : engine.running()) {
+                if (sqlRuns.containsKey(s)) {
+                    String said = stoppedSql(s);
+                    java.util.concurrent.CompletableFuture<SqlAction.Outcome> f = sqlRuns.get(s);
+                    boolean rolledBack = f.isDone() && !f.join().succeeded() && !f.join().inDoubt();
+                    save(def, s, "failed", null, Instant.now(), said, rolledBack ? Map.of() : Map.of(IN_DOUBT, true));
+                    continue;
+                }
+                Fan fan = fans.get(s);
+                if (fan != null) {
+                    fan.running().forEach(this::cancelPipelineRun);
+                    save(def, s, "failed", null, Instant.now(), why, recorded(fan, Map.of()));
+                    continue;
+                }
+                Long prId = pipelineRuns.get(s);
+                if (prId != null) {
+                    cancelPipelineRun(prId);
+                }
+                save(def, s, "failed", prId, Instant.now(), why, Map.of());
+            }
+            recordSkipped(def);
         }
 
         /** What a run's carry-on plan needs about the pipelines its nodes run. */
@@ -2514,10 +2590,30 @@ public class FlowService {
                                 Map.of(IN_DOUBT, true));
                         } else {
                             resumedStart.put(s.id(), start);
+                            resumeBases(s, r);
                         }
                     }
                     default -> {
                         // skipped: worked out again from the nodes before it
+                    }
+                }
+            }
+            // A node with no row yet, whose pipeline ran in an earlier try, is one this try runs again: its rows were
+            // cleared as the try began (carryOn), and a node of this try saves its row before it starts a run.
+            Set<String> recordedNodes = new HashSet<>();
+            store.nodeRuns(run.id()).forEach(r -> recordedNodes.add(r.nodeId()));
+            for (FlowDefinition.Node s : def.nodes()) {
+                if (recordedNodes.contains(s.id()) || !runsPipeline(s)) {
+                    continue;
+                }
+                if (FlowDefinition.FOR_EACH.equals(s.type())) {
+                    if (!pipelineStore.flowTries(run.id(), s.id()).isEmpty()) {
+                        rerun.add(s.id());
+                    }
+                } else {
+                    int latest = pipelineStore.flowLatestTry(run.id(), s.id(), null);
+                    if (latest >= 0) {
+                        tryBase.put(s.id(), latest + 1);
                     }
                 }
             }
@@ -2556,6 +2652,26 @@ public class FlowService {
             LOG.infof("Flow run %d of %s, try %d: keeping %d nodes, running %s again", run.id(), run.flow(),
                 run.runTry() + 1, plan.keep().size(), CarryOn.againInOrder(def, plan));
             return true;
+        }
+
+        /** Reads the try bases a node's row recorded, so a takeover counts its pipeline runs as the try did. */
+        private void resumeBases(FlowDefinition.Node s, FlowStore.NodeRun r) {
+            Map<String, Object> values = readParameters(r.reported());
+            if (values == null) {
+                return;
+            }
+            if (values.get(TRY_BASE) instanceof Number n) {
+                tryBase.put(s.id(), n.intValue());
+            }
+            if (values.get(ITEM_BASES) instanceof Map<?, ?> m) {
+                Map<Integer, Integer> bases = new HashMap<>();
+                m.forEach((k, v) -> {
+                    if (v instanceof Number n) {
+                        bases.put(Integer.parseInt(String.valueOf(k)), n.intValue());
+                    }
+                });
+                resumedItemBases.put(s.id(), bases);
+            }
         }
 
         /** Restores a node as its row says it ended, without running it: its values are read as before. */
@@ -2623,9 +2739,14 @@ public class FlowService {
     /** Where a sql node's row says its commit is in doubt: never run again by a later try of the flow. */
     static final String IN_DOUBT = "in_doubt";
 
+    /** Where a node's row says which pipeline-run try this try of the flow started it from (ADR 0053). */
+    static final String TRY_BASE = "try_base";
+    /** Where a for-each node's row says which try each item run again starts from (ADR 0053). */
+    static final String ITEM_BASES = "item_bases";
+
     /** What a node's row records beside what it reported, which a kept node's values leave out. */
     private static final Set<String> RECORDED = Set.of("tries", TIMED_OUT, NOT_STARTED, TIMED_OUT_ITEMS, RETRYING_ITEMS,
-        IN_DOUBT);
+        IN_DOUBT, TRY_BASE, ITEM_BASES);
 
     /** The server's cap on run retries; the defaults in tests that build the service by hand. */
     private io.kilnmark.server.runs.RunSettings runSettings() {
@@ -2656,8 +2777,9 @@ public class FlowService {
         }
         String why = "The worker running this flow stopped before it finished" + RunRetries.afterTries(run.runTry())
             + ". " + d.why() + ". Check what the pipelines it had started had written.";
-        store.finishRun(run.id(), "failed", why, d.why());
-        told(run.flow(), run.id(), "failed", why);
+        if (store.finishRun(run.id(), "failed", why, d.why(), run.runTry())) {
+            told(run.flow(), run.id(), "failed", why);
+        }
         return false;
     }
 

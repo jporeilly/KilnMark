@@ -155,7 +155,22 @@ public final class RunTables {
      * (or null).
      */
     public static void finishRun(Db db, RunKind k, long id, String status, String error, String result, String next) {
-        db.tx(c -> {
+        finishRun(db, k, id, status, error, result, next, null);
+    }
+
+    /**
+     * As {@link #finishRun(Db, RunKind, long, String, String, String, String)}, only while the run is
+     * still on try {@code onTry} (null: whatever its try). A worker ending its try never ends another's:
+     * one that lost its job, whose run another worker has taken over, changes nothing (ADR 0053).
+     *
+     * @return whether the run was ended
+     */
+    public static boolean finishRun(Db db, RunKind k, long id, String status, String error, String result, String next,
+                                    Integer onTry) {
+        return db.tx(c -> {
+            if (onTry != null && !onTry(c, k, id, onTry)) {
+                return false;
+            }
             recordTry(c, k, id, status, error, next);
             try (PreparedStatement ps = c.prepareStatement("UPDATE " + k.runTable() + " SET status = ?, "
                 + "finished_at = now(), error = ?, " + (k.results() ? "result = ?::jsonb, " : "")
@@ -168,10 +183,21 @@ public final class RunTables {
                 }
                 ps.setString(i++, status);
                 ps.setLong(i, id);
-                ps.executeUpdate();
+                return ps.executeUpdate() == 1;
             }
-            return null;
         });
+    }
+
+    /** Whether run {@code id} is still on try {@code n}, its row locked till the transaction ends. */
+    private static boolean onTry(Connection c, RunKind k, long id, int n) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM " + k.runTable() + " WHERE id = ? "
+            + "AND run_try = ? FOR UPDATE")) {
+            ps.setLong(1, id);
+            ps.setInt(2, n);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
     }
 
     /** Whether someone has asked the run to stop. */
@@ -351,17 +377,20 @@ public final class RunTables {
      * transaction with its job (ADR 0053, decision 3): the try is recorded, the run is queued again
      * with {@code waiting} as what it says meanwhile, and the job, still held by {@code workerId}, is
      * due again then, counting the try. A try is a new try of the same run, never a new run, so a
-     * schedule's fire is never repeated and one run at a time holds while it waits.
+     * schedule's fire is never repeated and one run at a time holds while it waits. {@code workerId} is
+     * the worker that claimed the job for this try, and {@code onTry} the try: a worker that has lost the
+     * job to another, which took the run over, changes nothing.
      *
      * @return false, and nothing changed, when the run was asked to stop meanwhile, is no longer
      *         running, or its job is no longer this worker's: the caller then ends the run for good
      */
-    public static boolean retry(Db db, RunKind k, long id, long jobId, String workerId, Instant at, String status,
-                                String error, String waiting) {
+    public static boolean retry(Db db, RunKind k, long id, long jobId, String workerId, int onTry, Instant at,
+                                String status, String error, String waiting) {
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM " + k.runTable() + " WHERE id = ? "
-                + "AND status = 'running' AND NOT cancel_requested FOR UPDATE")) {
+                + "AND status = 'running' AND run_try = ? AND NOT cancel_requested FOR UPDATE")) {
                 ps.setLong(1, id);
+                ps.setInt(2, onTry);
                 try (ResultSet rs = ps.executeQuery()) {
                     if (!rs.next()) {
                         return false;
@@ -403,7 +432,7 @@ public final class RunTables {
     public static boolean takeOver(Db db, RunKind k, long id, boolean requeue) {
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM " + k.runTable() + " WHERE id = ? "
-                + "AND status = 'running' FOR UPDATE")) {
+                + "AND status = 'running' AND run_try < " + MAX_TRY + " FOR UPDATE")) {
                 ps.setLong(1, id);
                 try (ResultSet rs = ps.executeQuery()) {
                     if (!rs.next()) {
@@ -436,6 +465,9 @@ public final class RunTables {
             }
         });
     }
+
+    /** The highest try number a run may reach (V39 checks it). */
+    public static final int MAX_TRY = 50;
 
     /** What a try lost with its worker says. */
     public static final String LOST = "The worker running it stopped, or lost its connection to Kilnmark's database";
@@ -497,11 +529,11 @@ public final class RunTables {
      * failed on records who asked. A run already going (one run at a time) is refused by the store's
      * own busy refusal before this is called.
      *
-     * @return false when the run is no longer failed
+     * @return false when the run is no longer failed, or has had as many tries as a run may (50)
      */
     public static boolean runAgain(Connection c, RunKind k, long id, String by) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM " + k.runTable() + " WHERE id = ? "
-            + "AND status = 'failed' FOR UPDATE")) {
+            + "AND status = 'failed' AND run_try < " + MAX_TRY + " FOR UPDATE")) {
             ps.setLong(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {

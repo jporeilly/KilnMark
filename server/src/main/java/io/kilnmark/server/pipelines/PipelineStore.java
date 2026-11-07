@@ -785,19 +785,23 @@ public class PipelineStore implements io.kilnmark.server.runs.RunStore<PipelineS
      * Gives an unfinished run its final status after its last try (ADR 0053): {@code failedAs} what
      * ended a failure, {@code next} why it is not tried again; both may be null.
      */
-    public void finishRun(long id, String status, String error, String result, String failedAs, String next) {
+    public boolean finishRun(long id, String status, String error, String result, String failedAs, String next,
+                             Integer onTry) {
         if (failedAs != null) {
             db.tx(c -> {
                 try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.pipeline_run SET failed_as = ? "
-                    + "WHERE id = ? AND status IN ('queued', 'running')")) {
+                    + "WHERE id = ? AND status IN ('queued', 'running')" + (onTry == null ? "" : " AND run_try = ?"))) {
                     ps.setString(1, failedAs);
                     ps.setLong(2, id);
+                    if (onTry != null) {
+                        ps.setInt(3, onTry);
+                    }
                     ps.executeUpdate();
                 }
                 return null;
             });
         }
-        RunTables.finishRun(db, KIND, id, status, error, result, next);
+        return RunTables.finishRun(db, KIND, id, status, error, result, next, onTry);
     }
 
     /**
@@ -821,8 +825,8 @@ public class PipelineStore implements io.kilnmark.server.runs.RunStore<PipelineS
     }
 
     /** Queues a run for its next try at {@code at} with its job, held by {@code holder} (RunTables#retry). */
-    public boolean retry(long id, long jobId, String holder, Instant at, String error, String waiting) {
-        return RunTables.retry(db, KIND, id, jobId, holder, at, "failed", error, waiting);
+    public boolean retry(long id, long jobId, String holder, int onTry, Instant at, String error, String waiting) {
+        return RunTables.retry(db, KIND, id, jobId, holder, onTry, at, "failed", error, waiting);
     }
 
     /** Takes over a run whose worker was lost: queued again as its next try, started from its beginning. */
@@ -936,6 +940,11 @@ public class PipelineStore implements io.kilnmark.server.runs.RunStore<PipelineS
      * they do not stay running for ever. Returns how many.
      */
     public int failOrphanedRuns() {
+        return failOrphaned().size();
+    }
+
+    /** As {@link #failOrphanedRuns()}: the runs failed now, to tell of (ADR 0053: a run lost on its last try). */
+    public List<Run> failOrphaned() {
         return db.tx(c -> {
             // The try each was on is recorded as lost (ADR 0053).
             try (PreparedStatement ps = c.prepareStatement("""
@@ -953,8 +962,19 @@ public class PipelineStore implements io.kilnmark.server.runs.RunStore<PipelineS
                         || 'the pipeline again; check what its writes had written first.'
                 FROM kilnmark.job j
                 WHERE j.kind = 'pipeline' AND j.status IN ('failed', 'done')
-                  AND (j.payload ->> 'pipelineRunId')::bigint = r.id AND r.status IN ('queued', 'running')""")) {
-                return ps.executeUpdate();
+                  AND (j.payload ->> 'pipelineRunId')::bigint = r.id AND r.status IN ('queued', 'running')
+                RETURNING r.id""")) {
+                List<Long> ids = new ArrayList<>();
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        ids.add(rs.getLong(1));
+                    }
+                }
+                List<Run> out = new ArrayList<>();
+                for (long id : ids) {
+                    findRun(c, id).ifPresent(out::add);
+                }
+                return out;
             }
         });
     }

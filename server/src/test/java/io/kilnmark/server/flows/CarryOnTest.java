@@ -45,10 +45,11 @@ class CarryOnTest {
 
     private static List<FlowStore.NodeRun> rows(FlowDefinition def, Map<String, String> statuses) {
         List<FlowStore.NodeRun> out = new ArrayList<>();
-        // "sql-doubt": a sql node that failed with its commit in doubt, as its row records it
+        // "sql-doubt": a sql node that failed with its commit in doubt, as PostgreSQL gives its row back (jsonb
+        // as text, with a space after the colon)
         statuses.forEach((node, status) -> out.add(new FlowStore.NodeRun(node, def.node(node).type(), 0,
             status.equals("sql-doubt") ? "failed" : status, null, null, null, null,
-            status.equals("sql-doubt") ? "{\"in_doubt\":true}" : "{}")));
+            status.equals("sql-doubt") ? "{\"in_doubt\": true}" : "{}")));
         return out;
     }
 
@@ -164,6 +165,9 @@ class CarryOnTest {
         CarryOn.Plan committed = CarryOn.plan(def, rows(def, Map.of("before", "failed", "tidy", "succeeded")),
             new Pipelines(), true);
         assertTrue(committed.blocker().contains("committed its changes"), committed.blocker());
+        CarryOn.Plan running = CarryOn.plan(def, rows(def, Map.of("before", "succeeded", "tidy", "running")),
+            new Pipelines(), true);
+        assertTrue(running.blocker().contains("may have committed"), "a sql node left running is in doubt too");
     }
 
     @Test

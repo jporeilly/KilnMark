@@ -71,12 +71,13 @@ run acts as.
    run's for that node:
    - a pipeline run that a flow node starts never uses the pipeline's own `run: retries`: the node's
      `retries` decide, as before;
-   - when a flow is tried again by itself, a node with `retries` of its own is never run again: the
-     tries it made stand. If such a node failed and nothing handled it, the flow is not tried again,
+   - when a flow is tried again by itself, a node with `retries` of its own that failed is never run
+     again: the tries it made stand. If nothing handled its failure, the flow is not tried again,
      since it would fail the same way;
    - a node without `retries` of its own may be run again by the flow's next try, once a try.
-   So a node is tried at most `1 + node retries` times, or at most `1 + run retries` times, never
-   their product. Run again from the failure (decision 9) is a person's choice and runs such a
+   So a node that fails is tried at most `1 + node retries` times, or at most `1 + run retries`
+   times, never their product. (A node that succeeded runs again only when a node before it runs
+   again and its connection is taken once more; its writes are safe to repeat, by decision 4.) Run again from the failure (decision 9) is a person's choice and runs such a
    node again with its own tries.
 
 6. **Lost workers are found by the stale recovery there is.** A pipeline's or flow's job is now
@@ -86,8 +87,12 @@ run acts as.
    seconds to 30 minutes) recovery queues the job again, and the next worker finds the run still
    running and takes it over: a pipeline starts again from its beginning (when its writes are safe
    to repeat), a flow carries on (decision 7). That wait is the lost try's retry wait. A worker
-   that is shutting down, or finds its lease gone, ends the try as lost, and the try is tried again
-   as any other is.
+   that is shutting down, or finds its lease gone, hands a flow over when the run may be taken
+   over: it leaves the run running and its pipeline runs going, for the next worker to watch;
+   otherwise, and for a pipeline, it ends the try as lost, and the try is tried again as any other
+   is. A worker only ever ends or queues again the try it is running: one that lost its job to
+   another, which took the run over, changes nothing (each end checks the run's try, and the job's
+   holder as the try began).
 
 7. **A flow carries on from where it failed.** Each try starts from the nodes' rows of the try
    before:

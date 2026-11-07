@@ -33,6 +33,10 @@ final class CarryOn {
     private CarryOn() {
     }
 
+    /** {@code "in_doubt": true} in a node's row, however it is spaced. */
+    private static final java.util.regex.Pattern IN_DOUBT = java.util.regex.Pattern.compile(
+        "\"" + FlowService.IN_DOUBT + "\"\\s*:\\s*true");
+
     /** What the plan needs to know about the pipelines a node runs. */
     interface Facts {
         /**
@@ -125,7 +129,8 @@ final class CarryOn {
     static String notAgain(FlowDefinition.Node s, FlowStore.NodeRun r, Facts facts, boolean byHand) {
         String type = s.type();
         if (FlowDefinition.SQL.equals(type)) {
-            if (r.reported() != null && r.reported().contains("\"" + FlowService.IN_DOUBT + "\":true")) {
+            // Read as JSON text, whatever its spacing (PostgreSQL writes jsonb with a space after the colon).
+            if ((r.reported() != null && IN_DOUBT.matcher(r.reported()).find()) || "running".equals(r.status())) {
                 return "may have committed: its commit failed, or its worker stopped while it ran";
             }
             if ("succeeded".equals(r.status())) {
