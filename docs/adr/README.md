@@ -51,3 +51,6 @@ Add a new record rather than editing an accepted one; mark the old one supersede
 | [0046](0046-scheduler.md) | One built-in scheduler for pipelines and flows | Accepted |
 | [0047](0047-external-schedulers.md) | External schedulers start runs and wait for them, with request keys and a run script | Accepted |
 | [0048](0048-deleting-a-flow.md) | Deleting a flow: its runs and schedules go, the pipeline runs it started stay | Accepted |
+| [0049](0049-more-nodes-and-how-coarse-they-are.md) | More nodes, and how coarse a node is: one per shape of work, single-value operations as expression functions; web calls behind allowed hosts | Accepted |
+| [0050](0050-ai-in-pipelines.md) | AI in pipelines: an `ai` node (classify, extract with where each value was found, filter, score, summarise, translate, ask, diagnose, find personal data), with context from other records, and an `embed` node; an unreadable answer is never guessed; under the model rules, never on unmasked sensitive values | Accepted |
+| [0052](0052-agents.md) | Agents propose, people decide: agents work at design time and in operations, never inside a run; each acts as its own token, never admin or with the unmask grant; every change is a proposal a person approves; in flows a model makes only bounded choices | Accepted |

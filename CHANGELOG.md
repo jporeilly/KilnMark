@@ -278,6 +278,47 @@ details.
   say designers and admins turn writing on, as the server enforces. A diagram of the component
   families joins the guides.
 
+- **Noted for later** (docs/product/backlog.md, "Later, not scheduled"): OCR for scanned
+  documents, with a trial of Tesseract against a local vision model, and Apache OpenNLP's name
+  finder as a fallback for finding personal data with AI off, once its models' licences are
+  checked. Low priority.
+- **Agents are decided** ([ADR 0052](docs/adr/0052-agents.md)): agents work at design time and in
+  operations, never inside a run; in flows a model chooses only between fixed branches, through an
+  `ai` node's `classify` and a `route` or `gate`, with low-confidence rows sent to a person. Each
+  agent acts as its own token (`agent:`), with the least role, never admin or the unmask grant, and
+  with the lesser of its role and the person's who started it. Every change it would make is a
+  proposal a person approves; database operations, SQL text, tokens and settings are never an
+  agent's. Its tools are Kilnmark's own API through `Sights`; what it reads is data, never orders;
+  each task has limits, a record of every step, and an off switch. The order: failed runs, drafting
+  a pipeline, stewardship overnight, outside agents through MCP, agents people build. A diagram,
+  `agents.svg`, drawn by `diagrams.mjs`. Nothing is built yet.
+- **AI in pipelines is decided** ([ADR 0050](docs/adr/0050-ai-in-pipelines.md)): an `ai` node
+  with the tasks classify, extract (each value with where in the text it was found, from a
+  schema and worked examples, long text read in overlapping pieces), filter, score, summarise,
+  translate, ask (a designer's own question to a schema), diagnose (the likely cause of a fault,
+  with a confidence and its evidence) and find personal data; an `embed` node; and `ai-summary`
+  in `aggregate`, one text per group. Any task can take context: other records chosen by keys
+  and time, by meaning from an embedded table, or both, at most 20, read through `Sights`,
+  marked as data, and named by key beside the answer. An answer that cannot be read is asked
+  for once more, then flagged with confidence 0, never filled with a made-up default. The
+  canvas suggests filters before the `ai` node and the preview estimates calls, tokens and
+  time. A customer's own model or agent service is called with the `http` node under the same
+  rules. A model's answer is data and
+  never acts on its own; a `route` on its confidence sends the rest to a person, and confirmed
+  findings come back as history and as a measure of accuracy on the customer's data. A worked
+  example, a valve's fault, with a diagram, `ai-diagnose.svg`. All of it under the model rules of ADR 0012 (local by default, a model per feature, JSON answers,
+  scored before release); a model never sees a sensitive value unmasked, so such a column is
+  masked first or refused; each answer carries its model, prompt version and confidence; rows,
+  tokens and time are limited per run and answers cached. Nothing is built yet.
+- **More nodes are decided** ([ADR 0049](docs/adr/0049-more-nodes-and-how-coarse-they-are.md)):
+  nodes stay coarse, one per shape of work, with operations on single values as expression
+  functions; a node is added only for work that changes the number of rows, needs order or state
+  across rows, combines inputs, reaches a web service or matters for governance. Web calls come
+  as a REST connector, an `http` node and an `http` flow node, behind the allowed hosts an admin
+  sets, with TLS, stored credentials, and time, size and rate limits; no script node. The order,
+  after 0.1.1: `sort` and `join`, `window`, more functions, web calls, JSON and XML, `pivot`,
+  change detection and dimension history, `sequence`, `mask`, generated rows and file actions in
+  flows. Backlog item 9.
 - **Error Prone checks the flow files too** (ADR 0042, decision 5). `FlowDefinition`, its test,
   `FlowService` and `JobQueue` are no longer left out. What it found is fixed: case changes now
   name `Locale.ROOT`, so a server in a Turkish locale reads `PRIORITY: HIGH` and the like as

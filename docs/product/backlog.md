@@ -53,18 +53,33 @@ run timelines).
    sources. Decided in [ADR 0045](../adr/0045-database-tools.md) (amends ADR 0028); the design and
    its order (Explore, the SQL generator, settings on tabs, operations) are in
    [docs/design/database-tools.md](../design/database-tools.md).
-9. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
+9. **More nodes** (owner, 6 November 2026; [ADR 0049](../adr/0049-more-nodes-and-how-coarse-they-are.md)).
+   `sort` and `join` (two inputs of any size, spilling to disk) are done (#137, #140); next
+   `window` and more expression functions; then web calls (a REST connector, an `http`
+   node and an `http` flow node, behind the allowed hosts an admin sets), JSON and XML, `pivot`
+   and `unpivot`, change detection and dimension history, `sequence`, `mask`, generated rows, and
+   file actions in flows. Nodes stay coarse: one per shape of work, single-value operations as
+   functions. With them, **AI in pipelines** ([ADR 0050](../adr/0050-ai-in-pipelines.md)): an `ai`
+   node (classify, extract, filter, score, summarise, translate, ask, diagnose, find personal
+   data), with context from other records by keys or meaning (a fault inferred from a valve's
+   history and engineers' notes), an `ai-summary` across a group, and an `embed` node, after `mask` so sensitive columns can be masked first; then
+   explaining failed runs, drafting a
+   pipeline from a description, suggesting quality rules, and run tools on the MCP server, as
+   agents that propose and people approve ([ADR 0052](../adr/0052-agents.md)): failed runs first,
+   then drafting a pipeline, stewardship overnight, outside agents through MCP, and agents people
+   build.
+10. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
    pre-run checks, flags on slow pipelines. Run tools on the MCP server fold in here (parked item
    in Plan & Scope). **Benchmarks come first** (owner, 6 November 2026; planned in
    [docs/design/benchmarks.md](../design/benchmarks.md)): a data generator and `lab bench`, the
    copy, file-load and join workloads at 1 and 10 million rows on the owner's server, a nightly
    check that fails on a 15% slowdown, then the rest of the workloads, two benchmark machines and
    a comparison with the tool a customer runs today. What they find decides what to optimise.
-10. **Connectors** (brief of 28 October): SFTP/FTP, SMB, Azure Blob, REST; Snowflake, Vertica and
+11. **Connectors** (brief of 28 October): SFTP/FTP, SMB, Azure Blob, REST; Snowflake, Vertica and
    Exasol as connectors of their own, with the SQL that moves files refused (ADR 0030).
-11. **Templates of a team's own** ("save as template", after the Library's, ADR 0043), and
+12. **Templates of a team's own** ("save as template", after the Library's, ADR 0043), and
     comparing a pipeline's or flow's versions; then the Foundation milestone.
-12. **Business calendars for schedules (holidays, working days, last working day of the month)**,
+13. **Business calendars for schedules (holidays, working days, last working day of the month)**,
     for the built-in scheduler (ADR 0046). External schedulers bring their own calendars (ADR 0047).
 
 ## 4. Hardening, as customers ask
@@ -78,14 +93,14 @@ sources (ADR 0034), OIDC sign-in with MFA (ADR 0036, #78), access reviews and to
 #83), the SSDF self-assessment (#84), the bundled Keycloak (ADR 0014, #93), static analysis with
 dependency verification (ADR 0042, #99) and signed images with an offline install (ADR 0044, #102).
 
-13. **The SSDF gaps**: build provenance, a threat model, a security analyser; the rest of the
+14. **The SSDF gaps**: build provenance, a threat model, a security analyser; the rest of the
     evidence pack when a customer's due diligence asks.
-14. **Change approval and environments**, which also gives database tools their second person.
+15. **Change approval and environments**, which also gives database tools their second person.
     With it, marks keyed by the database's identity rather than the source record, and password references
     (`env:`, `secret:`) for admins only (ADR 0045, "Related gap").
-15. **Generic JDBC drivers in a process of their own** (ADR 0030, decision 5); new table names
+16. **Generic JDBC drivers in a process of their own** (ADR 0030, decision 5); new table names
     checked against the driver's longest table name, not its longest column name (ADR 0042).
-16. **Small items**: a JDBC `socketTimeout`, masking on the run quality view, a metric for preview
+17. **Small items**: a JDBC `socketTimeout`, masking on the run quality view, a metric for preview
     slots, `KILNMARK_DB_PASSWORD` in the dev compose. **Job retention**: the job table keeps every
     job ever queued (done and failed too), so it only grows; deleting old finished jobs, and how
     long to keep them, needs the owner's decision first, as it deletes records (efficiency review,
@@ -94,17 +109,17 @@ dependency verification (ADR 0042, #99) and signed images with an offline instal
     CASCADE, not led by any index, so deleting a source still reads `profile` once per scan run),
     and the ON DELETE SET NULL keys `ai_usage.profile_id` and `source_id`,
     `accepted_pattern.rule_id`, `drift_event.compared_with` and `quality_issue.drift_event_id`.
-17. **Audit events** for data read with the unmask grant, and for MCP refusals (ADR 0029).
-18. **A full export in open formats** (for exit), and a FIPS mode when a federal customer needs it.
+18. **Audit events** for data read with the unmask grant, and for MCP refusals (ADR 0029).
+19. **A full export in open formats** (for exit), and a FIPS mode when a federal customer needs it.
 
 ## 5. Housekeeping
 
-19. **The local CI runner on a Podman machine of its own**, without the Windows drives mounted,
+20. **The local CI runner on a Podman machine of its own**, without the Windows drives mounted,
     starting afresh for each job (ephemeral), and its PostgreSQL image under a CI-only tag
     (docs/development.md, "CI on a local runner"; review of #111).
-20. **The server tests on Windows**: Testcontainers cannot reach Podman from the tool shell, so
+21. **The server tests on Windows**: Testcontainers cannot reach Podman from the tool shell, so
     server tests run only in CI there.
-21. **Refactoring, in small steps** (owner, 6 November 2026): each its own pull request that changes
+22. **Refactoring, in small steps** (owner, 6 November 2026): each its own pull request that changes
     no behaviour, with every test green before and after. In order:
     1. **One run lifecycle for pipelines and flows**: checking, queueing, request keys, schedules
        and deleting are written twice today, in `PipelineService` (about 2,000 lines) and
@@ -120,6 +135,22 @@ dependency verification (ADR 0042, #99) and signed images with an offline instal
        layout faults (#133) came from fields laid out separately and from app-wide fieldset rules
        leaking into forms; the panel layout sweep starts this.
     4. **`FlowService` and `QualityPredictor` (about 2,600 lines) split** into focused parts.
+
+## Later, not scheduled
+
+Noted so they are not lost; low priority until a customer needs them.
+
+- **OCR for scanned documents and images** (owner, 6 November 2026): scanned work orders,
+  delivery notes and invoices are recorded today but not read (ADR 0017, "Left out, for
+  later"). A short trial first: Tesseract through Tika's OCR parser, as a separate worker
+  image, against a local vision model through the model runtime (ADR 0012), on synthetic
+  scanned work orders in the lab, comparing accuracy, time per page and image size. The text
+  then reaches the `ai` node's tasks like any document's (ADR 0050).
+- **Names and places without a model** (owner, 6 November 2026): Apache OpenNLP's name finder
+  as the fallback for `detect-personal-data` with AI off (ADR 0050, decision 6), which today
+  finds account numbers by pattern and checksum but not names or places. First check the
+  licences of its trained models against ADR 0007: the code is Apache-2.0, the models are
+  trained on corpora with licences of their own.
 
 ## Owner's items
 
