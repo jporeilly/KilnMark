@@ -194,6 +194,8 @@ describe("each setting kind gets its control, with help and default", () => {
     expect(out.indexOf("full_name")).toBeLessThan(out.indexOf("email"));
     expect(out).toContain("Expression 2");
     expect(out).toContain("Add a column");
+    const window = html(spec("columns", "expressions"), { balance: "sum(amount)" }, { nodeType: "window" });
+    expect(window).toContain("Function 1");
     const routes = html(spec("routes", "conditions"), { large: "amount > 1000" }, { nodeType: "route" });
     expect(routes).toContain("Port 1");
     expect(routes).toContain("Condition 1");
@@ -218,6 +220,10 @@ describe("what the canvas says about nodes", () => {
     expect(nodeSummary(node({ type: "compute", settings: { columns: { x: "1", y: "2" } } }))).toBe("x, y");
     expect(nodeSummary(node({ type: "lookup", settings: { on: { a: "b" } } }))).toBe("on a = b");
     expect(nodeSummary(node({ type: "sort", settings: { by: ["region", "amount desc"] } }))).toBe("by region, amount desc");
+    expect(nodeSummary(node({ type: "window", settings: { partition_by: ["account_id"], order_by: ["txn_at"], columns: { balance: "sum(amount)", n: "row_number()" } } }))).toBe(
+      "balance, n · per account_id",
+    );
+    expect(nodeSummary(node({ type: "window", settings: { order_by: ["txn_at"], columns: { n: "row_number()" } } }))).toBe("n");
     expect(nodeSummary(node({ type: "join", settings: { on: { customer_id: "id" }, how: "left" } }))).toBe("left on customer_id = id");
     expect(nodeSummary(node({ type: "join", settings: { on: { a: "b" } } }))).toBe("inner on a = b");
     expect(nodeSummary(node({ type: "write", settings: { source: "w", path: "x.csv", mode: "replace" } }))).toBe("w · x.csv · replace");

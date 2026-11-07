@@ -130,9 +130,9 @@ class SampleTablesApiTest {
         JsonPath added = as(designer).body(Map.of("sources", Map.of("crm-db", "e2e-db", "shop-db", "e2e-db",
             "files", "e2e-files"), "schema", SCHEMA)).post("/api/v1/samples").then().statusCode(200)
             .extract().jsonPath();
-        // 21 pipelines, then the sample flows that run them (ADR 0043). The one with sql nodes needs a
+        // 22 pipelines, then the sample flows that run them (ADR 0043). The one with sql nodes needs a
         // source with Allow SQL on, which e2e-db does not have: skipped, saying so, never a draft.
-        assertEquals(24, added.getInt("added"), added.prettify());
+        assertEquals(25, added.getInt("added"), added.prettify());
         assertEquals(List.of("sample-for-each-region", "sample-passing-values", "sample-quality-decides"),
             added.getList("samples.findAll { it.outcome == 'added' && it.file.startsWith('08-flows/') }.name"),
             added.prettify());
@@ -172,6 +172,18 @@ class SampleTablesApiTest {
         assertEquals("succeeded", limit.getString("run.status"), limit.prettify());
         assertEquals(100, limit.getLong("run.rowsWritten"));
         assertTrue(Files.exists(out.resolve("samples/filter-and-route/first_transactions.csv")));
+
+        // The window sample: every transaction with its account's running balance, and one latest row per account.
+        JsonPath window = waitForRun(designer, as(designer).body(Map.of()).post("/api/v1/pipelines/sample-window/runs")
+            .then().statusCode(202).extract().jsonPath().getLong("id"));
+        assertEquals("succeeded", window.getString("run.status"), window.prettify());
+        long transactions = count(Samples.tableIn(SCHEMA, "billing.transactions"));
+        List<String> balances = Files.readAllLines(out.resolve("samples/transform/running_balances.csv"));
+        List<String> latest = Files.readAllLines(out.resolve("samples/transform/latest_per_account.csv"));
+        assertEquals(transactions + 1, balances.size(), "every transaction, and the header");
+        assertTrue(latest.size() > 1 && latest.size() < balances.size(), "one row per account: " + latest.size());
+        assertEquals(latest.size() - 1, latest.stream().skip(1).map(l -> l.split(",")[1]).distinct().count(),
+            "each account once");
 
         // The volume sample: four million rows from the sample data itself, totalled and the large lines set
         // apart, in one run.

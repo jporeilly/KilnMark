@@ -937,3 +937,71 @@ nodes:
 ```
 
 Related: [join](pipeline-nodes.md#join).
+
+## window
+
+Adds row numbers, ranks, running totals and the previous or next row's values, worked out over
+each group of rows in order.
+
+[generated: node window]: #
+
+**Window functions**: a transform node, in the palette's Transform folder. Adds row numbers, ranks, running totals and the previous or next row's values, worked out over the rows of each group in order. Every row comes out, with the new columns. Past its memory limit it orders rows on disk, so any number of rows can be used.
+
+- Reads from: `in`
+- Writes to: `out`
+
+| Setting | Type | Required | Default | Parameters | What it does |
+| --- | --- | --- | --- | --- | --- |
+| `partition_by` | list of columns | no |  | no | Rows with equal values in these columns form a group, worked out on its own: numbers and totals start again in each. Empty values form a group of their own. Leave empty for one group. |
+| `order_by` | columns in order | yes |  | no | The order rows are worked out in within each group, the first column deciding most. Add desc for largest first, and nulls first to put empty values first (they go last by default). |
+| `columns` | names and expressions | yes |  | yes | Each new column's name and its window function, for example balance: sum(amount) or previous: lag(amount, 1, 0). |
+| `memory_limit_mb` | number | no | `256` | whole value | The most memory rows may take while they are put in order and worked out. Past it, sorted parts are written to disk and merged. |
+
+[end: node window]: #
+
+**What to know.** Rows with equal `partition_by` values form a group (empty values a group of their
+own), and each group is worked out on its own, in `order_by` order, written as for `sort`. Each new
+column is one window function: `row_number()`, `rank()`, `dense_rank()`, the running totals
+`count(*)`, `count(x)`, `sum(x)`, `avg(x)`, `min(x)` and `max(x)` over the rows so far (this one
+included, one row at a time, so tied rows get different totals in the order they arrived), and
+`lag(x, offset, default)` and `lead(...)`, the value `offset` rows before or after in the group
+(1 unless given; up to 1,000) or the default (empty unless given). Arguments are expressions over
+the row's columns. Rows with equal `order_by` values keep the order they arrived in; empty values go
+last unless a column says `nulls first`. Every input row comes out, its columns and then the new
+ones, in order of group and then of `order_by`; a new column cannot have an input column's name, in
+any case. Nothing is passed on until every row has arrived. Rows are put in order within
+`memory_limit_mb`, and on disk past it, as a sort does (encrypted, in a private temporary folder
+deleted when the node ends); the run's log says when that happened and how much was written. The
+rows a `lead` looks ahead to and the values a `lag` looks back to are held within a limit of the
+same size, so a window may hold up to about twice `memory_limit_mb` in all.
+
+```yaml
+kilnmark: pipeline/v1
+name: orders-running-total
+description: Each customer's orders with a running total and the order before.
+
+nodes:
+  - id: orders
+    type: read
+    source: sales-db
+    asset: sales.orders
+
+  - id: totals
+    type: window
+    input: orders
+    partition_by: [customer_id]
+    order_by: [ordered_at, order_id]
+    columns:
+      running_total: "sum(amount)"
+      order_number: "row_number()"
+      previous_amount: "lag(amount, 1, 0)"
+
+  - id: out
+    type: write
+    input: totals
+    source: files
+    path: exports/orders-running-total.csv
+    mode: replace
+```
+
+Related: [window](pipeline-nodes.md#window).

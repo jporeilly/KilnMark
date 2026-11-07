@@ -90,6 +90,10 @@ export function nodeSummary(node: GraphNode): string {
       return s.rows != null ? `first ${t("rows")} rows` : "";
     case "sort":
       return s.by != null ? `by ${text(s.by)}` : "";
+    case "window": {
+      const per = s.partition_by != null && text(s.partition_by) !== "" ? `per ${t("partition_by")}` : "";
+      return [keysOf(s.columns).join(", "), per].filter(Boolean).join(" · ");
+    }
     case "gate": {
       const n = Array.isArray(s.rules) ? s.rules.length : 0;
       const own = s.asset_rules === false || s.asset_rules === "false" ? "" : "asset's rules";

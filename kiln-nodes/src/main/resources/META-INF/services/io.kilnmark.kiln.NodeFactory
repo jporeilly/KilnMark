@@ -9,3 +9,4 @@ io.kilnmark.kiln.nodes.RouteFactory
 io.kilnmark.kiln.nodes.LimitFactory
 io.kilnmark.kiln.nodes.SortFactory
 io.kilnmark.kiln.nodes.JoinFactory
+io.kilnmark.kiln.nodes.WindowFactory

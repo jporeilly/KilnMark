@@ -124,18 +124,24 @@ public final class SortFactory implements NodeFactory {
 
     /** The key for these columns, checked against the input's: each must exist and hold values that can be ordered. */
     static KeyCodec codec(Schema in, List<Config.OrderTerm> by, String prefix) throws NodeException {
+        return codec(in, by, prefix, "by", "put in order");
+    }
+
+    /** As above, for the setting {@code key}, saying what the node does with the columns ("put in order"). */
+    static KeyCodec codec(Schema in, List<Config.OrderTerm> by, String prefix, String key, String doing)
+        throws NodeException {
         List<KeyCodec.Part> parts = new ArrayList<>();
         for (Config.OrderTerm t : by) {
             Field f = BaseNode.field(in, t.column());
             if (f == null) {
                 String near = Names.suggest(t.column(), BaseNode.names(in));
-                throw new NodeException(prefix + "by: the input has no column '" + t.column() + "'"
+                throw new NodeException(prefix + key + ": the input has no column '" + t.column() + "'"
                     + (near != null ? "; did you mean " + near + "?" : ""));
             }
             Type type = Type.of(f.getType());
             if (type == null) {
-                throw new NodeException(prefix + "by: the column '" + t.column() + "' holds " + f.getType()
-                    + " values, which cannot be put in order");
+                throw new NodeException(prefix + key + ": the column '" + t.column() + "' holds " + f.getType()
+                    + " values, which cannot be " + doing);
             }
             parts.add(new KeyCodec.Part(t.column(), type, t.descending(), t.nullsFirst()));
         }

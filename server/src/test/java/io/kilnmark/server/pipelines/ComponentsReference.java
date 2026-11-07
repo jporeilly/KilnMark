@@ -151,7 +151,8 @@ final class ComponentsReference {
     private static String functionIndex() {
         return "- [Functions](pipeline-nodes.md#functions), for text, numbers, dates and regular expressions: "
             + codes(Expression.functions()) + ".\n- [Aggregate functions](pipeline-nodes.md#aggregate), for an "
-            + "aggregate node's values: " + codes(Expression.aggregates()) + ".\n";
+            + "aggregate node's values: " + codes(Expression.aggregates()) + ".\n- [Window functions]"
+            + "(pipeline-nodes.md#window), for a window node's columns: " + codes(Expression.windowFunctions()) + ".\n";
     }
 
     /** Names in code, sorted, joined as a list in words. */

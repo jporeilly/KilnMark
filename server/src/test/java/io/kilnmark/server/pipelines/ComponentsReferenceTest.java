@@ -168,7 +168,7 @@ class ComponentsReferenceTest {
     void everyExpressionFunctionIsInTheGuide() throws Exception {
         // The first cells of the tables headed "| Function |": each names one function or more, as `f(x)`.
         Set<String> documented = new TreeSet<>();
-        Pattern call = Pattern.compile("`([a-z_]+)\\(");
+        Pattern call = Pattern.compile("`([a-z_][a-z0-9_]*)\\(");
         boolean inTable = false;
         for (String line : read("pipeline-nodes.md").split("\n")) {
             if (line.startsWith("| Function |")) {
@@ -184,6 +184,7 @@ class ComponentsReferenceTest {
         }
         Set<String> expected = new TreeSet<>(Expression.functions());
         expected.addAll(Expression.aggregates());
+        expected.addAll(Expression.windowFunctions());
         assertEquals(expected, documented, "the functions in pipeline-nodes.md's tables");
     }
 

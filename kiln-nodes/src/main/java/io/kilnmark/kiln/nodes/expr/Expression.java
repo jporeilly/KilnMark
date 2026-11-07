@@ -44,6 +44,11 @@ public final class Expression {
         return Compiler.AGGREGATES;
     }
 
+    /** The functions a window node's columns may call: what the guide's window function table lists. */
+    public static java.util.Set<String> windowFunctions() {
+        return Windowing.FUNCTIONS;
+    }
+
     /**
      * Reads an expression, checking only its form; columns and types are checked by {@link #compile}.
      *

@@ -67,6 +67,7 @@ in [Building and running a pipeline](pipelines.md).
 | [`select`](reference-pipeline-nodes.md#select) | transform | Select columns, in Transform | Keeps or drops columns, and renames, reorders and changes the type of the columns kept. |
 | [`sort`](reference-pipeline-nodes.md#sort) | transform | Sort rows, in Transform | Orders rows by one or more columns, each ascending or descending. |
 | [`union`](reference-pipeline-nodes.md#union) | transform | Union, in Combine | Appends the rows of all its inputs, matching columns by name. |
+| [`window`](reference-pipeline-nodes.md#window) | transform | Window functions, in Transform | Adds row numbers, ranks, running totals and the previous or next row's values, worked out over the rows of each group in order. |
 | [`gate`](reference-pipeline-nodes.md#gate) | gate | Quality gate, in Quality | Checks rows against quality rules as they pass, with no second read: the rules of the asset read upstream and any written here. |
 | [`write`](reference-pipeline-nodes.md#write) | sink | Write to a table or file, in Write | Writes rows to a database table or a file in a saved source. |
 
@@ -148,8 +149,9 @@ language, much like SQL. Its values, operators, types, functions and limits are 
 
 [generated: index functions]: #
 
-- [Functions](pipeline-nodes.md#functions), for text, numbers, dates and regular expressions: `abs`, `ceil`, `coalesce`, `concat`, `date_part`, `date_trunc`, `floor`, `format_date`, `length`, `lower`, `now`, `nullif`, `parse_date`, `parse_timestamp`, `regex_match`, `regex_replace`, `replace`, `round`, `substring`, `today`, `trim` and `upper`.
+- [Functions](pipeline-nodes.md#functions), for text, numbers, dates and regular expressions: `abs`, `ceil`, `coalesce`, `concat`, `contains`, `date_add`, `date_diff`, `date_part`, `date_trunc`, `ends_with`, `floor`, `format_date`, `greatest`, `if`, `least`, `left`, `length`, `lower`, `lpad`, `now`, `nullif`, `parse_date`, `parse_timestamp`, `regex_match`, `regex_replace`, `replace`, `right`, `round`, `rpad`, `sha256`, `split_part`, `starts_with`, `substring`, `today`, `trim` and `upper`.
 - [Aggregate functions](pipeline-nodes.md#aggregate), for an aggregate node's values: `avg`, `count`, `count_distinct`, `max`, `min` and `sum`.
+- [Window functions](pipeline-nodes.md#window), for a window node's columns: `avg`, `count`, `dense_rank`, `lag`, `lead`, `max`, `min`, `rank`, `row_number` and `sum`.
 
 [end: index functions]: #
 

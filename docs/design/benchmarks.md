@@ -11,9 +11,9 @@ second in memory, and under 1 million rows a second reading PostgreSQL. That was
 on one machine. Nothing has yet measured a whole pipeline from source to target, at volume, next
 to anything else.
 
-### First data points: sort and join (not a benchmark)
+### First data points: sort, join and window (not a benchmark)
 
-When `sort` and `join` were built (ADR 0049), one rough timing each was taken on the owner's
+When `sort`, `join` and `window` were built (ADR 0049), one rough timing each was taken on the owner's
 machine, to know the order of magnitude and that spilling to disk costs little more than sorting
 in memory. One run each, after a warm-up, in the engine alone (a generating node, the node, a
 counting node, with `KilnGraphRunner`; no database, no files read or written but the spill), so
@@ -32,12 +32,21 @@ name of 10-14 characters and a decimal amount. Rerun them with
 | left join, 1 + 1 million | 2 million in | 32 (spilling) | 20.6 | 0.10 million | 132 MB | 22 MB |
 | left join, 10 + 10 million | 20 million in | 8,192 (in memory) | 113.4 | 0.18 million | none | 1,682 MB |
 | left join, 10 + 10 million | 20 million in | 256 (spilling) | 71.6 | 0.28 million | 1,323 MB | 173 MB |
+| window, 10,000 groups | 1 million | 4,096 (in memory) | 2.2 | 0.45 million | none | 85 MB |
+| window, 10,000 groups | 1 million | 16 (spilling) | 3.6 | 0.28 million | 70 MB | 11 MB |
+| window, 10,000 groups | 10 million | 8,192 (in memory) | 28.7 | 0.35 million | none | 841 MB |
+| window, 10,000 groups | 10 million | 256 (spilling) | 31.6 | 0.32 million | 692 MB | 170 MB |
 
 The joins used random keys drawn from as many values as rows, so about a third of the left rows
 found no match and some keys repeated (13.7 million rows out of the 10 million join). Joining is
 several times slower than sorting the same rows: its merge copies rows one at a time, value by
 value, into the output, and the in-memory run at 10 million was slower than the spilling one,
 which points at garbage collection with 8 GB of heap. Both are where to optimise first.
+
+The window runs partitioned by the key (10,000 values) and ordered by the id, adding a running
+total of the amount, a row number and the amount before (`lag`). It costs about twice a sort of
+the same rows: the sort itself, then the functions, worked out a value at a time in boxed Java
+objects, and the new columns written. Spilling adds little, as for a sort.
 
 ## 1. What we want to know
 
