@@ -97,7 +97,9 @@ step_id() {
 require() {
   kc update "authentication/flows/$(path "$1")/executions" -r "$REALM" -b "{\"id\":\"$2\",\"requirement\":\"$3\"}"
 }
-one() { head -n 1 || true; }
+# The first line of its input. It reads all of it: a reader that stopped early would end the
+# writer with SIGPIPE, which pipefail turns into a failure of the whole pipeline.
+one() { local first=""; IFS= read -r first || true; printf '%s\n' "$first"; cat > /dev/null; }
 
 # Brute-force protection on Keycloak's own admin realm too: its admin signs in on the same pages.
 kc update realms/master -s bruteForceProtected=true -s failureFactor=10
@@ -138,7 +140,7 @@ flow_complete() {
     id="$(step_id "$FORMS" "$provider" 2> /dev/null || true)"
     [ -n "$id" ] || return 1
     kc get "authentication/flows/$(path "$FORMS")/executions" -r "$REALM" \
-      --fields id,authenticationConfig --format csv --noquotes | grep -q "^$id,." || return 1
+      --fields id,authenticationConfig --format csv --noquotes | grep "^$id,." > /dev/null || return 1
   done
 }
 browser_flow="$(kc get "realms/$REALM" --fields browserFlow --format csv --noquotes)"
@@ -213,8 +215,9 @@ priya.shah@kilnmark.com:Priya:Shah:kilnmark-designers,kilnmark-sensitive-data
 alex.morgan@kilnmark.com:Alex:Morgan:kilnmark-admins"
 
 user_id() { kc get users -r "$REALM" -q username="$1" -q exact=true --fields id --format csv --noquotes | one; }
-# Whether person $1 is in group $2 (ids).
-in_group() { kc get "users/$1/groups" -r "$REALM" --fields id --format csv --noquotes | grep -qx "$2"; }
+# Whether person $1 is in group $2 (ids). grep reads all of kcadm's output (no -q), so kcadm never
+# ends with SIGPIPE, which pipefail would turn into "not a member".
+in_group() { kc get "users/$1/groups" -r "$REALM" --fields id --format csv --noquotes | grep -x "$2" > /dev/null; }
 set_password() {
   printf '{"type":"password","temporary":false,"value":%s}' "$(json "$PEOPLE_PASSWORD")" \
     | kc update "users/$1/reset-password" -r "$REALM" -f -
@@ -274,7 +277,7 @@ elif [ "$PEOPLE_ACTION" = add ] || [ "$PEOPLE_ACTION" = new-password ]; then
     elif [ "$PEOPLE_ACTION" = new-password ]; then
       set_password "$uid"
       say "gave $email the new password"
-    elif ! kc get "users/$uid/credentials" -r "$REALM" --fields type --format csv --noquotes | grep -qx password; then
+    elif ! kc get "users/$uid/credentials" -r "$REALM" --fields type --format csv --noquotes | grep -x password > /dev/null; then
       set_password "$uid"   # made by a run that stopped before their password
       say "gave $email a password: an earlier run left them without one"
     else

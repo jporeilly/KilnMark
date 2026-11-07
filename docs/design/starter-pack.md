@@ -12,7 +12,7 @@ Kilnmark with the Starter Pack".
 | --- | --- | --- |
 | `kilnmark-samples-db.sh` | `containers/postgres`, in the `kilnmark-postgres` image | Run by the `samples-db` one-off at every start, as the server's superuser over TLS: makes or keeps the login and database `kilnmark_samples`, and revokes `CONNECT` and `TEMPORARY` from `PUBLIC` on every other database, and anything granted to the login there |
 | `samples-db` | `containers/compose.release.yaml` | The one-off: depends on `postgres` being healthy, `restart: "no"`. Unset `KILNMARK_SAMPLES_DB_PASSWORD`: makes nothing, exits 0 |
-| `files` volume | the same | `/srv/files`, writable; `KILNMARK_FILES_DIR` replaces it with the site's folder |
+| `files` volume | the same | `/srv/files`, writable; `KILNMARK_FILES_DIR` replaces it with the site's folder. The pack's folder in it, `starter-pack`, holds a marker, `.kilnmark-starter-pack`, with a value the pack keeps in its setting: a folder of that name without it is the site's, never adopted or deleted |
 | `StarterPack` | `server/.../api` | Turns the example data on and off: each step caught and reported, the state in the server setting `starter_pack` (JSON: on, since, by, and the ids of the sources it made) |
 | `StarterPackResource` | `/api/v1/starter-pack` | `GET` (viewer, for the banner), `GET details`, `POST` and `DELETE` (admin) |
 | `ExampleAccounts` | `server/.../starter` | Tells a kilnmark.com sign-in apart, for the access review, the page and production. Kilnmark holds no Keycloak credential and makes no Keycloak call |
@@ -73,14 +73,16 @@ byte-order mark, which Windows PowerShell can add. The password goes to `/dev/tt
 
 The control scripts remove `KILNMARK_PRODUCTION`, `KILNMARK_STARTER` and
 `KILNMARK_STARTER_PEOPLE_ACTION` from their own environment before anything, since compose prefers
-the environment to `config/.env`, and read `export NAME=` lines as compose does. podman-compose
-1.0.x prints each podman command it runs, every container setting on it; those lines never reach
-the screen or `logs`: the bash edition drops them from everything it shows and logs, the Windows
-edition from all it passes on from compose.
+the environment to `config/.env`, and read `export NAME=` lines, and the name's case exactly, as
+compose does. podman-compose 1.0.x prints each podman command it runs, every container setting on
+it, joined with spaces or as a Python list; those lines never reach the screen or `logs`: both
+editions drop them from all they pass on from compose, whether or not they are logging.
 
 `setup.sh` checks the same rules itself, before anything else, and refuses to add people otherwise.
 It finds groups by their path (`group-by-path`), never by search, which also answers with the parent
-of a subgroup of that name.
+of a subgroup of that name. Every reader of kcadm's output reads all of it (`one` drains its input;
+`grep` without `-q`): a reader that stopped early would end kcadm with SIGPIPE, which pipefail turns
+into "not a member", and an example person would stay.
 It makes each missing person with one call, already in the group `kilnmark-starter-pack` and their
 role's groups, and deletes them again if the group did not take. Only members of that group are
 ever changed or deleted: someone else with one of the addresses is left as they are, never given
@@ -102,9 +104,13 @@ anything but `false` as production. On an install marked production:
   production such a token is refused by `ApiTokens.authenticate` whenever it is presented, and has
   no working role for a schedule, before and after the sweep;
 - at every start, each unfinished pipeline and flow run whose asker is such an account, a token the
-  rule finds (a run names a token by its name), or a schedule one of them set (`schedule <id> (set
-  by ...)`) is cancelled, each `run.cancelled`; and a worker cancels such a run instead of starting
-  it, should one be queued before the sweep;
+  rule finds, or a schedule one of them set is cancelled, each `run.cancelled`; and a worker cancels
+  such a run instead of starting it, should one be queued before the sweep. `ExampleAccess` reads
+  the asker: a person by name, a token by the id in `token <id> (<name>)` only (a run asked for
+  through the API names its token so, `AuditLog.requester`), a scheduled run (`schedule <id> (set by
+  ...)`) through its schedule's token id or person. A name never stands for a token;
+- a schedule a kilnmark.com person set does not fire (`Setters`), whatever role their last trial
+  sign-in recorded;
 - at every start, each API token whose maker, or whose unmask grant's approver, is such an account
   is revoked, and so is each token one of those made (its maker is `token <id> (...)`), however far
   down; each is `token.revoked` with the reason, and the schedules it set pause as for any revoked

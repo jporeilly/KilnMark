@@ -105,7 +105,8 @@ public class StarterPackResource {
             AuditLog.actor(identity));
     }
 
+    /** Who, as the pack's state and the sample-tables run name them: a token by its id (ADR 0051). */
     private String who() {
-        return identity.isAnonymous() ? "anonymous" : identity.getPrincipal().getName().replaceAll("\\p{Cntrl}", "?");
+        return io.kilnmark.server.audit.AuditLog.requester(identity);
     }
 }

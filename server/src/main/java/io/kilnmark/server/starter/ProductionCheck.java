@@ -69,6 +69,9 @@ public class ProductionCheck {
     @jakarta.inject.Inject
     FlowService flows;
 
+    @jakarta.inject.Inject
+    ExampleAccess examples;
+
     public ProductionCheck(KilnmarkConfig config, ApiTokens tokens, ScheduleService schedules, AuditLog audit) {
         this.config = config;
         this.tokens = tokens;
@@ -115,13 +118,13 @@ public class ProductionCheck {
         // First what would act: unfinished runs (a run waiting for a place on a source is queued).
         List<String> cancelled = new ArrayList<>();
         for (FlowStore.Run r : flowRuns.unfinishedRuns()) {
-            if (tokens.actsForExample(r.requestedBy()) && cancel(() -> flows.cancel(r.id(), actor.name(), AccessRole.ADMIN))) {
+            if (examples.actsForExample(r.requestedBy()) && cancel(() -> flows.cancel(r.id(), actor.name(), AccessRole.ADMIN))) {
                 ExampleAccounts.recordCancelled(audit, "flow", r.flow(), r.id());
                 cancelled.add("flow run " + r.id());
             }
         }
         for (PipelineStore.Run r : pipelineRuns.unfinishedRuns()) {
-            if (tokens.actsForExample(r.requestedBy()) && cancel(() -> pipelines.cancel(r.id(), actor.name()))) {
+            if (examples.actsForExample(r.requestedBy()) && cancel(() -> pipelines.cancel(r.id(), actor.name()))) {
                 ExampleAccounts.recordCancelled(audit, "pipeline", r.pipeline(), r.id());
                 cancelled.add("pipeline run " + r.id());
             }

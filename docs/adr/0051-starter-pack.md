@@ -142,7 +142,7 @@ are (ADR 0043).
    server refuses never lets the people in. Compose would take `KILNMARK_PRODUCTION`,
    `KILNMARK_STARTER` and the people's action from the shell's environment before `config/.env`, so
    the control scripts remove them from their own environment first, and read an `export` in front
-   of a line as compose does: `config/.env` alone decides.
+   of a line, and the name's letter case exactly, as compose does: `config/.env` alone decides.
 
 8. **Nothing an example account did outlives the trial on production.** Deleting the people in
    Keycloak does not touch what they made in Kilnmark, and Kilnmark cannot see Keycloak. So on an
@@ -153,9 +153,13 @@ are (ADR 0043).
    example admin does not survive, ADR 0038), and each token such a token made, and pauses each
    schedule one of them set (ADR 0046). Each cancellation, revocation and pause is an audit event,
    with the reason. The start-up sweep is not the only line: such a token is refused whenever it is
-   presented, and such a run is cancelled when a worker would start it, so nothing acts in the
-   moments before the sweep has run. On an install not marked production these stay, as the trial's
-   own; the access review shows which accounts are examples.
+   presented, such a run is cancelled when a worker would start it, and a schedule such a person set
+   does not fire, so nothing acts in the moments before the sweep has run. A token is known by its
+   id, never by its name, which anyone making a token chooses and need not be unique: a run names a
+   token as `token <id> (<name>)`, and a scheduled run is traced through its schedule to the token
+   or person who set it. So an example admin cannot stop a real token's work by giving a token of
+   their own the same name. On an install not marked production these stay, as the trial's own; the
+   access review shows which accounts are examples.
 
 ## Consequences
 
@@ -176,9 +180,12 @@ are (ADR 0043).
   sign-ins are refused, their unfinished runs cancelled, their tokens (and any token one of those
   made) refused and revoked, and their schedules paused, each recorded. What they changed, such as a
   source, a setting or which tokens a local assistant uses, stays as any admin's change does: the
-  audit log says who did it. A run started by a token is known by the token's name, so a run of a
-  real token sharing an example token's name is cancelled too, which is the safe side. Quality runs
-  are not cancelled: they run with no one's role, whoever asked.
+  audit log says who did it. Quality runs are not cancelled: they run with no one's role, whoever
+  asked.
+- A run a token asks for now names it `token <id> (<name>)` where it named only `<name>`.
+- The pack writes a marker in the folder it makes, `starter-pack/.kilnmark-starter-pack`, holding a
+  value it keeps in its own setting. A folder of that name without it, a site's own on a real share,
+  is never written in or deleted: turning the pack on says so and turning it off leaves it.
 - `KILNMARK_PRODUCTION` set to anything but `true` or `false` stops the server at start, and the
   control script says why.
 - The two samples that run SQL are not added by the pack (an admin may not see unmasked values,

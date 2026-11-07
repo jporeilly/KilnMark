@@ -97,9 +97,9 @@ public class PipelineService {
     @Inject
     io.kilnmark.server.ai.EgressPolicy egress;
 
-    /** API tokens, to refuse on production a run a Starter Pack example account asked for (ADR 0051). */
+    /** To refuse on production a run a Starter Pack example account asked for (ADR 0051). */
     @Inject
-    io.kilnmark.server.auth.ApiTokens tokens;
+    io.kilnmark.server.starter.ExampleAccess examples;
 
     /** The audit log; null in tests that build the service by hand. */
     @Inject
@@ -1210,7 +1210,7 @@ public class PipelineService {
         if (run.finished()) {
             return new ScanService.Result(ScanService.Outcome.SKIPPED, "Pipeline run " + id + " had already finished");
         }
-        if (config.production() && tokens != null && tokens.actsForExample(run.requestedBy())) {
+        if (config.production() && examples != null && examples.actsForExample(run.requestedBy())) {
             // ADR 0051: on production, nothing a Starter Pack example account asked for runs
             store.finishRun(id, "cancelled", io.kilnmark.server.starter.ExampleAccounts.RUN_CANCELLED, null);
             io.kilnmark.server.starter.ExampleAccounts.recordCancelled(audit, "pipeline", run.pipeline(), id);

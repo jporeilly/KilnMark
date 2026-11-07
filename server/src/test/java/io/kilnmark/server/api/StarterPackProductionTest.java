@@ -158,6 +158,11 @@ class StarterPackProductionTest {
             "@daily", null, Map.of(), "designer", true, null), io.kilnmark.server.schedules.ScheduleService.setter(priya,
             "sso:priya.shah@kilnmark.com (sub-priya)"), AccessRole.DESIGNER);
 
+        // Before any sweep: a schedule an example person set never fires on production, whatever role
+        // their last sign-in in the trial gave them.
+        var problem = setters.problem(store.find(schedule.id()).orElseThrow());
+        assertTrue(problem != null && problem.reason().contains("example account"), String.valueOf(problem));
+
         int revokedEvents = StarterPackApiTest.events(AuditLog.TOKEN_REVOKED);
         io.kilnmark.server.starter.ProductionCheck.Swept swept = check.sweep();
         assertEquals(java.util.Set.of(ex, child, grandchild, approved), java.util.Set.copyOf(swept.tokens()), swept.toString());
@@ -179,6 +184,9 @@ class StarterPackProductionTest {
 
     @jakarta.inject.Inject
     io.kilnmark.server.flows.FlowStore flowStore;
+
+    @jakarta.inject.Inject
+    io.kilnmark.server.schedules.Setters setters;
 
     @jakarta.inject.Inject
     io.kilnmark.server.pipelines.PipelineStore pipelineStore;
@@ -229,9 +237,14 @@ class StarterPackProductionTest {
     @Test
     void runsTheExampleAccountsAskedForNeverRun() throws Exception {
         String alex = "sso:alex.morgan@kilnmark.com (sub-alex)";
-        for (String f : List.of("pr-flow-a", "pr-flow-b", "pr-flow-own")) {
+        for (String f : List.of("pr-flow-a", "pr-flow-b", "pr-flow-own", "pr-flow-asked")) {
             flow(f);
         }
+        // A run a token asks for names the token by its id, which only ever says which token it is.
+        long asked = admin().contentType(ContentType.JSON).body(Map.of()).post("/api/v1/flows/pr-flow-asked/runs").then()
+            .statusCode(202).extract().jsonPath().getLong("id");
+        assertTrue(flowStore.run(asked).orElseThrow().requestedBy().matches("token \\d+ \\(.*\\)"),
+            flowStore.run(asked).orElseThrow().requestedBy());
         // A pipeline that cannot run (its source is not here): it is never meant to start.
         admin().contentType(ContentType.JSON).body(Map.of("yaml", """
             kilnmark: pipeline/v1
@@ -251,11 +264,36 @@ class StarterPackProductionTest {
         long f2 = queuedWithoutJob("flow_run", "pr-flow-b", "flow", alex);
         long p2 = queuedWithoutJob("pipeline_run", "pr-pipe", "pipeline", alex);
         long own = queuedWithoutJob("flow_run", "pr-flow-own", "flow", "sso:Rita Real (sub-rita)");
+        // A token is known by its id, never its name: an example token named as a real one stops only its own runs.
+        long exampleAirflow = tokens.create("airflow", AccessRole.ADMIN, null, alex).token().id();
+        long realAirflow = tokens.create("airflow", AccessRole.ADMIN, null, "sso:Rita Real (sub-rita)").token().id();
+        long byExampleToken = queuedWithoutJob("pipeline_run", "pr-pipe", "pipeline", "token " + exampleAirflow + " (airflow)");
+        long byRealToken = queuedWithoutJob("pipeline_run", "pr-pipe", "pipeline", "token " + realAirflow + " (airflow)");
+        long byName = queuedWithoutJob("pipeline_run", "pr-pipe", "pipeline", "airflow");
+        // and a schedule by the token that set it, whatever its name
+        var exampleSchedule = schedules.create(new io.kilnmark.server.schedules.ScheduleViews.ScheduleChange(null,
+            "pr-flow-own", "@daily", null, Map.of(), "designer", false, null), new io.kilnmark.server.schedules.ScheduleStore.Setter(
+            "airflow", exampleAirflow, null), AccessRole.DESIGNER);
+        var realSchedule = schedules.create(new io.kilnmark.server.schedules.ScheduleViews.ScheduleChange(null,
+            "pr-flow-own", "@daily", null, Map.of(), "designer", false, null), new io.kilnmark.server.schedules.ScheduleStore.Setter(
+            "airflow", realAirflow, null), AccessRole.DESIGNER);
+        long byExampleSchedule = queuedWithoutJob("pipeline_run", "pr-pipe", "pipeline",
+            io.kilnmark.server.schedules.ScheduleService.requestedBy(exampleSchedule));
+        long byRealSchedule = queuedWithoutJob("pipeline_run", "pr-pipe", "pipeline",
+            io.kilnmark.server.schedules.ScheduleService.requestedBy(realSchedule));
         io.kilnmark.server.starter.ProductionCheck.Swept swept = check.sweep();
         assertTrue(swept.runs().containsAll(List.of("flow run " + f2, "pipeline run " + p2)), swept.toString());
         assertTrue(status("flow_run", f2).startsWith("cancelled"));
         assertTrue(status("pipeline_run", p2).startsWith("cancelled"));
         assertTrue(status("flow_run", own).startsWith("queued"), "a real person's run is left");
+        assertTrue(status("pipeline_run", byExampleToken).startsWith("cancelled"), "the example token's run");
+        assertTrue(status("pipeline_run", byExampleSchedule).startsWith("cancelled"), "the example token's schedule's run");
+        for (long id : List.of(byRealToken, byName, byRealSchedule)) {
+            assertTrue(status("pipeline_run", id).startsWith("queued"), "a name never stands for a token: run " + id);
+            pipelineStore.requestCancel(id, "test");
+        }
+        schedules.delete(exampleSchedule.id(), "test", AccessRole.ADMIN);
+        schedules.delete(realSchedule.id(), "test", AccessRole.ADMIN);
         audit.awaitStored(5000);
         JsonPath ev = admin().get("/api/v1/audit?action=" + AuditLog.RUN_CANCELLED + "&limit=20").then().statusCode(200)
             .extract().jsonPath();

@@ -144,7 +144,7 @@ class ControlScriptStarterTest {
     void bothEditionsHandThePeoplesPasswordToSetupOnItsStandardInputAndShowItOnTheTerminalOnly() throws IOException {
         String sh = Files.readString(LAUNCH.resolve("kilnmark.sh"));
         assertTrue(sh.contains("  if ! printf '%s\\n' \"$password\" | KILNMARK_STARTER_PEOPLE_ACTION=\"$action\" \\\n"
-            + "    \"${compose[@]}\" run --rm -T keycloak-setup; then"),
+            + "    \"${compose[@]}\" run --rm -T keycloak-setup 2>&1 | hide_compose_commands; then"),
             "on keycloak-setup's standard input, from printf (a builtin: no command line)");
         assertTrue(sh.contains("echo \"shown only now and kept nowhere, not even in logs/: $password\"")
             && sh.contains("    } > /dev/tty\n  else"), "to the terminal, past logs/");
@@ -191,7 +191,9 @@ class ControlScriptStarterTest {
 
     /** What a command of the script prints, run with these settings and this outside environment. */
     interface Scripted {
-        String run(Map<String, String> settings, Map<String, String> outside) throws Exception;
+        /** {@code command}: "starter" (starter people) or "down"; {@code logs}: whether logs/ is there. */
+        String run(Map<String, String> settings, Map<String, String> outside, String command, boolean logs)
+            throws Exception;
     }
 
     /** The leaked secret the fake engine prints as podman-compose 1.0.x prints a podman command. */
@@ -204,7 +206,7 @@ class ControlScriptStarterTest {
      */
     private static void composeRules(Scripted s, Path[] root) throws Exception {
         String out = s.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed"),
-            Map.of("KILNMARK_PRODUCTION", "from-the-shell", "KILNMARK_STARTER", "from-the-shell"));
+            Map.of("KILNMARK_PRODUCTION", "from-the-shell", "KILNMARK_STARTER", "from-the-shell"), "starter", true);
         assertTrue(out.contains("keycloak-setup: seen"), out);
         assertFalse(out.contains("from-the-shell"), "the outside environment reached compose: " + out);
         assertFalse(out.contains(LEAKED), "a podman command line was shown: " + out);
@@ -216,9 +218,50 @@ class ControlScriptStarterTest {
         }
         assertTrue(logs.toString().contains("keycloak-setup: seen"), "what setup says is kept: " + logs);
         assertFalse(logs.toString().contains(LEAKED), "a podman command line was kept in logs: " + logs);
+        // with no logs/ folder nothing is logged, and nothing filtered there: the screen is filtered all the same,
+        // for starter people and for a compose call that shows its output only when it fails (down)
+        for (String command : List.of("starter", "down")) {
+            String bare = s.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed"), Map.of(), command, false);
+            assertTrue(bare.contains("keycloak-setup: seen"), command + ": " + bare);
+            assertFalse(bare.contains(LEAKED), command + ": a podman command line was shown: " + bare);
+        }
         // an export in front, which compose reads too
         assertTrue(s.run(Map.of("COMPOSE_PROFILES", "auth", "KILNMARK_STARTER", "allowed", "export KILNMARK_PRODUCTION",
-            "TRUE"), Map.of()).contains("marked production"), "export KILNMARK_PRODUCTION=TRUE is production");
+            "TRUE"), Map.of(), "starter", true).contains("marked production"), "export KILNMARK_PRODUCTION=TRUE is production");
+        // the name's case exactly, as compose reads it: kilnmark_production is another setting
+        Map<String, String> lower = new LinkedHashMap<>();
+        lower.put("COMPOSE_PROFILES", "auth");
+        lower.put("KILNMARK_STARTER", "allowed");
+        lower.put("KILNMARK_PRODUCTION", "false");
+        lower.put("kilnmark_production", "true");
+        assertTrue(s.run(lower, Map.of(), "starter", true).contains("keycloak-setup: seen"),
+            "KILNMARK_PRODUCTION=false, then kilnmark_production=true: not production, as compose reads it");
+    }
+
+    /**
+     * keycloak-setup reads all of kcadm's output where it takes a line or looks for one: a reader
+     * that stopped early would end kcadm with SIGPIPE, which pipefail turns into "not a member", and
+     * an example person would never be removed.
+     */
+    @Test
+    void setupReadsAllOfWhatKcadmPrints() throws Exception {
+        String bash = System.getenv("KILNMARK_TEST_BASH");
+        boolean windows = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win");
+        String shell = bash != null && !bash.isBlank() ? bash : windows ? null : "bash";
+        Assumptions.assumeTrue(shell != null, "set KILNMARK_TEST_BASH to bash to run this on Windows");
+        String setup = Path.of("../containers/keycloak/setup.sh").toAbsolutePath().toString().replace('\\', '/');
+        // as a script file: Windows would mangle the quotes of a -c argument
+        Path script = Files.createTempFile("kilnmark-setup-readers", ".sh");
+        Files.writeString(script, "set -o pipefail\nf='" + setup + "'\n"
+            + "eval \"$(grep '^one() ' \"$f\")\"\neval \"$(grep '^in_group() ' \"$f\")\"\n"
+            + "REALM=x\nkc() { seq 1 300000; }\n"
+            + "seq 1 300000 | one > /dev/null || exit 3\n"
+            + "[ \"$(printf 'a\\nb\\n' | one)\" = a ] || exit 4\n"
+            + "in_group someone 1 || exit 5\n! in_group someone x || exit 6\n");
+        Process p = new ProcessBuilder(shell, script.toString().replace('\\', '/')).redirectErrorStream(true).start();
+        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertTrue(p.waitFor(60, TimeUnit.SECONDS));
+        assertEquals(0, p.exitValue(), out);
     }
 
     private static void peopleRules(People p) throws Exception {
@@ -263,11 +306,17 @@ class ControlScriptStarterTest {
         });
         Path engine = fakeEngine(false);
         Path[] last = new Path[1];
-        composeRules((settings, outside) -> {
-            last[0] = installRoot(false);
-            writeEnv(last[0], settings);
-            return run(List.of(shell, LAUNCH.resolve("kilnmark.sh").toAbsolutePath().toString(), "starter", "people"),
-                last[0], engine.toString().replace('\\', '/'), outside);
+        composeRules((settings, outside, command, logs) -> {
+            Path root = installRoot(false);
+            if (logs) {
+                last[0] = root;
+            } else {
+                Files.delete(root.resolve("logs"));
+            }
+            writeEnv(root, settings);
+            List<String> c = new ArrayList<>(List.of(shell, LAUNCH.resolve("kilnmark.sh").toAbsolutePath().toString()));
+            c.addAll(command.equals("down") ? List.of("down") : List.of("starter", "people"));
+            return run(c, root, engine.toString().replace('\\', '/'), outside);
         }, last);
     }
 
@@ -291,12 +340,18 @@ class ControlScriptStarterTest {
         });
         Path engine = fakeEngine(true);
         Path[] last = new Path[1];
-        composeRules((settings, outside) -> {
-            last[0] = installRoot(true);
-            writeEnv(last[0], settings);
-            return run(List.of(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
-                LAUNCH.resolve("kilnmark.ps1").toAbsolutePath().toString(), "starter", "people"), last[0],
-                engine.toString(), outside);
+        composeRules((settings, outside, command, logs) -> {
+            Path root = installRoot(true);
+            if (logs) {
+                last[0] = root;
+            } else {
+                Files.delete(root.resolve("logs"));
+            }
+            writeEnv(root, settings);
+            List<String> c = new ArrayList<>(List.of(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy",
+                "Bypass", "-File", LAUNCH.resolve("kilnmark.ps1").toAbsolutePath().toString()));
+            c.addAll(command.equals("down") ? List.of("down") : List.of("starter", "people"));
+            return run(c, root, engine.toString(), outside);
         }, last);
     }
 
@@ -312,6 +367,7 @@ class ControlScriptStarterTest {
             Files.writeString(f, "@echo off\r\n"
                 + "if \"%1 %2\"==\"compose version\" exit /b 0\r\n"
                 + "echo podman run --name kilnmark_x -e KC_ADMIN_PASSWORD=" + LEAKED + " quay.io/keycloak/keycloak 1>&2\r\n"
+                + "echo ['podman', 'run', '-e', 'KILNMARK_OIDC_CLIENT_SECRET=" + LEAKED + "'] 1>&2\r\n"
                 + "echo keycloak-setup: seen [%KILNMARK_PRODUCTION%] [%KILNMARK_STARTER%]\r\n"
                 + "exit /b 1\r\n");
             return f;
@@ -320,6 +376,7 @@ class ControlScriptStarterTest {
         Files.writeString(f, "#!/bin/bash\n"
             + "if [ \"$1 $2\" = \"compose version\" ]; then exit 0; fi\n"
             + "echo \"podman run --name kilnmark_x -e KC_ADMIN_PASSWORD=" + LEAKED + " quay.io/keycloak/keycloak\" >&2\n"
+            + "echo \"['podman', 'run', '-e', 'KILNMARK_OIDC_CLIENT_SECRET=" + LEAKED + "']\" >&2\n"
             + "echo \"keycloak-setup: seen [${KILNMARK_PRODUCTION-}] [${KILNMARK_STARTER-}]\"\n"
             + "exit 1\n");
         try {

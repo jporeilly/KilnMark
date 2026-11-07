@@ -84,9 +84,9 @@ public class FlowService {
     @Inject
     io.kilnmark.server.audit.AuditLog audit;
 
-    /** API tokens, to refuse on production a run a Starter Pack example account asked for (ADR 0051). */
+    /** To refuse on production a run a Starter Pack example account asked for (ADR 0051). */
     @Inject
-    io.kilnmark.server.auth.ApiTokens tokens;
+    io.kilnmark.server.starter.ExampleAccess examples;
 
     @Inject
     public FlowService(FlowStore store, PipelineService pipelines, PipelineStore pipelineStore, ObjectMapper json) {
@@ -1029,7 +1029,7 @@ public class FlowService {
         if (run.finished()) {
             return new ScanService.Result(ScanService.Outcome.SKIPPED, "Flow run " + id + " had already finished");
         }
-        if (config != null && config.production() && tokens != null && tokens.actsForExample(run.requestedBy())) {
+        if (config != null && config.production() && examples != null && examples.actsForExample(run.requestedBy())) {
             // ADR 0051: on production, nothing a Starter Pack example account asked for runs
             store.finishRun(id, "cancelled", io.kilnmark.server.starter.ExampleAccounts.RUN_CANCELLED);
             io.kilnmark.server.starter.ExampleAccounts.recordCancelled(audit, "flow", run.flow(), id);

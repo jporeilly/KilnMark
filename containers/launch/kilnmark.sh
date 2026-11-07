@@ -159,8 +159,10 @@ images_present() {
 
 # podman-compose 1.0.x (Ubuntu 24.04's) prints each podman command it runs, with every setting of
 # the container on it (-e NAME=value: database passwords, Keycloak's admin password, the client
-# secret). Those lines are never shown or kept in logs/.
-hide_compose_commands() { grep --line-buffered -v -E '(^|[/[:space:]])podman(\.exe)? .*(-e|--env)[[:space:]=]' || true; }
+# secret), joined with spaces or as a Python list. Those lines are never shown or kept in logs/:
+# filtered here for every compose call this script shows, whether or not it logs.
+compose_command_line="podman.*[[:space:]'\",[](-e|--env)([[:space:]=,'\"]|\$)"
+hide_compose_commands() { grep --line-buffered -v -E "$compose_command_line" || true; }
 
 start_log() {
   [ -n "$root" ] && [ -d "$root/logs" ] || return 0
@@ -400,7 +402,7 @@ local_url() {
 compose_quietly() {
   local out
   if out="$("${compose[@]}" "$@" 2>&1)"; then return 0; fi
-  printf '%s\n' "$out" >&2
+  printf '%s\n' "$out" | hide_compose_commands >&2
   return 1
 }
 
@@ -773,7 +775,7 @@ cmd_starter() {
   set_compose
   echo "Asking keycloak-setup to $( [ "$action" = remove ] && echo remove || echo add ) the example people ..."
   if ! printf '%s\n' "$password" | KILNMARK_STARTER_PEOPLE_ACTION="$action" \
-    "${compose[@]}" run --rm -T keycloak-setup; then
+    "${compose[@]}" run --rm -T keycloak-setup 2>&1 | hide_compose_commands; then
     die "keycloak-setup did not finish: see what it said above. Nothing more was done."
   fi
   if [ "$action" = remove ]; then

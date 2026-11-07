@@ -135,7 +135,8 @@ function Get-Setting([string]$Name) {
     if (-not (Test-Path $file)) { return '' }
     $value = ''
     foreach ($line in [IO.File]::ReadAllLines($file)) {
-        if ($line -match ('^\s*(export\s+)?' + $Name + '\s*=(.*)$')) { $value = $Matches[2] }
+        # the name's case exactly, as compose reads it
+        if ($line -cmatch ('^\s*(export\s+)?' + $Name + '\s*=(.*)$')) { $value = $Matches[2] }
     }
     $value = $value.Trim()
     if ($value.StartsWith('"')) { $value = $value.Substring(1); $i = $value.IndexOf('"'); if ($i -ge 0) { $value = $value.Substring(0, $i) } }
@@ -166,8 +167,9 @@ function Get-ComposeArgs {
 }
 
 # podman-compose 1.0.x prints each podman command it runs, with every setting of the container on
-# it (-e NAME=value: passwords, the client secret). Those lines are never shown or kept in logs\.
-function Test-ComposeCommand([string]$Line) { return ($Line -match '(^|[\\/\s])podman(\.exe)? .*(-e|--env)[\s=]') }
+# it (-e NAME=value: passwords, the client secret), joined with spaces or as a Python list. Those
+# lines are never shown or kept in logs\.
+function Test-ComposeCommand([string]$Line) { return ($Line -match 'podman.*[\s''",\[](-e|--env)([\s=,''"]|$)') }
 
 # Runs compose with the given arguments; its output reaches the screen and the log.
 function Invoke-Compose {

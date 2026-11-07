@@ -415,6 +415,15 @@ public class AuditLog {
     /** Who is not signed in, or whose sign-in failed. */
     public static final String ANONYMOUS = "anonymous";
 
+    /**
+     * How a run, or anything queued for later, names who asked for it: a person by their sign-in's
+     * name, a token as {@code token <id> (<name>)}, so that the id, never a name chosen freely,
+     * says which token it was (ADR 0051).
+     */
+    public static String requester(SecurityIdentity identity) {
+        return actor(identity).toString();
+    }
+
     /** The caller of the current request; anonymous when it is not signed in or its sign-in failed. */
     public static Actor actor(SecurityIdentity identity) {
         try {

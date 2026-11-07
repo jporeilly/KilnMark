@@ -79,7 +79,12 @@ details.
   their schedules paused, each recorded; such a token is refused and such a run cancelled at any
   time, not only at the start. The control scripts ignore those settings in the shell's
   environment, read `export` lines in `config/.env` as compose does, and never show or log the
-  podman command lines podman-compose 1.0.x prints, secrets and all. `keycloak-setup` finds groups by
+  podman command lines podman-compose 1.0.x prints, secrets and all, logging or not; they read a
+  setting's name with its case exactly, as compose does. A run asked for by a token names it
+  `token <id> (<name>)`, and only the id ever says which token: an example token named like a real
+  one stops none of the real one's work. A schedule an example person set does not fire on
+  production. The pack marks the folder it makes and never adopts or deletes a `starter-pack`
+  folder of the site's own. `keycloak-setup` finds groups by
   path, so a subgroup named like one of its groups is never taken for it. A source the pack deletes
   says in the audit log whether it had columns marked sensitive. A step's failure on the page
   never names a host: what a called service said goes to the server's log.

@@ -350,7 +350,7 @@ public class ApiTokens {
      * lifetime, by the database's clock), else empty: what a schedule it set is checked by.
      */
     public Optional<AccessRole> workingRole(long id) {
-        if (config.production() && find(id).map(t -> madeByExample(t, this::find)).orElse(false)) {
+        if (config.production() && madeByExample(id)) {
             return Optional.empty(); // ADR 0051: on production nothing an example account made acts
         }
         return db.tx(c -> {
@@ -364,11 +364,11 @@ public class ApiTokens {
         });
     }
 
-    /** How a token made by a token names its maker ({@code TokenResource}): "token 12 (its name)". */
-    private static final Pattern MADE_BY_TOKEN = Pattern.compile("^token (\\d{1,18}) \\(");
-
-    /** How a scheduled run names who set its schedule ({@code ScheduleService.requestedBy}). */
-    private static final Pattern SCHEDULED = Pattern.compile("^schedule \\d{1,18} \\(set by (.*)\\)$", Pattern.DOTALL);
+    /**
+     * How Kilnmark names a token as a caller ({@code AuditLog.Actor}): "token 12 (its name)". Only
+     * the id says which token: names are chosen freely and need not be unique.
+     */
+    public static final Pattern AS_CALLER = Pattern.compile("^token (\\d{1,18}) \\(");
 
     /**
      * Whether token {@code t} was made by one of the Starter Pack's example accounts, or had its
@@ -382,31 +382,15 @@ public class ApiTokens {
                 || io.kilnmark.server.starter.ExampleAccounts.isExample(at.unmaskApprovedBy())) {
                 return true;
             }
-            java.util.regex.Matcher m = MADE_BY_TOKEN.matcher(at.createdBy() == null ? "" : at.createdBy());
+            java.util.regex.Matcher m = AS_CALLER.matcher(at.createdBy() == null ? "" : at.createdBy());
             at = m.find() ? lookup.apply(Long.parseLong(m.group(1))).orElse(null) : null;
         }
         return at != null; // a chain longer than any made by hand: refused
     }
 
-    /**
-     * Whether {@code who}, as a run or a schedule names who asked for it, is one of the Starter
-     * Pack's example accounts or one of the tokens {@link #madeByExample} finds (a token goes by
-     * its name there), or a schedule one of them set.
-     */
-    public boolean actsForExample(String who) {
-        if (who == null) {
-            return false;
-        }
-        java.util.regex.Matcher s = SCHEDULED.matcher(who);
-        String name = s.matches() ? s.group(1) : who;
-        if (io.kilnmark.server.starter.ExampleAccounts.isExample(name)) {
-            return true;
-        }
-        List<Token> all = list();
-        Map<Long, Token> byId = new java.util.HashMap<>();
-        all.forEach(t -> byId.put(t.id(), t));
-        return all.stream().anyMatch(t -> t.name().equals(name)
-            && madeByExample(t, id -> Optional.ofNullable(byId.get(id))));
+    /** Whether token {@code id} is one {@link #madeByExample} finds; false for no such token. */
+    public boolean madeByExample(long id) {
+        return find(id).map(t -> madeByExample(t, this::find)).orElse(false);
     }
 
     public Optional<Token> find(long id) {

@@ -194,10 +194,49 @@ public class StarterPack {
         v.put("since", on != null || !was.hasNonNull("since") ? Instant.now().toString() : was.get("since").asText());
         v.put("by", on != null || !was.hasNonNull("by") ? by : was.get("by").asText()); // by: who changed it now
         v.put("sources", own);
+        if (was.hasNonNull("folder")) {
+            v.put("folder", was.get("folder").asText());
+        }
         try {
             settings.put(SETTING, JSON.writeValueAsString(v), by);
         } catch (IOException e) {
             throw new IllegalStateException(e);
+        }
+    }
+
+    /**
+     * Keeps (or, with null, forgets) the value the pack wrote in its folder's marker when it made
+     * the folder: only a folder whose marker holds it is the pack's, to write in and to delete.
+     */
+    private void saveFolder(String mark, String by) {
+        com.fasterxml.jackson.databind.node.ObjectNode n = stored().deepCopy() instanceof
+            com.fasterxml.jackson.databind.node.ObjectNode o ? o : JSON.createObjectNode();
+        if (mark == null) {
+            n.remove("folder");
+        } else {
+            n.put("folder", mark);
+        }
+        try {
+            settings.put(SETTING, JSON.writeValueAsString(n), by);
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** The file in the pack's folder that says the pack made it. */
+    static final String MARKER = ".kilnmark-starter-pack";
+
+    /** Whether {@code folder} is the one the pack made: its marker holds the value the pack kept. */
+    private boolean madeByThePack(Path folder) {
+        String mark = stored().path("folder").asText(null);
+        Path marker = folder.resolve(MARKER);
+        if (mark == null || Files.isSymbolicLink(folder) || !Files.isRegularFile(marker, LinkOption.NOFOLLOW_LINKS)) {
+            return false;
+        }
+        try {
+            return mark.equals(Files.readString(marker).strip());
+        } catch (IOException e) {
+            return false;
         }
     }
 
@@ -448,11 +487,22 @@ public class StarterPack {
 
     private String filesSource(AuditLog.Actor actor) {
         Path folder = folder();
-        try {
-            Files.createDirectories(folder);
-        } catch (IOException e) {
-            throw new Problem("Kilnmark could not make the folder " + FOLDER + " in the files folder: it "
-                + "must be writable by Kilnmark (INSTALL.md, The files folder)");
+        if (Files.exists(folder, LinkOption.NOFOLLOW_LINKS)) {
+            // a site's own folder of that name (KILNMARK_FILES_DIR can be a real share) is never adopted
+            if (!madeByThePack(folder)) {
+                throw new Problem("A folder " + FOLDER + " is in the files folder that the Starter Pack did not make: "
+                    + "it was left as it is. Rename it, then turn the pack on again");
+            }
+        } else {
+            try {
+                Files.createDirectories(folder);
+                String mark = java.util.UUID.randomUUID().toString();
+                Files.writeString(folder.resolve(MARKER), mark + "\n");
+                saveFolder(mark, actor.name());
+            } catch (IOException e) {
+                throw new Problem("Kilnmark could not make the folder " + FOLDER + " in the files folder: it "
+                    + "must be writable by Kilnmark (INSTALL.md, The files folder)");
+            }
         }
         Map<String, String> s = new LinkedHashMap<>();
         s.put("path", folder.toString().replace('\\', '/'));
@@ -582,7 +632,7 @@ public class StarterPack {
                 return "nothing of the pack's";
             });
             ok &= run(steps, "sample tables", this::emptyDatabase);
-            ok &= run(steps, "sample files", this::removeFiles);
+            ok &= run(steps, "sample files", () -> removeFiles(by));
             if (ok) {
                 save(false, by, ownSources());
             }
@@ -717,14 +767,20 @@ public class StarterPack {
         return "\"" + identifier.replace("\"", "\"\"") + "\"";
     }
 
-    /** Deletes the pack's folder in the files folder, never following a link out of it. */
-    String removeFiles() {
+    /**
+     * Deletes the pack's folder in the files folder, never following a link out of it, and only
+     * when its marker says the pack made it: a site's own folder of that name is left as it is.
+     */
+    String removeFiles(String by) {
         Path folder = folder();
         if (folder == null || !Files.exists(folder, LinkOption.NOFOLLOW_LINKS)) {
             return "none was left";
         }
         if (Files.isSymbolicLink(folder)) {
             throw new Problem("The pack's folder " + FOLDER + " is a link: remove it yourself");
+        }
+        if (!madeByThePack(folder)) {
+            return "the folder " + FOLDER + " is not the pack's: left as it is";
         }
         int[] count = {0};
         try {
@@ -749,6 +805,7 @@ public class StarterPack {
             throw new Problem("Kilnmark could not delete every file in " + FOLDER + ": a file there may be "
                 + "open, or not Kilnmark's to delete");
         }
+        saveFolder(null, by);
         return count[0] + " files removed with the folder " + FOLDER;
     }
 

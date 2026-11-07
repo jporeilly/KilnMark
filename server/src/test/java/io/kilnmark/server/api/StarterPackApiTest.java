@@ -300,6 +300,23 @@ class StarterPackApiTest {
         admin().delete("/api/v1/sources/" + StarterPack.FILES_SOURCE).then().statusCode(200);
     }
 
+    @Test
+    @Order(7)
+    void aFolderOfThePacksNameThatIsNotThePacksIsNeverAdoptedOrDeleted() throws Exception {
+        // KILNMARK_FILES_DIR can be a real share: a site's own folder starter-pack is left alone
+        Path own = Files.createDirectories(folder());
+        Files.writeString(own.resolve("keep.txt"), "the site's own");
+        JsonPath on = admin().post("/api/v1/starter-pack").then().statusCode(200).extract().jsonPath();
+        assertEquals("failed", on.getString("steps.find { it.step == 'files source' }.outcome"), on.prettify());
+        assertTrue(on.getString("steps.find { it.step == 'files source' }.detail").contains("did not make"), on.prettify());
+        JsonPath off = admin().contentType(ContentType.JSON).body(Map.of("confirm", "DELETE")).delete("/api/v1/starter-pack")
+            .then().statusCode(200).extract().jsonPath();
+        assertTrue(off.getString("steps.find { it.step == 'sample files' }.detail").contains("not the pack's"), off.prettify());
+        assertEquals("the site's own", Files.readString(own.resolve("keep.txt")), "never deleted");
+        Files.delete(own.resolve("keep.txt"));
+        Files.delete(own);
+    }
+
     @AfterAll
     static void dropTheDatabase() throws Exception {
         try (Connection c = io.quarkus.arc.Arc.container().instance(io.agroal.api.AgroalDataSource.class).get()
