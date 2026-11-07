@@ -121,6 +121,7 @@ public class JobWorker {
         slots = new Semaphore(concurrency);
         int flowCount = Math.max(1, config.worker().flows());
         flowSlots = new Semaphore(flowCount);
+        flowLeases = queue.flowLeases();
         recover();
         Thread.ofVirtual().name("kilnmark-job-heartbeat").start(this::beat);
         listener = Thread.ofVirtual().name("kilnmark-job-listener").start(this::listen);
@@ -156,6 +157,8 @@ public class JobWorker {
 
     /** Flows this worker watches at once ({@code kilnmark.worker.flows}); they hold no slot (see {@link #poll}). */
     private Semaphore flowSlots;
+    /** The locks of the flows this worker watches, all on one connection (docs/design/flows.md, section 4). */
+    private JobQueue.FlowLeases flowLeases;
 
     private void poll() {
         Duration every = config.worker().pollInterval();
@@ -178,8 +181,8 @@ public class JobWorker {
                     boolean light = io.kilnmark.server.flows.FlowStore.JOB_KIND.equals(j.kind());
                     if (light) {
                         slots.release();
-                        // Each flow holds a database connection for its lock while it watches: a few at a time,
-                        // or flows could take every connection and starve the pipeline runs they wait for.
+                        // A few flows at a time: each takes connections now and then as it looks (their locks
+                        // share one), and the pipeline runs they wait for need the rest.
                         if (!flowSlots.tryAcquire()) {
                             queue.release(j, Duration.ofSeconds(5), null);
                             continue;
@@ -219,11 +222,12 @@ public class JobWorker {
     /** Runs one claimed job while holding its source's scan lock (a pipeline job: its own lock). */
     void execute(JobQueue.Job job) {
         if (io.kilnmark.server.pipelines.PipelineStore.JOB_KIND.equals(job.kind())) {
-            executeLocked(job, "Pipeline", (id, lease, stop) -> pipelines.execute(id, lease, stop));
+            executeLocked(job, "Pipeline", queue::lockPipelineJob,
+                (id, lease, stop) -> pipelines.execute(id, lease, stop));
             return;
         }
         if (io.kilnmark.server.flows.FlowStore.JOB_KIND.equals(job.kind())) {
-            executeLocked(job, "Flow", (id, lease, stop) -> flows.execute(id, lease, stop));
+            executeLocked(job, "Flow", flowLeases::lock, (id, lease, stop) -> flows.execute(id, lease, stop));
             return;
         }
         boolean qualityJob = io.kilnmark.server.quality.QualityService.JOB_KIND.equals(job.kind()) && job.sourceId() >= 0;
@@ -279,15 +283,17 @@ public class JobWorker {
     }
 
     /**
-     * Runs a pipeline or flow job while holding its own lock (no source lock: runs of a pipeline may read
-     * sources being scanned). A pipeline job is tried once; a run stopped by shutdown is marked
+     * Runs a pipeline or flow job while holding its own lock, taken by {@code lock} (no source lock:
+     * runs of a pipeline may read sources being scanned; a flow's lock is on the connection its
+     * worker's flows share). A pipeline job is tried once; a run stopped by shutdown is marked
      * failed rather than repeated, since its writes may have begun. A run waiting for a free place on
      * a source ({@link ScanService.Outcome#WAITING}) goes back in the queue without using that attempt.
      */
-    private void executeLocked(JobQueue.Job job, String what, LockedRun body) {
+    private void executeLocked(JobQueue.Job job, String what,
+                               java.util.function.LongFunction<Optional<JobQueue.ScanLease>> lock, LockedRun body) {
         Optional<JobQueue.ScanLease> lease;
         try {
-            lease = queue.lockPipelineJob(job.id());
+            lease = lock.apply(job.id());
         } catch (RuntimeException e) {
             queue.retryOrFail(job, e.getMessage());
             return;

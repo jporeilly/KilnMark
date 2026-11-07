@@ -11,7 +11,9 @@ import java.util.List;
 import java.util.Optional;
 
 import io.kilnmark.server.Db;
-import io.kilnmark.server.jobs.JobQueue;
+import io.kilnmark.server.runs.RunKind;
+import io.kilnmark.server.runs.RunRow;
+import io.kilnmark.server.runs.RunTables;
 import io.kilnmark.server.schedules.ScheduleStore;
 import jakarta.enterprise.context.ApplicationScoped;
 
@@ -20,10 +22,18 @@ import jakarta.enterprise.context.ApplicationScoped;
  * {@link FlowService} reads and writes them.
  */
 @ApplicationScoped
-public class FlowStore {
+public class FlowStore implements io.kilnmark.server.runs.RunStore<FlowStore.Run> {
 
     /** The job kind workers run flows under. */
     public static final String JOB_KIND = "flow";
+
+    /**
+     * Flows in the run lifecycle they share with pipelines (docs/design/pipelines.md, "One run
+     * lifecycle"): a queued run says nothing while it waits, a run records no result, and a delete
+     * waits for a run's job to end too (ADR 0048, decision 1).
+     */
+    public static final RunKind KIND = new RunKind(JOB_KIND, ScheduleStore.Target.FLOW, Busy::new, Missing::new,
+        false, false, true);
 
     /** {@code library}: {@code sample} for one added from the samples (ADR 0043), else null. */
     public record Flow(String name, String displayName, String description, int latestVersion, String createdBy,
@@ -38,8 +48,9 @@ public class FlowStore {
     /** {@code parameters} is a JSON object of the values the run started with. */
     public record Run(long id, String flow, int version, String status, String requestedBy, String requestedRole,
                       Instant requestedAt, Instant startedAt, Instant finishedAt, boolean cancelRequested, String error,
-                      String parameters, String variables) {
+                      String parameters, String variables) implements RunRow {
 
+        @Override
         public boolean finished() {
             return !status.equals("queued") && !status.equals("running");
         }
@@ -136,45 +147,9 @@ public class FlowStore {
      * @throws Busy when a run is queued or running, or the job of one is still finishing
      * @throws ScheduleStore.LockWaitTooLong when a lock was not granted in time; nothing was deleted
      */
+    @Override
     public Optional<List<ScheduleStore.Gone>> deleteWithSchedules(String name) {
-        return ScheduleStore.deleting(db, c -> {
-            // the schedules' rows first, then the flow's: a schedule's fire holds its row while it
-            // queues a run, which locks the flow, so the other order could deadlock
-            ScheduleStore.lockFor(c, ScheduleStore.Target.FLOW, name);
-            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.flow WHERE name = ? FOR UPDATE")) {
-                ps.setString(1, name);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (!rs.next()) {
-                        return Optional.<List<ScheduleStore.Gone>>empty();
-                    }
-                }
-            }
-            // A run's job ends after the run is recorded as ended, and tells of a failure in between:
-            // while it is still going, a failure told after the delete would be about a flow that is gone.
-            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.flow_run WHERE flow = ? "
-                + "AND status IN ('queued', 'running') UNION ALL SELECT 1 FROM kilnmark.job j "
-                + "JOIN kilnmark.flow_run r ON (j.payload ->> 'flowRunId')::bigint = r.id WHERE r.flow = ? "
-                + "AND j.kind = '" + JOB_KIND + "' AND j.status IN ('queued', 'running') LIMIT 1")) {
-                ps.setString(1, name);
-                ps.setString(2, name);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (rs.next()) {
-                        throw new Busy();
-                    }
-                }
-            }
-            List<ScheduleStore.Gone> gone = ScheduleStore.deleteFor(c, ScheduleStore.Target.FLOW, name);
-            // a name used again starts with no open problem: its next failure is told (notify_state, V13)
-            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.notify_state WHERE dedupe_key = ?")) {
-                ps.setString(1, "flow:" + name);
-                ps.executeUpdate();
-            }
-            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.flow WHERE name = ?")) {
-                ps.setString(1, name);
-                ps.executeUpdate();
-            }
-            return Optional.of(gone);
-        });
+        return RunTables.delete(db, KIND, name);
     }
 
     // ---- flows and versions ----
@@ -403,23 +378,8 @@ public class FlowStore {
     public Run queueRun(String flow, int version, String by, String role, String parameters, String variables) {
         return db.tx(c -> {
             // the flow can have been deleted since the caller found it
-            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.flow WHERE name = ? FOR UPDATE")) {
-                ps.setString(1, flow);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (!rs.next()) {
-                        throw new Missing();
-                    }
-                }
-            }
-            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.flow_run WHERE flow = ? "
-                + "AND status IN ('queued', 'running') LIMIT 1")) {
-                ps.setString(1, flow);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (rs.next()) {
-                        throw new Busy();
-                    }
-                }
-            }
+            RunTables.lockOwner(c, KIND, flow);
+            RunTables.refuseWhileBusy(c, KIND, flow, null, null);
             long id;
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.flow_run (flow, version, "
                 + "requested_by, requested_role, parameters, variables) VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb) "
@@ -437,14 +397,7 @@ public class FlowStore {
             }
             // A flow only decides what runs next; one that was running when its worker stopped is
             // failed, not repeated, as pipelines are: the pipelines it started may have written.
-            try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.job (kind, payload, max_attempts) "
-                + "VALUES ('" + JOB_KIND + "', jsonb_build_object('flowRunId', ?::bigint), 1)")) {
-                ps.setLong(1, id);
-                ps.executeUpdate();
-            }
-            try (PreparedStatement ps = c.prepareStatement("NOTIFY " + JobQueue.CHANNEL)) {
-                ps.execute();
-            }
+            RunTables.addJob(c, KIND, id, null);
             return findRun(c, id).orElseThrow();
         });
     }
@@ -459,6 +412,7 @@ public class FlowStore {
         }
     }
 
+    @Override
     public Optional<Run> run(long id) {
         return db.tx(c -> findRun(c, id));
     }
@@ -481,106 +435,45 @@ public class FlowStore {
     }
 
     /** The run a flow job is for. */
+    @Override
     public Optional<Long> runForJob(long jobId) {
-        return db.tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement("SELECT (payload ->> 'flowRunId')::bigint "
-                + "FROM kilnmark.job WHERE id = ? AND kind = '" + JOB_KIND + "'")) {
-                ps.setLong(1, jobId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (rs.next()) {
-                        long id = rs.getLong(1);
-                        return rs.wasNull() ? Optional.<Long>empty() : Optional.of(id);
-                    }
-                    return Optional.<Long>empty();
-                }
-            }
-        });
+        return RunTables.runForJob(db, KIND, jobId);
     }
 
     /** Marks a queued run running; false if it was cancelled meanwhile. */
+    @Override
     public boolean startRun(long id) {
-        return db.tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.flow_run SET status = 'running', "
-                + "started_at = now() WHERE id = ? AND status = 'queued' AND NOT cancel_requested")) {
-                ps.setLong(1, id);
-                return ps.executeUpdate() == 1;
-            }
-        });
+        return RunTables.startRun(db, KIND, id);
     }
 
+    @Override
     public void finishRun(long id, String status, String error) {
-        db.tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.flow_run SET status = ?, "
-                + "finished_at = now(), error = ?, cancel_requested = (? = 'cancelled') "
-                + "WHERE id = ? AND status IN ('queued', 'running')")) {
-                ps.setString(1, status);
-                ps.setString(2, error);
-                ps.setString(3, status);
-                ps.setLong(4, id);
-                ps.executeUpdate();
-            }
-            return null;
-        });
+        RunTables.finishRun(db, KIND, id, status, error, null);
     }
 
+    @Override
     public boolean cancelRequested(long id) {
-        return db.tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement(
-                "SELECT cancel_requested FROM kilnmark.flow_run WHERE id = ?")) {
-                ps.setLong(1, id);
-                try (ResultSet rs = ps.executeQuery()) {
-                    return rs.next() && rs.getBoolean(1);
-                }
-            }
-        });
+        return RunTables.cancelRequested(db, KIND, id);
     }
 
     /** Asks a run to stop: a queued run is cancelled at once and its job taken off the queue. */
+    @Override
     public Optional<Run> requestCancel(long id, String by) {
         return db.tx(c -> {
-            Optional<Run> run;
-            try (PreparedStatement ps = c.prepareStatement("SELECT " + RUN_COLUMNS
-                + " FROM kilnmark.flow_run r WHERE r.id = ? FOR UPDATE")) {
-                ps.setLong(1, id);
-                try (ResultSet rs = ps.executeQuery()) {
-                    run = rs.next() ? Optional.of(run(rs)) : Optional.empty();
-                }
-            }
-            if (run.isEmpty() || run.get().finished()) {
-                return run;
-            }
-            boolean queued = run.get().status().equals("queued");
-            try (PreparedStatement ps = c.prepareStatement(queued
-                ? "UPDATE kilnmark.flow_run SET status = 'cancelled', cancel_requested = true, finished_at = now(), "
-                    + "error = ? WHERE id = ?"
-                : "UPDATE kilnmark.flow_run SET cancel_requested = true, error = ? WHERE id = ?")) {
-                ps.setString(1, "Cancelled by " + by);
-                ps.setLong(2, id);
-                ps.executeUpdate();
-            }
-            if (queued) {
-                try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.job SET status = 'done', "
-                    + "finished_at = now(), last_error = 'Cancelled before it started' WHERE kind = '" + JOB_KIND
-                    + "' AND status = 'queued' AND (payload ->> 'flowRunId')::bigint = ?")) {
-                    ps.setLong(1, id);
-                    ps.executeUpdate();
-                }
-            }
+            RunTables.requestCancel(c, KIND, id, by);
             return findRun(c, id);
         });
     }
 
     /** Whether a worker still has the job of this run (queued or running). */
+    @Override
     public boolean jobActive(long runId) {
-        return db.tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.job WHERE kind = '" + JOB_KIND
-                + "' AND status IN ('queued', 'running') AND (payload ->> 'flowRunId')::bigint = ?")) {
-                ps.setLong(1, runId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    return rs.next();
-                }
-            }
-        });
+        return RunTables.jobActive(db, KIND, runId);
+    }
+
+    @Override
+    public RunKind kind() {
+        return KIND;
     }
 
     /**
