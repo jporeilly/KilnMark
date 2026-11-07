@@ -6,15 +6,31 @@ stay in [Plan & Scope](plan-and-scope.md) under "Beyond v0.1".
 
 Last reviewed: 5 November 2026, evening (owner: "let's go" on this order, after #97-#103 merged:
 timeout, priority, the Library, static analysis, flow node cards, the one-script install and the
-run timelines).
+run timelines). Updated 7 November 2026: item 1 (run retries and owners), the gaps under item 9,
+and audit reporting tables under item 18, from [research](../design/research/README.md).
 
 ## 1. Finish what is half built
 
-1. **Flow controls, the rest** ([ADR 0041](../adr/0041-flow-nodes-for-resources-and-control.md),
-   docs/design/flow-controls.md; owner, 5 November 2026): `timeout` (C3), `priority` (C5), the
-   `check-source` node (C1), the `wait-for` node (C2) and a node's `retries` (C4) are built, and
-   `FlowDefinition`, its test, `FlowService` and `JobQueue` came out of Error Prone's
-   `excludedPaths` with what it found fixed (ADR 0042, decision 5). Done.
+1. **Run retries, owners, and Run again from the failure** (owner, 7 November 2026; research in
+   [docs/design/research](../design/research/README.md), run options section 8). Needs an ADR
+   first. Half built: stale jobs are queued again while attempts remain (`JobQueue.recoverStale`)
+   and a flow carries on from a node's latest try, but a flow job is tried once, so no flow is
+   taken over today (docs/design/flows.md says so; flow-controls.md C4 reads as if it were, and is
+   corrected here).
+   - **Retries on a pipeline or a flow**, however it was started: a number of tries before it
+     fails, a delay that doubles to a limit, and which failures to try again (any, or only a lost
+     worker). Only when trying again is safe, by node retries' rule; never a cancel; never past the
+     schedule's next time; a retry is a new try of the same run, so schedules still fire at most
+     once (ADR 0046); a node's own retries take the place of the run's.
+   - **A flow carries on from where it failed**: nodes that succeeded keep their results, parallel
+     branches carry on from their own state, a for-each node tries only its failed items.
+   - **Run again from the failure**, by hand, on a failed flow run: the same version and
+     parameters, the succeeded nodes kept, the rest run again; recorded against the first run and
+     in the audit log. Pipelines start again in full, as in every tool; a long one becomes
+     resumable as stages in a flow, or by incremental reads (item 9).
+   - **Owners**: people or team addresses on a pipeline or flow, told when its retries run out,
+     when it recovers and when it takes longer than expected; no extra rights and never the
+     identity a run acts as; with no owner, admins are told. No alert on each retry.
 2. **Dependency updates**: Dependabot's Gradle group (#76) less the MariaDB driver 3.x, which sets
    `session_track_system_variables` to NULL on connect and fails against the MariaDB the tests
    use; hold it until that is understood. Each update also updates
@@ -68,6 +84,28 @@ run timelines).
    agents that propose and people approve ([ADR 0052](../adr/0052-agents.md)): failed runs first,
    then drafting a pipeline, stewardship overnight, outside agents through MCP, and agents people
    build.
+
+   **The gaps other tools show** (owner, 7 November 2026; [node options, section
+   3](../design/research/node-options.md#3-the-15-gaps-that-matter-most-for-banks)), first of all
+   in nodes, in this order:
+   1. **Rows that fail are kept**: an expression, cast or write that fails on a row sends it to an
+      error port with its error code, column and reason, instead of stopping the run; and an
+      **error tolerance** on the node (fail past N rows or a share), recorded with the run.
+   2. **Which row wins, stated**: upsert, lookup and dedupe say which of two rows with the same key
+      is kept (the latest by a column, the first, or an error), never arrival order unsaid.
+   3. **Incremental reads by watermark**, the watermark recorded with each run so a load can be
+      repeated exactly; change data capture later.
+   4. **Write modes**: delete, update only, insert only, a conditional merge, and columns left
+      untouched (such as `created_at`).
+   5. **Range lookups and joins** (a rate valid on a transaction's date).
+   6. **Schema drift chosen on the node** (fail, ignore new columns, add them) and a column
+      contract on a write.
+   7. **Partitioned reads and a fetch size**; aggregate and dedupe spilling to disk; first, last,
+      median, percentile and standard deviation in aggregate.
+   8. **Case-insensitive and locale-aware comparison and sorting**, and a random sample with a
+      seed.
+   History, change detection, window, JSON and XML, and masking are in the list above already.
+   Each also closes a migration trap (research README, "Migration").
 10. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
    pre-run checks, flags on slow pipelines. Run tools on the MCP server fold in here (parked item
    in Plan & Scope). **Benchmarks come first** (owner, 6 November 2026; planned in
@@ -109,7 +147,24 @@ dependency verification (ADR 0042, #99) and signed images with an offline instal
     CASCADE, not led by any index, so deleting a source still reads `profile` once per scan run),
     and the ON DELETE SET NULL keys `ai_usage.profile_id` and `source_id`,
     `accepted_pattern.rule_id`, `drift_event.compared_with` and `quality_issue.drift_event_id`.
-18. **Audit events** for data read with the unmask grant, and for MCP refusals (ADR 0029).
+18. **Audit events** for data read with the unmask grant, and for MCP refusals (ADR 0029). And
+    **audit reporting tables** (owner, 7 November 2026), for the standard audit reports banks are
+    asked for: a stable, documented, read-only set of tables or views, versioned like the API,
+    that a reporting tool can read without knowing Kilnmark's own schema. Needs an ADR first. At
+    least:
+    - **Runs**: every pipeline and flow run, with who or what started it, the version, its
+      parameters, start, end, status, tries, and rows read, written and rejected per node, so loads
+      can be reconciled (BCBS 239);
+    - **Changes**: every saved version of a pipeline, flow, source, rule and schedule, by whom,
+      with the approval once change approval exists (SOX change management, item 15);
+    - **Access**: who holds which role and grant, sign-ins and refusals, and the access review over
+      time (SOX access, NYDFS 500.7);
+    - **Sensitive data**: reads with the unmask grant, and where marked data is (GDPR, NYDFS);
+    - **Quality**: rule results over time, issues opened and closed;
+    - the audit log itself, as a table a report can join to.
+    With report templates for the common ones (run evidence, change log, access review,
+    reconciliation), and the migration need of log tables that reports read (research, run options
+    section 10). Kept as long as the audit log (no deletion; NYDFS asks for five years).
 19. **A full export in open formats** (for exit), and a FIPS mode when a federal customer needs it.
 
 ## 5. Housekeeping
