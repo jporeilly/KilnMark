@@ -92,6 +92,9 @@ details.
   waiting for a file, and points a check-source node's `tables` at the sample tables when they were
   created in a schema, as a pipeline's `asset` is. `sample-limit` no longer says its table holds
   100,000 rows (it holds 1,200), and the samples' README no longer says the flows are skipped.
+- **A read message no longer shows a value**: a decimal read through a generic JDBC driver that
+  does not fit the type the driver reports now fails naming the column and the type, not the
+  value, as every message should.
 - **Run retries, carrying on and owners** (ADR 0053; backlog item 1, done; migration V39): the
   `run:` block (`RunOptions`), checked when saved (with retries, a pipeline's writes must replace or
   upsert; so must a flow's pipelines with `retry_on: any`, unless a node has retries of its own); a
