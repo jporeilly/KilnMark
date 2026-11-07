@@ -36,22 +36,25 @@ import io.kilnmark.kiln.plugins.write.WriteReport;
 import io.kilnmark.kiln.yaml.Parameters;
 import io.kilnmark.kiln.yaml.PipelineDefinition;
 import io.kilnmark.server.KilnmarkConfig;
-import io.kilnmark.server.api.ApiError;
 import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.jobs.JobQueue;
 import io.kilnmark.server.quality.Sights;
 import io.kilnmark.server.quality.QualityService;
+import io.kilnmark.server.runs.RunLifecycle;
+import io.kilnmark.server.runs.RunStarter;
+import io.kilnmark.server.runs.RunWatch;
 import io.kilnmark.server.scan.ScanService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.WebApplicationException;
-import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
 /**
  * Pipelines (docs/design/pipelines.md sections 5 and 6): saving them with every version, checking
  * their YAML, queueing runs on the job queue and, on a worker, running one exact version and
- * recording each node's part, the assets it wrote and their lineage.
+ * recording each node's part, the assets it wrote and their lineage. Queueing, cancelling, a run's
+ * first steps on a worker and deleting go through the run lifecycle pipelines share with flows
+ * ({@link RunLifecycle}).
  */
 @ApplicationScoped
 public class PipelineService {
@@ -73,6 +76,11 @@ public class PipelineService {
     private final KilnmarkConfig config;
     private final ObjectMapper json;
     private final PipelineExecution execution;
+    private final RunLifecycle<PipelineStore.Run> lifecycle;
+
+    /** Cancel signals for the runs on this process; null in tests that build the service by hand. */
+    @Inject
+    RunWatch watch;
 
     /** The scan's path for storing row counts and profiles, reused for what pipelines write. */
     @Inject
@@ -114,6 +122,7 @@ public class PipelineService {
         this.config = config;
         this.json = json;
         this.execution = new PipelineExecution(json);
+        this.lifecycle = new RunLifecycle<>(store, LOG, () -> watch);
     }
 
     // ---- names and checks ----
@@ -131,8 +140,7 @@ public class PipelineService {
     }
 
     static WebApplicationException fail(Response.Status status, String message) {
-        return new WebApplicationException(Response.status(status).type(MediaType.APPLICATION_JSON)
-            .entity(new ApiError(message)).build());
+        return RunLifecycle.fail(status, message);
     }
 
     private void checkSize(String yaml) {
@@ -528,18 +536,7 @@ public class PipelineService {
 
     /** Deletes the pipeline as {@link #delete} does; returns the schedules deleted with it, to record. */
     public List<io.kilnmark.server.schedules.ScheduleStore.Gone> deleteWithSchedules(String name, String by) {
-        try {
-            List<io.kilnmark.server.schedules.ScheduleStore.Gone> gone = store.deleteWithSchedules(name)
-                .orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No pipeline called " + name));
-            LOG.infof("Pipeline %s deleted by %s, with %d schedules", name, by, gone.size());
-            return gone;
-        } catch (PipelineStore.Busy e) {
-            throw fail(Response.Status.CONFLICT, "A run of " + name + " is queued or running. Wait for it to finish, "
-                + "or cancel it, then delete the pipeline.");
-        } catch (io.kilnmark.server.schedules.ScheduleStore.LockWaitTooLong e) {
-            throw fail(Response.Status.CONFLICT, "Nothing was deleted: " + name + " or one of its schedules was busy "
-                + "a moment ago, perhaps with a scheduled run starting. Try again.");
-        }
+        return lifecycle.delete(name, by);
     }
 
     public List<PipelineViews.VersionSummary> versions(String name) {
@@ -601,19 +598,16 @@ public class PipelineService {
      * @throws WebApplicationException (404) when the pipeline was deleted since it was checked
      */
     public PipelineStore.Run queueChecked(CheckedRun checked, String by, AccessRole role) {
-        PipelineStore.Run run;
-        try {
-            run = store.queueRun(checked.name(), checked.version(), by, role.id(), null, null, checked.parameters(),
-                checked.variables());
-        } catch (PipelineStore.Busy e) {
-            throw new io.kilnmark.server.api.AlreadyRunning("A run of " + checked.name() + " is already queued or "
-                + "running. Wait for it to finish, or cancel it, then run the pipeline again.");
-        } catch (PipelineStore.Missing e) {
-            // deleted since it was checked
-            throw fail(Response.Status.NOT_FOUND, "No pipeline called " + checked.name());
-        }
+        PipelineStore.Run run = lifecycle.queue(checked.name(), () -> store.queueRun(checked.name(), checked.version(),
+            by, role.id(), null, null, checked.parameters(), checked.variables()));
         LOG.infof("Run %d of pipeline %s (version %d) queued by %s", run.id(), checked.name(), checked.version(), by);
         return run;
+    }
+
+    /** Running a pipeline in two steps, as a schedule's fire does (ADR 0046): check, then queue. */
+    public RunStarter<CheckedRun> starter() {
+        return RunStarter.of((name, version, parameters, role) -> checkRun(name, version, parameters),
+            (checked, by, role) -> queueChecked(checked, by, role).id());
     }
 
     /**
@@ -688,11 +682,7 @@ public class PipelineService {
         PipelineStore.Version v = store.version(name, p.latestVersion()).orElseThrow(() -> fail(
             Response.Status.NOT_FOUND, name + " has no version " + p.latestVersion()));
         PipelineDefinition def = PipelineDefinition.parse(v.yaml()).definition();
-        try {
-            Parameters.resolve(name, def == null ? List.of() : def.parameters(), parameters, variables());
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("parameters: " + e.getMessage(), e);
-        }
+        RunLifecycle.checkParameters(name, def == null ? List.of() : def.parameters(), parameters, variables());
     }
 
     /** A version that can run, and its parameters' values for the run, defaults filled in. */
@@ -746,15 +736,7 @@ public class PipelineService {
     }
 
     private Map<String, Object> jsonMap(String text) {
-        try {
-            Map<String, Object> m = json.readValue(text == null ? "{}" : text,
-                new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() {
-                });
-            m.replaceAll((k, v) -> v instanceof Number num ? num.doubleValue() : v);
-            return m;
-        } catch (JsonProcessingException e) {
-            return null; // the caller fails the run
-        }
+        return RunLifecycle.values(json, text); // null: the caller fails the run
     }
 
     private static String firstProblems(List<PipelineCompilerPort.Problem> problems) {
@@ -963,19 +945,7 @@ public class PipelineService {
 
     /** Asks a run to stop: a queued run is cancelled at once, a running one within a few seconds. */
     public PipelineViews.RunSummary cancel(long id, String by) {
-        PipelineStore.Run before = store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND,
-            "No pipeline run " + id));
-        if (before.finished()) {
-            throw fail(Response.Status.CONFLICT, "Run " + id + " has already finished (" + before.status() + ")");
-        }
-        PipelineStore.Run r = store.requestCancel(id, by).orElseThrow(() -> fail(Response.Status.NOT_FOUND,
-            "No pipeline run " + id));
-        if (r.status().equals("running") && !store.jobActive(id)) {
-            // Its worker stopped without finishing it: nothing will notice the request, so finish it here,
-            // or the pipeline could never run again.
-            store.finishRun(id, "cancelled", "Cancelled by " + by + "; the worker running it had stopped", null);
-            r = store.run(id).orElse(r);
-        }
+        PipelineStore.Run r = lifecycle.cancel(id, by);
         LOG.infof("Run %d of pipeline %s cancelled by %s", id, r.pipeline(), by);
         return summary(r, null); // a cancel says who cancelled, nothing from the data
     }
@@ -1189,19 +1159,12 @@ public class PipelineService {
     public ScanService.Result execute(long jobId, JobQueue.ScanLease lease, BooleanSupplier shutdown) {
         // Runs left by a stopped worker are marked failed by the workers' periodic recovery, not here:
         // a run waiting for a place comes through here every few seconds.
-        Optional<Long> runId = store.runForJob(jobId);
-        if (runId.isEmpty()) {
-            return new ScanService.Result(ScanService.Outcome.SKIPPED, "Job " + jobId + " names no pipeline run");
+        RunLifecycle.Found<PipelineStore.Run> found = lifecycle.find(jobId);
+        if (found.skipped() != null) {
+            return found.skipped();
         }
-        long id = runId.get();
-        Optional<PipelineStore.Run> found = store.run(id);
-        if (found.isEmpty()) {
-            return new ScanService.Result(ScanService.Outcome.SKIPPED, "Pipeline run " + id + " no longer exists");
-        }
-        PipelineStore.Run run = found.get();
-        if (run.finished()) {
-            return new ScanService.Result(ScanService.Outcome.SKIPPED, "Pipeline run " + id + " had already finished");
-        }
+        PipelineStore.Run run = found.run();
+        long id = run.id();
         // A place on every source it reads or writes that limits runs at once, before it starts (ADR 0040).
         // A run asked to stop ends below without one.
         JobQueue.SourceLimit full = run.cancelRequested() || lease == null ? null : takePlaces(run, lease);
@@ -1209,11 +1172,9 @@ public class PipelineService {
             store.waiting(id, waitingFor(full.source()));
             return new ScanService.Result(ScanService.Outcome.WAITING, null);
         }
-        if (!store.startRun(id)) {
-            if (store.cancelRequested(id)) {
-                store.finishRun(id, "cancelled", "Cancelled before it started", null);
-            }
-            return new ScanService.Result(ScanService.Outcome.SKIPPED, "Pipeline run " + id + " was cancelled");
+        ScanService.Result notStarted = lifecycle.start(id);
+        if (notStarted != null) {
+            return notStarted;
         }
         RunContext context = new RunContext(run.pipeline(), id, run.requestedBy(), role(run.requestedRole()));
         RunLog log = new RunLog(store, id, context, json);
@@ -1225,6 +1186,10 @@ public class PipelineService {
         boolean measuredSaved = false;
         PipelineCompilerPort.Compilation c = null;
         boolean ran = false;
+        // Whether someone asks the run to stop is read in memory while it works; the process's run watcher
+        // turns it, at once for a cancel asked here, at its next look for one asked on another process.
+        RunWatch.Signal signal = lifecycle.signal(id);
+        BooleanSupplier cancelled = signal == null ? () -> store.cancelRequested(id) : signal::cancelled;
         try {
             PipelineStore.Version v = store.version(run.pipeline(), run.version()).orElse(null);
             if (v == null) {
@@ -1232,7 +1197,7 @@ public class PipelineService {
                     null);
                 return new ScanService.Result(ScanService.Outcome.FINISHED, null);
             }
-            if (stopped(id, shutdown, null)) {
+            if (stopped(id, cancelled, shutdown, null)) {
                 return new ScanService.Result(ScanService.Outcome.FINISHED, null);
             }
             Map<String, Object> runParameters = jsonMap(run.parameters());
@@ -1263,7 +1228,7 @@ public class PipelineService {
                     + firstProblems(c.problems())), null);
                 return new ScanService.Result(ScanService.Outcome.FINISHED, null);
             }
-            if (stopped(id, shutdown, c.graph())) {
+            if (stopped(id, cancelled, shutdown, c.graph())) {
                 return new ScanService.Result(ScanService.Outcome.FINISHED, null);
             }
             // Each write's asset under the URN its connector worked out (for a prefixed S3 source, the prefix
@@ -1280,10 +1245,10 @@ public class PipelineService {
             store.setAssets(id, json.writeValueAsString(assets));
             // One run writes a table or file at a time: wait a while for another run writing it. The
             // locks are taken on the job's own connection, so a run never holds more than one.
-            BooleanSupplier stop = () -> store.cancelRequested(id) || shutdown.getAsBoolean();
+            BooleanSupplier stop = () -> cancelled.getAsBoolean() || shutdown.getAsBoolean();
             for (String urn : writes.stream().map(PipelineExecution.WriteTarget::urn).distinct().sorted().toList()) {
                 if (!JobQueue.waitFor(() -> lease.tryLockTarget(urn), config.pipelines().waitForTarget(), stop)) {
-                    if (stopped(id, shutdown, c.graph())) {
+                    if (stopped(id, cancelled, shutdown, c.graph())) {
                         return new ScanService.Result(ScanService.Outcome.FINISHED, null);
                     }
                     PipelineExecution.closeNodes(c.graph());
@@ -1299,8 +1264,7 @@ public class PipelineService {
             predicted.addAll(predictRun(c, context));
             saveQuality(id, predicted, context);
             ran = true;
-            PipelineExecution.Outcome o = execution.run(runner, c.graph(), writes, context,
-                () -> store.cancelRequested(id), shutdown, log);
+            PipelineExecution.Outcome o = execution.run(runner, c.graph(), writes, context, cancelled, shutdown, log);
             store.saveNodeRuns(id, o.nodes());
             List<RunQuality.NodeQuality> measured = RunQuality.withPredicted(measure(c, writes, o), predicted,
                 o.status());
@@ -1395,6 +1359,9 @@ public class PipelineService {
             store.finishRun(id, "failed", context.scrub("The run failed: " + e.getMessage()), null);
             finished(run.pipeline(), id, "failed");
         } finally {
+            if (signal != null) {
+                signal.close();
+            }
             for (String urn : held) {
                 try {
                     lease.unlockTarget(urn);
@@ -1423,8 +1390,8 @@ public class PipelineService {
      * Whether the run was asked to stop, or its worker is stopping, before its nodes run; if so the
      * run gets its final status and {@code graph}'s nodes (when created) are closed.
      */
-    private boolean stopped(long id, BooleanSupplier shutdown, PipelineGraph graph) {
-        boolean cancelled = store.cancelRequested(id);
+    private boolean stopped(long id, BooleanSupplier cancel, BooleanSupplier shutdown, PipelineGraph graph) {
+        boolean cancelled = cancel.getAsBoolean();
         if (!cancelled && !shutdown.getAsBoolean()) {
             return false;
         }
@@ -1518,11 +1485,7 @@ public class PipelineService {
     }
 
     private static AccessRole role(String text) {
-        try {
-            return AccessRole.parse(text);
-        } catch (IllegalArgumentException e) {
-            return AccessRole.VIEWER;
-        }
+        return RunLifecycle.role(text);
     }
 
     /**

@@ -26,7 +26,6 @@ import io.kilnmark.kiln.yaml.Parameters;
 import io.kilnmark.kiln.yaml.PipelineDefinition;
 import io.kilnmark.kiln.yaml.Position;
 import io.kilnmark.kiln.yaml.Problem;
-import io.kilnmark.server.api.ApiError;
 import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.jobs.JobQueue;
 import io.kilnmark.server.notify.NotificationPublisher;
@@ -34,19 +33,24 @@ import io.kilnmark.server.pipelines.PipelineService;
 import io.kilnmark.server.pipelines.PipelineSources;
 import io.kilnmark.server.pipelines.PipelineStore;
 import io.kilnmark.server.pipelines.WriteNodeFactory;
+import io.kilnmark.server.runs.RunLifecycle;
+import io.kilnmark.server.runs.RunStarter;
+import io.kilnmark.server.runs.RunWatch;
 import io.kilnmark.server.scan.ScanService;
 import io.kilnmark.server.variables.VariableService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.WebApplicationException;
-import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
 /**
  * Flows (docs/design/flows.md): saving them with every version, checking their YAML, queueing runs
  * on the job queue and, on a worker, deciding which flow node runs next. A flow node that runs a
  * pipeline queues an ordinary pipeline run, so any worker may run it, as the person who started the
- * flow and with their role; the flow only watches those runs and follows the connections.
+ * flow and with their role; the flow only watches those runs and follows the connections. Queueing,
+ * cancelling, a run's first steps on a worker and deleting go through the run lifecycle flows share
+ * with pipelines ({@link RunLifecycle}); the pipeline runs it watches, and whether it is asked to
+ * stop, it reads through the process's run watcher ({@link RunWatch}), with every other flow there.
  */
 @ApplicationScoped
 public class FlowService {
@@ -61,8 +65,21 @@ public class FlowService {
     private final PipelineStore pipelineStore;
     private final ObjectMapper json;
 
-    /** How often a running flow looks at its nodes. */
+    /** How often a running flow looks at its nodes: at most this long between looks. */
     volatile long pollMillis = 500;
+
+    private final RunLifecycle<FlowStore.Run> lifecycle;
+
+    /**
+     * The process's run watcher: whether a flow run is asked to stop, and the pipeline runs every flow
+     * here watches, read for all of them at once. Null in tests that build the service by hand: each
+     * flow then reads them itself.
+     */
+    @Inject
+    RunWatch watch;
+
+    /** The pipeline runs the flows on this process watch, through {@link #watch}; made once. */
+    private volatile RunWatch.Rows<PipelineStore.Run> watchedRuns;
 
     /** Notifications: notify nodes and failed runs; null in tests that build the service by hand. */
     @Inject
@@ -90,11 +107,30 @@ public class FlowService {
         this.pipelines = pipelines;
         this.pipelineStore = pipelineStore;
         this.json = json;
+        this.lifecycle = new RunLifecycle<>(store, LOG, () -> watch);
     }
 
     private static WebApplicationException fail(Response.Status status, String message) {
-        return new WebApplicationException(Response.status(status).type(MediaType.APPLICATION_JSON)
-            .entity(new ApiError(message)).build());
+        return RunLifecycle.fail(status, message);
+    }
+
+    /** The pipeline runs flows watch, read in one query a look for every flow here; null without a watcher. */
+    private RunWatch.Rows<PipelineStore.Run> watchedRuns() {
+        RunWatch w = watch;
+        if (w == null) {
+            return null;
+        }
+        RunWatch.Rows<PipelineStore.Run> rows = watchedRuns;
+        if (rows == null) {
+            synchronized (this) {
+                rows = watchedRuns;
+                if (rows == null) {
+                    rows = w.rows(pipelineStore::runs, PipelineStore.Run::finished);
+                    watchedRuns = rows;
+                }
+            }
+        }
+        return rows;
     }
 
     private static void requireSteward(AccessRole role, String what) {
@@ -554,18 +590,7 @@ public class FlowService {
         if (!role.atLeast(AccessRole.DESIGNER)) {
             throw fail(Response.Status.FORBIDDEN, "Deleting a flow takes the designer role");
         }
-        try {
-            List<io.kilnmark.server.schedules.ScheduleStore.Gone> gone = store.deleteWithSchedules(name)
-                .orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No flow called " + name));
-            LOG.infof("Flow %s deleted by %s, with %d schedules", name, by, gone.size());
-            return gone;
-        } catch (FlowStore.Busy e) {
-            throw fail(Response.Status.CONFLICT, "A run of " + name + " is queued or running. Wait for it to finish, "
-                + "or cancel it, then delete the flow.");
-        } catch (io.kilnmark.server.schedules.ScheduleStore.LockWaitTooLong e) {
-            throw fail(Response.Status.CONFLICT, "Nothing was deleted: " + name + " or one of its schedules was busy "
-                + "a moment ago, perhaps with a scheduled run starting. Try again.");
-        }
+        return lifecycle.delete(name, by);
     }
 
     public Optional<FlowStore.Version> version(String name, int n) {
@@ -630,16 +655,14 @@ public class FlowService {
      * @throws WebApplicationException (404) when the flow was deleted since it was checked
      */
     public FlowStore.Run queueChecked(CheckedRun checked, String by, AccessRole role) {
-        try {
-            return store.queueRun(checked.name(), checked.version(), by, role.id(), checked.parameters(),
-                checked.variables());
-        } catch (FlowStore.Busy e) {
-            throw new io.kilnmark.server.api.AlreadyRunning("A run of " + checked.name() + " is already queued or "
-                + "running. Wait for it to finish, or cancel it, then run the flow again.");
-        } catch (FlowStore.Missing e) {
-            // deleted since it was checked
-            throw fail(Response.Status.NOT_FOUND, "No flow called " + checked.name());
-        }
+        return lifecycle.queue(checked.name(), () -> store.queueRun(checked.name(), checked.version(), by, role.id(),
+            checked.parameters(), checked.variables()));
+    }
+
+    /** Running a flow in two steps, as a schedule's fire does (ADR 0046): check, then queue. */
+    public RunStarter<CheckedRun> starter() {
+        return RunStarter.of((name, version, parameters, role) -> checkRun(name, version, parameters, role),
+            (checked, by, role) -> queueChecked(checked, by, role).id());
     }
 
     /**
@@ -655,11 +678,7 @@ public class FlowService {
         FlowStore.Version v = store.version(name, f.latestVersion()).orElseThrow(() -> fail(Response.Status.NOT_FOUND,
             name + " has no version " + f.latestVersion()));
         FlowDefinition def = FlowDefinition.parse(v.yaml()).definition();
-        try {
-            Parameters.resolve(name, def == null ? List.of() : def.parameters(), parameters, variables());
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("parameters: " + e.getMessage(), e);
-        }
+        RunLifecycle.checkParameters(name, def == null ? List.of() : def.parameters(), parameters, variables());
     }
 
     /** Why a version saved before sql nodes were checked (V29) does not run. */
@@ -992,17 +1011,7 @@ public class FlowService {
     /** Asks a run to stop: a queued run is cancelled at once, a running one within a moment. */
     public FlowStore.Run cancel(long id, String by, AccessRole role) {
         requireSteward(role, "Cancelling a flow run");
-        FlowStore.Run before = store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No flow run " + id));
-        if (before.finished()) {
-            throw fail(Response.Status.CONFLICT, "Run " + id + " has already finished (" + before.status() + ")");
-        }
-        FlowStore.Run r = store.requestCancel(id, by).orElseThrow(() -> fail(Response.Status.NOT_FOUND,
-            "No flow run " + id));
-        if (r.status().equals("running") && !store.jobActive(id)) {
-            // Its worker stopped without finishing it: nothing will notice the request.
-            store.finishRun(id, "cancelled", "Cancelled by " + by + "; the worker running it had stopped");
-            r = store.run(id).orElse(r);
-        }
+        FlowStore.Run r = lifecycle.cancel(id, by);
         LOG.infof("Flow run %d of %s cancelled by %s", id, r.flow(), by);
         return r;
     }
@@ -1012,26 +1021,20 @@ public class FlowService {
     /** Runs the flow run behind job {@code jobId}; called by a worker. */
     public ScanService.Result execute(long jobId, JobQueue.ScanLease lease, BooleanSupplier shutdown) {
         failOrphanedRuns();
-        Optional<Long> runId = store.runForJob(jobId);
-        if (runId.isEmpty()) {
-            return new ScanService.Result(ScanService.Outcome.SKIPPED, "Job " + jobId + " names no flow run");
+        RunLifecycle.Found<FlowStore.Run> found = lifecycle.find(jobId);
+        if (found.skipped() != null) {
+            return found.skipped();
         }
-        long id = runId.get();
-        Optional<FlowStore.Run> found = store.run(id);
-        if (found.isEmpty()) {
-            return new ScanService.Result(ScanService.Outcome.SKIPPED, "Flow run " + id + " no longer exists");
+        FlowStore.Run run = found.run();
+        long id = run.id();
+        ScanService.Result notStarted = lifecycle.start(id);
+        if (notStarted != null) {
+            return notStarted;
         }
-        FlowStore.Run run = found.get();
-        if (run.finished()) {
-            return new ScanService.Result(ScanService.Outcome.SKIPPED, "Flow run " + id + " had already finished");
-        }
-        if (!store.startRun(id)) {
-            if (store.cancelRequested(id)) {
-                store.finishRun(id, "cancelled", "Cancelled before it started");
-            }
-            return new ScanService.Result(ScanService.Outcome.SKIPPED, "Flow run " + id + " was cancelled");
-        }
-        Execution execution = new Execution(run, shutdown, lease);
+        RunWatch.Signal signal = lifecycle.signal(id);
+        RunWatch.Rows<PipelineStore.Run> rows = watchedRuns();
+        RunWatch.Rows<PipelineStore.Run>.Session watched = rows == null ? null : rows.session();
+        Execution execution = new Execution(run, shutdown, lease, signal, watched);
         try {
             execution.run();
         } catch (RuntimeException e) {
@@ -1044,6 +1047,13 @@ public class FlowService {
             String why = "The flow could not be run to the end: an internal error. Look at the server's log.";
             store.finishRun(id, "failed", why);
             told(run.flow(), id, "failed", why);
+        } finally {
+            if (signal != null) {
+                signal.close();
+            }
+            if (watched != null) {
+                watched.close();
+            }
         }
         return new ScanService.Result(ScanService.Outcome.FINISHED, null);
     }
@@ -1069,6 +1079,10 @@ public class FlowService {
         private final Map<String, SqlAction.Control> sqlControls = new HashMap<>();
         /** The flow job's lease: a sql node takes its place on its source here (ADR 0040); null in some tests. */
         private final JobQueue.ScanLease lease;
+        /** Whether the run is asked to stop, read in memory; null without a watcher. */
+        private final RunWatch.Signal cancel;
+        /** The pipeline runs this run's nodes started, as the watcher last read them; null without one. */
+        private final RunWatch.Rows<PipelineStore.Run>.Session watched;
         /** Places on their sources held by running sql nodes, given back as each ends. */
         private final Map<String, List<Long>> sqlPlaces = new HashMap<>();
         /** Sql nodes waiting for a free place on their source. */
@@ -1094,10 +1108,23 @@ public class FlowService {
         /** The for-each nodes started, each with its items' runs. */
         private final Map<String, Fan> fans = new HashMap<>();
 
-        Execution(FlowStore.Run run, BooleanSupplier shutdown, JobQueue.ScanLease lease) {
+        Execution(FlowStore.Run run, BooleanSupplier shutdown, JobQueue.ScanLease lease, RunWatch.Signal cancel,
+                  RunWatch.Rows<PipelineStore.Run>.Session watched) {
             this.run = run;
             this.shutdown = shutdown;
             this.lease = lease;
+            this.cancel = cancel;
+            this.watched = watched;
+        }
+
+        /** Whether someone asked the flow run to stop. */
+        private boolean cancelAskedFor() {
+            return cancel == null ? store.cancelRequested(run.id()) : cancel.cancelled();
+        }
+
+        /** A pipeline run a node started, as the watcher last read it (the first time, read now). */
+        private Optional<PipelineStore.Run> pipelineRun(long id) {
+            return watched == null ? pipelineStore.run(id) : watched.get(id, pipelineStore::run);
         }
 
         void run() {
@@ -1170,7 +1197,7 @@ public class FlowService {
                     told(run.flow(), run.id(), "failed", why);
                     return;
                 }
-                if (!cancelling && store.cancelRequested(run.id())) {
+                if (!cancelling && cancelAskedFor()) {
                     cancelling = true;
                     engine.cancel();
                 }
@@ -1201,9 +1228,15 @@ public class FlowService {
             finish(def, engine);
         }
 
+        /** Waits for the watcher's next look (or {@link #pollMillis} without one), so what is read next is fresh. */
         private void pause() {
             try {
-                Thread.sleep(pollMillis);
+                RunWatch w = watch;
+                if (w == null) {
+                    Thread.sleep(pollMillis);
+                } else {
+                    w.awaitTick(Duration.ofMillis(pollMillis));
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 sqlControls.values().forEach(SqlAction.Control::stop);
@@ -1573,7 +1606,7 @@ public class FlowService {
                 if (fan.ended.containsKey(e.getKey())) {
                     continue;
                 }
-                Optional<PipelineStore.Run> pr = pipelineStore.run(e.getValue());
+                Optional<PipelineStore.Run> pr = pipelineRun(e.getValue());
                 if (pr.isEmpty()) {
                     fan.ended.put(e.getKey(), "failed");
                 } else if (pr.get().finished()) {
@@ -2152,7 +2185,7 @@ public class FlowService {
                 }
                 return;
             }
-            Optional<PipelineStore.Run> pr = pipelineStore.run(prId);
+            Optional<PipelineStore.Run> pr = pipelineRun(prId);
             if (pr.isPresent() && !pr.get().finished()) {
                 if (!cancelling && !engine.halted() && !timedOut.contains(node)
                     && overdue(s.timeout(), pr.get().startedAt())) {
@@ -2358,22 +2391,10 @@ public class FlowService {
 
     /** Stored values (JSON), numbers as Doubles; null when they cannot be read. */
     private Map<String, Object> readParameters(String text) {
-        try {
-            Map<String, Object> m = json.readValue(text == null ? "{}" : text,
-                new TypeReference<LinkedHashMap<String, Object>>() {
-                });
-            m.replaceAll((k, v) -> v instanceof Number n ? n.doubleValue() : v);
-            return m;
-        } catch (JsonProcessingException e) {
-            return null;
-        }
+        return RunLifecycle.values(json, text);
     }
 
     private static AccessRole role(String text) {
-        try {
-            return AccessRole.parse(text);
-        } catch (IllegalArgumentException e) {
-            return AccessRole.VIEWER;
-        }
+        return RunLifecycle.role(text);
     }
 }

@@ -11,7 +11,9 @@ import java.util.List;
 import java.util.Optional;
 
 import io.kilnmark.server.Db;
-import io.kilnmark.server.jobs.JobQueue;
+import io.kilnmark.server.runs.RunKind;
+import io.kilnmark.server.runs.RunRow;
+import io.kilnmark.server.runs.RunTables;
 import io.kilnmark.server.schedules.ScheduleStore;
 import jakarta.enterprise.context.ApplicationScoped;
 
@@ -20,10 +22,18 @@ import jakarta.enterprise.context.ApplicationScoped;
  * text; {@link PipelineService} reads and writes them.
  */
 @ApplicationScoped
-public class PipelineStore {
+public class PipelineStore implements io.kilnmark.server.runs.RunStore<PipelineStore.Run> {
 
     /** The job kind workers run pipelines under. */
     public static final String JOB_KIND = "pipeline";
+
+    /**
+     * Pipelines in the run lifecycle they share with flows (docs/design/pipelines.md, "One run
+     * lifecycle"): a queued run may say what it waits for, a run records a result, and a delete does
+     * not wait for a run's job once the run has ended (ADR 0048, decision 5).
+     */
+    public static final RunKind KIND = new RunKind(JOB_KIND, ScheduleStore.Target.PIPELINE, Busy::new, Missing::new,
+        true, true, false);
 
     /** {@code library}: {@code sample} for one added from the samples (ADR 0043), else null. */
     public record Pipeline(String name, String displayName, String description, int latestVersion, String createdBy,
@@ -38,8 +48,9 @@ public class PipelineStore {
     /** {@code result} is JSON or null; {@code assets} a JSON array of the URNs the run reads and writes. */
     public record Run(long id, String pipeline, int version, String status, String requestedBy, String requestedRole,
                       Instant requestedAt, Instant startedAt, Instant finishedAt, boolean cancelRequested, String error,
-                      String result, String assets, String parameters, String variables) {
+                      String result, String assets, String parameters, String variables) implements RunRow {
 
+        @Override
         public boolean finished() {
             return !status.equals("queued") && !status.equals("running");
         }
@@ -349,41 +360,9 @@ public class PipelineStore {
      * @throws Busy when a run is queued or running
      * @throws ScheduleStore.LockWaitTooLong when a lock was not granted in time; nothing was deleted
      */
+    @Override
     public Optional<List<ScheduleStore.Gone>> deleteWithSchedules(String name) {
-        return ScheduleStore.deleting(db, c -> {
-            // the schedules' rows first, then the pipeline's: a schedule's fire holds its row while it
-            // queues a run, which locks the pipeline, so the other order could deadlock
-            ScheduleStore.lockFor(c, ScheduleStore.Target.PIPELINE, name);
-            try (PreparedStatement ps = c.prepareStatement(
-                "SELECT 1 FROM kilnmark.pipeline WHERE name = ? FOR UPDATE")) {
-                ps.setString(1, name);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (!rs.next()) {
-                        return Optional.<List<ScheduleStore.Gone>>empty();
-                    }
-                }
-            }
-            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.pipeline_run WHERE pipeline = ? "
-                + "AND status IN ('queued', 'running') LIMIT 1")) {
-                ps.setString(1, name);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (rs.next()) {
-                        throw new Busy();
-                    }
-                }
-            }
-            List<ScheduleStore.Gone> gone = ScheduleStore.deleteFor(c, ScheduleStore.Target.PIPELINE, name);
-            // a name used again starts with no open problem: its next failure is told (notify_state, V13)
-            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.notify_state WHERE dedupe_key = ?")) {
-                ps.setString(1, "pipeline:" + name);
-                ps.executeUpdate();
-            }
-            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.pipeline WHERE name = ?")) {
-                ps.setString(1, name);
-                ps.executeUpdate();
-            }
-            return Optional.of(gone);
-        });
+        return RunTables.delete(db, KIND, name);
     }
 
     // ---- runs ----
@@ -461,32 +440,8 @@ public class PipelineStore {
         return db.tx(c -> {
             // One run of a pipeline at a time: the pipeline's row is locked while checking. It can have
             // been deleted since the caller found it.
-            try (PreparedStatement ps = c.prepareStatement(
-                "SELECT 1 FROM kilnmark.pipeline WHERE name = ? FOR UPDATE")) {
-                ps.setString(1, name);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (!rs.next()) {
-                        throw new Missing();
-                    }
-                }
-            }
-            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.pipeline_run WHERE pipeline = ? "
-                + "AND status IN ('queued', 'running')"
-                // An item run whose flow run is gone (flow_run_id set to null) still counts: null is never "same".
-                + (flowItem == null ? "" : " AND NOT coalesce(flow_item IS NOT NULL AND flow_run_id = ? AND flow_node = ?, "
-                    + "false)")
-                + " LIMIT 1")) {
-                ps.setString(1, name);
-                if (flowItem != null) {
-                    ps.setLong(2, flowRunId);
-                    ps.setString(3, flowNode);
-                }
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (rs.next()) {
-                        throw new Busy();
-                    }
-                }
-            }
+            RunTables.lockOwner(c, KIND, name);
+            RunTables.refuseWhileBusy(c, KIND, name, flowRunId, flowItem == null ? null : flowNode);
             long id;
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.pipeline_run (pipeline, version, "
                 + "requested_by, requested_role, flow_run_id, flow_node, flow_item, parameters, variables, flow_try) "
@@ -514,15 +469,7 @@ public class PipelineStore {
                     id = rs.getLong(1);
                 }
             }
-            try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.job (kind, payload, max_attempts, "
-                + "priority) VALUES ('" + JOB_KIND + "', jsonb_build_object('pipelineRunId', ?::bigint), 1, ?)")) {
-                ps.setLong(1, id);
-                ps.setShort(2, (short) priority);
-                ps.executeUpdate();
-            }
-            try (PreparedStatement ps = c.prepareStatement("NOTIFY " + JobQueue.CHANNEL)) {
-                ps.execute();
-            }
+            RunTables.addJob(c, KIND, id, priority);
             return findRun(c, id).orElseThrow();
         });
     }
@@ -719,20 +666,9 @@ public class PipelineStore {
     }
 
     /** The run a pipeline job is for. */
+    @Override
     public Optional<Long> runForJob(long jobId) {
-        return db.tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement("SELECT (payload ->> 'pipelineRunId')::bigint "
-                + "FROM kilnmark.job WHERE id = ? AND kind = '" + JOB_KIND + "'")) {
-                ps.setLong(1, jobId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (rs.next()) {
-                        long id = rs.getLong(1);
-                        return rs.wasNull() ? Optional.<Long>empty() : Optional.of(id);
-                    }
-                    return Optional.<Long>empty();
-                }
-            }
-        });
+        return RunTables.runForJob(db, KIND, jobId);
     }
 
     private static Optional<Run> findRun(Connection c, long id) throws SQLException {
@@ -745,8 +681,33 @@ public class PipelineStore {
         }
     }
 
+    @Override
     public Optional<Run> run(long id) {
         return db.tx(c -> findRun(c, id));
+    }
+
+    /**
+     * The runs among {@code ids} that are there, by id, in one query: what the flows on a process
+     * watch, read for all of them at once ({@link io.kilnmark.server.runs.RunWatch}).
+     */
+    public java.util.Map<Long, Run> runs(java.util.Collection<Long> ids) {
+        if (ids.isEmpty()) {
+            return java.util.Map.of();
+        }
+        return db.tx(c -> {
+            java.util.Map<Long, Run> out = new java.util.HashMap<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT " + RUN_COLUMNS
+                + " FROM kilnmark.pipeline_run r WHERE r.id = ANY (?)")) {
+                ps.setArray(1, c.createArrayOf("bigint", ids.toArray()));
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Run r = run(rs, 1);
+                        out.put(r.id(), r);
+                    }
+                }
+            }
+            return out;
+        });
     }
 
     /** A pipeline's latest runs, newest first. */
@@ -771,14 +732,9 @@ public class PipelineStore {
      * Marks a queued run running, clearing what it said while it waited; false when it is no longer
      * queued (cancelled, or already taken).
      */
+    @Override
     public boolean startRun(long id) {
-        return db.tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.pipeline_run SET status = 'running', "
-                + "started_at = now(), error = NULL WHERE id = ? AND status = 'queued' AND NOT cancel_requested")) {
-                ps.setLong(1, id);
-                return ps.executeUpdate() == 1;
-            }
-        });
+        return RunTables.startRun(db, KIND, id);
     }
 
     /**
@@ -800,20 +756,13 @@ public class PipelineStore {
 
     /** Gives an unfinished run its final status. */
     public void finishRun(long id, String status, String error, String result) {
-        db.tx(c -> {
-            // A cancel asked for too late to stop the run is cleared, so the run does not read as stopping.
-            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.pipeline_run SET status = ?, "
-                + "finished_at = now(), error = ?, result = ?::jsonb, cancel_requested = (? = 'cancelled') "
-                + "WHERE id = ? AND status IN ('queued', 'running')")) {
-                ps.setString(1, status);
-                ps.setString(2, error);
-                ps.setString(3, result);
-                ps.setString(4, status);
-                ps.setLong(5, id);
-                ps.executeUpdate();
-            }
-            return null;
-        });
+        RunTables.finishRun(db, KIND, id, status, error, result);
+    }
+
+    /** Gives an unfinished run its final status, with no result. */
+    @Override
+    public void finishRun(long id, String status, String error) {
+        finishRun(id, status, error, null);
     }
 
     /**
@@ -822,36 +771,10 @@ public class PipelineStore {
      *
      * @return the run as it now is; empty when there is no such run
      */
+    @Override
     public Optional<Run> requestCancel(long id, String by) {
         return db.tx(c -> {
-            Optional<Run> run;
-            try (PreparedStatement ps = c.prepareStatement("SELECT " + RUN_COLUMNS
-                + " FROM kilnmark.pipeline_run r WHERE r.id = ? FOR UPDATE")) {
-                ps.setLong(1, id);
-                try (ResultSet rs = ps.executeQuery()) {
-                    run = rs.next() ? Optional.of(run(rs, 1)) : Optional.empty();
-                }
-            }
-            if (run.isEmpty() || run.get().finished()) {
-                return run;
-            }
-            boolean queued = run.get().status().equals("queued");
-            try (PreparedStatement ps = c.prepareStatement(queued
-                ? "UPDATE kilnmark.pipeline_run SET status = 'cancelled', cancel_requested = true, finished_at = now(), "
-                    + "error = ? WHERE id = ?"
-                : "UPDATE kilnmark.pipeline_run SET cancel_requested = true, error = ? WHERE id = ?")) {
-                ps.setString(1, "Cancelled by " + by);
-                ps.setLong(2, id);
-                ps.executeUpdate();
-            }
-            if (queued) {
-                try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.job SET status = 'done', "
-                    + "finished_at = now(), last_error = 'Cancelled before it started' WHERE kind = '" + JOB_KIND
-                    + "' AND status = 'queued' AND (payload ->> 'pipelineRunId')::bigint = ?")) {
-                    ps.setLong(1, id);
-                    ps.executeUpdate();
-                }
-            }
+            RunTables.requestCancel(c, KIND, id, by);
             return findRun(c, id);
         });
     }
@@ -873,29 +796,20 @@ public class PipelineStore {
      * Whether the run's job is still being run by a worker (queued or running); false when the job
      * is done, failed or gone, so a run still marked running has been left behind.
      */
+    @Override
     public boolean jobActive(long runId) {
-        return db.tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.job WHERE kind = '" + JOB_KIND
-                + "' AND status IN ('queued', 'running') AND (payload ->> 'pipelineRunId')::bigint = ?")) {
-                ps.setLong(1, runId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    return rs.next();
-                }
-            }
-        });
+        return RunTables.jobActive(db, KIND, runId);
     }
 
     /** Whether someone has asked the run to stop. */
+    @Override
     public boolean cancelRequested(long id) {
-        return db.tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement(
-                "SELECT cancel_requested FROM kilnmark.pipeline_run WHERE id = ?")) {
-                ps.setLong(1, id);
-                try (ResultSet rs = ps.executeQuery()) {
-                    return rs.next() && rs.getBoolean(1);
-                }
-            }
-        });
+        return RunTables.cancelRequested(db, KIND, id);
+    }
+
+    @Override
+    public RunKind kind() {
+        return KIND;
     }
 
     /**

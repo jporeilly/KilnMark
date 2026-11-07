@@ -197,6 +197,88 @@ public class JobQueue {
     }
 
     /**
+     * The flow jobs' locks of one worker, all on one connection (docs/design/flows.md, section 4): a
+     * flow job's lock is taken as a pipeline job's is ({@link #lockPipelineJob}), and its sql nodes'
+     * places on sources too, but every flow the worker watches shares the one connection, opened for
+     * the first and given back when the last ends. So the connections a worker holds do not grow with
+     * the flows it watches. A worker that dies frees them all, as it frees a pipeline job's.
+     */
+    public FlowLeases flowLeases() {
+        return new FlowLeases();
+    }
+
+    /** The flow jobs' leases of one worker, on one connection of their own ({@link #flowLeases}). */
+    public final class FlowLeases {
+        private Session session;
+
+        private FlowLeases() {
+        }
+
+        /**
+         * Takes the lock of flow job {@code jobId} on the shared connection, opening it when no flow
+         * holds it; empty if another worker holds the lock, or this one already does.
+         */
+        public synchronized Optional<ScanLease> lock(long jobId) {
+            while (true) {
+                Session s = session;
+                String failure = "Cannot lock pipeline job " + jobId + ": "; // as a job's own connection says
+                if (s == null || s.broken || s.closed) {
+                    s = open(failure);
+                    session = s;
+                }
+                synchronized (s) {
+                    if (s.closed) {
+                        continue; // its last flow ended just now, and gave the connection back
+                    }
+                    // A session's advisory locks nest: one already held here would be granted again.
+                    if (s.jobs.contains(jobId)) {
+                        return Optional.empty();
+                    }
+                    boolean locked;
+                    try (PreparedStatement ps = s.c.prepareStatement("SELECT pg_try_advisory_lock(?, ?)")) {
+                        ps.setInt(1, PIPELINE_JOB_LOCK_CLASS);
+                        ps.setInt(2, (int) jobId);
+                        try (ResultSet rs = ps.executeQuery()) {
+                            locked = rs.next() && rs.getBoolean(1);
+                        }
+                    } catch (SQLException e) {
+                        s.broken = true;
+                        s.closeIfUnused();
+                        throw new Db.DbException(failure + e.getMessage(), e);
+                    }
+                    if (!locked) {
+                        s.closeIfUnused();
+                        return Optional.empty();
+                    }
+                    s.jobs.add(jobId);
+                    s.leases++;
+                    return Optional.of(new ScanLease(s, jobId));
+                }
+            }
+        }
+    }
+
+    /** The connection a worker's flows share, opened with nothing locked yet. */
+    private Session open(String failure) {
+        try {
+            Connection c = db.connection();
+            try {
+                c.setAutoCommit(true);
+                try (PreparedStatement ps = c.prepareStatement("SELECT pg_backend_pid()");
+                     ResultSet rs = ps.executeQuery()) {
+                    rs.next();
+                    return new Session(c, rs.getInt(1), true, PIPELINE_JOB_LOCK_CLASS);
+                }
+            } catch (SQLException | RuntimeException e) {
+                c.close();
+                throw e;
+            }
+        } catch (SQLException e) {
+            throw new Db.DbException(failure + e.getMessage(), e);
+        }
+    }
+
+    /**
      * Tries {@code take} until it is true, {@code wait} has passed or {@code stop} turns true,
      * polling a few times a second.
      *
@@ -239,7 +321,7 @@ public class JobQueue {
                 try (ResultSet rs = ps.executeQuery()) {
                     rs.next();
                     if (rs.getBoolean(1)) {
-                        ScanLease lease = new ScanLease(c, key, rs.getInt(2));
+                        ScanLease lease = new ScanLease(new Session(c, rs.getInt(2), false, lockClass), key);
                         c = null;
                         return Optional.of(lease);
                     }
@@ -260,30 +342,89 @@ public class JobQueue {
     }
 
     /**
-     * The right to scan one source: an advisory lock on a connection held for the scan's whole
-     * length. Heartbeats go over the same connection, so a lost connection (and with it the lock)
-     * is noticed.
+     * A connection that holds advisory locks: a lease's own ({@code shared} false), or the one a
+     * worker's flows share ({@link FlowLeases}). Every use is synchronized on it.
+     */
+    private static final class Session {
+        private final Connection c;
+        private final int backendPid;
+        private final boolean shared;
+        private final int lockClass;
+        /**
+         * Source places held on this connection, by every lease on it: advisory locks nest within a
+         * session, so a place one lease holds would be granted to another as if it were free.
+         */
+        private final java.util.Set<Long> places = new java.util.HashSet<>();
+        /** The jobs whose locks a shared connection holds. */
+        private final java.util.Set<Long> jobs = new java.util.HashSet<>();
+        private int leases;
+        /** A statement failed: new flows take a new connection; this one closes once its flows end. */
+        private boolean broken;
+        private boolean closed;
+
+        Session(Connection c, int backendPid, boolean shared, int lockClass) {
+            this.c = c;
+            this.backendPid = backendPid;
+            this.shared = shared;
+            this.lockClass = lockClass;
+        }
+
+        private interface Binder {
+            void bind(PreparedStatement ps) throws SQLException;
+        }
+
+        boolean tryLock(String sql, Binder binder) {
+            if (closed) {
+                return false;
+            }
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
+                binder.bind(ps);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() && rs.getBoolean(1);
+                }
+            } catch (SQLException e) {
+                broken = true;
+                throw new Db.DbException("Cannot take or give back a lock: " + e.getMessage(), e);
+            }
+        }
+
+        /** Gives the connection back, holding no lock, when no lease is on it any more. */
+        void closeIfUnused() {
+            if (leases == 0 && !closed) {
+                closed = true;
+                try (c; PreparedStatement ps = c.prepareStatement("SELECT pg_advisory_unlock_all()")) {
+                    ps.execute();
+                } catch (SQLException e) {
+                    LOG.debugf(e, "Giving back the flows' shared connection; closing it releases its locks anyway");
+                }
+            }
+        }
+    }
+
+    /**
+     * The right to scan one source, or to run one pipeline or flow job: an advisory lock on a
+     * connection held for the scan's or run's whole length. Heartbeats go over the same connection,
+     * so a lost connection (and with it the lock) is noticed. A flow job's lease is on the connection
+     * its worker's flows share ({@link FlowLeases}); closing it then gives back only its own locks.
      */
     public static final class ScanLease implements AutoCloseable {
-        private final Connection c;
+        private final Session s;
         private final long sourceId;
-        private final int backendPid;
-        /** Source places held on this connection: advisory locks nest within a session, so they are counted here. */
+        /** Source places this lease holds (the session counts every lease's, {@link Session#places}). */
         private final java.util.Set<Long> places = new java.util.HashSet<>();
         /** Whether this lease has held a place: closing it then wakes the runs waiting for one. */
         private boolean heldPlaces;
         private boolean closed;
 
-        /** {@code sourceId} is the lock's key: a source id, or a pipeline job's id. */
-        ScanLease(Connection c, long sourceId, int backendPid) {
-            this.c = c;
+        /** {@code sourceId} is the lock's key: a source id, or a pipeline or flow job's id. */
+        private ScanLease(Session s, long sourceId) {
+            this.s = s;
             this.sourceId = sourceId;
-            this.backendPid = backendPid;
         }
 
         /** The PostgreSQL backend holding the lock (tests end it to play a dead worker). */
         int backendPid() {
-            return backendPid;
+            return s.backendPid;
         }
 
         /**
@@ -291,32 +432,40 @@ public class JobQueue {
          * lease's own connection, so a run holds all its locks on the one connection its job
          * already has. False if another session holds it.
          */
-        public synchronized boolean tryLockTarget(String urn) {
-            return tryLock("SELECT pg_try_advisory_lock(?)", ps -> ps.setLong(1, targetKey(urn)));
+        public boolean tryLockTarget(String urn) {
+            synchronized (s) {
+                return tryLock("SELECT pg_try_advisory_lock(?)", ps -> ps.setLong(1, targetKey(urn)));
+            }
         }
 
         /** Gives back an asset's write lock taken with {@link #tryLockTarget}. */
-        public synchronized void unlockTarget(String urn) {
-            tryLock("SELECT pg_advisory_unlock(?)", ps -> ps.setLong(1, targetKey(urn)));
+        public void unlockTarget(String urn) {
+            synchronized (s) {
+                tryLock("SELECT pg_advisory_unlock(?)", ps -> ps.setLong(1, targetKey(urn)));
+            }
         }
 
         /**
          * Takes a source's scan lock on this lease's connection, so no scan of the source runs
          * meanwhile (scans take the same lock). False if a scan holds it.
          */
-        public synchronized boolean tryLockSource(long source) {
-            return tryLock("SELECT pg_try_advisory_lock(?, ?)", ps -> {
-                ps.setInt(1, SOURCE_LOCK_CLASS);
-                ps.setInt(2, (int) source);
-            });
+        public boolean tryLockSource(long source) {
+            synchronized (s) {
+                return tryLock("SELECT pg_try_advisory_lock(?, ?)", ps -> {
+                    ps.setInt(1, SOURCE_LOCK_CLASS);
+                    ps.setInt(2, (int) source);
+                });
+            }
         }
 
         /** Gives back a source's scan lock taken with {@link #tryLockSource}. */
-        public synchronized void unlockSource(long source) {
-            tryLock("SELECT pg_advisory_unlock(?, ?)", ps -> {
-                ps.setInt(1, SOURCE_LOCK_CLASS);
-                ps.setInt(2, (int) source);
-            });
+        public void unlockSource(long source) {
+            synchronized (s) {
+                tryLock("SELECT pg_advisory_unlock(?, ?)", ps -> {
+                    ps.setInt(1, SOURCE_LOCK_CLASS);
+                    ps.setInt(2, (int) source);
+                });
+            }
         }
 
         /**
@@ -326,51 +475,57 @@ public class JobQueue {
          * never holds a place while it waits for another. Places are freed by {@link #givePlaces},
          * or when the lease closes (by PostgreSQL, when a worker dies).
          */
-        public synchronized Places takePlaces(java.util.Collection<SourceLimit> sources) {
-            java.util.Map<Long, SourceLimit> byId = new java.util.TreeMap<>();
-            sources.forEach(s -> byId.putIfAbsent(s.sourceId(), s));
-            List<Long> taken = new ArrayList<>();
-            try {
-                for (SourceLimit s : byId.values()) {
-                    Long got = null;
-                    for (int k = 0; k < s.max() && got == null; k++) {
-                        long key = placeKey(s.sourceId(), k);
-                        // A place this session already holds would be granted again: it is not free.
-                        if (!places.contains(key)
-                            && tryLock("SELECT pg_try_advisory_lock(?)", ps -> ps.setLong(1, key))) {
-                            got = key;
+        public Places takePlaces(java.util.Collection<SourceLimit> sources) {
+            synchronized (s) {
+                java.util.Map<Long, SourceLimit> byId = new java.util.TreeMap<>();
+                sources.forEach(x -> byId.putIfAbsent(x.sourceId(), x));
+                List<Long> taken = new ArrayList<>();
+                try {
+                    for (SourceLimit x : byId.values()) {
+                        Long got = null;
+                        for (int k = 0; k < x.max() && got == null; k++) {
+                            long key = placeKey(x.sourceId(), k);
+                            // A place this session already holds would be granted again: it is not free.
+                            if (!s.places.contains(key)
+                                && tryLock("SELECT pg_try_advisory_lock(?)", ps -> ps.setLong(1, key))) {
+                                got = key;
+                            }
                         }
+                        if (got == null) {
+                            unlockPlaces(taken); // no wake: nothing was free for long, and waking would loop
+                            return new Places(List.of(), x);
+                        }
+                        s.places.add(got);
+                        places.add(got);
+                        taken.add(got);
                     }
-                    if (got == null) {
-                        unlockPlaces(taken); // no wake: nothing was free for long, and waking would loop
-                        return new Places(List.of(), s);
-                    }
-                    places.add(got);
-                    taken.add(got);
+                } catch (RuntimeException e) {
+                    unlockPlaces(taken);
+                    throw e;
                 }
-            } catch (RuntimeException e) {
-                unlockPlaces(taken);
-                throw e;
+                heldPlaces |= !taken.isEmpty(); // only places kept: a run that gave them back wakes no one
+                return new Places(taken, null);
             }
-            heldPlaces |= !taken.isEmpty(); // only places kept: a run that gave them back wakes no one
-            return new Places(taken, null);
         }
 
         /**
          * Gives back places taken with {@link #takePlaces}, and wakes the runs waiting for one; never
          * throws (closing the lease frees them anyway).
          */
-        public synchronized void givePlaces(List<Long> keys) {
-            if (unlockPlaces(keys)) {
-                wakeWaiting(c);
+        public void givePlaces(List<Long> keys) {
+            synchronized (s) {
+                if (unlockPlaces(keys)) {
+                    wakeWaiting(s.c);
+                }
             }
         }
 
         /** Unlocks places this lease holds; whether any was. Never throws. */
-        private boolean unlockPlaces(List<Long> keys) {
+        private boolean unlockPlaces(java.util.Collection<Long> keys) {
             boolean freed = false;
-            for (long key : keys) {
+            for (long key : List.copyOf(keys)) {
                 if (places.remove(key)) {
+                    s.places.remove(key);
                     try {
                         freed |= tryLock("SELECT pg_advisory_unlock(?)", ps -> ps.setLong(1, key));
                     } catch (RuntimeException e) {
@@ -388,66 +543,95 @@ public class JobQueue {
          * for a back-off. Never throws.
          */
         private static void wakeWaiting(Connection c) {
-            try (Statement s = c.createStatement()) {
-                s.executeUpdate("UPDATE kilnmark.job SET run_after = now() WHERE kind = '"
+            try (Statement st = c.createStatement()) {
+                st.executeUpdate("UPDATE kilnmark.job SET run_after = now() WHERE kind = '"
                     + io.kilnmark.server.pipelines.PipelineStore.JOB_KIND + "' AND status = 'queued' AND run_after > now()");
-                s.execute("NOTIFY " + CHANNEL);
+                st.execute("NOTIFY " + CHANNEL);
             } catch (SQLException e) {
                 LOG.debugf("Could not wake the runs waiting for a place; they look again within seconds");
             }
         }
 
-        private interface Binder {
-            void bind(PreparedStatement ps) throws SQLException;
-        }
-
-        private boolean tryLock(String sql, Binder binder) {
+        private boolean tryLock(String sql, Session.Binder binder) {
             if (closed) {
                 return false;
             }
-            try (PreparedStatement ps = c.prepareStatement(sql)) {
-                binder.bind(ps);
-                try (ResultSet rs = ps.executeQuery()) {
-                    return rs.next() && rs.getBoolean(1);
-                }
-            } catch (SQLException e) {
-                throw new Db.DbException("Cannot take or give back a lock: " + e.getMessage(), e);
-            }
+            return s.tryLock(sql, binder);
         }
 
         /** Refreshes the job's heartbeat. False if the job is no longer this worker's, or the lock was lost. */
-        public synchronized boolean beat(long jobId, String workerId) {
-            if (closed) {
-                return false;
-            }
-            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.job SET heartbeat_at = now() "
-                + "WHERE id = ? AND locked_by = ? AND status = 'running'")) {
-                ps.setLong(1, jobId);
-                ps.setString(2, workerId);
-                return ps.executeUpdate() == 1;
-            } catch (SQLException e) {
-                LOG.warnf("Lost the database connection holding source %d's scan lock: %s", sourceId, e.getMessage());
-                return false;
+        public boolean beat(long jobId, String workerId) {
+            synchronized (s) {
+                if (closed || s.closed) {
+                    return false;
+                }
+                try (PreparedStatement ps = s.c.prepareStatement("UPDATE kilnmark.job SET heartbeat_at = now() "
+                    + "WHERE id = ? AND locked_by = ? AND status = 'running'")) {
+                    ps.setLong(1, jobId);
+                    ps.setString(2, workerId);
+                    return ps.executeUpdate() == 1;
+                } catch (SQLException e) {
+                    s.broken = true;
+                    LOG.warnf("Lost the database connection holding source %d's scan lock: %s", sourceId,
+                        e.getMessage());
+                    return false;
+                }
             }
         }
 
         @Override
-        public synchronized void close() {
-            if (closed) {
-                return;
-            }
-            closed = true;
-            places.clear();
-            // Every advisory lock this session took (a pipeline's target and source locks too), so the
-            // connection goes back to the pool holding none.
-            try (c; PreparedStatement ps = c.prepareStatement("SELECT pg_advisory_unlock_all()")) {
-                ps.execute();
-                if (heldPlaces) {
-                    wakeWaiting(c); // after the places are free, or a woken run would find them still held
+        public void close() {
+            synchronized (s) {
+                if (closed) {
+                    return;
                 }
-            } catch (SQLException e) {
-                LOG.debugf(e, "Releasing source %d's scan lock; a closed connection releases it anyway", sourceId);
+                closed = true;
+                if (s.shared) {
+                    closeShared();
+                    return;
+                }
+                places.clear();
+                s.places.clear();
+                s.closed = true;
+                // Every advisory lock this session took (a pipeline's target and source locks too), so the
+                // connection goes back to the pool holding none.
+                try (Connection c = s.c; PreparedStatement ps = c.prepareStatement("SELECT pg_advisory_unlock_all()")) {
+                    ps.execute();
+                    if (heldPlaces) {
+                        wakeWaiting(c); // after the places are free, or a woken run would find them still held
+                    }
+                } catch (SQLException e) {
+                    LOG.debugf(e, "Releasing source %d's scan lock; a closed connection releases it anyway", sourceId);
+                }
             }
+        }
+
+        /** On the flows' shared connection: gives back this flow's places and job lock, and the connection with its last. */
+        private void closeShared() {
+            // through the session itself: this lease already reads as closed, and would unlock nothing
+            for (long key : List.copyOf(places)) {
+                places.remove(key);
+                s.places.remove(key);
+                try {
+                    s.tryLock("SELECT pg_advisory_unlock(?)", ps -> ps.setLong(1, key));
+                } catch (RuntimeException e) {
+                    LOG.debugf("Could not give back a source's place; closing the shared connection does");
+                }
+            }
+            try {
+                s.tryLock("SELECT pg_advisory_unlock(?, ?)", ps -> {
+                    ps.setInt(1, s.lockClass);
+                    ps.setInt(2, (int) sourceId);
+                });
+            } catch (RuntimeException e) {
+                LOG.debugf("Could not give back flow job %d's lock; closing the shared connection does", sourceId);
+            }
+            if (heldPlaces && !s.closed) {
+                wakeWaiting(s.c); // after the places are free, or a woken run would find them still held
+            }
+            s.jobs.remove(sourceId);
+            s.leases--;
+            s.closeIfUnused();
         }
     }
 

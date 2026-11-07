@@ -1084,4 +1084,66 @@ class ScheduleApiTest {
         as(designer).delete("/api/v1/schedules/" + id).then().statusCode(204);
         as(designer).delete("/api/v1/schedules/" + other).then().statusCode(204);
     }
+
+    @Test
+    @Order(32)
+    void aFireChecksItsRunWithoutHoldingTheScheduleAndRunsAChangeSavedMeanwhile() throws Exception {
+        as(designer).body(Map.of("name", "sc-unheld", "yaml", pipeline("sc-unheld"))).post("/api/v1/pipelines").then()
+            .statusCode(201);
+        long id = create(designer, body("pipeline", "sc-unheld", "cron", "@hourly"));
+        dueAgo(id, Duration.ofSeconds(5));
+        ScheduleStore.Schedule claimed = store.claimDue(null, Scheduler.BATCH,
+                (s, at) -> Scheduler.plan(s, at, Duration.ofHours(1))).stream()
+            .filter(x -> x.schedule().id() == id).findFirst().orElseThrow().schedule();
+        CountDownLatch checking = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        scheduler.whileChecking(() -> {
+            checking.countDown();
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        try {
+            Future<?> fire = pool.submit(() -> scheduler.run(claimed));
+            assertTrue(checking.await(30, java.util.concurrent.TimeUnit.SECONDS));
+            // while the run is checked (its version compiled, the catalogue read), the schedule's row is
+            // not locked: only the claim, and then the queueing, hold it
+            try (Connection c = db.getConnection()) {
+                c.setAutoCommit(false);
+                try (PreparedStatement ps = c.prepareStatement(
+                    "SELECT 1 FROM kilnmark.schedule WHERE id = ? FOR UPDATE NOWAIT")) {
+                    ps.setLong(1, id);
+                    ps.executeQuery().close();
+                } finally {
+                    c.rollback();
+                }
+            }
+            // a change saved meanwhile is the one that runs: the run is checked again for it
+            as(designer).body(body("pipeline", "sc-unheld", "cron", "@hourly", "parameters", Map.of("max_id", 7)))
+                .put("/api/v1/schedules/" + id).then().statusCode(200);
+            release.countDown();
+            fire.get(60, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            scheduler.whileChecking(() -> { });
+            release.countDown();
+            pool.shutdownNow();
+        }
+        JsonPath s = schedule(id);
+        assertEquals(Scheduler.STARTED, s.getString("lastOutcome"));
+        long run = s.getLong("lastPipelineRun");
+        awaitPipelineRunDone(run);
+        try (Connection c = db.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT parameters ->> 'max_id' FROM kilnmark.pipeline_run "
+                 + "WHERE id = ?")) {
+            ps.setLong(1, run);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next());
+                assertEquals(7.0, Double.parseDouble(rs.getString(1)), "the values saved while the fire was checking");
+            }
+        }
+        as(designer).delete("/api/v1/schedules/" + id).then().statusCode(204);
+    }
 }

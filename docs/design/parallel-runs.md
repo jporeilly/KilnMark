@@ -55,7 +55,9 @@ A job runs when all of these have room:
 - `kilnmark.worker.flows` (`KILNMARK_WORKER_FLOWS`, 8, at least 1) replaces `JobWorker.MAX_FLOWS`.
 - The installation guide gains **Sizing the workers**: what a slot is, how to raise the slots, and
   the database connections it takes. Each running job holds one connection for its lease and uses
-  one or two more while it works; each watched flow holds one; each worker keeps one for `LISTEN`.
+  one or two more while it works; the flows a worker watches share one for their locks (refactor
+  22.1; before, each held one) and take one now and then while they look; each worker keeps one for
+  `LISTEN`. The check below still counts one for each flow, as headroom for those looks.
   The pool (`QUARKUS_DATASOURCE_JDBC_MAX_SIZE`, 30 by default) must be at least
   `concurrency × 3 + flows + 6` (five of them for the API and scheduler); PostgreSQL's `max_connections` at least the sum over
   all Kilnmark processes.
