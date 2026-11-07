@@ -651,14 +651,18 @@ behaves as before (the same first failure, the same message).
   moving any input vector into the output, so a failed try leaves the input whole.
 - **What is a row failure.** Only exceptions from evaluating rows, never from compiling against a
   schema. The sites that throw for one row's value carry a code (`ExprException.row`):
-  `cast_failed`, `division_by_zero`, `out_of_range`, `too_long`, `too_slow`, `invalid_argument`;
-  their problem and hint are fixed wordings. Any other is `expression_failed` with a generic message,
-  so text built from a value can never reach an error row.
+  `cast_failed`, `division_by_zero`, `out_of_range`, `too_long`, `too_slow`, `too_complex`;
+  their problem and hint are fixed wordings. A single row failing without a
+  code stops the run (`Failing.single`), so a mistake that fails every row never empties the output
+  quietly, and text built from a value can never reach an error row.
 - **Error rows** (`RowErrors`, kiln-core): the input's columns, less any `error_*` columns already
   there, then `error_node`, `error_column`, `error_code`, `error_message` (utf8, nullable). The
   errors port's columns are the input's, so marks follow by name: `NodePreview.marked` and `hidden`
-  give a node one set for all its ports, which covers `errors`; the four added columns are never
-  marked, since no value goes into them.
+  give a node one set for all its ports, which covers `errors`. `marked` adds `error_column`,
+  `error_code` and `error_message` (`FAILED_ON`) when the node's expressions, casts or conditions
+  touch a marked column, and for a write given any marked column: which value failed says something
+  about it. A preview drains (`NodePreview.drained`, a `filter` on `false`) each errors port in its
+  cut that the pipeline reads from outside it, so it fails no sooner than the run.
 - **Tolerance** (`RowErrors.Tally`): `max_errors` is checked as rows fail, `max_error_share` when the
   input ends, against the rows that arrived at the node. The node's line in the run's log comes from
   the tally. With nothing on `errors` nothing is counted.
@@ -671,10 +675,11 @@ behaves as before (the same first failure, the same message).
   `WriteGuard`, which counts what the writer emits on `errors` and judges the share *before* it
   tells the writer the input has ended, so a write past its share never commits. A write's
   `rowsOut` stays empty in the run record; its `errors` count is in its ports.
-- **Messages without values.** The write's decimal and time-precision refusals no longer quote the
-  value, in run failures as in error rows. Some dialect checks (`valueProblem`,
-  `targetValueProblem`) still quote values in a run's failure message, which only those who may see
-  the source's values read; their error rows use fixed wordings.
+- **Messages without values.** The write's decimal and time-precision refusals, and the dialects'
+  value checks (`valueProblem`, `targetValueProblem`: TINYINT and unsigned ranges, MySQL years and
+  NaN, Oracle digits and characters), no longer quote the value, in run failures as in error rows.
+  A write with `commit_every` may not set `max_error_share` (it would commit before the share is
+  judged).
 
 ### Sorting, and spilling to disk (ADR 0049)
 

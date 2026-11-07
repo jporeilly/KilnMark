@@ -73,13 +73,14 @@ file, say) and failing rows go there instead, while the others carry on:
 | --- | --- |
 | `error_node` | The node's id. |
 | `error_column` | The column being worked out (compute) or cast (select); for a condition, `condition` or `routes.<name>`. |
-| `error_code` | `cast_failed`, `division_by_zero`, `out_of_range`, `too_long`, `too_slow`, `invalid_argument`, or `expression_failed` for anything else. |
+| `error_code` | `cast_failed`, `division_by_zero`, `out_of_range`, `too_long`, `too_slow` or `too_complex`. |
 | `error_message` | What went wrong and what to do. It never holds the value: the value is in the row's own column. |
 
 The row keeps its columns' names, so a column marked sensitive stays marked in the error rows: it
-is masked wherever they are shown, and a write of them carries the mark to what it writes. A row
-that already has the four columns (it failed at an earlier node and was routed on) takes the latest
-failure.
+is masked wherever they are shown, and a write of them carries the mark to what it writes. When
+the failure came from a marked column, `error_column`, `error_code` and `error_message` are marked
+too, since which value failed, and how, says something about it. A row that already has the four
+columns (it failed at an earlier node and was routed on) takes the latest failure.
 
 **The error tolerance** stops the run when too many rows fail, judged over the whole run:
 
@@ -95,8 +96,10 @@ port (limits: max_error_share 1.00%)", so rows read, written and set aside can b
 
 How the rows are found: a node works on a batch of rows at once, so when a batch fails the node
 splits it in halves, and each failing half again, until it has the single rows that fail. A batch
-that works costs nothing extra. A failure that is not about one row (a setting that is wrong for
-every row) still stops the run.
+that works costs nothing extra. A failure that is not about one row's value (a setting that is
+wrong for every row, or a wrong argument such as field 0 for `split_part`) still stops the run, so
+a mistake never quietly sends every row to `errors`. A preview of a node whose `errors` port the
+pipeline reads sets failing rows aside as the run does.
 
 ## filter
 

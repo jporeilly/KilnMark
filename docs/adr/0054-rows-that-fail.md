@@ -37,11 +37,12 @@ values, by definition, and their reasons are shown on the run page and in files.
    - `write` (databases): a value Kilnmark checks before it is sent and the table would refuse:
      an empty key column for upsert, a text longer than its column, a decimal with more digits
      than its column keeps, a time with more digits of a second than its column keeps, a value of
-     a type the column cannot take, an empty value for a column that must be filled. These rows
-     never reach the database.
+     a type the column cannot take. These rows never reach the database.
    - Not row failures, so still fatal: a setting or column that is wrong for the whole input
-     (caught when the pipeline is checked, or on the first batch), memory limits, a source that
-     cannot be reached, and a refusal by the database itself.
+     (caught when the pipeline is checked, or on the first batch), a failure not known to be about
+     one row's value (such as a wrong argument for every row), memory limits, a source that cannot
+     be reached, and a refusal by the database itself, including an empty value for a column that
+     must be filled.
 
 3. **Writes report the database's own refusals at batch level, for now.** A constraint the
    database enforces (a unique index, a foreign key, a check) is found only when a batch is sent,
@@ -62,7 +63,8 @@ values, by definition, and their reasons are shown on the run page and in files.
    - `error_column`: the column being worked out (compute), cast (select) or written (write); for
      a condition, the setting (`condition`, or `routes.<name>`);
    - `error_code`: a fixed word, such as `cast_failed`, `division_by_zero`, `out_of_range`,
-     `too_long`, `key_missing`, `does_not_fit`;
+     `too_long`, `key_missing`, `does_not_fit`. Only failures the expression engine marks as about
+     one row's value carry a code; any other stops the run;
    - `error_message`: what went wrong and what to do, from a fixed list of wordings, **never** text
      built from the value. The value is in the row's own column, where its mark applies.
    A row that already has these columns (it failed at an earlier node, and was routed on) has them
@@ -70,8 +72,11 @@ values, by definition, and their reasons are shown on the run page and in files.
 
 6. **Marks follow the row.** Error rows keep their columns' names, so ADR 0027's marks reach them
    as they reach any other port: a column marked sensitive is masked in the error rows a viewer
-   sees, in a preview of the errors port, and in what a write of them records. The four added
-   columns hold no values from the data, so they are never marked.
+   sees, in a preview of the errors port, and in what a write of them records. The added columns
+   hold no value, but which value failed, and how, says something about it: `error_column`,
+   `error_code` and `error_message` are marked when the node worked the failure out from a marked
+   column (an expression, cast or condition that uses one; for a write, any marked column it is
+   given). `error_node` names only the node.
 
 7. **An error tolerance on the node:** `max_errors` (a count) and `max_error_share` (0 to 1).
    - Judged over the whole run, as a gate's `max_failing_share` is. The count is checked as rows
@@ -80,6 +85,9 @@ values, by definition, and their reasons are shown on the run page and in files.
    - With neither set, every failing row goes to `errors` and the run carries on.
    - Without a connected `errors` port the tolerance has nothing to count: the first failure
      stops the run.
+   - A write with `commit_every` commits rows before its share can be judged, so it may not set
+     `max_error_share`; with `max_errors`, rows committed before the limit is passed stay, as with
+     any failure of such a write.
 
 8. **The run records it.** Rows in and out per port are already recorded for every node
    (`NodeResult.rowsInByPort` and `rowsOutByPort`), so rows read, written and set aside on `errors`
@@ -90,6 +98,10 @@ values, by definition, and their reasons are shown on the run page and in files.
 9. **On the canvas** the `errors` port is drawn as `rejected` and `quarantine` are: one more
    output port, connected like any other.
 
+10. **A preview behaves as the run.** A preview runs only the nodes up to the one previewed; an
+    errors port that the pipeline reads from beyond them is drained in the preview, so a failing
+    row is set aside there as in the run, rather than stopping the preview.
+
 ## Consequences
 
 - A pipeline converted from a tool whose units send failing rows elsewhere can now keep doing so
@@ -98,7 +110,8 @@ values, by definition, and their reasons are shown on the run page and in files.
   read its counts. The run page shows them per port.
 - Nodes that fail per batch pay for the splitting only on batches that fail.
 - A write still stops on the database's own refusals until the savepoint work is done.
-- Existing messages that quoted values (a write's decimal and time checks quoted the value) no
+- Existing messages that quoted values (a write's decimal and time checks, and the databases'
+  own value checks: whole numbers out of range, years, NaN, Oracle's digits and characters) no
   longer do, in errors and in run failures alike.
 - Later: the same port on `lookup` (a key that cannot be compared), `join`, `window`, `aggregate`
   (a value that overflows), and the database's own refusals on `write`.

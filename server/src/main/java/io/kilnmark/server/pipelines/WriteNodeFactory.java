@@ -222,6 +222,11 @@ public final class WriteNodeFactory implements NodeFactory {
                 + "whose rows can repeat; " + mode + " writes every row");
         }
         problems.addAll(RowErrors.check(config));
+        if (config.get(RowErrors.MAX_SHARE) != null && config.get("commit_every") instanceof Number every
+            && every.longValue() > 0) {
+            problems.add(RowErrors.MAX_SHARE + ": the share is judged when the input ends, but commit_every commits "
+                + "rows before that, and they would stay; leave out commit_every, or use max_errors");
+        }
         Object format = config.get("format");
         if (format != null && (!(format instanceof String f) || !FORMATS.contains(f.strip().toLowerCase(Locale.ROOT)))) {
             problems.add("format: csv or parquet");

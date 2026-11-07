@@ -149,9 +149,50 @@ final class NodePreview {
                 + id + " needs " + reads + ". Preview a node nearer the start.");
         }
         String name = d.name() == null || d.name().isBlank() ? "preview" : d.name();
-        return new Plan(new PipelineDefinition(name, d.description(), clamp(sub, caps.memoryMb()), d.quality(),
-            d.parameters()), id,
-            chosen.type());
+        return new Plan(new PipelineDefinition(name, d.description(), drained(clamp(sub, caps.memoryMb()), d.nodes(),
+            keep, byId.keySet()), d.quality(), d.parameters()), id, chosen.type());
+    }
+
+    /**
+     * {@code sub} with a node that drops the rows for each errors port in it that the whole
+     * pipeline reads from outside it (ADR 0054): with something on its errors port, a node sets a
+     * failing row aside rather than stopping, and a preview must not fail where the run would not.
+     * An errors port nothing reads stays unconnected, so the preview fails where the run would.
+     */
+    static List<PipelineDefinition.NodeDefinition> drained(List<PipelineDefinition.NodeDefinition> sub,
+                                                           List<PipelineDefinition.NodeDefinition> all,
+                                                           Set<String> keep, Set<String> taken) {
+        Set<String> read = new LinkedHashSet<>();
+        for (PipelineDefinition.NodeDefinition n : all) {
+            if (keep.contains(n.id())) {
+                continue;
+            }
+            for (PipelineDefinition.InputRef r : n.inputs()) {
+                try {
+                    PortRef from = PortRef.parse(r.from(), "out");
+                    if (io.kilnmark.kiln.RowErrors.PORT.equals(from.port()) && keep.contains(from.node())) {
+                        read.add(from.node());
+                    }
+                } catch (IllegalArgumentException e) {
+                    // an input the check reports
+                }
+            }
+        }
+        if (read.isEmpty()) {
+            return sub;
+        }
+        List<PipelineDefinition.NodeDefinition> out = new ArrayList<>(sub);
+        int k = 0;
+        for (String node : read) {
+            String id;
+            do {
+                id = "preview-errors-" + ++k;
+            } while (taken.contains(id));
+            out.add(new PipelineDefinition.NodeDefinition(id, "filter", List.of(new PipelineDefinition.InputRef(null,
+                node + "." + io.kilnmark.kiln.RowErrors.PORT, io.kilnmark.kiln.yaml.Position.START)),
+                Map.of("condition", "false"), io.kilnmark.kiln.yaml.Position.START, Map.of()));
+        }
+        return out;
     }
 
     /**
@@ -415,6 +456,14 @@ final class NodePreview {
         return out.getOrDefault(node, Hidden.NONE);
     }
 
+    /**
+     * The columns of an error row that say what a row failed on (ADR 0054): marked when the node
+     * worked the failure out from a marked column, since which value failed, and how, says something
+     * about it. {@code error_node} names only the node.
+     */
+    static final List<String> FAILED_ON = List.of(io.kilnmark.kiln.RowErrors.COLUMN, io.kilnmark.kiln.RowErrors.CODE,
+        io.kilnmark.kiln.RowErrors.MESSAGE);
+
     /** What one node passes on marked, given what arrives marked. */
     private static Hidden marking(String type, Map<String, Object> config, Map<String, Hidden> in, Hidden any,
                                   Set<String> read) {
@@ -428,6 +477,7 @@ final class NodePreview {
                 texts(config.get("columns")).forEach((name, expr) -> {
                     if (main.touches(refs(expr))) {
                         now.add(name);
+                        now.addAll(FAILED_ON); // which value failed, and how, is worked out from it too
                     }
                 });
                 return main.all() ? Hidden.ALL : Hidden.of(now);
@@ -442,6 +492,9 @@ final class NodePreview {
                         now.add(to);
                     }
                 });
+                if (main.touches(new ArrayList<>(texts(config.get("cast")).keySet()))) {
+                    now.addAll(FAILED_ON);
+                }
                 return Hidden.of(now);
             }
             case "aggregate" -> {
@@ -476,7 +529,18 @@ final class NodePreview {
                 });
                 return Hidden.of(now);
             }
-            case "filter", "route", "dedupe", "gate", "limit", "union", "sort", "write" -> {
+            case "filter" -> {
+                return main.touches(refs(text(config.get("condition")))) ? main.plus(Hidden.of(FAILED_ON)) : main;
+            }
+            case "route" -> {
+                boolean marked = texts(config.get("routes")).values().stream().anyMatch(c -> main.touches(refs(c)));
+                return marked ? main.plus(Hidden.of(FAILED_ON)) : main;
+            }
+            case "write" -> {
+                // a write checks every value it is given: what its error rows say comes from any of them
+                return any.any() ? any.plus(Hidden.of(FAILED_ON)) : any;
+            }
+            case "dedupe", "gate", "limit", "union", "sort" -> {
                 return any;
             }
             default -> {

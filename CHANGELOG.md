@@ -77,8 +77,9 @@ details.
   rows, judged over the whole run (a write's before it commits). The run records each node's rows
   per port and logs how many failed. With nothing on the `errors` port, the first failure stops the
   run, as before. A refusal by the database itself (a unique index, a foreign key) still stops the
-  write. A route can no longer be called `errors`. A write's messages about a decimal or a time too
-  precise for its column no longer quote the value. A sample, `sample-rows-that-fail`, sets bad
+  write. A route can no longer be called `errors`. A write's messages about a value its column
+  cannot hold (a decimal or time too precise, a number out of range, a year, an Oracle character)
+  no longer quote the value. A sample, `sample-rows-that-fail`, sets bad
   SKUs aside into a quarantine file. ([Rows that fail](docs/guide/pipeline-nodes.md#rows-that-fail))
 
 ### Details

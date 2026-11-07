@@ -516,7 +516,32 @@ class NodePreviewTest {
         // what a write of x.errors records about the columns it wrote: the marks arriving at it
         NodePreview.Hidden marks = NodePreview.marked(c, Map.of("people", Set.of("name")), "x");
         assertTrue(marks.hides("name"), "the errors port carries the read's mark on");
-        assertFalse(marks.hides("error_message") || marks.hides("error_code"), "the reasons hold no value");
+        assertFalse(marks.hides("error_message") || marks.hides("error_code"),
+            "a failure worked out from an unmarked column says nothing about a marked one");
+        String byName = yaml("""
+              - {id: people, type: read, source: small, asset: lab.people}
+              - {id: x, type: compute, input: people, columns: {n: "cast(name as int64)"}}
+            """);
+        PipelineCompilerPort.Compilation named = KilnPipelineCompiler.compile(NodePreview.plan(byName, "x").definition(),
+            factories, false);
+        NodePreview.Hidden fromName = NodePreview.marked(named, Map.of("people", Set.of("name")), "x");
+        assertTrue(fromName.hides("error_code") && fromName.hides("error_message") && fromName.hides("error_column"),
+            "which value of a marked column failed, and how, is marked");
+        assertFalse(fromName.hides("error_node"));
+
+        // A preview of a node whose errors port the pipeline reads sets failing rows aside, as the run does;
+        // one whose errors port nothing reads fails, as the run does.
+        String drained = yaml("""
+              - {id: people, type: read, source: small, asset: lab.people}
+              - {id: x, type: compute, input: people, columns: {share: "100 / (id - 3)"}}
+              - {id: y, type: limit, input: x, rows: 100}
+              - {id: aside, type: limit, input: x.errors, rows: 100}
+            """);
+        PipelineViews.NodePreviewView out = previews().preview(drained, "y", null, 100, "jo", AccessRole.STEWARD,
+            nameHidden, () -> false);
+        assertEquals(39, out.rows().size(), "every person but id 3");
+        assertThrows(RuntimeException.class, () -> previews().preview(y, "x", null, 100, "jo", AccessRole.STEWARD,
+            nameHidden, () -> false), "nothing reads x.errors: the first failure stops it, as in a run");
     }
 
     @Test

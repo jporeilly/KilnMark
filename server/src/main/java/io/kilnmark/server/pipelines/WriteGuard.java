@@ -93,12 +93,13 @@ final class WriteGuard implements Node {
                 note(context);
                 return writer.process(inner);
             }
-            if (tally != null) {
-                tally.arrived(batch.getRowCount());
-            }
             // A batch of no rows is handed on too, as it would be without a rule: a read sends one to
             // say its columns, and the writer checks the table against them.
-            feed.put(upserts == null ? batch : upserts.choose(batch, context.allocator()));
+            VectorSchemaRoot chosen = upserts == null ? batch : upserts.choose(batch, context.allocator());
+            if (tally != null) {
+                tally.arrived(chosen.getRowCount()); // the rows the writer is given: those the rule leaves out are not
+            }
+            feed.put(chosen);
             return writer.process(inner);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

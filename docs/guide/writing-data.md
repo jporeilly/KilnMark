@@ -153,7 +153,9 @@ stops the write, as before.
 Error rows are the row as it arrived, with `error_node`, `error_column`, `error_code` and
 `error_message`, as for [rows that fail](pipeline-nodes.md#rows-that-fail) at other nodes; the
 message never holds the value. `max_errors` and `max_error_share` stop the write past a count or a
-share, and the share is judged before anything is committed.
+share, and the share is judged before anything is committed. With `commit_every`, rows are
+committed before the share can be judged, so a write cannot have both; with `max_errors`, rows
+committed before the limit is passed stay, as with any failure of such a write.
 
 ```yaml
   - id: load

@@ -49,7 +49,7 @@ public final class ExprException extends Exception {
 
     /**
      * What kind of row failure this is ({@code cast_failed}, {@code division_by_zero},
-     * {@code out_of_range}, {@code too_long}, {@code too_slow}, {@code invalid_argument}), or null
+     * {@code out_of_range}, {@code too_long}, {@code too_slow}, {@code too_complex}), or null
      * for a failure not known to be about one row's value, whose wording is then never used for an
      * error row.
      */

@@ -21,7 +21,9 @@ import io.kilnmark.kiln.nodes.expr.ExprException;
  * <p>Expressions work on a whole batch at once, so a failure says only that some row failed. A
  * batch that works costs nothing extra; one that fails is split in halves, and each failing half
  * again: about {@code k × log₂(n)} tries for {@code k} failing rows of {@code n}. A batch whose
- * single rows all work (it fails only as a whole) stops the run as before.
+ * single rows all work (it fails only as a whole) stops the run as before, and so does a single
+ * row whose failure is not known to be about its own value (an {@link ExprException} without a
+ * code): such a failure, a wrong argument for every row say, must not quietly empty the output.
  */
 final class Failing {
 
@@ -131,6 +133,9 @@ final class Failing {
             attempt.run(part);
             return false;
         } catch (RowFailure f) {
+            if (f.cause.code() == null) {
+                throw f.fatal();
+            }
             out[rows[0]] = failure(f.column, f.cause);
             return true;
         }

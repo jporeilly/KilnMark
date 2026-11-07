@@ -631,7 +631,7 @@ class GenericJdbcConnectorTest {
             {"decimal", "the value in column TOTAL has more decimal places"},
             {"text", "the value in column NOTE is 8 characters long, but the column holds at most 5"},
             {"seconds", "column AT_S has more digits of a second than the column keeps (0)"},
-            {"tiny", "the value 300 is outside -128 to 127"},
+            {"tiny", "the value is outside -128 to 127"},
             {"bytes", "it is 3 bytes long, but the column holds at most 2"}};
         for (String[] c : cases) {
             Object[] row = {2L, BigDecimal.ONE, "short", whole, (short) 1, new byte[] {1}};

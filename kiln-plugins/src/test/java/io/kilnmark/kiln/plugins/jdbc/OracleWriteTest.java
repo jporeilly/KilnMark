@@ -346,7 +346,7 @@ class OracleWriteTest {
             + "AL32UTF8, but the column holds at most 4 bytes"), bytes.error());
         RunResult digits = write(source, options("kt_billing.sized", "append", List.of(), Map.of()), s,
             Rows.list(new Object[] {3L, null, new BigDecimal("0.1234567890123456789100"), null, null}), 4, -1);
-        assertTrue(digits.error().contains("has 20 significant digits, but the FLOAT column keeps 19"), digits.error());
+        assertTrue(digits.error().contains("has more significant digits than the FLOAT column keeps (19)"), digits.error());
         RunResult empty = write(source, options("kt_billing.sized", "append", List.of(), Map.of()), s,
             Rows.list(new Object[] {4L, null, null, new byte[0], null}), 4, -1);
         assertTrue(empty.error().contains("it is empty (no bytes), which Oracle stores as null"), empty.error());

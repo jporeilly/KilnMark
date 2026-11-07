@@ -444,7 +444,7 @@ final class Regexes {
     }
 
     private static ExprException tooDeep(int pos) {
-        return ExprException.row("too_slow", "the regular expression needs too much memory on a value", pos,
+        return ExprException.row("too_complex", "the regular expression needs too much memory on a value", pos,
             "use a character class, like [ab]* instead of (a|b)*");
     }
 

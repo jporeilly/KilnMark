@@ -75,6 +75,12 @@ class WriteGuardTest {
                 "duplicates", "newest", "duplicates_by", "version")), "one problem, not a second about the column");
         assertEquals(List.of("duplicates: only upsert has a key whose rows can repeat; append writes every row"),
             write.check(Map.of("source", "warehouse", "table", "a.b", "mode", "append", "duplicates", "latest")));
+        // a write's share is judged at the end, so it cannot commit along the way
+        assertEquals(List.of(), write.check(Map.of("source", "warehouse", "table", "a.b", "mode", "append",
+            "max_error_share", 0.01, "max_errors", 5)));
+        assertTrue(write.check(Map.of("source", "warehouse", "table", "a.b", "mode", "append", "max_error_share", 0.01,
+            "commit_every", 1000L)).contains("max_error_share: the share is judged when the input ends, but "
+            + "commit_every commits rows before that, and they would stay; leave out commit_every, or use max_errors"));
     }
 
     /** Runs the rule over two batches in front of a writer that keeps what it is sent. */
@@ -231,7 +237,8 @@ class WriteGuardTest {
         assertTrue(fine.ended);
         assertEquals(List.of("a", "b", "c"), fine.kept);
         NodeException count = assertThrows(NodeException.class, () -> tolerate(1L, null, one, two));
-        assertTrue(count.getMessage().startsWith("2 rows failed, more than its max_errors of 1"), count.getMessage());
+        assertTrue(count.getMessage().startsWith("2 of the 5 rows so far failed, more than its max_errors of 1"),
+            count.getMessage());
         // 2 of 5 is 40%: past 30%, judged when the input ends, before the writer hears of it and commits
         Refuser[] seen = new Refuser[1];
         NodeException share = assertThrows(NodeException.class, () -> seen[0] = tolerate(null, 0.3, one, two));

@@ -234,8 +234,9 @@ public final class RowErrors {
         public void failed(long n) throws NodeException {
             failed += n;
             if (maxErrors != null && failed > maxErrors) {
-                throw new NodeException(number(failed) + " rows failed, more than its " + MAX_ERRORS + " of "
-                    + number(maxErrors) + "; the run stops. The failing rows so far went to its errors port");
+                throw new NodeException(number(failed) + " of the " + number(rows) + " rows so far failed, more than "
+                    + "its " + MAX_ERRORS + " of " + number(maxErrors) + "; the run stops. The failing rows so far went "
+                    + "to its errors port");
             }
         }
 

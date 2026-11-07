@@ -97,7 +97,7 @@ final class Texts {
      */
     static String splitPart(String s, String sep, long n, int pos) throws ExprException {
         if (n == 0) {
-            throw ExprException.row("invalid_argument", "split_part's field number cannot be 0", pos,
+            throw new ExprException("split_part's field number cannot be 0", pos,
                 "count fields from 1, or from -1 for the last");
         }
         if (sep.isEmpty()) {

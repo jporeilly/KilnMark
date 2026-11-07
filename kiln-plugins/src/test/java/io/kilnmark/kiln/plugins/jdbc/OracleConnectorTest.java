@@ -169,11 +169,13 @@ class OracleConnectorTest {
         OracleWriteSql latin = new OracleWriteSql(true, false, "WE8MSWIN1252", "AL16UTF16");
         assertNull(latin.targetValueProblem(null, "héllo, €5"), "all in windows-1252");
         String refused = latin.targetValueProblem(null, "Łódź");
-        assertTrue(refused.contains("the character 'Ł' (U+0141) cannot be stored in the database's character set "
+        assertTrue(refused.contains("a character cannot be stored in the database's character set "
             + "WE8MSWIN1252") && refused.contains("Oracle would store a ? instead"), refused);
         assertTrue(refused.contains("NVARCHAR2 or NCLOB column, whose character set (AL16UTF16) holds it"), refused);
         WritePlan.TargetColumn varchar = OracleConnector.target("NOTE", "VARCHAR2", null, null, 50, false, 50);
-        assertTrue(latin.targetValueProblem(varchar, "✓").contains("U+2713"));
+        String check = latin.targetValueProblem(varchar, "✓");
+        assertTrue(check.contains("a character cannot be stored") && !check.contains("✓") && !check.contains("2713"),
+            check);
         WritePlan.TargetColumn nvarchar = OracleConnector.target("NNOTE", "NVARCHAR2", null, null, 20, false, 40);
         assertNull(latin.targetValueProblem(nvarchar, "Łódź ✓"), "national columns use the national character set");
         WritePlan.TargetColumn json = OracleConnector.target("DOC", "JSON", null, null, null, false, null);
@@ -240,6 +242,6 @@ class OracleConnectorTest {
         assertNull(strict.targetValueProblem(float63, new BigDecimal("0.1234567890123456789")));
         assertNull(strict.targetValueProblem(float63, new BigDecimal("12345678901234567890000")), "19 digits");
         String rounded = strict.targetValueProblem(float63, new BigDecimal("0.12345678901234567891"));
-        assertTrue(rounded.contains("has 20 significant digits, but the FLOAT column keeps 19"), rounded);
+        assertTrue(rounded.contains("has more significant digits than the FLOAT column keeps (19)"), rounded);
     }
 }

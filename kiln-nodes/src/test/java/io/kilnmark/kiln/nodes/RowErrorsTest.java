@@ -97,8 +97,8 @@ class RowErrorsTest {
         try (Harness h = payments(new Harness()).connect("out", RowErrors.PORT)) {
             NodeException e = assertThrows(NodeException.class, () -> h.run(new ComputeFactory(),
                 computeConfig(RowErrors.MAX_ERRORS, 1)));
-            assertEquals("2 rows failed, more than its max_errors of 1; the run stops. The failing rows so far went to "
-                + "its errors port", e.getMessage());
+            assertEquals("2 of the 24 rows so far failed, more than its max_errors of 1; the run stops. The failing "
+                + "rows so far went to its errors port", e.getMessage());
         }
         try (Harness h = payments(new Harness()).connect("out", RowErrors.PORT)) {
             h.run(new ComputeFactory(), computeConfig(RowErrors.MAX_ERRORS, 2, RowErrors.MAX_SHARE, 0.1));
@@ -183,6 +183,17 @@ class RowErrorsTest {
         assertEquals("expression_failed", f.code());
         assertEquals(RowErrors.GENERIC, f.message());
         assertNull(plain.code());
+    }
+
+    @Test
+    void aFailureNotKnownToBeAboutTheRowStopsTheRunEvenWithTheErrorsPort() throws Exception {
+        Map<String, Object> columns = new LinkedHashMap<>();
+        columns.put("part", "split_part(amount, '-', 0)");
+        try (Harness h = payments(new Harness()).connect("out", RowErrors.PORT)) {
+            NodeException e = assertThrows(NodeException.class, () -> h.run(new ComputeFactory(),
+                config("columns", columns)));
+            assertTrue(e.getMessage().startsWith("column part: split_part's field number cannot be 0"), e.getMessage());
+        }
     }
 
     @Test

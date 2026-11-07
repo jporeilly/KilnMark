@@ -453,9 +453,12 @@ class MySqlConnectorTest {
         assertEquals("2024-06-01 00:00:00.000000", MySqlWriteSql.temporal(Instant.parse("2024-06-01T01:00:00+01:00")),
             "an instant in UTC");
         assertTrue(MY.valueProblem(Kind.FLOAT64, Double.NaN).contains("NaN"));
-        assertTrue(MY.valueProblem(Kind.FLOAT32, Float.POSITIVE_INFINITY).contains("Infinity"));
-        assertTrue(MY.valueProblem(Kind.DATE, LocalDate.of(-44, 3, 15)).contains("year -44"));
-        assertTrue(MY.valueProblem(Kind.TIMESTAMP, LocalDateTime.of(10000, 1, 1, 0, 0)).contains("10000"));
+        assertTrue(MY.valueProblem(Kind.FLOAT32, Float.POSITIVE_INFINITY).contains("infinity"));
+        // the problem names the limits, never the value (CLAUDE.md, "Writing")
+        String bc = MY.valueProblem(Kind.DATE, LocalDate.of(-44, 3, 15));
+        assertTrue(bc.contains("outside what MySQL dates hold (0 to 9999)") && !bc.contains("-44"), bc);
+        String far = MY.valueProblem(Kind.TIMESTAMP, LocalDateTime.of(10000, 1, 1, 0, 0));
+        assertTrue(far.contains("outside what MySQL dates hold") && !far.contains("10000"), far);
         assertNull(MY.valueProblem(Kind.TEXT, "zero\0 is fine in MySQL"));
         assertNull(MY.valueProblem(Kind.INT64, null));
         assertEquals(1000, MY.defaultBatchSize("upsert"));
