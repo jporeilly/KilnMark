@@ -130,6 +130,14 @@ class StarterPackApiTest {
     @Test
     @Order(1)
     void onlyAdminsTurnItAndEveryoneSeesWhetherItIsOn() throws Exception {
+        // the pack's folder an earlier run left in a files root other runs share: this run starts without it
+        if (Files.exists(folder())) {
+            try (var walk = Files.walk(folder())) {
+                for (Path p : walk.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                    Files.delete(p);
+                }
+            }
+        }
         makeSamplesDatabase(db);
         String viewer = Tokens.newToken("viewer", false);
         Tokens.as(viewer).get("/api/v1/starter-pack").then().statusCode(200).body("on", equalTo(false));

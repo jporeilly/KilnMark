@@ -52,6 +52,7 @@ public class SourceService {
     private final SourceChecks checks;
 
     private final HostPolicy hosts;
+    private final KilnmarkConfig config;
 
     public SourceService(GraphStore store, SecretBox secrets, Connectors connectors, SourceChecks checks,
                          KilnmarkConfig config) {
@@ -60,6 +61,7 @@ public class SourceService {
         this.connectors = connectors;
         this.checks = checks;
         this.hosts = HostPolicy.of(config);
+        this.config = config;
     }
 
     /**
@@ -75,9 +77,17 @@ public class SourceService {
         return store.source(name).orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND, "No source called " + name));
     }
 
+    /**
+     * The connector for a kind a source may have here: on production never the Starter Pack's example
+     * data (ADR 0051), for a source added by hand or in a bulk import alike.
+     */
     Connector connector(String kind) {
+        if (!io.kilnmark.server.starter.ModeCheck.kindAllowed(kind, config)) {
+            throw new IllegalArgumentException(io.kilnmark.server.starter.ModeCheck.SAMPLE_DATA_REFUSED);
+        }
         return connectors.get(kind).orElseThrow(() -> new IllegalArgumentException("kind: unknown kind '" + kind
-            + "'; this server supports " + String.join(", ", connectors.all().stream().map(Connector::kind).toList())));
+            + "'; this server supports " + String.join(", ", connectors.all().stream().map(Connector::kind)
+                .filter(k -> io.kilnmark.server.starter.ModeCheck.kindAllowed(k, config)).toList())));
     }
 
     /** A saved source as its connector sees it, with its secret decrypted. */

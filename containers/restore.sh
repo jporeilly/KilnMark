@@ -148,6 +148,10 @@ mode_of() {
 backup_mode=$(mode_of kilnmark_restoring)
 live_mode=$(mode_of kilnmark)
 want_mode=${KILNMARK_EXPECTED_MODE:-$(sed -n 's/^KILNMARK_MODE=//p' .env 2>/dev/null | tail -n 1 | tr -d '\r')}
+if [ -z "$live_mode" ] && [ -z "$want_mode" ]; then
+  echo "Cannot tell this install's deployment mode: its database has none recorded and neither KILNMARK_EXPECTED_MODE nor .env names one. Restore through the control script (kilnmark.sh restore). Nothing was changed." >&2
+  exit 1
+fi
 if [ -z "$backup_mode" ]; then
   echo "The backup has no deployment mode recorded: it is from before deployment modes (release 0.1.1 or earlier, a preview), which cannot be restored into this release. Install Kilnmark afresh. Nothing was changed." >&2
   exit 1
@@ -182,9 +186,9 @@ if $restore_keycloak; then
     < "$src/keycloak-db.dump"
 
   # Keycloak's database must be this backup's install's: the id and mode its realm carries (the
-  # people commands keep them there), where it has them. A production install's never holds the
-  # Starter Pack's group (its mark) or example people (at kilnmark.com). Checked before anything is
-  # stopped or replaced.
+  # control script keeps them there at every start). A production install's must carry them, and
+  # never holds the Starter Pack's group (its mark) or example people (by their user names, which
+  # nobody can change). Checked before anything is stopped or replaced.
   stage="checking Keycloak's database in the backup"
   kc_restoring() {
     $compose exec -T keycloak-db psql -U keycloak -d keycloak_restoring -X -q -At -v ON_ERROR_STOP=1 -c "$1" | tr -d '\r'
@@ -198,9 +202,13 @@ if $restore_keycloak; then
     echo "Keycloak's database in the backup belongs to another Kilnmark install, or another mode: the backup is not whole. Nothing was changed." >&2
     exit 1
   fi
+  if [ "$backup_mode" = production ] && { [ -z "$kc_id" ] || [ -z "$kc_mode" ]; }; then
+    echo "Keycloak's database in the backup does not say which install it belongs to (taken before the control script kept that on its realm), so it cannot be told from another install's: take a new backup with this version. Nothing was changed." >&2
+    exit 1
+  fi
   if [ "$backup_mode" = production ]; then
     pack=$(kc_restoring "SELECT count(*) FROM group_attribute WHERE name = 'kilnmark_starter_pack'")
-    examples=$(kc_restoring "SELECT count(*) FROM user_entity u JOIN realm r ON r.id = u.realm_id WHERE r.name = 'kilnmark' AND lower(u.email) LIKE '%@kilnmark.com'")
+    examples=$(kc_restoring "SELECT count(*) FROM user_entity u JOIN realm r ON r.id = u.realm_id WHERE r.name = 'kilnmark' AND u.username IN ('vera.lane@kilnmark.com', 'sam.okafor@kilnmark.com', 'dana.reyes@kilnmark.com', 'priya.shah@kilnmark.com', 'alex.morgan@kilnmark.com')")
     if [ "$pack" != 0 ] || [ "$examples" != 0 ]; then
       echo "Keycloak's database in the backup has the Starter Pack's group or example people, which a production install never has: it is not this install's. Nothing was changed." >&2
       exit 1

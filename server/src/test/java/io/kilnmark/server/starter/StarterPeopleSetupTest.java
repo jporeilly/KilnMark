@@ -264,13 +264,29 @@ class StarterPeopleSetupTest {
         assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark/users/" + alexId, alex).statusCode());
         assertNotNull(user("a.morgan@example.test"), "renamed");
 
-        ok(setup("", STARTER, "", ""));         // KILNMARK_STARTER removed: the next up removes them
-        for (String person : PEOPLE.subList(1, PEOPLE.size())) {
-            assertNull(user(person), person + " removed once the switch went");
+        // an example person given another email (by an admin: people may not change their own) is still one
+        com.fasterxml.jackson.databind.node.ObjectNode dana = (com.fasterxml.jackson.databind.node.ObjectNode)
+            user("dana.reyes@kilnmark.com");
+        dana.put("email", "dana@bank.example");
+        assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark/users/" + dana.path("id").asText(), dana).statusCode());
+
+        ExecResult gone = setup("", STARTER, "", "");   // KILNMARK_STARTER removed: the next up removes them
+        ok(gone);
+        for (String person : PEOPLE.subList(1, PEOPLE.size() - 1)) {
+            assertNull(user(person), person + " removed once the switch went, by user name, whatever their email");
         }
         assertNotNull(user("vera.lane@kilnmark.com"), "never someone the pack did not make");
-        assertEquals(404, call(admin(), "GET", "/admin/realms/kilnmark/users/" + alexId, null).statusCode(),
-            "the renamed example admin is removed too");
+        // one an admin renamed is no longer known for an example person: only taken out of the group, and said
+        assertEquals(200, call(admin(), "GET", "/admin/realms/kilnmark/users/" + alexId, null).statusCode());
+        assertTrue(gone.getStdout().contains("took a.morgan@example.test out of the group kilnmark-starter-pack"), gone.getStdout());
+        assertEquals(204, call(admin(), "DELETE", "/admin/realms/kilnmark/users/" + alexId, null).statusCode());
+        // and from now on nobody's user name changes, nor may people change their own email or names
+        assertFalse(realm().path("editUsernameAllowed").asBoolean(), "user names are fixed");
+        for (JsonNode a : profile().path("attributes")) {
+            if (List.of("email", "firstName", "lastName").contains(a.path("name").asText())) {
+                assertEquals("[\"admin\"]", a.path("permissions").path("edit").toString(), a.toString());
+            }
+        }
         assertEquals(404, group(GROUP), "the empty group goes too");
         assertEquals(200, group("/" + DECOY), "a team's own group stays");
         assertEquals(200, group("/" + DECOY + GROUP), "and its subgroup of that name");
@@ -715,6 +731,33 @@ class StarterPeopleSetupTest {
         // someone waiting with no password at all, or only the marked temporary one, is activated
         ok(activate(PRODUCTION, "ada@bank.example", SECOND));
         ok(activate(PRODUCTION, "ben@bank.example", SECOND));
+
+        // a temporary password someone intercepted, with a one-time code set up on it (Keycloak asks for
+        // the code before the new password) and then left: it still expires, and the code goes with it
+        partialImport(List.of(Map.of("username", "tom@bank.example", "email", "tom@bank.example", "emailVerified", true,
+            "firstName", "Tom", "lastName", "Ng", "enabled", true, "requiredActions", List.of("UPDATE_PASSWORD"),
+            "credentials", List.of(Map.of("type", "password", "value", VERAS_OWN, "temporary", true), Map.of("type", "otp", "secretData", "{\"value\":\"JBSWY3DPEHPK3PXP\"}",
+                "credentialData", "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}")))));
+        String tom = id("tom@bank.example");
+        // marked as the people commands mark theirs
+        for (JsonNode c : JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark/users/" + tom + "/credentials", null).body())) {
+            if ("password".equals(c.path("type").asText())) {
+                HttpResponse<String> l = HTTP.send(HttpRequest.newBuilder(URI.create(base() + "/admin/realms/kilnmark/users/" + tom
+                    + "/credentials/" + c.path("id").asText() + "/userLabel")).header("Authorization", "Bearer " + admin())
+                    .header("Content-Type", "text/plain").PUT(HttpRequest.BodyPublishers.ofString("kilnmark-temporary")).build(),
+                    HttpResponse.BodyHandlers.ofString());
+                assertEquals(204, l.statusCode(), l.body());
+            }
+        }
+        assertEquals(2, JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark/users/" + tom + "/credentials", null)
+            .body()).size(), "the marked password and a one-time code");
+        r = run(PRODUCTION, "KILNMARK_PEOPLE_ACTION=expire KILNMARK_SETUP_NOW_MS=" + at, "");
+        ok(r);
+        assertTrue(r.getStdout().contains("disabled tom@bank.example: their temporary password was not used"), r.getStdout());
+        JsonNode left = JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark/users/" + tom + "/credentials", null).body());
+        assertEquals(1, left.size(), left.toString());
+        assertEquals("password", left.path(0).path("type").asText(), "the code set up on it is gone");
+        ok(activate(PRODUCTION, "tom@bank.example", SECOND));   // and the real person can be given a new one
     }
 
     @Test
@@ -733,6 +776,15 @@ class StarterPeopleSetupTest {
         assertNotEquals(0, r.getExitCode());
         assertNull(user("eve@bank.example"), "removed again");
         assertEquals(204, call(admin(), "DELETE", "/admin/realms/kilnmark/default-groups/" + pack, null).statusCode());
+        // nor in a Kilnmark group the row did not name: admins as a default group would make an import admins
+        String admins = JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark/group-by-path/kilnmark-admins", null).body())
+            .path("id").asText();
+        assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark/default-groups/" + admins, null).statusCode());
+        r = importPeople(STARTER, RITAS_FIRST, "email,first_name,last_name,groups" + NL + "fay@bank.example,Fay,Ross,kilnmark-viewers" + NL);
+        assertNotEquals(0, r.getExitCode());
+        assertTrue(r.getStderr().contains("was put in the group kilnmark-admins"), r.getStderr());
+        assertNull(user("fay@bank.example"), "removed again");
+        assertEquals(204, call(admin(), "DELETE", "/admin/realms/kilnmark/default-groups/" + admins, null).statusCode());
 
         // someone put in the pack's group by hand, not at kilnmark.com: only taken out of it
         assertEquals(201, call(admin(), "POST", "/admin/realms/kilnmark/users", Map.of("username", "pat@bank.example",
@@ -786,5 +838,9 @@ class StarterPeopleSetupTest {
         JsonNode attributes = realm().path("attributes");
         assertEquals(id, attributes.path("kilnmark_install_id").asText(), attributes.toString());
         assertEquals(PRODUCTION, attributes.path("kilnmark_mode").asText());
+        // stamp: that alone, as up asks after the server's first start
+        String later = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+        ok(run(PRODUCTION, "KILNMARK_PEOPLE_ACTION=stamp KILNMARK_INSTALL_ID=" + later, ""));
+        assertEquals(later, realm().path("attributes").path("kilnmark_install_id").asText());
     }
 }

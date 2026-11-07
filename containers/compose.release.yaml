@@ -62,11 +62,11 @@ services:
       PGSSLMODE: require
     # Its two passwords, the database's and the samples login's (KILNMARK_DB_PASSWORD and
     # KILNMARK_SAMPLES_DB_PASSWORD), are read from a file holding only them, which the control
-    # script writes for each run in a folder of its own (KILNMARK_SECRETS_DIR, under config/run) and
+    # script writes for each run in a folder of its own (KILNMARK_RUN_DIR, under config/run) and
     # removes once the run is over: never config/.env whole, never its environment, which
     # podman-compose puts on podman's command line. No default: unset, nothing is made.
     volumes:
-      - ${KILNMARK_SECRETS_DIR:-../../config/run}/samples-db.env:/run/kilnmark/env:ro,z
+      - ${KILNMARK_RUN_DIR:-../../config/run}/samples-db.env:/run/kilnmark/env:ro,z
     cap_drop: [ALL]
     security_opt: [no-new-privileges]
     depends_on:
@@ -281,11 +281,11 @@ services:
     volumes:
       - ./containers/keycloak/setup.sh:/opt/kilnmark/setup.sh:ro,Z
       # Keycloak's admin password and the client secret, in a file holding only them, which the
-      # control script writes for each run in a folder of its own (KILNMARK_SECRETS_DIR, under
+      # control script writes for each run in a folder of its own (KILNMARK_RUN_DIR, under
       # config/run) and removes once the run is over: never config/.env whole, never its environment,
       # which podman-compose puts on podman's command line, where other users of the machine can
       # read it.
-      - ${KILNMARK_SECRETS_DIR:-../../config/run}/keycloak-setup.env:/run/kilnmark/env:ro,z
+      - ${KILNMARK_RUN_DIR:-../../config/run}/keycloak-setup.env:/run/kilnmark/env:ro,z
     depends_on:
       keycloak:
         condition: service_healthy

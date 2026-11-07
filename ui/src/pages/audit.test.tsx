@@ -96,6 +96,7 @@ group("the audit log page", () => {
         "auth.person_activated",
         "auth.person_disabled",
         "server.start_refused",
+        "server.install_id_made",
         "access.review",
         "unmask.requested",
         "unmask.approved",

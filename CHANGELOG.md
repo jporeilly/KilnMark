@@ -260,10 +260,31 @@ details.
   anything, refuses a backup whose `backup.txt` differs from its dump, a Keycloak database whose
   realm names another install or mode, and, on production, one holding the Starter Pack's group or
   anyone at kilnmark.com.
-- **A first start that fails after migrating no longer strands a new install**: the server marks a
-  database new before its first migration (no migration history yet), durably, straight after it,
-  and records the mode only into a database with that mark, which then goes. A database migrated
-  before modes has none, and is refused, with no clock compared.
+- **A first start stopped or failing part way no longer strands a new install**: before its first
+  migration the server writes a mark that the database is new, in a table of its own
+  (`kilnmark_first_start.mark`) made in a transaction of its own, and records the mode only into a
+  database with that mark, which then goes. A start stopped during the migrations leaves it, so the
+  next start records the mode; a database migrated before modes has none, and is refused, with no
+  clock compared. An install id made later, for a database whose mode an earlier build recorded,
+  is logged and audited (`server.install_id_made`).
+- **Production never takes the example data as a source**: a source of kind `sample-data` is
+  refused on production, added by hand or imported, and **Add connection** no longer offers it there.
+- **People cannot change who they look like in the bundled Keycloak**: setup makes email, first and
+  last name editable by admins only, and user names fixed. The Starter Pack's removal, and a
+  restore's check of a production Keycloak database, know the example people by their user names,
+  never their email. Someone made by the people commands who lands in a Kilnmark group the request
+  did not name (a default group) is deleted again, and the command stops.
+- **A temporary password with a one-time code set up on it still expires**, and the code is taken
+  away again, so the real person can be activated.
+- **Every start tells the realm which install it belongs to**, once the server has recorded it, and a
+  production restore refuses a Keycloak database whose realm does not say; `restore.sh` run by hand
+  refuses when it cannot tell this install's mode.
+- **The hourly task and timer run only a script nobody else may change**: on Windows `up` makes the
+  install root yours alone and does not set the task up while anyone else may write `kilnmark.ps1`
+  or its folder; on Linux as root, only when root owns the root and the script. `KILNMARK_PROJECT`
+  must be lower-case letters, digits, `-` and `_`. `uninstall --purge` keeps, and names, an image
+  another install on the machine still uses. The one-offs' per-run folder setting is now
+  `KILNMARK_RUN_DIR`.
 - **Guard rails**: the marking, the audit events `starter.added` (a refused attempt too),
   `starter.removed` (naming what it deleted; each schedule deleted with a sample is recorded as a
   `schedule.deleted`) and `starter.people`, and the access review's new `example` column

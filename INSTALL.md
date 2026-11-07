@@ -179,7 +179,7 @@ written `-Offline`, `-Root`, `-SkipVerify` and so on.
 | `people list` | Lists the realm's people, their Kilnmark groups, whether they are active or waiting to be activated, and who has not yet chosen their own password |
 | `people expire` | Disables anyone whose temporary password went unused for longer than `KILNMARK_PEOPLE_ACTIVATION_HOURS`. `up` sets it to run every hour (a systemd timer on Linux, a scheduled task on Windows); you need not run it yourself |
 | `starter people [--new-password \| --remove]` | On a Starter Pack install, the five example people in the bundled Keycloak, with `KILNMARK_STARTER=allowed`: adds them, gives them all a new password, or removes them. You type the password (it is not shown) or pipe it in, and it is kept nowhere (below, "Try Kilnmark with the Starter Pack") |
-| `uninstall [--purge]` | Stops Kilnmark. `--purge` also deletes its volumes and images, once you type `DELETE` |
+| `uninstall [--purge]` | Stops Kilnmark. `--purge` also deletes its volumes and images, once you type `DELETE`; an image another install on the machine still uses is kept, and named |
 
 Every command writes what it said to `logs`, and ends with a failure code when it fails, so it can
 be scheduled. No command prints a secret. Without cosign, `install`, `upgrade`, `load-images` and
@@ -507,14 +507,24 @@ which `up` sets up with the bundled Keycloak and `uninstall` removes:
 - on **Windows**, a scheduled task of yours, `Kilnmark <project> people expire`, which runs while
   you are signed in to Windows, as the Podman machine or Docker Desktop does.
 
+The task or timer runs the control script for you every hour, so `up` sets it up only where nobody
+else may change that script: on Windows it first makes the install root yours alone, and says so
+and sets nothing up while anyone else may still write `kilnmark.ps1` or its folder; on Linux, run
+as root, only when root owns the install root and `kilnmark.sh` and nobody else may write them (run
+Kilnmark as its own account instead, with `prepare`). `KILNMARK_PROJECT`, which names the task, is
+lower-case letters, digits, `-` and `_`. A temporary password with a one-time code set up on it,
+but no new password, still expires, and the code is taken away again.
+
 `status` and `check` say whether it is set up. While Keycloak is stopped nobody can sign in, so
 `people expire` does nothing then, and the next start expires them first. The password goes to `keycloak-setup` on its input only:
 never on the screen, in `.env`, a command line or `logs`. Someone already there with that email is
 left exactly as they are, their password and groups too, and reported as already there; running a
 command again changes nothing. Addresses at kilnmark.com, the Starter Pack's example people's, are
-refused, so a real person is never taken for an example one; people added this way are never in
-the pack's group, so removing the example people never removes them: should someone made land in
-it (the realm has it as a default group, say), they are deleted again and the command stops. The
+refused, so a real person is never taken for an example one; people added this way are in exactly
+the Kilnmark groups they were given, and never in the pack's group, so removing the example people
+never removes them: should someone made land in another group of Kilnmark's (the realm has it as a
+default group, say), they are deleted again and the command stops. People cannot change their own
+email, names or user name in the bundled Keycloak: an admin does, in its console. The
 commands act only where the mode Kilnmark recorded in its database is the one `.env` says, and stop
 when the database does not answer.
 Kilnmark's audit log records each person made (`auth.person_added`, with their groups), each import
@@ -621,9 +631,9 @@ Anyone who has the password can sign in as an example admin or as a designer who
 values: that is why they are only for trials and training.
 
 To take them out, run `starter people --remove`, or remove `KILNMARK_STARTER=allowed` from `.env`
-and run `kilnmark.sh up`: `keycloak-setup` then deletes the members of the pack's group at a
-kilnmark.com address, whatever they are called now, and the group. Anyone else someone put in the
-group is only taken out of it, and named; nobody outside it is touched.
+and run `kilnmark.sh up`: `keycloak-setup` then deletes the members of the pack's group whose user
+name is one of the five example addresses (user names cannot change), and the group. Anyone else
+someone put in the group is only taken out of it, and named; nobody outside it is touched.
 
 **Turn it off.** Under **Settings**, **Starter Pack**, choose **Turn off** and type `DELETE`.
 Kilnmark removes every sample in the Library, the pack's sources, the tables in `kilnmark_samples`

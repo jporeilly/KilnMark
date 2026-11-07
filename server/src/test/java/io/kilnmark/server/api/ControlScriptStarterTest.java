@@ -162,7 +162,7 @@ class ControlScriptStarterTest {
         assertFalse(c.contains("config/.env}:") || c.contains("KILNMARK_ENV_FILE"), "config/.env is never mounted");
         assertFalse(setup.contains("user: \"0\""), "keycloak-setup runs as the image's own user");
         for (String[] one : new String[][] {{"keycloak-setup", setup}, {"samples-db", samples}}) {
-            assertTrue(one[1].contains("- ${KILNMARK_SECRETS_DIR:-../../config/run}/" + one[0] + ".env:/run/kilnmark/env:ro,z"),
+            assertTrue(one[1].contains("- ${KILNMARK_RUN_DIR:-../../config/run}/" + one[0] + ".env:/run/kilnmark/env:ro,z"),
                 one[0]);
             assertTrue(one[1].contains("    cap_drop: [ALL]\n    security_opt: [no-new-privileges]\n"), one[0]);
             for (String secret : List.of("PASSWORD}", "SECRET}", "PASSWORD:?", "SECRET:?", "PASSWORD:-", "TOKEN}")) {
@@ -696,14 +696,29 @@ class ControlScriptStarterTest {
                 noRunSecretsLeft(root);
                 return new Admin(out, logsOf(root), List.copyOf(api.posted()));
             });
-            timerRules((settings, args) -> {
-                Path root = TIMER_ROOTS.computeIfAbsent("linux", k -> uncheckedRoot(false));
-                writeEnv(root, withApi(settings, api));
-                List<String> c = new ArrayList<>(List.of(shell, script));
-                c.addAll(args);
-                String out = withInput("", () -> run(c, root, works.toString().replace('\\', '/'), recordedAsEnv(settings, Map.of())));
-                noRunSecretsLeft(root);
-                return new Timer(out, unitsOf(root), "");
+            timerRules(new TimerRun() {
+                @Override
+                public Timer run(Map<String, String> settings, List<String> args, Map<String, String> outside, String input)
+                    throws Exception {
+                    Path root = root();
+                    writeEnv(root, withApi(settings, api));
+                    List<String> c = new ArrayList<>(List.of(shell, script));
+                    c.addAll(args);
+                    String out = withInput(input, () -> ControlScriptStarterTest.run(c, root, works.toString().replace('\\', '/'),
+                        recordedAsEnv(settings, outside)));
+                    noRunSecretsLeft(root);
+                    return new Timer(out, unitsOf(root), "");
+                }
+
+                @Override
+                public Path root() {
+                    return TIMER_ROOTS.computeIfAbsent("linux", k -> uncheckedRoot(false));
+                }
+
+                @Override
+                public boolean windows() {
+                    return false;
+                }
             });
         }
     }
@@ -762,15 +777,31 @@ class ControlScriptStarterTest {
                 noRunSecretsLeft(root);
                 return new Admin(out, logsOf(root), List.copyOf(api.posted()));
             });
-            timerRules((settings, args) -> {
-                Path root = TIMER_ROOTS.computeIfAbsent("windows", k -> uncheckedRoot(true));
-                writeEnv(root, withApi(settings, api));
-                List<String> c = new ArrayList<>(ps);
-                c.addAll(args.stream().map(a -> a.equals("--no-browser") ? "-NoBrowser" : a).toList());
-                String out = withInput("", () -> run(c, root, works.toString(), recordedAsEnv(settings, Map.of())));
-                noRunSecretsLeft(root);
-                Path log = root.resolve("schtasks.log");
-                return new Timer(out, "", Files.exists(log) ? Files.readString(log) : "");
+            timerRules(new TimerRun() {
+                @Override
+                public Timer run(Map<String, String> settings, List<String> args, Map<String, String> outside, String input)
+                    throws Exception {
+                    Path root = root();
+                    writeEnv(root, withApi(settings, api));
+                    List<String> c = new ArrayList<>(ps);
+                    c.addAll(args.stream().map(a -> a.equals("--no-browser") ? "-NoBrowser" : a.equals("--purge") ? "-Purge" : a)
+                        .toList());
+                    String out = withInput(input, () -> ControlScriptStarterTest.run(c, root, works.toString(),
+                        recordedAsEnv(settings, outside)));
+                    noRunSecretsLeft(root);
+                    Path log = root.resolve("schtasks.log");
+                    return new Timer(out, "", Files.exists(log) ? Files.readString(log) : "");
+                }
+
+                @Override
+                public Path root() {
+                    return TIMER_ROOTS.computeIfAbsent("windows", k -> uncheckedRoot(true));
+                }
+
+                @Override
+                public boolean windows() {
+                    return true;
+                }
             });
         }
     }
@@ -780,8 +811,20 @@ class ControlScriptStarterTest {
     }
 
     interface TimerRun {
-        /** {@code args}: the command's words, the same install root throughout, Kilnmark's API answering. */
-        Timer run(Map<String, String> settings, List<String> args) throws Exception;
+        /**
+         * {@code args}: the command's words, the same install root throughout, Kilnmark's API
+         * answering; {@code outside}: the script's own environment; {@code input}: its standard input.
+         */
+        Timer run(Map<String, String> settings, List<String> args, Map<String, String> outside, String input) throws Exception;
+
+        default Timer run(Map<String, String> settings, List<String> args) throws Exception {
+            return run(settings, args, Map.of(), "");
+        }
+
+        /** The install root the runs share. */
+        Path root();
+
+        boolean windows();
     }
 
     static final Map<String, Path> TIMER_ROOTS = new java.util.concurrent.ConcurrentHashMap<>();
@@ -801,6 +844,9 @@ class ControlScriptStarterTest {
             assertTrue(first.schtasks().contains("/Create /SC HOURLY /TN \"Kilnmark kilnmark people expire\"")
                 && first.schtasks().contains("kilnmark.ps1 people expire -Project kilnmark"), first.schtasks());
         }
+        // the install's id, as the server recorded it, handed to keycloak-setup at the start
+        assertTrue(Files.readString(t.root().resolve("up.log")).contains("install id [0e38a49e-ee00-4b1e-98f9-fe3c44e6fa09]"),
+            Files.readString(t.root().resolve("up.log")));
         Timer again = t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"));
         assertFalse(again.out().contains("Set up the hourly expiry"), "once: " + again.out());
         assertTrue(t.run(WITH_KEYCLOAK, List.of("status")).out().contains("People expiry: hourly"));
@@ -810,12 +856,40 @@ class ControlScriptStarterTest {
         assertTrue(without.units().isEmpty() || !without.units().contains("people expire"), without.units());
         assertTrue(t.run(WITH_KEYCLOAK, List.of("check")).out().contains("People expiry: not set up"));
         assertTrue(t.run(WITH_KEYCLOAK, List.of("up", "--no-browser")).out().contains("Set up the hourly expiry"));
+        // never a task or timer that runs a script others may change, as the user (Windows) or root (Linux)
+        if (t.windows()) {
+            Path ps1 = Files.writeString(t.root().resolve("kilnmark.ps1"), "# planted\r\n");
+            Process grant = new ProcessBuilder("icacls.exe", ps1.toString(), "/grant", "*S-1-1-0:(W)").redirectErrorStream(true)
+                .start();
+            grant.getInputStream().readAllBytes();
+            assertEquals(0, grant.waitFor());
+            Timer open = t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"));
+            assertTrue(open.out().contains("was not set up") && open.out().contains("may change"), open.out());
+            List<String> asked = open.schtasks().lines().filter(l -> !l.isBlank()).toList();
+            assertTrue(asked.get(asked.size() - 1).startsWith("/Delete"), "the task it had is taken away, none made: " + asked);
+            Files.delete(ps1);
+        } else {
+            Timer asRoot = t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"), Map.of("KILNMARK_TEST_UID", "0"), "");
+            assertTrue(asRoot.out().contains("was not set up: as root") && asRoot.out().contains("is not root's own"),
+                asRoot.out());
+        }
+        assertTrue(t.run(WITH_KEYCLOAK, List.of("up", "--no-browser")).out().contains("Set up the hourly expiry"));
+        // a project name the timer could not take is refused at once
+        String bad = t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"), Map.of("KILNMARK_PROJECT", "My Kilnmark"), "").out();
+        assertTrue(bad.contains("KILNMARK_PROJECT is lower-case letters"), bad);
         Timer gone = t.run(WITH_KEYCLOAK, List.of("uninstall"));
         assertTrue(gone.out().contains("Removed the hourly expiry"), gone.out());
         assertTrue(gone.units().isEmpty() || !gone.units().contains("people expire"), gone.units());
         if (!gone.schtasks().isEmpty()) {
             assertTrue(gone.schtasks().contains("/Delete /TN \"Kilnmark kilnmark people expire\""), gone.schtasks());
         }
+        // purge keeps an image another install's container still uses, and says so
+        Timer purged = t.run(WITH_KEYCLOAK, List.of("uninstall", "--purge"), Map.of("FAKE_IMAGE_IN_USE", "kilnmark-server"),
+            "DELETE");
+        assertTrue(purged.out().contains("Kept the images ghcr.io/jporeilly/kilnmark-server:9.9.9: other containers"),
+            purged.out());
+        String removed = Files.readString(t.root().resolve("rmi.log"));
+        assertTrue(removed.contains("kilnmark-postgres:9.9.9") && !removed.contains("kilnmark-server"), removed);
     }
 
     private static Path uncheckedRoot(boolean windows) {
@@ -891,10 +965,17 @@ class ControlScriptStarterTest {
                 + "echo %* | %SystemRoot%\\System32\\findstr.exe /c:\"install_id\" > nul && (echo 0e38a49e-ee00-4b1e-98f9-fe3c44e6fa09& exit /b 0)\r\n"
                 + "echo %* | %SystemRoot%\\System32\\findstr.exe /c:\"psql\" > nul && if \"%FAKE_RECORDED_MODE%\"==\"none\" exit /b 1\r\n"
                 + "echo %* | %SystemRoot%\\System32\\findstr.exe /c:\"psql\" > nul && (echo %FAKE_RECORDED_MODE%& exit /b 0)\r\n"
-                + "if \"%1\"==\"ps\" (echo Exited ^(0^) 2 seconds ago& exit /b 0)\r\n"
+                + "if not \"%1\"==\"ps\" goto notps\r\n"
+                + "echo %* | %SystemRoot%\\System32\\findstr.exe /c:\"ancestor=\" > nul || (echo Exited ^(0^) 2 seconds ago& exit /b 0)\r\n"
+                + "if not defined FAKE_IMAGE_IN_USE exit /b 0\r\n"
+                + "echo %* | %SystemRoot%\\System32\\findstr.exe /c:\"%FAKE_IMAGE_IN_USE%\" > nul && echo other_kilnmark_1\r\n"
+                + "exit /b 0\r\n"
+                + ":notps\r\n"
+                + "if \"%1\"==\"rmi\" (echo %2>> \"%FAKE_RMI_LOG%\"& exit /b 0)\r\n"
+                + "echo %* | %SystemRoot%\\System32\\findstr.exe /c:\" up -d\" > nul && echo install id [%KILNMARK_INSTALL_ID%]>> \"%FAKE_UP_LOG%\"\r\n"
                 + "if \"%1\"==\"logs\" (echo keycloak-setup: started& echo keycloak-setup: disabled old@bank.example: their temporary password was not used within 72 hours& exit /b 0)\r\n"
-                + "if not defined KILNMARK_SECRETS_DIR goto nosecrets\r\n"
-                + "set sd=%KILNMARK_SECRETS_DIR:/=\\%\r\n"
+                + "if not defined KILNMARK_RUN_DIR goto nosecrets\r\n"
+                + "set sd=%KILNMARK_RUN_DIR:/=\\%\r\n"
                 + "for %%I in (\"%sd%\") do set rn=%%~nxI\r\n"
                 + "%SystemRoot%\\System32\\findstr.exe /c:\"KILNMARK_KEYCLOAK_ADMIN_PASSWORD='kc admin #1'\" \"%KILNMARK_ROOT%\\config\\run\\%rn%\\keycloak-setup.env\" > nul 2> nul && %SystemRoot%\\System32\\findstr.exe /c:\"KILNMARK_OIDC_CLIENT_SECRET='bare-secret'\" \"%KILNMARK_ROOT%\\config\\run\\%rn%\\keycloak-setup.env\" > nul 2> nul && echo keycloak-setup: secrets [as compose reads them]\r\n"
                 + ":nosecrets\r\n"
@@ -922,10 +1003,13 @@ class ControlScriptStarterTest {
             + "if [ \"$1 $2\" = \"compose version\" ]; then exit 0; fi\n"
             + "case \"$*\" in *install_id*) echo 0e38a49e-ee00-4b1e-98f9-fe3c44e6fa09; exit 0 ;; *psql*) [ \"${FAKE_RECORDED_MODE-}\" != none ] || exit 1\n"
             + "  echo \"${FAKE_RECORDED_MODE:-starter-pack}\"; exit 0 ;; esac\n"
+            + "case \"$*\" in *\" up -d\"*) echo \"install id [${KILNMARK_INSTALL_ID-}]\" >> \"${FAKE_UP_LOG:-/dev/null}\" ;; esac\n"
+            + "case \"$*\" in ps*ancestor=*) case \"$*\" in *\"${FAKE_IMAGE_IN_USE:-no image in use}\"*) echo other_kilnmark_1 ;; esac; exit 0 ;; esac\n"
+            + "case \"$1\" in rmi) echo \"$2\" >> \"${FAKE_RMI_LOG:-/dev/null}\"; exit 0 ;; esac\n"
             + "case \"$1\" in ps) echo 'Exited (0) 2 seconds ago'; exit 0 ;; logs) echo 'keycloak-setup: started'\n"
             + "  echo 'keycloak-setup: disabled old@bank.example: their temporary password was not used within 72 hours'; exit 0 ;; esac\n"
-            + "f=\"${KILNMARK_ROOT-}/config/run/${KILNMARK_SECRETS_DIR##*/}/keycloak-setup.env\"\n"
-            + "if [ -n \"${KILNMARK_SECRETS_DIR-}\" ] && [ \"$(cat \"$f\" 2> /dev/null)\" = \"KILNMARK_KEYCLOAK_ADMIN_PASSWORD='kc admin #1'\n"
+            + "f=\"${KILNMARK_ROOT-}/config/run/${KILNMARK_RUN_DIR##*/}/keycloak-setup.env\"\n"
+            + "if [ -n \"${KILNMARK_RUN_DIR-}\" ] && [ \"$(cat \"$f\" 2> /dev/null)\" = \"KILNMARK_KEYCLOAK_ADMIN_PASSWORD='kc admin #1'\n"
             + "KILNMARK_OIDC_CLIENT_SECRET='bare-secret'\" ]; then echo 'keycloak-setup: secrets [as compose reads them]'; fi\n"
             + "pw=''; IFS= read -r -t 2 pw || true\n"
             + "echo \"podman run --name kilnmark_x -e KC_ADMIN_PASSWORD=" + LEAKED + " quay.io/keycloak/keycloak\" >&2\n"
@@ -1062,6 +1146,8 @@ class ControlScriptStarterTest {
         pb.environment().put("KILNMARK_SCHTASKS", fakeTimerTool(true).toString());
         pb.environment().put("FAKE_TIMER_LOG", root.resolve(System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT)
             .contains("win") ? "schtasks.log" : "systemctl.log").toString());
+        pb.environment().put("FAKE_RMI_LOG", root.resolve("rmi.log").toString());
+        pb.environment().put("FAKE_UP_LOG", root.resolve("up.log").toString());
         pb.environment().putAll(outside);
         Process p = pb.start();
         try (var in = p.getOutputStream()) {

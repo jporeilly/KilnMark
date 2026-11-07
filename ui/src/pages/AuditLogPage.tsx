@@ -23,6 +23,7 @@ export const ACTIONS: { value: string; label: string; tone: Tone }[] = [
   { value: "auth.person_activated", label: "Person activated", tone: "warn" },
   { value: "auth.person_disabled", label: "Person disabled", tone: "neutral" },
   { value: "server.start_refused", label: "Start refused", tone: "bad" },
+  { value: "server.install_id_made", label: "Install id made", tone: "neutral" },
   { value: "access.review", label: "Access review viewed", tone: "neutral" },
   { value: "unmask.requested", label: "Sensitive values asked for", tone: "warn" },
   { value: "unmask.approved", label: "Sensitive values approved", tone: "warn" },
@@ -90,6 +91,9 @@ export function describe(e: AuditEvent): string {
   }
   if (e.action === "auth.person_disabled") {
     return `Disabled ${String(d.person ?? "")}: their temporary password went unused`;
+  }
+  if (e.action === "server.install_id_made") {
+    return "This install was given an id of its own: backups taken before do not name it, so take a new one";
   }
   if (e.action === "server.start_refused") {
     return String(d.reason ?? "");

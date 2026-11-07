@@ -100,7 +100,9 @@ A restore puts Kilnmark back as it was when the backup was taken. Everything sin
    Pack install), and only a whole one: before anything is stopped, it refuses a backup whose
    `backup.txt` names another mode or install than its dump does (or neither: a backup taken before
    they were recorded), a Keycloak database whose realm names another install or mode, and, on
-   production, a Keycloak database holding the Starter Pack's group or anyone at kilnmark.com.
+   production, a Keycloak database whose realm does not say which install it is of (take a new
+   backup with this version), or holding the Starter Pack's group or example people. Run by hand,
+   `restore.sh` refuses when neither the database nor `.env` says this install's mode.
    With `--yes`, it:
    - restores the backup into a database of its own, `kilnmark_restoring`, while Kilnmark keeps
      running. If that fails, nothing has changed: Kilnmark still runs on its own database, and the

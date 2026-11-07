@@ -48,6 +48,7 @@ class BackupModeAndInstallTest {
             e.put("FAKE_KC_MODE", kcMode);
             e.put("FAKE_KC_PACK", kcPack);
             e.put("FAKE_KC_EXAMPLES", kcExamples);
+            e.put("FAKE_ZERO", "0");
             return e;
         }
     }
@@ -61,8 +62,11 @@ class BackupModeAndInstallTest {
         Answers good = new Answers("production", ID, "production", ID, "production", "0", "0");
         String ok = r.run("production", "production", ID, good);
         assertTrue(ok.contains(PASSED), ok);
-        // Keycloak's database with no install recorded on its realm yet: by the group and people alone
-        assertTrue(r.run("production", "production", ID, new Answers("production", ID, "production", "-", "-", "0", "0"))
+        // on production, a Keycloak database whose realm does not say which install it is of is refused;
+        // a Starter Pack install's is checked by the rest alone
+        String unnamed = r.run("production", "production", ID, new Answers("production", ID, "production", "-", "-", "0", "0"));
+        assertTrue(unnamed.contains("does not say which install it belongs to") && !unnamed.contains(PASSED), unnamed);
+        assertTrue(r.run("starter-pack", "starter-pack", ID, new Answers("starter-pack", ID, "starter-pack", "-", "-", "1", "5"))
             .contains(PASSED));
         // backup.txt from before the mode and id were recorded, or naming another install's
         for (String[] file : new String[][] {{"-", ID}, {"production", "-"}}) {
@@ -83,7 +87,7 @@ class BackupModeAndInstallTest {
             assertTrue(out.contains("belongs to another Kilnmark install") && !out.contains(PASSED), out);
         }
         // on production, never a Keycloak database with the Starter Pack's group or example people
-        for (Answers a : List.of(new Answers("production", ID, "production", "-", "-", "1", "0"),
+        for (Answers a : List.of(new Answers("production", ID, "production", ID, "production", "1", "0"),
             new Answers("production", ID, "production", ID, "production", "0", "2"))) {
             String out = r.run("production", "production", ID, a);
             assertTrue(out.contains("has the Starter Pack's group or example people") && !out.contains(PASSED), out);
@@ -108,6 +112,20 @@ class BackupModeAndInstallTest {
             return run(List.of(bash, Path.of("../containers/restore.sh").toAbsolutePath().toString().replace('\\', '/'),
                 backup.toString().replace('\\', '/'), "--yes"), release, env);
         });
+    }
+
+    /** restore.sh run by hand where neither the database nor .env says this install's mode: refused. */
+    @Test
+    void theLinuxRestoreRefusesWhenItCannotTellThisInstallsMode() throws Exception {
+        String bash = bash();
+        Path release = release("production");
+        Files.writeString(release.resolve(".env"), "COMPOSE_PROFILES=auth\n");
+        Map<String, String> env = new Answers("production", ID, "-", ID, "production", "0", "0").env();
+        env.put("KILNMARK_COMPOSE", fakeCompose().toString().replace('\\', '/'));
+        env.put("KILNMARK_KEYCLOAK", "on");
+        String out = run(List.of(bash, Path.of("../containers/restore.sh").toAbsolutePath().toString().replace('\\', '/'),
+            backup("production", ID).toString().replace('\\', '/'), "--yes"), release, env);
+        assertTrue(out.contains("Cannot tell this install's deployment mode") && !out.contains(PASSED), out);
     }
 
     @Test
@@ -210,7 +228,8 @@ class BackupModeAndInstallTest {
             + "  *keycloak_restoring*kilnmark_install_id*) say \"$FAKE_KC_ID\" ;;\n"
             + "  *keycloak_restoring*\"'kilnmark_mode'\"*) say \"$FAKE_KC_MODE\" ;;\n"
             + "  *keycloak_restoring*group_attribute*) say \"$FAKE_KC_PACK\" ;;\n"
-            + "  *keycloak_restoring*user_entity*) say \"$FAKE_KC_EXAMPLES\" ;;\n"
+            + "  *keycloak_restoring*\"u.username IN (\"*) say \"$FAKE_KC_EXAMPLES\" ;;\n"
+            + "  *keycloak_restoring*user_entity*) say 0 ;;\n"
             + "  *\"-d kilnmark_restoring\"*deployment_mode*) say \"$FAKE_BACKUP_MODE\" ;;\n"
             + "  *\"-d kilnmark_restoring\"*install_id*) say \"$FAKE_BACKUP_ID\" ;;\n"
             + "  *\"-d kilnmark \"*deployment_mode*) say \"$FAKE_LIVE_MODE\" ;;\n"
@@ -233,7 +252,7 @@ class BackupModeAndInstallTest {
             + "if \"%1\"==\"ps\" (echo fakeid& exit /b 0)\r\n");
         String[][] answers = {{"keycloak_restoring", "kilnmark_install_id", "FAKE_KC_ID"},
             {"keycloak_restoring", "'kilnmark_mode'", "FAKE_KC_MODE"}, {"keycloak_restoring", "group_attribute", "FAKE_KC_PACK"},
-            {"keycloak_restoring", "user_entity", "FAKE_KC_EXAMPLES"}, {"-d kilnmark_restoring", "deployment_mode", "FAKE_BACKUP_MODE"},
+            {"keycloak_restoring", "u.username IN (", "FAKE_KC_EXAMPLES"}, {"keycloak_restoring", "user_entity", "FAKE_ZERO"}, {"-d kilnmark_restoring", "deployment_mode", "FAKE_BACKUP_MODE"},
             {"-d kilnmark_restoring", "install_id", "FAKE_BACKUP_ID"}, {"-d kilnmark ", "deployment_mode", "FAKE_LIVE_MODE"},
             {"-d kilnmark ", "install_id", "FAKE_LIVE_ID"}};
         for (String[] a : answers) {

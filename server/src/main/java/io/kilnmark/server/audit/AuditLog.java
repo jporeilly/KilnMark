@@ -154,6 +154,11 @@ public class AuditLog {
      */
     public static final String STARTER_PEOPLE = "starter.people";
     /**
+     * The server made the install its own id (ADR 0051) for a database whose mode an earlier build had
+     * recorded without one; detail: mode. Backups taken before do not name it.
+     */
+    public static final String INSTALL_ID_MADE = "server.install_id_made";
+    /**
      * A pipeline's owners were set (ADR 0053); detail: before and after, the sign-in names and team
      * addresses. Target: the pipeline's name.
      */
@@ -170,7 +175,7 @@ public class AuditLog {
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
         SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, MAX_RUNS_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
         SIGN_OUT, PERSON_ADDED, PEOPLE_IMPORTED, PERSON_ACTIVATED, PERSON_DISABLED, START_REFUSED, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED, SCHEDULE_SET,
-        SCHEDULE_DELETED, SCHEDULE_PAUSED, STARTER_PACK_ADDED, STARTER_PACK_REMOVED, STARTER_PEOPLE, PIPELINE_OWNERS_SET,
+        SCHEDULE_DELETED, SCHEDULE_PAUSED, STARTER_PACK_ADDED, STARTER_PACK_REMOVED, STARTER_PEOPLE, INSTALL_ID_MADE, PIPELINE_OWNERS_SET,
         FLOW_OWNERS_SET, FLOW_RUN_AGAIN);
 
     /** The most events one request returns. */

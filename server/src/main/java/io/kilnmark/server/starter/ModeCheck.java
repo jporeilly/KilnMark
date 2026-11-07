@@ -151,6 +151,7 @@ public class ModeCheck {
             return problem;
         }
         String[] refusal = new String[1];
+        boolean[] idMadeLate = new boolean[1];
         String recorded = db.tx(c -> {
             boolean first;
             try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.server_setting WHERE key = ?")) {
@@ -159,7 +160,7 @@ public class ModeCheck {
                     first = !rs.next();
                 }
             }
-            String newMark = RECORDED.equals(key) ? io.kilnmark.server.DatabaseTls.NEW_DATABASE : key + "_new";
+            String newMark = RECORDED.equals(key) ? io.kilnmark.server.DatabaseTls.NEW_DATABASE : key;
             if (first && !rules.anyDatabase() && !markedNew(c, newMark)) {
                 refusal[0] = PREDATES;
                 return null;
@@ -176,16 +177,22 @@ public class ModeCheck {
                     LOG.infof("Deployment mode recorded at first start: %s", configured);
                 }
             }
-            // the install's own id, beside the mode: a backup carries both
+            // the install's own id, beside the mode: a backup carries both. One made for a database
+            // that had its mode already (recorded by an earlier build) is said and audited below.
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.server_setting (key, value, updated_by) "
                 + "VALUES (?, ?, 'server (first start)') ON CONFLICT (key) DO NOTHING")) {
                 ps.setString(1, RECORDED.equals(key) ? INSTALL_ID : key + "_install_id");
                 ps.setString(2, java.util.UUID.randomUUID().toString());
-                ps.executeUpdate();
+                if (ps.executeUpdate() == 1 && !first) {
+                    idMadeLate[0] = true;
+                }
             }
-            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.server_setting WHERE key = ?")) {
-                ps.setString(1, newMark);
-                ps.executeUpdate();
+            if (marksThere(c)) {
+                try (PreparedStatement ps = c.prepareStatement("DELETE FROM " + io.kilnmark.server.DatabaseTls.MARKS
+                    + " WHERE key = ?")) {
+                    ps.setString(1, newMark);
+                    ps.executeUpdate();
+                }
             }
             try (PreparedStatement ps = c.prepareStatement("SELECT value FROM kilnmark.server_setting WHERE key = ?")) {
                 ps.setString(1, key);
@@ -197,12 +204,34 @@ public class ModeCheck {
         if (refusal[0] != null) {
             return refusal[0];
         }
+        if (idMadeLate[0]) {
+            LOG.warn("This install had no id of its own (its mode was recorded by an earlier build): one is made now. "
+                + "Backups taken before now do not name it, so take a new one");
+            try {
+                audit.record(new io.kilnmark.server.audit.AuditLog.Actor("server (start)", null),
+                    io.kilnmark.server.audit.AuditLog.INSTALL_ID_MADE, key, java.util.Map.of("mode", configured));
+            } catch (RuntimeException e) {
+                LOG.warnf("Could not record the new install id in the audit log (%s)", e.getClass().getSimpleName());
+            }
+        }
         return mismatch(configured, recorded);
     }
 
+    /** Whether the table of new databases' marks is there (DatabaseTls makes it before a first migration). */
+    static boolean marksThere(java.sql.Connection c) throws java.sql.SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT to_regclass('" + io.kilnmark.server.DatabaseTls.MARKS
+            + "') IS NOT NULL"); ResultSet rs = ps.executeQuery()) {
+            return rs.next() && rs.getBoolean(1);
+        }
+    }
+
     /** Whether the database carries the mark of a new one (DatabaseTls, before its first migration). */
-    static boolean markedNew(java.sql.Connection c, String mark) throws java.sql.SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.server_setting WHERE key = ?")) {
+    public static boolean markedNew(java.sql.Connection c, String mark) throws java.sql.SQLException {
+        if (!marksThere(c)) {
+            return false;
+        }
+        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM " + io.kilnmark.server.DatabaseTls.MARKS
+            + " WHERE key = ?")) {
             ps.setString(1, mark);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next();
@@ -251,6 +280,21 @@ public class ModeCheck {
     public static boolean samplesAllowed(io.kilnmark.server.KilnmarkConfig config) {
         return starterPack(config);
     }
+
+    /** The kind of source that reads the Starter Pack's example tables bundled with the server. */
+    public static final String SAMPLE_DATA_KIND = "sample-data";
+
+    /**
+     * Whether a source of this kind may be added or listed here: every kind, but the Starter Pack's
+     * example data ({@link #SAMPLE_DATA_KIND}) only where the samples are allowed.
+     */
+    public static boolean kindAllowed(String kind, io.kilnmark.server.KilnmarkConfig config) {
+        return !SAMPLE_DATA_KIND.equals(kind) || samplesAllowed(config);
+    }
+
+    /** Why a source of the example data's kind is refused on production. */
+    public static final String SAMPLE_DATA_REFUSED = "kind: sample-data is the Starter Pack's example data, and this is "
+        + "a production install, which never has it. Nothing was changed";
 
     /** Whether the Starter Pack's example people may be here, and sign in: on a Starter Pack install only. */
     public static boolean examplePeopleAllowed(io.kilnmark.server.KilnmarkConfig config) {

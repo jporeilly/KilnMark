@@ -19,7 +19,7 @@ $DefaultRoot = 'C:\Kilnmark'
 $Project = 'kilnmark'; if ($env:KILNMARK_PROJECT) { $Project = $env:KILNMARK_PROJECT }
 # Compose fills ${NAME} from this process's environment before config\.env. These must mean what
 # config\.env says, as this script reads them (ADR 0051), so a value set outside never counts.
-$OneRun = @('KILNMARK_STARTER_PEOPLE_ACTION', 'KILNMARK_PEOPLE_ACTION', 'KILNMARK_PERSON_EMAIL', 'KILNMARK_PERSON_FIRST_NAME', 'KILNMARK_PERSON_LAST_NAME', 'KILNMARK_PERSON_GROUPS', 'KILNMARK_INSTALL_ID', 'KILNMARK_SECRETS_DIR')
+$OneRun = @('KILNMARK_STARTER_PEOPLE_ACTION', 'KILNMARK_PEOPLE_ACTION', 'KILNMARK_PERSON_EMAIL', 'KILNMARK_PERSON_FIRST_NAME', 'KILNMARK_PERSON_LAST_NAME', 'KILNMARK_PERSON_GROUPS', 'KILNMARK_INSTALL_ID', 'KILNMARK_RUN_DIR')
 foreach ($n in (@('KILNMARK_MODE', 'KILNMARK_STARTER', 'KILNMARK_ENV_FILE') + $OneRun)) {
     Remove-Item ('Env:' + $n) -ErrorAction SilentlyContinue
 }
@@ -203,7 +203,7 @@ function Assert-PeopleMode { $why = Get-PeopleModeProblem; if ($why) { Fail $why
 # The few secrets each one-off needs (keycloak-setup: Keycloak's admin password and the client
 # secret; samples-db: the database's password and the samples login's), each set in a file of its
 # own, in a new folder only you can open under config\run, for one run: compose mounts them
-# read-only (KILNMARK_SECRETS_DIR, relative to compose.yaml), never config\.env whole. Gone once the
+# read-only (KILNMARK_RUN_DIR, relative to compose.yaml), never config\.env whole. Gone once the
 # run is over (Remove-RunSecrets, in a finally); one a killed run left goes a day on.
 $script:RunSecrets = $null
 function Get-RunSecretLine([string]$Name) {
@@ -225,12 +225,12 @@ function Write-RunSecrets {
     $script:RunSecrets = $dir
     Write-UnixText (Join-Path $dir 'keycloak-setup.env') @((Get-RunSecretLine 'KILNMARK_KEYCLOAK_ADMIN_PASSWORD'), (Get-RunSecretLine 'KILNMARK_OIDC_CLIENT_SECRET'))
     Write-UnixText (Join-Path $dir 'samples-db.env') @((Get-RunSecretLine 'KILNMARK_DB_PASSWORD'), (Get-RunSecretLine 'KILNMARK_SAMPLES_DB_PASSWORD'))
-    $env:KILNMARK_SECRETS_DIR = '../../config/run/' + $name
+    $env:KILNMARK_RUN_DIR = '../../config/run/' + $name
 }
 function Remove-RunSecrets {
     if ($script:RunSecrets) { Remove-Item $script:RunSecrets -Recurse -Force -ErrorAction SilentlyContinue }
     $script:RunSecrets = $null
-    Remove-Item Env:KILNMARK_SECRETS_DIR -ErrorAction SilentlyContinue
+    Remove-Item Env:KILNMARK_RUN_DIR -ErrorAction SilentlyContinue
 }
 
 # --- the hourly expiry of unused temporary passwords (ADR 0051) ---------------------------------
@@ -247,7 +247,40 @@ function Invoke-Schtasks {
     return ($LASTEXITCODE -eq 0)
 }
 function Test-ExpiryTask { return (Invoke-Schtasks /Query /TN (Get-ExpiryTaskName)) }
+# Who other than you, SYSTEM and the Administrators may change $Path (or, for a folder, what is in
+# it): their names, or nothing.
+function Get-OthersWriting([string]$Path) {
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $ok = @($me, 'S-1-5-18', 'S-1-5-32-544', 'S-1-3-0')
+    # writing, appending, attributes, adding or deleting what is in a folder, deleting, permissions,
+    # ownership, and the generic write and all
+    $mask = [long](0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x40000000 -bor 0x10000000)
+    $out = @()
+    foreach ($ace in (Get-Acl $Path).Access) {
+        if ($ace.AccessControlType -ne 'Allow') { continue }
+        if (($ace.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
+        if (([long]$ace.FileSystemRights -band $mask) -eq 0) { continue }
+        $sid = $null
+        try { $sid = $ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch { $sid = '' + $ace.IdentityReference }
+        if ($ok -notcontains $sid) { $out += ('' + $ace.IdentityReference) }
+    }
+    # unrolled here, gathered again with @() by the caller
+    return $out
+}
+
+# The task runs kilnmark.ps1 from the install root as you, every hour: the root (with versions\ and
+# the launchers in it) is made yours alone first, and the task is not set up while anyone else may
+# still change the script or its folder, since they would run what they wrote as you.
 function Set-ExpiryTask {
+    Protect-Folder $script:Root
+    $ps1 = Join-Path $script:Root 'kilnmark.ps1'
+    $others = @(Get-OthersWriting $script:Root)
+    if (Test-Path $ps1) { $others += @(Get-OthersWriting $ps1) }
+    if ($others.Count -gt 0) {
+        Remove-ExpiryTask
+        Write-Host ('Warning: the hourly expiry of unused temporary passwords was not set up: ' + (($others | Select-Object -Unique) -join ', ') + ' may change ' + $ps1 + ' or its folder, and the task would run it as you. Take that right away (or install where only you and the administrators can write), then run up again. Each start expires them too.') -ForegroundColor Yellow
+        return
+    }
     $had = Test-ExpiryTask
     $run = 'powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ' + (Join-Path $script:Root 'kilnmark.ps1') + ' people expire -Project ' + $Project
     if (Invoke-Schtasks /Create /SC HOURLY /TN (Get-ExpiryTaskName) /TR $run /F) {
@@ -266,6 +299,8 @@ function Get-ExpiryState {
 }
 
 function Get-ComposeArgs {
+    # a compose project's name, as compose and the hourly expiry's scheduled task take it
+    if ($Project -cnotmatch '^[a-z0-9][a-z0-9_-]*$') { Fail 'KILNMARK_PROJECT is lower-case letters, digits, - and _, starting with a letter or a digit. Nothing was changed.' }
     Select-Engine
     $env = Join-Path $script:Root 'config\.env'
     if (-not (Test-Path $env)) { Fail ('There is no ' + $env + '. Run: kilnmark.cmd install') }
@@ -648,6 +683,7 @@ function Invoke-Up([string[]]$Options) {
     Write-Host ('Starting Kilnmark ' + $v + ' ...')
     try {
         Write-RunSecrets
+        Set-InstallIdForSetup
         if (-not (Invoke-ComposeQuietly up -d)) { Fail 'Kilnmark could not start. See why with: kilnmark.cmd logs' }
         if (-not (Wait-For 'Kilnmark' ((Get-LocalUrl) + '/q/health/ready') 90)) { Fail 'Kilnmark did not answer within 3 minutes. See why with: kilnmark.cmd logs kilnmark' }
         # the one-offs this start ran: waited for (keycloak-setup tells Kilnmark what it did), then their secrets go
@@ -655,16 +691,49 @@ function Invoke-Up([string[]]$Options) {
             $kc = Get-Setting 'KILNMARK_KEYCLOAK_PORT'; if (-not $kc) { $kc = '8180' }
             if (-not (Wait-For 'Keycloak' ('http://localhost:' + $kc + '/realms/kilnmark') 150)) { Fail 'Keycloak did not answer within 5 minutes. See why with: kilnmark.cmd logs keycloak' }
             Invoke-PeopleAfterUp
+            # after the server's first start: the realm is told the id it made
+            if (-not $env:KILNMARK_INSTALL_ID) {
+                $id = Get-RecordedSetting 'install_id'
+                if ($id) {
+                    $env:KILNMARK_PEOPLE_ACTION = 'stamp'; $env:KILNMARK_INSTALL_ID = $id
+                    try {
+                        $base = Get-ComposeArgs
+                        & $script:Engine @base run --rm -T keycloak-setup *> $null
+                        if ($LASTEXITCODE -ne 0) { Write-Host "Warning: Keycloak's realm was not told which install it belongs to; the next start tells it. See: kilnmark.cmd logs keycloak-setup" -ForegroundColor Yellow }
+                    } finally { Remove-Item Env:KILNMARK_PEOPLE_ACTION -ErrorAction SilentlyContinue }
+                }
+            }
         }
         if ((Test-SamplesAllowed) -and -not (Wait-OneOff 'samples-db')) { Write-Host 'Warning: samples-db did not finish well, so the Starter Pack may not find its database. See: kilnmark.cmd logs samples-db' -ForegroundColor Yellow }
     } finally {
         Remove-RunSecrets
+        Remove-Item Env:KILNMARK_INSTALL_ID -ErrorAction SilentlyContinue
     }
     if (Test-KeycloakOn) { Set-ExpiryTask } else { Remove-ExpiryTask }
     $url = Get-Setting 'KILNMARK_URL'; if (-not $url) { $url = Get-LocalUrl }
     $url = $url.TrimEnd('/')
     Write-Host ('Kilnmark ' + $v + ' is ready at ' + $url)
     if ($browser) { Start-Process $url }
+}
+
+# The install's id and mode, as the server recorded them, handed to keycloak-setup at every start to
+# keep on the realm (a restore checks a backup's Keycloak database by them). Read with the database
+# started first; before the server's first start there is none yet (Invoke-Up then stamps the realm).
+# A mode in config\.env other than the recorded one stops here: the server would refuse it anyway.
+function Set-InstallIdForSetup {
+    Remove-Item Env:KILNMARK_INSTALL_ID -ErrorAction SilentlyContinue
+    if (-not (Test-KeycloakOn)) { return }
+    if (-not (Invoke-ComposeQuietly up -d postgres)) { Fail "Kilnmark's database could not start. See why with: kilnmark.cmd logs postgres" }
+    $base = Get-ComposeArgs
+    for ($i = 0; $i -lt 60; $i++) {
+        & $script:Engine @base exec -T postgres pg_isready -h 127.0.0.1 -U kilnmark -d kilnmark *> $null
+        if ($LASTEXITCODE -eq 0) { break }
+        Start-Sleep -Seconds 2
+    }
+    $recorded = Get-RecordedMode
+    if ($recorded -and $recorded -cne (Get-Setting 'KILNMARK_MODE')) { Fail 'KILNMARK_MODE in config\.env differs from the mode Kilnmark recorded at its first start: set it back. Kilnmark was not started.' }
+    $id = Get-RecordedSetting 'install_id'
+    if ($id) { $env:KILNMARK_INSTALL_ID = $id }
 }
 
 # Everything: a stop, then up, so the one-offs run again with this start's settings. One service:
@@ -884,10 +953,18 @@ function Invoke-Uninstall([string[]]$Options) {
     }
     Write-Host "This deletes all of Kilnmark's data: its database, the key to stored passwords, and Keycloak's."
     Write-Host 'Back up first (kilnmark.cmd backup) if you might want any of it. Type DELETE to go on:'
-    $answer = Read-Host
+    # typed at a console, or one line on standard input (a pipe)
+    if ([Console]::IsInputRedirected) { $answer = [Console]::In.ReadLine(); if ($null -eq $answer) { $answer = '' }; $answer = $answer.Trim() } else { $answer = Read-Host }
     if ($answer -cne 'DELETE') { Fail 'Nothing was deleted.' }
     [void](Invoke-Compose --profile auth --profile ai down -v)
-    foreach ($i in (Get-ImageNames $v)) { & $script:Engine rmi $i *> $null }
+    # An image another install on this machine still runs is kept: removing it, or its name, would
+    # stop that install starting again.
+    $kept = @()
+    foreach ($i in (Get-ImageNames $v)) {
+        $users = (& $script:Engine ps -a --filter ('ancestor=' + $i) --format '{{.Names}}' 2> $null | Out-String).Trim()
+        if ($users) { $kept += $i } else { & $script:Engine rmi $i *> $null }
+    }
+    if ($kept.Count -gt 0) { Write-Host ('Kept the images ' + ($kept -join ' ') + ': other containers on this machine use them (another install, say).') }
     Write-Host ("Kilnmark's containers, volumes and images are deleted. " + $script:Root + ' is kept: delete it yourself if you wish.')
 }
 
@@ -1524,7 +1601,7 @@ function Invoke-Restore([string[]]$Options) {
     }
     # Keycloak's database must be this backup's install's: the id and mode its realm carries (the
     # people commands keep them there), where it has them. A production install's never holds the
-    # Starter Pack's group (its mark) or example people (at kilnmark.com).
+    # Starter Pack's group (its mark) or example people (by their user names, which nobody can change).
     if ($restoreKeycloak) {
         $kcSql = {
             param($q)
@@ -1537,9 +1614,10 @@ function Invoke-Restore([string[]]$Options) {
         $kcId = & $kcSql ($attr -f 'kilnmark_install_id')
         $kcMode = & $kcSql ($attr -f 'kilnmark_mode')
         if (($kcId -and $kcId -cne $backupId) -or ($kcMode -and $kcMode -cne $backupMode)) { Fail "Keycloak's database in the backup belongs to another Kilnmark install, or another mode: the backup is not whole. Nothing was changed." }
+        if ($backupMode -ceq 'production' -and (-not $kcId -or -not $kcMode)) { Fail "Keycloak's database in the backup does not say which install it belongs to (taken before the control script kept that on its realm), so it cannot be told from another install's: take a new backup with this version. Nothing was changed." }
         if ($backupMode -ceq 'production') {
             $pack = & $kcSql "SELECT count(*) FROM group_attribute WHERE name = 'kilnmark_starter_pack'"
-            $examples = & $kcSql "SELECT count(*) FROM user_entity u JOIN realm r ON r.id = u.realm_id WHERE r.name = 'kilnmark' AND lower(u.email) LIKE '%@kilnmark.com'"
+            $examples = & $kcSql "SELECT count(*) FROM user_entity u JOIN realm r ON r.id = u.realm_id WHERE r.name = 'kilnmark' AND u.username IN ('vera.lane@kilnmark.com', 'sam.okafor@kilnmark.com', 'dana.reyes@kilnmark.com', 'priya.shah@kilnmark.com', 'alex.morgan@kilnmark.com')"
             if ($pack -ne '0' -or $examples -ne '0') { Fail "Keycloak's database in the backup has the Starter Pack's group or example people, which a production install never has: it is not this install's. Nothing was changed." }
         }
     }

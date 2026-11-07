@@ -22,7 +22,7 @@ default_root="/opt/kilnmark"
 # config/.env says, as this script reads them (ADR 0051), so a value exported here never counts.
 unset KILNMARK_MODE KILNMARK_STARTER KILNMARK_STARTER_PEOPLE_ACTION \
   KILNMARK_PEOPLE_ACTION KILNMARK_PERSON_EMAIL KILNMARK_PERSON_FIRST_NAME KILNMARK_PERSON_LAST_NAME \
-  KILNMARK_PERSON_GROUPS KILNMARK_INSTALL_ID KILNMARK_SECRETS_DIR KILNMARK_ENV_FILE
+  KILNMARK_PERSON_GROUPS KILNMARK_INSTALL_ID KILNMARK_RUN_DIR KILNMARK_ENV_FILE
 
 # Rootless Podman needs the account's systemd session; sudo -iu and su do not set it up, but its
 # runtime folder exists once lingering is on (prepare turns it on).
@@ -195,6 +195,9 @@ require_people_mode() { check_people_mode; [ -z "$mode_problem" ] || die "$mode_
 # compose, always the kilnmark project, with this site's .env and the current version's file.
 compose=()
 set_compose() {
+  # a compose project's name, as compose and the hourly expiry's timer take it
+  [[ "$project" =~ ^[a-z0-9][a-z0-9_-]*$ ]] \
+    || die "KILNMARK_PROJECT is lower-case letters, digits, - and _, starting with a letter or a digit. Nothing was changed."
   pick_engine
   # The real folder, not the current symlink: compose resolves relative paths in it (the
   # certificate folder, ../../certs/https) without following symlinks.
@@ -214,7 +217,7 @@ image_names() { echo "$registry/kilnmark-server:$1 $registry/kilnmark-postgres:$
 # The few secrets each one-off needs (keycloak-setup: Keycloak's admin password and the client
 # secret; samples-db: the database's password and the samples login's), each set in a file of its
 # own, in a new folder only this account can open under config/run, for one run: compose mounts
-# them read-only (KILNMARK_SECRETS_DIR, relative to compose.yaml), never config/.env whole. Gone once
+# them read-only (KILNMARK_RUN_DIR, relative to compose.yaml), never config/.env whole. Gone once
 # the run is over (drop_run_secrets), and however this script ends; one a killed run left goes a day on.
 run_secret_line() {
   local v; v="$(setting "$1")"
@@ -233,12 +236,12 @@ write_run_secrets() {
   { run_secret_line KILNMARK_DB_PASSWORD; run_secret_line KILNMARK_SAMPLES_DB_PASSWORD; } > "$run_secrets/samples-db.env"
   # readable inside the containers, whichever user each runs as: the folder keeps everyone else out
   chmod 644 "$run_secrets/keycloak-setup.env" "$run_secrets/samples-db.env"
-  export KILNMARK_SECRETS_DIR="../../config/run/$(basename "$run_secrets")"
+  export KILNMARK_RUN_DIR="../../config/run/$(basename "$run_secrets")"
 }
 drop_run_secrets() {
   [ -z "$run_secrets" ] || rm -rf "$run_secrets"
   run_secrets=""
-  unset KILNMARK_SECRETS_DIR
+  unset KILNMARK_RUN_DIR
 }
 
 # --- the hourly expiry of unused temporary passwords (ADR 0051) -----------------------------------
@@ -249,18 +252,39 @@ drop_run_secrets() {
 # the bundled Keycloak; uninstall removes it. KILNMARK_SYSTEMCTL and KILNMARK_SYSTEMD_DIR are for
 # the tests only.
 expiry_unit="kilnmark-$project-people-expire"
+# who runs this, for the timer (KILNMARK_TEST_UID, for the tests only)
+expiry_uid() { printf '%s' "${KILNMARK_TEST_UID:-$(id -u)}"; }
 expiry_systemctl() {
   local sc="${KILNMARK_SYSTEMCTL:-systemctl}"
-  if [ "$(id -u)" -eq 0 ]; then "$sc" "$@"; else "$sc" --user "$@"; fi
+  if [ "$(expiry_uid)" -eq 0 ]; then "$sc" "$@"; else "$sc" --user "$@"; fi
 }
 expiry_dir() {
   if [ -n "${KILNMARK_SYSTEMD_DIR:-}" ]; then printf '%s' "$KILNMARK_SYSTEMD_DIR"
-  elif [ "$(id -u)" -eq 0 ]; then printf '%s' /etc/systemd/system
+  elif [ "$(expiry_uid)" -eq 0 ]; then printf '%s' /etc/systemd/system
   else printf '%s' "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
   fi
 }
+# Why a system timer may not run this script as root, or nothing: root runs $root/kilnmark.sh every
+# hour, so it and its folder must be root's own and writable by nobody else.
+expiry_root_problem() {
+  local f perms
+  [ "$(expiry_uid)" -eq 0 ] || return 0
+  for f in "$root" "$root/kilnmark.sh"; do
+    perms="$(stat -c '%u %a' "$f" 2> /dev/null || echo "x 777")"
+    if [ "${perms%% *}" != 0 ] || (( (8#${perms##* } & 8#022) != 0 )); then
+      echo "as root, it would run $root/kilnmark.sh every hour, and $f is not root's own, or others may change it: make both root's, writable by root alone, or run Kilnmark as its own account (sudo ./kilnmark.sh prepare)"
+      return 0
+    fi
+  done
+}
 expiry_timer_set() {
-  local dir service timer engine_line=""
+  local dir service timer engine_line="" why
+  why="$(expiry_root_problem)"
+  if [ -n "$why" ]; then
+    expiry_timer_remove
+    echo "Warning: the hourly expiry of unused temporary passwords was not set up: $why. Each start expires them too." >&2
+    return 0
+  fi
   dir="$(expiry_dir)"
   [ -z "${KILNMARK_ENGINE:-}" ] || engine_line="
 Environment=KILNMARK_ENGINE=$KILNMARK_ENGINE"
@@ -542,7 +566,7 @@ ensure_settings() {
   check_mode
   # Each is for one run of keycloak-setup, set by this script only: in config/.env every start would take it.
   for one_run in KILNMARK_STARTER_PEOPLE_ACTION KILNMARK_PEOPLE_ACTION KILNMARK_PERSON_EMAIL KILNMARK_PERSON_FIRST_NAME \
-    KILNMARK_PERSON_LAST_NAME KILNMARK_PERSON_GROUPS KILNMARK_INSTALL_ID KILNMARK_SECRETS_DIR; do
+    KILNMARK_PERSON_LAST_NAME KILNMARK_PERSON_GROUPS KILNMARK_INSTALL_ID KILNMARK_RUN_DIR; do
     [ -z "$(setting "$one_run")" ] || die "$one_run is for one run of the control script only: delete it from config/.env. Nothing was changed."
   done
   # A Starter Pack install signs in with the bundled Keycloak, where its example people are (ADR 0051).
@@ -603,6 +627,7 @@ cmd_up() {
   images_present "$v" || die "The images of Kilnmark $v are not here. Get them with one of: ./kilnmark.sh pull, ./kilnmark.sh load-images FILE, ./kilnmark.sh build"
   echo "Starting Kilnmark $v ..."
   write_run_secrets
+  hand_install_id
   compose_quietly up -d || die "Kilnmark could not start. See why with: ./kilnmark.sh logs"
   wait_for Kilnmark "$(local_url)/q/health/ready" 90 \
     || die "Kilnmark did not answer within 3 minutes. See why with: ./kilnmark.sh logs kilnmark"
@@ -616,14 +641,43 @@ cmd_up() {
   fi
 }
 
+# The install's id and mode, as the server recorded them, handed to keycloak-setup at every start
+# to keep on the realm (a restore checks a backup's Keycloak database by them). Read with the
+# database started first; before the server's first start there is none yet (after_one_offs then
+# stamps the realm). A mode in config/.env other than the recorded one stops here: the server
+# would refuse it anyway, and the realm must never carry the wrong one.
+hand_install_id() {
+  local i recorded
+  unset KILNMARK_INSTALL_ID
+  auth_on || return 0
+  compose_quietly up -d postgres || die "Kilnmark's database could not start. See why with: ./kilnmark.sh logs postgres"
+  for i in $(seq 1 60); do
+    "${compose[@]}" exec -T postgres pg_isready -h 127.0.0.1 -U kilnmark -d kilnmark > /dev/null 2>&1 && break
+    sleep 2
+  done
+  recorded="$(recorded_mode)"
+  if [ -n "$recorded" ] && [ "$recorded" != "$(setting KILNMARK_MODE)" ]; then
+    die "KILNMARK_MODE in config/.env differs from the mode Kilnmark recorded at its first start: set it back. Kilnmark was not started."
+  fi
+  KILNMARK_INSTALL_ID="$(recorded_setting install_id)"
+  export KILNMARK_INSTALL_ID
+}
+
 # The one-offs this start ran: waits for them (keycloak-setup tells Kilnmark what it did), then
-# their secrets go.
+# their secrets go. After the server's first start, the realm is stamped with the id it made.
 after_one_offs() {
   if auth_on; then
-    local kc; kc="$(setting KILNMARK_KEYCLOAK_PORT)"
+    local kc id; kc="$(setting KILNMARK_KEYCLOAK_PORT)"
     wait_for Keycloak "http://localhost:${kc:-8180}/realms/kilnmark" 150 \
       || die "Keycloak did not answer within 5 minutes. See why with: ./kilnmark.sh logs keycloak"
     people_after_up
+    if [ -z "${KILNMARK_INSTALL_ID:-}" ]; then
+      id="$(recorded_setting install_id)"
+      if [ -n "$id" ] && ! KILNMARK_PEOPLE_ACTION=stamp KILNMARK_INSTALL_ID="$id" \
+        "${compose[@]}" run --rm -T keycloak-setup < /dev/null > /dev/null 2>&1; then
+        echo "Warning: Keycloak's realm was not told which install it belongs to; the next start tells it. See: ./kilnmark.sh logs keycloak-setup" >&2
+      fi
+    fi
   fi
   if samples_allowed && ! one_off_done samples-db; then
     echo "Warning: samples-db did not finish well, so the Starter Pack may not find its database. See: ./kilnmark.sh logs samples-db" >&2
@@ -950,7 +1004,17 @@ cmd_uninstall() {
   local answer; read -r answer
   [ "$answer" = DELETE ] || die "Nothing was deleted."
   "${compose[@]}" --profile auth --profile ai down -v
-  "$engine" rmi $(image_names "$v") > /dev/null 2>&1 || true
+  # An image another install on this machine still runs is kept: removing it, or its name, would
+  # stop that install starting again.
+  local i kept=""
+  for i in $(image_names "$v"); do
+    if [ -n "$("$engine" ps -a --filter "ancestor=$i" --format '{{.Names}}' 2> /dev/null || true)" ]; then
+      kept="$kept $i"
+    else
+      "$engine" rmi "$i" > /dev/null 2>&1 || true
+    fi
+  done
+  [ -z "$kept" ] || echo "Kept the images$kept: other containers on this machine use them (another install, say)."
   echo "Kilnmark's containers, volumes and images are deleted. $root is kept: delete it yourself if you wish."
 }
 

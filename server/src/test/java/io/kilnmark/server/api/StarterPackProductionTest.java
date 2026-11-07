@@ -41,11 +41,27 @@ class StarterPackProductionTest {
     public static class Production implements QuarkusTestProfile {
         @Override
         public Map<String, String> getConfigOverrides() {
-            return Map.of("kilnmark.mode", "production",
+            Map<String, String> out = new HashMap<>(Map.of("kilnmark.mode", "production",
                 // its own database: the other tests' records the mode as starter-pack
                 "quarkus.datasource.devservices.db-name", "kilnmark_production",
                 "kilnmark.auth.oidc.viewer-groups", "kilnmark-viewers",
-                "kilnmark.auth.oidc.admin-groups", "kilnmark-admins");
+                "kilnmark.auth.oidc.admin-groups", "kilnmark-admins"));
+            // the same where the tests share one database server, named outside (no dev services): a
+            // new database of its own beside the shared one
+            String shared = System.getenv("QUARKUS_DATASOURCE_JDBC_URL");
+            if (shared != null && !shared.isBlank()) {
+                String db = "kilnmark_production_test";
+                try (java.sql.Connection c = java.sql.DriverManager.getConnection(shared,
+                    System.getenv("QUARKUS_DATASOURCE_USERNAME"), System.getenv("QUARKUS_DATASOURCE_PASSWORD"));
+                     java.sql.Statement st = c.createStatement()) {
+                    st.execute("DROP DATABASE IF EXISTS " + db + " WITH (FORCE)");
+                    st.execute("CREATE DATABASE " + db);
+                } catch (java.sql.SQLException e) {
+                    throw new IllegalStateException("A database of its own for the production tests could not be made", e);
+                }
+                out.put("quarkus.datasource.jdbc.url", shared.replaceFirst("/[^/?]+(\\?|$)","/" + db + "$1"));
+            }
+            return out;
         }
     }
 
@@ -60,6 +76,25 @@ class StarterPackProductionTest {
 
     @jakarta.inject.Inject
     io.kilnmark.server.KilnmarkConfig config;
+
+    /** The example data's kind of source is never offered, added or imported on production. */
+    @Test
+    void theExampleDataIsNeverASourceHereNorOfferedInAddConnection() {
+        List<String> kinds = admin().get("/api/v1/connectors").then().statusCode(200).extract().jsonPath().getList("kind");
+        assertFalse(kinds.contains(ModeCheck.SAMPLE_DATA_KIND), kinds.toString());
+        assertTrue(kinds.contains("postgresql"), kinds.toString());
+        String catalogue = admin().get("/api/v1/connectors/catalogue").then().statusCode(200).extract().asString();
+        assertFalse(catalogue.contains("\"" + ModeCheck.SAMPLE_DATA_KIND + "\""), catalogue);
+        admin().contentType(ContentType.JSON).body(Map.of("name", "my-samples", "kind", ModeCheck.SAMPLE_DATA_KIND,
+            "settings", Map.of())).post("/api/v1/sources").then().statusCode(400)
+            .body("error", containsString("a production install, which never has it"));
+        JsonPath imported = admin().contentType(ContentType.JSON)
+            .body("[{\"name\": \"my-samples\", \"kind\": \"" + ModeCheck.SAMPLE_DATA_KIND + "\"}]")
+            .post("/api/v1/sources/import").then().statusCode(422).extract().jsonPath();
+        assertTrue(imported.getString("rows[0].error").contains("a production install, which never has it"),
+            imported.prettify());
+        admin().get("/api/v1/sources/my-samples").then().statusCode(404);
+    }
 
     @Test
     void thePackIsNeverTurnedOnAndTheRefusalIsRecorded() throws Exception {
@@ -216,7 +251,7 @@ class StarterPackProductionTest {
         // this run's database was new: marked before its first migration, and the mark used up by the mode
         try (java.sql.Connection c = source.getConnection()) {
             assertFalse(io.kilnmark.server.DatabaseTls.isNew(c), "migrated now");
-            assertFalse(markThere(c, io.kilnmark.server.DatabaseTls.NEW_DATABASE), "the mark is used up");
+            assertFalse(ModeCheck.markedNew(c, io.kilnmark.server.DatabaseTls.NEW_DATABASE), "the mark is used up");
             assertTrue(markThere(c, ModeCheck.INSTALL_ID), "an install id, made at the first start");
         }
         // a database not marked new (migrated before, with no mode) never records one: it predates modes
@@ -228,13 +263,28 @@ class StarterPackProductionTest {
         }
         // a first start that fails after migrating (the mark made, no mode recorded), then a second that succeeds
         try (java.sql.Connection c = source.getConnection()) {
-            io.kilnmark.server.DatabaseTls.markNew(c, key + "_new");
+            io.kilnmark.server.DatabaseTls.markNew(c, key);
         }
         assertNull(modes.checkFor(ModeCheck.PRODUCTION, key, new ModeCheck.FirstStart(false, false)));
         try (java.sql.Connection c = source.getConnection()) {
-            assertFalse(markThere(c, key + "_new"), "used up");
+            assertFalse(ModeCheck.markedNew(c, key), "used up");
             assertTrue(markThere(c, key + "_install_id"));
         }
+        // a database whose mode an earlier build recorded with no install id: one is made, said and audited
+        String older = "deployment_mode_test_" + System.nanoTime();
+        try (java.sql.Connection c = source.getConnection(); java.sql.PreparedStatement ps = c.prepareStatement(
+            "INSERT INTO kilnmark.server_setting (key, value, updated_by) VALUES (?, 'production', 'an earlier build')")) {
+            ps.setString(1, older);
+            ps.executeUpdate();
+        }
+        int made = StarterPackApiTest.events(AuditLog.INSTALL_ID_MADE);
+        assertNull(modes.checkFor(ModeCheck.PRODUCTION, older, new ModeCheck.FirstStart(false, false)));
+        StarterPackApiTest.eventually(AuditLog.INSTALL_ID_MADE, made + 1);
+        try (java.sql.Connection c = source.getConnection()) {
+            assertTrue(markThere(c, older + "_install_id"));
+        }
+        assertNull(modes.checkFor(ModeCheck.PRODUCTION, older, new ModeCheck.FirstStart(false, false)));
+        assertEquals(made + 1, StarterPackApiTest.events(AuditLog.INSTALL_ID_MADE), "made once");
         // from then on the other mode is refused, either way round
         assertNull(modes.checkFor(ModeCheck.PRODUCTION, key, new ModeCheck.FirstStart(false, true)), "recorded: checked only");
         assertTrue(modes.checkFor(ModeCheck.STARTER_PACK, key, new ModeCheck.FirstStart(false, false))
@@ -247,12 +297,12 @@ class StarterPackProductionTest {
         }
         String other = "deployment_mode_test_" + System.nanoTime();
         try (java.sql.Connection c = source.getConnection()) {
-            io.kilnmark.server.DatabaseTls.markNew(c, other + "_new");
+            io.kilnmark.server.DatabaseTls.markNew(c, other);
         }
         String refused = modes.checkFor(ModeCheck.PRODUCTION, other, new ModeCheck.FirstStart(false, true));
         assertTrue(refused != null && refused.contains("already has the Starter Pack's database or login"), refused);
         try (java.sql.Connection c = source.getConnection()) {
-            assertTrue(markThere(c, other + "_new"), "a refused first start keeps the mark");
+            assertTrue(ModeCheck.markedNew(c, other), "a refused first start keeps the mark");
         }
         assertNull(modes.checkFor(ModeCheck.STARTER_PACK, other, new ModeCheck.FirstStart(false, true)),
             "a Starter Pack install may be");
@@ -280,6 +330,57 @@ class StarterPackProductionTest {
             .then().statusCode(403);
         // the templates stay
         admin().get("/api/v1/templates").then().statusCode(200);
+    }
+
+    /**
+     * A first start stopped part way through its migrations (Flyway commits each one), then a second
+     * start: the mark, made before the first migration, is still there, so the mode is recorded. A
+     * database migrated with no mark (from before there were modes) has none.
+     */
+    @Test
+    void aFirstStartStoppedPartWayThroughItsMigrationsStillRecordsTheModeAtTheNext() throws Exception {
+        io.agroal.api.AgroalDataSource source = io.quarkus.arc.Arc.container().instance(io.agroal.api.AgroalDataSource.class)
+            .get();
+        String url;
+        String stopped = "km_mark_stopped_" + System.nanoTime() % 1_000_000;
+        String unmarked = "km_mark_unmarked_" + System.nanoTime() % 1_000_000;
+        try (java.sql.Connection c = source.getConnection(); java.sql.Statement st = c.createStatement()) {
+            url = c.getMetaData().getURL();
+            st.execute("CREATE DATABASE " + stopped);
+            st.execute("CREATE DATABASE " + unmarked);
+        }
+        org.eclipse.microprofile.config.Config cfg = org.eclipse.microprofile.config.ConfigProvider.getConfig();
+        String user = cfg.getValue("quarkus.datasource.username", String.class);
+        String password = cfg.getValue("quarkus.datasource.password", String.class);
+        java.util.function.Function<String, String> at = db -> url.replaceFirst("/[^/?]+(\\?|$)", "/" + db + "$1");
+        // the first start: as the server starts, stopped after the fifth migration
+        io.kilnmark.server.DatabaseTls.Connect toStopped = () -> java.sql.DriverManager.getConnection(at.apply(stopped), user,
+            password);
+        io.kilnmark.server.DatabaseTls.markThenMigrate(toStopped,
+            () -> flyway(at.apply(stopped), user, password).target("5").load().migrate());
+        // the second start: history there, so not new; the mark is kept, and the migrations finish
+        try (java.sql.Connection c = toStopped.open()) {
+            assertFalse(io.kilnmark.server.DatabaseTls.isNew(c), "the migrations it did are there");
+            assertTrue(ModeCheck.markedNew(c, io.kilnmark.server.DatabaseTls.NEW_DATABASE), "still marked new");
+        }
+        io.kilnmark.server.DatabaseTls.markThenMigrate(toStopped, () -> flyway(at.apply(stopped), user, password).load().migrate());
+        // a database migrated by a build from before modes, with no mark
+        flyway(at.apply(unmarked), user, password).load().migrate();
+        try (java.sql.Connection c = java.sql.DriverManager.getConnection(at.apply(stopped), user, password);
+             java.sql.Connection u = java.sql.DriverManager.getConnection(at.apply(unmarked), user, password)) {
+            assertTrue(ModeCheck.markedNew(c, io.kilnmark.server.DatabaseTls.NEW_DATABASE));
+            assertFalse(ModeCheck.markedNew(u, io.kilnmark.server.DatabaseTls.NEW_DATABASE), "never marked");
+        } finally {
+            try (java.sql.Connection c = source.getConnection(); java.sql.Statement st = c.createStatement()) {
+                st.execute("DROP DATABASE IF EXISTS " + stopped + " WITH (FORCE)");
+                st.execute("DROP DATABASE IF EXISTS " + unmarked + " WITH (FORCE)");
+            }
+        }
+    }
+
+    private static org.flywaydb.core.api.configuration.FluentConfiguration flyway(String url, String user, String password) {
+        return org.flywaydb.core.Flyway.configure().dataSource(url, user, password).schemas("kilnmark")
+            .defaultSchema("kilnmark").locations("classpath:db/migration");
     }
 
     private static boolean markThere(java.sql.Connection c, String key) throws java.sql.SQLException {

@@ -119,7 +119,8 @@ public class CatalogResource {
     @GET
     @Path("connectors")
     public java.util.List<Views.Connector> connectors() {
-        return connectors.all().stream().map(c -> view(c, drivers)).toList();
+        return connectors.all().stream().filter(c -> io.kilnmark.server.starter.ModeCheck.kindAllowed(c.kind(), config))
+            .map(c -> view(c, drivers)).toList();
     }
 
     /** Customer-installed drivers, for whether a connector's driver is there. */
@@ -178,8 +179,11 @@ public class CatalogResource {
         boolean planned = config.connectors().showPlanned();
         java.util.List<Views.ConnectorCategory> out = new java.util.ArrayList<>();
         for (String[] cat : PlannedConnectors.CATEGORIES) {
+            // never the Starter Pack's example data on production (ADR 0051)
             java.util.List<Views.Connector> built = connectors.all().stream()
-                .filter(c -> c.category().equals(cat[0])).map(c -> view(c, drivers)).toList();
+                .filter(c -> c.category().equals(cat[0]))
+                .filter(c -> io.kilnmark.server.starter.ModeCheck.kindAllowed(c.kind(), config))
+                .map(c -> view(c, drivers)).toList();
             java.util.List<Views.PlannedConnector> later = planned
                 ? PlannedConnectors.ALL.stream().filter(p -> p.category().equals(cat[0])).toList() : java.util.List.of();
             if (cat[0].equals("other") && built.isEmpty()) {
