@@ -28,6 +28,10 @@ details.
 
 ### Details
 
+- **Dependencies updated** (Dependabot's npm and GitHub Actions groups, redone on an owner branch,
+  since Dependabot's own branches get no runner): `@xyflow/react` 12.12.1, `marked` 18.1.3,
+  `@vitejs/plugin-react` 6.2.1, `vitest` 5.1.0, and `gradle/actions/wrapper-validation` 6.4.1,
+  pinned by commit as before. mime4j stays at 0.8.12, which the Quarkus BOM holds.
 - **`sort` is an external merge sort** (`ExternalSorter` in `kiln-nodes`; docs/design/pipelines.md,
   "Sorting, and spilling to disk"). Each row's key is encoded once into bytes that order as the
   values do (`KeyCodec`), as the expression language's `<` orders them: numbers by value, -0.0 equal
