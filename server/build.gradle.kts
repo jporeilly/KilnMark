@@ -138,6 +138,8 @@ val checkReference = tasks.register<Test>("checkReference") {
     filter { includeTestsMatching(referenceTest) }
     inputs.files(rootProject.fileTree("docs/guide") { include("*.md") })
     inputs.dir(rootProject.file("kiln-plugins/src/test/java"))
+    // the drivers guide names the shipped drivers' versions
+    inputs.file(rootProject.file("gradle/libs.versions.toml"))
 }
 tasks.named("check") { dependsOn(checkReference) }
 
@@ -214,7 +216,7 @@ val buildUi by tasks.registering(Exec::class) {
     inputs.files(uiDir.file("index.html"), uiDir.file("vite.config.ts"), uiDir.file("tsconfig.json"),
         uiDir.file("package.json"), uiDir.file("package-lock.json"))
     // The bundled documentation, and the anchor cases the pre-build check reads (scripts/check-slugs.mjs).
-    inputs.files(rootProject.fileTree("docs/guide") { include("*.md") }, rootProject.file("CHANGELOG.md"))
+    inputs.files(rootProject.fileTree("docs/guide") { include("*.md", "install/*.md") }, rootProject.file("CHANGELOG.md"))
     inputs.dir(rootProject.file("tests/docs"))
     outputs.dir(uiOut)
 }
@@ -233,21 +235,25 @@ val uiSbom by tasks.registering(Exec::class) {
 
 // The user guides and the changelog, for the assistant (docs/design/assistant.md): the same files
 // the web UI bundles, one source of truth. Copied into the server's resources under kilnmark/docs,
-// with a list of the guides (a jar cannot be listed reliably at run time).
+// with a list of the guides (a jar cannot be listed reliably at run time). The install guides in
+// docs/guide/install/ are copied beside the others: page ids are file names, unique across both
+// (ui/src/docs/groups.test.ts), as the viewer addresses them.
 val guideDir = rootProject.layout.projectDirectory.dir("docs/guide")
+val guideFiles = arrayOf("*.md", "install/*.md")
 val docsResources = layout.buildDirectory.dir("generated/docs-resources")
 val bundleDocs by tasks.registering(Sync::class) {
-    description = "Copies docs/guide/*.md and CHANGELOG.md into the server's resources."
+    description = "Copies docs/guide/*.md, docs/guide/install/*.md and CHANGELOG.md into the server's resources."
     from(guideDir) {
-        include("*.md")
-        into("kilnmark/docs/guide")
+        include(*guideFiles)
+        eachFile { path = "kilnmark/docs/guide/$name" }
+        includeEmptyDirs = false
     }
     from(rootProject.layout.projectDirectory.file("CHANGELOG.md")) {
         into("kilnmark/docs")
     }
     into(docsResources)
     val listFile = docsResources.map { it.file("kilnmark/docs/guide.list").asFile }
-    val guideNames = guideDir.asFileTree.matching { include("*.md") }.elements
+    val guideNames = guideDir.asFileTree.matching { include(*guideFiles) }.elements
         .map { files -> files.map { it.asFile.name }.sorted() }
     doLast {
         listFile.get().writeText(guideNames.get().joinToString("\n", postfix = "\n"))

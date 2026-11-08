@@ -23,7 +23,7 @@ Three things make this safe:
 1. **A token for the scheduler.** An admin opens **API tokens** and makes one with the **Steward**
    role (it can run pipelines and flows, and change nothing else), named after the scheduler, for
    example `scheduler-controlm`, with the expiry your policy sets. See
-   [Signing in, roles and tokens](signing-in.md#api-tokens). One token for each scheduler makes the
+   [People and access](people-and-access.md#api-tokens). One token for each scheduler makes the
    audit log say which one started a run.
 2. **A file holding the token**, on each machine that runs the jobs (the scheduler's agent),
    readable only by the account the jobs run as. The token is never put on the command line or in

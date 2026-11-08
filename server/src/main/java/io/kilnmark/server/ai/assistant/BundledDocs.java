@@ -11,9 +11,10 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * The documentation that ships in this build: {@code docs/guide/*.md} and {@code CHANGELOG.md},
- * copied into the server's resources at build time (server/build.gradle.kts, the same files the UI
- * bundles), so the assistant never cites a page that is not in this build. Pages are in the
+ * The documentation that ships in this build: {@code docs/guide/*.md}, the install guides in
+ * {@code docs/guide/install/} (copied beside the others, as their ids are their file names) and
+ * {@code CHANGELOG.md}, copied into the server's resources at build time (server/build.gradle.kts,
+ * the same files the UI bundles), so the assistant never cites a page that is not in this build. Pages are in the
  * viewer's order and carry its ids: the guides by title, then {@code whats-new}.
  */
 public final class BundledDocs {

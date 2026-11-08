@@ -26,7 +26,7 @@ import io.kilnmark.server.quality.Rule;
 import io.kilnmark.server.quality.RuleType;
 
 /**
- * Predicted quality, node by node (docs/guide/pipelines.md, "Predicted quality"): each node's rule
+ * Predicted quality, node by node (docs/guide/quality-gates.md, "Predicted quality"): each node's rule
  * for carrying the catalogue's metadata through, what stays unknown, and that a write is scored
  * the way a run scores what it wrote. Synthetic profiles only; nothing is read.
  */

@@ -52,6 +52,21 @@ final class ComponentsReference {
     static final String CONNECTORS = "reference-connectors.md";
     static final String RULES = "reference-quality-rules.md";
     static final List<String> PAGES = List.of(INDEX, NODES, FLOW_NODES, CONNECTORS, RULES);
+    /** The expression language, with its function tables (not a page of entries). */
+    static final String EXPRESSIONS = "expressions.md";
+    /** The drivers guide, which lists the drivers Kilnmark ships with their versions and licences. */
+    static final String DRIVERS = "drivers.md";
+    /**
+     * The driver each connector that ships one uses, by kind, as the drivers guide names it; empty for a
+     * connector that needs none (files, object storage, the sample data). A new connector must be added
+     * here, so that its entry always says which driver it needs.
+     */
+    static final Map<String, String> SHIPPED_DRIVERS = Map.of(
+        "postgresql", "the PostgreSQL JDBC driver",
+        "sqlserver", "the Microsoft JDBC Driver for SQL Server",
+        "mysql", "MariaDB Connector/J (MySQL's own driver is never used)",
+        "mariadb", "MariaDB Connector/J",
+        "files", "", "s3", "", "sample-data", "");
 
     /** A part's first and last line. */
     static final Pattern START = Pattern.compile("(?m)^\\[generated: ([^\\]\\r\\n]+)\\]: #\\r?$");
@@ -149,10 +164,11 @@ final class ComponentsReference {
     }
 
     private static String functionIndex() {
-        return "- [Functions](pipeline-nodes.md#functions), for text, numbers, dates and regular expressions: "
-            + codes(Expression.functions()) + ".\n- [Aggregate functions](pipeline-nodes.md#aggregate), for an "
-            + "aggregate node's values: " + codes(Expression.aggregates()) + ".\n- [Window functions]"
-            + "(pipeline-nodes.md#window), for a window node's columns: " + codes(Expression.windowFunctions()) + ".\n";
+        return "- [Functions](" + EXPRESSIONS + "#functions), for text, numbers, dates and regular expressions: "
+            + codes(Expression.functions()) + ".\n- [Aggregate functions](" + EXPRESSIONS + "#aggregate-functions), "
+            + "for an aggregate node's values: " + codes(Expression.aggregates()) + ".\n- [Window functions]("
+            + EXPRESSIONS + "#window-functions), for a window node's columns: " + codes(Expression.windowFunctions())
+            + ".\n";
     }
 
     /** Names in code, sorted, joined as a list in words. */
@@ -297,13 +313,22 @@ final class ComponentsReference {
         b.append("- In flows: ").append(inFlows(c)).append('\n');
         Connector.Driver d = c.driver();
         if (c instanceof io.kilnmark.kiln.plugins.jdbc.GenericJdbcConnector) {
-            b.append("- Driver: the JDBC driver an admin registers on this server\n");
+            b.append("- Driver: the vendor's JDBC driver, which an admin registers on this server ([Databases without a "
+                + "connector of their own](" + DRIVERS + "#databases-without-a-connector-of-their-own))\n");
         } else if (d == null) {
-            b.append("- Driver: ships with Kilnmark\n");
+            String shipped = SHIPPED_DRIVERS.get(c.kind());
+            if (shipped == null) {
+                throw new IllegalStateException("Say in ComponentsReference.SHIPPED_DRIVERS which driver the "
+                    + c.kind() + " connector ships with, or that it needs none");
+            }
+            b.append(shipped.isEmpty() ? "- Driver: none needed: Kilnmark reaches these itself\n"
+                : "- Driver: " + shipped + ", which ships with Kilnmark ([Drivers Kilnmark ships](" + DRIVERS
+                    + "#drivers-kilnmark-ships))\n");
         } else {
-            b.append("- Driver: installed by an admin (`").append(d.coordinates()).append("` ").append(d.version())
-                .append(", ").append(d.licence()).append(d.bundleable() ? "" : "; Kilnmark may not ship it")
-                .append(")\n");
+            b.append("- Driver: installed by an admin from **Settings › Drivers** (`").append(d.coordinates())
+                .append("` ").append(d.version()).append(", ").append(d.licence())
+                .append(d.bundleable() ? "" : "; Kilnmark may not ship it").append("; [Install a driver](")
+                .append(DRIVERS).append("#install-a-driver-admins))\n");
         }
         b.append("- Who sets one up: ").append(c.adminOnly() ? "admins only" : "designers and admins").append("\n\n");
         if (c.settings().isEmpty()) {

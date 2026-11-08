@@ -1210,8 +1210,9 @@ settings, writer settings and abilities, `CommonSettings`, `FlowDefinition`'s co
 a component has no entry or a page has one for a component the server lacks, when a flow node's or
 rule's hand-written settings table names other keys than the reader takes (the flow node and rule
 tables are hand-written: only their keys are checked, not their types or defaults), when the
-expression function tables in `pipeline-nodes.md` miss a function, when the images under Versions
-tested are not exactly those the integration tests use, and when an entry has no example. Every
+expression function tables in `expressions.md` miss a function, when the drivers guide does not name
+each shipped driver at its version, when the images under Versions tested are not exactly those the
+integration tests use, and when an entry has no example. Every
 YAML example on the pages is a whole pipeline or flow, checked as saving checks it against stub
 sources; every JSON example is a rule, checked as `POST /api/v1/quality/rules` checks it. After
 changing a setting, a connector or a node, run `./gradlew :server:writeReference -PskipUi` and

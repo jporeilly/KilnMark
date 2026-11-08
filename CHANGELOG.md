@@ -67,20 +67,20 @@ details.
 - **Owners** on pipelines and flows: people or team addresses, who are told when a run fails after
   its last try, when it recovers, and when it takes longer than expected, whatever their own
   choices. By default whoever first saved it; with no owner, admins are told. Owning gives no
-  rights. ([Owners](docs/guide/pipelines.md#owners))
+  rights. ([Owners](docs/guide/notifications.md#owners-of-pipelines-and-flows))
 - **Sort rows** (a new `sort` node, ADR 0049): orders rows by one or more columns, each smallest or
   largest first, with empty values last unless a column says `nulls first`. Rows with equal values
   keep their order. Any number of rows can be sorted: past the node's memory limit it carries on on
   disk, in a temporary folder only the server can read, encrypted and deleted when the node ends,
   and the run's log says how much it wrote. In the Transform folder of the canvas, with a sample,
-  `sample-sort`. ([sort](docs/guide/pipeline-nodes.md#sort))
+  `sample-sort`. ([sort](docs/guide/reference-pipeline-nodes.md#sort))
 - **Join two inputs** (a new `join` node, ADR 0049): `inner`, `left`, `right` or `full`, on one or
   more pairs of key columns, with every pair kept when a key repeats on both sides. Either input
   may be larger than memory: both are sorted by their keys, on disk past the node's memory limit.
   Keys match by value as a lookup's do, and an empty key never matches. Every column of both
   sides comes out with its type; a right column whose name the left already has is renamed
   `right_...`. In the Combine folder of the canvas, with a sample, `sample-join`. A `lookup` is
-  still the quicker choice for a small table. ([join](docs/guide/pipeline-nodes.md#join))
+  still the quicker choice for a small table. ([join](docs/guide/reference-pipeline-nodes.md#join))
 - **Window functions** (a new `window` node, ADR 0049): row numbers, ranks, running totals (count,
   sum, average, smallest and largest so far) and the previous or next row's value, with an offset
   and a default, worked out over each group of rows (`partition_by`) in an order (`order_by`). Every
@@ -89,13 +89,13 @@ details.
   unless a column says `nulls first`, as in a sort. Any number of rows can be used: past the node's
   memory limit it carries on on disk, as a sort does, and the run's log says how much it wrote. In
   the Transform folder of the canvas, with a sample, `sample-window`.
-  ([window](docs/guide/pipeline-nodes.md#window))
+  ([window](docs/guide/reference-pipeline-nodes.md#window))
 - **More expression functions** (ADR 0049): `if(condition, a, b)`; padding with `lpad` and `rpad`;
   `left` and `right`; `split_part` to take one field of a text; `starts_with`, `ends_with` and
   `contains`; `greatest` and `least`; `date_add` to move a date or time by years, quarters, months,
   weeks, days, hours, minutes or seconds, and `date_diff` to count the whole units between two; and
   `sha256` to hash a text. A hash of a column marked sensitive stays marked. Each is checked when a
-  pipeline is saved: its arguments' types, and units and other values that must be written out. ([Functions](docs/guide/pipeline-nodes.md#functions))
+  pipeline is saved: its arguments' types, and units and other values that must be written out. ([Functions](docs/guide/expressions.md#functions))
 - **Signing in through your organisation's provider no longer ends after a few minutes.** A sign-in
   now renews itself while the person works, and lasts until 8 hours after they signed in at the
   provider, until the provider's own session ends, or until they sign out. With the bundled
@@ -110,7 +110,7 @@ details.
   card, the default too, and the settings panel offers the deciding column only for `latest` and
   `earliest`. A lookup's error for a repeated key no longer quotes the key's value. A preview is
   refused for those who cannot unmask when `duplicates_by` names a column marked sensitive.
-  ([Which row wins](docs/guide/pipeline-nodes.md#which-row-wins))
+  ([Which row wins](docs/guide/reference-pipeline-nodes.md#which-row-wins))
 - **Rows that fail are set aside, not fatal** (ADR 0054; backlog item 9, point 1): `compute`,
   `select`, `filter`, `route` and `write` have an `errors` port. Connect something to it, such as a
   write to a quarantine file, and a row whose expression, cast or condition fails, or whose value a
@@ -124,10 +124,39 @@ details.
   write. A route can no longer be called `errors`. A write's messages about a value its column
   cannot hold (a decimal or time too precise, a number out of range, a year, an Oracle character)
   no longer quote the value. A sample, `sample-rows-that-fail`, sets bad
-  SKUs aside into a quarantine file. ([Rows that fail](docs/guide/pipeline-nodes.md#rows-that-fail))
+  SKUs aside into a quarantine file. ([Rows that fail](docs/guide/rows-that-fail.md))
+- **The documentation, arranged by reader**: the Documentation page now shows the guides in six
+  groups, Get started, Build, Data quality, Install and deploy, Administer and Reference, each in
+  reading order. New: [Your first pipeline](docs/guide/first-pipeline.md), from signing in to a
+  finished run. Pipeline nodes and expressions is merged into
+  [Reference: pipeline nodes](docs/guide/reference-pipeline-nodes.md), with the expression language
+  on a page of its own, [Expressions](docs/guide/expressions.md), and
+  [Rows that fail](docs/guide/rows-that-fail.md) beside [Quality gates](docs/guide/quality-gates.md),
+  which takes the gates, measured and predicted quality out of the pipelines guide. Setting up
+  tokens, your identity provider and Keycloak moves from the sign-in guide to
+  [People and access](docs/guide/people-and-access.md), and the owners of pipelines and flows are
+  described once, in [Notifications](docs/guide/notifications.md#owners-of-pipelines-and-flows).
+  Each connector's entry says which driver it uses, and
+  [Database drivers](docs/guide/drivers.md#drivers-kilnmark-ships) lists those Kilnmark ships with
+  their versions and licences. Old links to a page or section that moved still arrive.
 
 ### Details
 
+- **The documentation's groups and moves** (`ui/src/docs/groups.ts`): the groups the Documentation
+  page shows, and where each page or section that moved went, which the viewer follows for an old
+  link and for a link inside a guide. `groups.test.ts` fails when a guide is in no group, when a
+  move ends on a page or section that does not exist, and when a guide links to a page or section
+  that is not there. The install guides, in `docs/guide/install/`, fill the Install and deploy group
+  by themselves and are bundled beside the others, for the viewer and the assistant. The
+  components reference names each connector's driver from `ComponentsReference.SHIPPED_DRIVERS`,
+  which a new connector must join, and `ComponentsReferenceTest` checks that the drivers guide names
+  each shipped driver at the version the build ships. The assistant's evaluation set follows the
+  moves, with a question for each merged page. Guides corrected against the code: the pipelines
+  guide said stewards add, change and delete pipelines (designers do; stewards run them) and that a
+  page for server variables would follow (there is none yet: use the API); the flows guide said
+  node settings could not be changed on the diagram (they can), and pointed to the design notes for
+  the condition language, which it now explains itself; the connectors reference said the files,
+  S3 and sample data connectors ship a driver (they need none).
 - **Samples explained** (ADR 0043): `Samples.explanation` reads a file's opening comment into a
   title, what it shows, `# Why it matters:`, `# Look for:` and `# Needs:`; `GET /api/v1/samples` and
   `GET /api/v1/templates` return it as `explanation`, and `SamplesExplainedTest` fails the build when

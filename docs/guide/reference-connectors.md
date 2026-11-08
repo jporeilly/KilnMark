@@ -85,7 +85,7 @@ Kind `postgresql`, listed under databases (relational).
 | yes | yes | yes | yes | yes | yes, with Allow SQL on |
 
 - In flows: `check-source` can reach it and look for its tables; `wait-for` can wait for a query; a `sql` node can run on it, with Allow SQL and Allow writing on
-- Driver: ships with Kilnmark
+- Driver: the PostgreSQL JDBC driver, which ships with Kilnmark ([Drivers Kilnmark ships](drivers.md#drivers-kilnmark-ships))
 - Who sets one up: designers and admins
 
 | Setting | Type | Required | Default | What it does |
@@ -152,7 +152,7 @@ Kind `sqlserver`, listed under databases (relational).
 | yes | yes | yes | yes | yes | no |
 
 - In flows: `check-source` can reach it and look for its tables
-- Driver: ships with Kilnmark
+- Driver: the Microsoft JDBC Driver for SQL Server, which ships with Kilnmark ([Drivers Kilnmark ships](drivers.md#drivers-kilnmark-ships))
 - Who sets one up: designers and admins
 
 | Setting | Type | Required | Default | What it does |
@@ -218,7 +218,7 @@ Kind `mysql`, listed under databases (relational).
 | yes | yes | yes | yes | yes | no |
 
 - In flows: `check-source` can reach it and look for its tables
-- Driver: ships with Kilnmark
+- Driver: MariaDB Connector/J (MySQL's own driver is never used), which ships with Kilnmark ([Drivers Kilnmark ships](drivers.md#drivers-kilnmark-ships))
 - Who sets one up: designers and admins
 
 | Setting | Type | Required | Default | What it does |
@@ -287,7 +287,7 @@ Kind `mariadb`, listed under databases (relational).
 | yes | yes | yes | yes | yes | no |
 
 - In flows: `check-source` can reach it and look for its tables
-- Driver: ships with Kilnmark
+- Driver: MariaDB Connector/J, which ships with Kilnmark ([Drivers Kilnmark ships](drivers.md#drivers-kilnmark-ships))
 - Who sets one up: designers and admins
 
 | Setting | Type | Required | Default | What it does |
@@ -352,7 +352,7 @@ Kind `oracle`, listed under databases (relational).
 | yes | yes | yes | yes | yes | no |
 
 - In flows: `check-source` can reach it and look for its tables
-- Driver: installed by an admin (`com.oracle.database.jdbc:ojdbc11` 23.26.3.0.0, Oracle Free Use Terms and Conditions (FUTC); Kilnmark may not ship it)
+- Driver: installed by an admin from **Settings › Drivers** (`com.oracle.database.jdbc:ojdbc11` 23.26.3.0.0, Oracle Free Use Terms and Conditions (FUTC); Kilnmark may not ship it; [Install a driver](drivers.md#install-a-driver-admins))
 - Who sets one up: designers and admins
 
 | Setting | Type | Required | Default | What it does |
@@ -423,7 +423,7 @@ Kind `jdbc`, listed under databases (relational).
 | yes | yes | yes | yes | yes | no |
 
 - In flows: `check-source` can reach it and look for its tables
-- Driver: the JDBC driver an admin registers on this server
+- Driver: the vendor's JDBC driver, which an admin registers on this server ([Databases without a connector of their own](drivers.md#databases-without-a-connector-of-their-own))
 - Who sets one up: admins only
 
 | Setting | Type | Required | Default | What it does |
@@ -493,7 +493,7 @@ Kind `files`, listed under files (local or network folder).
 
 - Formats it reads: csv, tsv, json, jsonl, parquet, excel, documents
 - In flows: `check-source` can reach it and look for its files; `wait-for` can wait for a file
-- Driver: ships with Kilnmark
+- Driver: none needed: Kilnmark reaches these itself
 - Who sets one up: designers and admins
 
 | Setting | Type | Required | Default | What it does |
@@ -559,7 +559,7 @@ Kind `s3`, listed under files (object storage).
 
 - Formats it reads: csv, tsv, json, jsonl, parquet, excel, documents
 - In flows: `check-source` can reach it and look for its files; `wait-for` can wait for a file
-- Driver: ships with Kilnmark
+- Driver: none needed: Kilnmark reaches these itself
 - Who sets one up: designers and admins
 
 | Setting | Type | Required | Default | What it does |
@@ -631,7 +631,7 @@ Kind `sample-data`, listed under files (built in).
 
 - Formats it reads: csv
 - In flows: `check-source` can reach it and look for its files; `wait-for` can wait for a file
-- Driver: ships with Kilnmark
+- Driver: none needed: Kilnmark reaches these itself
 - Who sets one up: designers and admins
 
 It has no settings of its own.

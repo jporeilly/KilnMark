@@ -143,22 +143,22 @@ thresholds, alerts and recipes are in [Setting data quality rules](quality-rules
 
 ## Expression functions
 
-`filter`, `compute`, `aggregate` and `route`, and a read node's `where`, share one small expression
-language, much like SQL. Its values, operators, types, functions and limits are in
-[Pipeline nodes and expressions](pipeline-nodes.md#expressions):
+`filter`, `compute`, `aggregate`, `route` and `window` nodes, and a read node's `where`, share one
+small expression language, much like SQL. Its values, operators, types, functions and limits are
+in [Expressions](expressions.md):
 
 [generated: index functions]: #
 
-- [Functions](pipeline-nodes.md#functions), for text, numbers, dates and regular expressions: `abs`, `ceil`, `coalesce`, `concat`, `contains`, `date_add`, `date_diff`, `date_part`, `date_trunc`, `ends_with`, `floor`, `format_date`, `greatest`, `if`, `least`, `left`, `length`, `lower`, `lpad`, `now`, `nullif`, `parse_date`, `parse_timestamp`, `regex_match`, `regex_replace`, `replace`, `right`, `round`, `rpad`, `sha256`, `split_part`, `starts_with`, `substring`, `today`, `trim` and `upper`.
-- [Aggregate functions](pipeline-nodes.md#aggregate), for an aggregate node's values: `avg`, `count`, `count_distinct`, `max`, `min` and `sum`.
-- [Window functions](pipeline-nodes.md#window), for a window node's columns: `avg`, `count`, `dense_rank`, `lag`, `lead`, `max`, `min`, `rank`, `row_number` and `sum`.
+- [Functions](expressions.md#functions), for text, numbers, dates and regular expressions: `abs`, `ceil`, `coalesce`, `concat`, `contains`, `date_add`, `date_diff`, `date_part`, `date_trunc`, `ends_with`, `floor`, `format_date`, `greatest`, `if`, `least`, `left`, `length`, `lower`, `lpad`, `now`, `nullif`, `parse_date`, `parse_timestamp`, `regex_match`, `regex_replace`, `replace`, `right`, `round`, `rpad`, `sha256`, `split_part`, `starts_with`, `substring`, `today`, `trim` and `upper`.
+- [Aggregate functions](expressions.md#aggregate-functions), for an aggregate node's values: `avg`, `count`, `count_distinct`, `max`, `min` and `sum`.
+- [Window functions](expressions.md#window-functions), for a window node's columns: `avg`, `count`, `dense_rank`, `lag`, `lead`, `max`, `min`, `rank`, `row_number` and `sum`.
 
 [end: index functions]: #
 
 And, written in the language itself:
 
-- [Types](pipeline-nodes.md#types) and `cast`, [empty values](pipeline-nodes.md#empty-values-null)
-  and [limits](pipeline-nodes.md#limits).
+- [Types](expressions.md#types) and `cast`, [empty values](expressions.md#empty-values-null)
+  and [limits](expressions.md#limits).
 
 The build checks that the function tables there list every function the language has, and no
 other.
