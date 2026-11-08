@@ -2,6 +2,7 @@ package io.kilnmark.server;
 
 import static io.kilnmark.server.Tokens.admin;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.notNullValue;
@@ -193,7 +194,8 @@ class CatalogFlowTest {
         admin().contentType(ContentType.JSON).body(Map.of("name", "Bad Name", "settings", Map.of("url", url)))
             .post("/api/v1/sources").then().statusCode(400).body("error", containsString("name"));
         admin().contentType(ContentType.JSON).body(Map.of("name", "odd", "kind", "teradata"))
-            .post("/api/v1/sources").then().statusCode(400).body("error", containsString("unknown kind"));
+            .post("/api/v1/sources").then().statusCode(400).body("error", containsString("unknown kind"))
+            .body("error", not(containsString("teradata")));   // never the kind sent
         admin().contentType(ContentType.JSON).body(Map.of("name", "no-url"))
             .post("/api/v1/sources").then().statusCode(400).body("error", containsString("url: required"));
         admin().get("/api/v1/connectors").then().statusCode(200)

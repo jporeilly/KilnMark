@@ -59,8 +59,7 @@ final class SourceRules {
         }
         Connector c = connectors.get(source.kind()).orElse(null);
         if (c == null) {
-            return "kind: unknown kind '" + source.kind() + "'; this server supports "
-                + String.join(", ", connectors.all().stream().map(Connector::kind).toList());
+            return SourceService.unknownKind(connectors);
         }
         for (Connector.Setting s : c.settings()) {
             if (s.required() && source.setting(s.key()) == null) {

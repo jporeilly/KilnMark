@@ -2,6 +2,7 @@ package io.kilnmark.server.pipelines;
 
 import static io.kilnmark.server.Tokens.admin;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -132,7 +133,7 @@ class SampleTablesApiTest {
 
         // What cannot have the tables: no such source, not a database, not writable, an unusable schema.
         as(designer).body(Map.of("source", "nope", "schema", SCHEMA)).post("/api/v1/samples/tables").then()
-            .statusCode(400).body("error", containsString("no saved source called 'nope'"));
+            .statusCode(400).body("error", containsString("no saved source of that name")).body("error", not(containsString("nope")));
         as(designer).body(Map.of("source", "e2e-files", "schema", SCHEMA)).post("/api/v1/samples/tables").then()
             .statusCode(400).body("error", containsString("is not a database"));
         as(designer).body(Map.of("source", "e2e-db-readonly", "schema", SCHEMA)).post("/api/v1/samples/tables")

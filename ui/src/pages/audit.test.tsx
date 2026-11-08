@@ -49,6 +49,7 @@ group("the audit log page", () => {
       "2 statements on warehouse, version 3",
     );
     expect(describe(event("starter.added", { refused: "production" }))).toBe("Refused, nothing changed: production");
+    expect(describe(event("samples.refused", { refused: "production", request: "add" }))).toBe("Refused, nothing changed: production (add)");
     expect(describe(event("starter.people", { action: "remove", people: ["vera.lane@kilnmark.com", "sam.okafor@kilnmark.com"] }))).toBe(
       "Removed: vera.lane@kilnmark.com, sam.okafor@kilnmark.com",
     );
@@ -109,6 +110,7 @@ group("the audit log page", () => {
         "schedule.paused",
         "starter.added",
         "starter.removed",
+        "samples.refused",
         "starter.people",
         "flow.sql",
         "mark.cleared",

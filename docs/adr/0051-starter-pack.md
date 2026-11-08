@@ -6,7 +6,10 @@ at install (decisions 6 to 13), in place of a production setting and the start-u
 people commands and Keycloak's backup the same day; then no upgrade from before modes, activation
 on production, and expiring temporary passwords; amended 8 November 2026 by the owner: the
 install layout and the guided install, decision 17, in place of the temporary Windows root of
-decision 15)
+decision 15; amended 8 November 2026 after a security review of 0.1.2: expiry reads credentials
+as JSON and fails closed, decision 10; groups compared whole and names without formatting
+characters, decision 10; the marked group found at any level and the realm checked before
+anything changes, decision 16)
 
 ## Context
 
@@ -231,7 +234,23 @@ converted: Production or Starter Pack.
       else the person has: Keycloak asks for a one-time code before the new password, so someone
       who intercepted a temporary password could set up a code and stop there; they are still
       disabled in time, and any credential made since that password was set (the code) is deleted,
-      so the real person can be activated again. The check runs at every run of `keycloak-setup` (every start, every `people`
+      so the real person can be activated again. **Expiry reads a person's credentials as JSON,
+      never as CSV.** A one-time code's label is text the person chose, and Keycloak's own form for
+      setting up the code keeps a line break in it (a CRLF, found on a 0.1.2 install); read as CSV,
+      the label's second line is a second credential, a marked password with whatever time they
+      write, one in the future or none at all, so it never expired. Only a credential whose type is
+      exactly `password` and whose label is exactly `kilnmark-temporary` counts, and the earliest
+      such time. **It fails closed**: anyone Keycloak still asks to choose their own password whose
+      credentials do not read cleanly (a label holding a control character or an invisible
+      formatting one, a marked password whose time is not a plain time, or one more than an hour
+      ahead) is disabled at once and named (`auth.person_disabled`), however recent their
+      temporary password; nothing of theirs is deleted, and an admin checks them in Keycloak's
+      console. A listing of the realm's people that does not read cleanly stops the run, saying so,
+      rather than checking nobody unsaid. The Keycloak image has no jq (nor awk or python), so
+      `keycloak-setup` reads kcadm's JSON with a small, strict reader of its own (anything not JSON
+      as kcadm writes it is refused), never sed or a pattern over the raw text; every listing of
+      people, the realm's stamp and the pack's group are read the same way, and CSV is kept only
+      for Keycloak's own ids, types and times. The check runs at every run of `keycloak-setup` (every start, every `people`
       command) and, because nothing else may run for days, every hour as `people expire`: `up` sets
       it up with the bundled Keycloak (on Linux a systemd timer of the service account, a system one
       as root; on Windows a scheduled task of the user, which runs while they are signed in, as the
@@ -253,7 +272,10 @@ converted: Production or Starter Pack.
       `kilnmark-admins` here, and one it maps to seeing sensitive values (`KILNMARK_OIDC_UNMASK_GROUPS`)
       as `kilnmark-sensitive-data`, whatever its name;
     - an import checks the whole file before changing anything (a well-formed address, a known
-      group, no address twice, no character Keycloak refuses in a name), names each bad line by its
+      group, no address twice, no character Keycloak refuses in a name, nor a control character or
+      an invisible formatting one, such as a right-to-left override or a zero-width space, which
+      can make a name look like another's; groups compared whole, one at a time, so one with a
+      space in it is refused, never read as two of Kilnmark's), names each bad line by its
       number, never its values, and then makes nobody; it ends with how many were made, already
       there and refused, and should Keycloak refuse someone part way, with how many it made first;
     - someone already there with that user name or email is left exactly as they are, their
@@ -406,9 +428,12 @@ converted: Production or Starter Pack.
     `keycloak-setup` refuses a realm stamped for another install or mode, and on production one
     holding the pack's marked group or any of the five example user names (a Keycloak volume kept
     from a Starter Pack install, say). It fails closed: a realm, group or user lookup Keycloak does
-    not answer counts against the realm (the pack's group is looked for by an exact search, whose
-    empty answer is the only "not there"), and a stamp is read whole and compared exactly, so half
-    of one, or one not of Kilnmark's shape, is refused. So do the people commands' own lookups:
+    not answer counts against the realm (the pack's marked group is looked for at every level, not
+    only at the top, by an exact search, which answers with the way down to each group of that
+    name; its empty answer, read cleanly, is the only "not there"), and a stamp is read whole and
+    compared exactly, so half of one, or one not of Kilnmark's shape, is refused. A realm already
+    there is checked before anything is changed, Keycloak's own master realm included, so a
+    refused run has changed nothing, as it says. So do the people commands' own lookups:
     whether someone is from a directory, enabled, in the pack's group or holds a credential, when
     Keycloak does not answer, leaves them as they are (`enable`) or stops (`activate`). A person
     made is checked against their groups by full path: a subgroup with a role's name is another
@@ -419,7 +444,7 @@ converted: Production or Starter Pack.
     connector from, so nothing reaches it, whatever a database kept from a Starter Pack install
     holds. The only code that adds a source of that kind is the samples' own (their sample data,
     for the sample that reads it), and both ways to it refuse on production first: the samples
-    API (`/api/v1/samples`, refused on a production install) and the Starter Pack's own setting
+    API (`/api/v1/samples`, refused on a production install, each refusal an audit event, `samples.refused`) and the Starter Pack's own setting
     up, which runs only on a Starter Pack install. Adding a source of that kind by hand or in a bulk
     import is refused on production with its own reason.
 

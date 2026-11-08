@@ -527,14 +527,14 @@ public class Samples {
         String schema = body == null || body.schema() == null ? "" : body.schema().strip();
         Records.Source target = sources.source(name).orElseThrow(() -> new IllegalArgumentException(name.isEmpty()
             ? "source: choose the database to create the sample tables in"
-            : "source: there is no saved source called '" + name + "'"));
+            : "source: there is no saved source of that name"));
         String category = sources.connector(target.kind()).map(c -> c.category()).orElse("other");
         if (!"databases".equals(category)) {
-            throw new IllegalArgumentException("source: " + name + " is not a database; the sample tables go in a "
+            throw new IllegalArgumentException("source: the source chosen is not a database; the sample tables go in a "
                 + "database, such as PostgreSQL, MySQL, MariaDB or SQL Server");
         }
         if (!"true".equals(target.settings().get("allow_writing"))) {
-            throw new IllegalArgumentException("source: " + name + " does not allow writing; a designer or an admin "
+            throw new IllegalArgumentException("source: the source chosen does not allow writing; a designer or an admin "
                 + "turns on Allow writing for it first");
         }
         if (!SCHEMA.matcher(schema).matches()) {
@@ -622,7 +622,7 @@ public class Samples {
         if (body != null && body.sources() != null) {
             for (var e : body.sources().entrySet()) {
                 if (PLACEHOLDERS.stream().noneMatch(p -> p.name().equals(e.getKey()))) {
-                    throw new IllegalArgumentException("sources: '" + e.getKey() + "' is not a placeholder the "
+                    throw new IllegalArgumentException("sources: a name that is not a placeholder the "
                         + "samples use; they use " + String.join(", ", PLACEHOLDERS.stream().map(Placeholder::name)
                             .toList()));
                 }
@@ -631,7 +631,7 @@ public class Samples {
                     continue;
                 }
                 if (sources.source(to).isEmpty()) {
-                    throw new IllegalArgumentException("sources: there is no saved source called '" + to + "'");
+                    throw new IllegalArgumentException("sources: " + e.getKey() + " names a source that is not saved");
                 }
                 mapping.put(e.getKey(), to);
             }

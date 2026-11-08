@@ -125,14 +125,26 @@ read_password() {
   printf '%s' "$p"
 }
 trim() { local t="$1"; t="${t#"${t%%[![:space:]]*}"}"; printf '%s' "${t%"${t##*[![:space:]]}"}"; }
+# Characters no text setup reads may hold: control characters (C0, DEL, C1) and Unicode's format
+# and separator characters (bidirectional overrides and isolates, zero-width characters, the soft
+# hyphen, the byte-order mark, line and paragraph separators, tags), which [[:cntrl:]] does not see
+# and which can make a name look like another. As UTF-8 bytes, matched in the C locale.
+ODD_RE=$'[\x01-\x1f\x7f]|\xc2[\x80-\x9f\xad]|\xd8\x9c|\xe1\xa0\x8e|\xe2\x80[\x8b-\x8f\xa8-\xae]|\xe2\x81[\xa0-\xa4\xa6-\xaf]|\xef\xbb\xbf|\xef\xbf[\xb9-\xbb]|\xf0\x9d\x85[\xb3-\xba]|\xf3\xa0[\x80-\x81]'
+# Whether text $1 holds any of them.
+odd_text() ( LC_ALL=C; [[ "$1" =~ $ODD_RE ]] )
+# Whether $1 is one of the words of $2 (space-separated), compared whole: never a part of the list.
+in_words() { local w; for w in $2; do [ "$w" = "$1" ] && return 0; done; return 1; }
+# Whether $1 is one of the lines of $2, compared whole.
+in_lines() { local w; while IFS= read -r w; do [ -n "$w" ] && [ "$w" = "$1" ] && return 0; done <<< "$2"; return 1; }
 # The groups config/.env maps to a role for Kilnmark (KILNMARK_OIDC_*_GROUPS, comma-separated, a
 # leading / or not): every one of them (MAPPED_GROUPS), and those that make an admin or let someone
-# see sensitive values, which count as kilnmark-admins and kilnmark-sensitive-data do here.
+# see sensitive values, which count as kilnmark-admins and kilnmark-sensitive-data do here. One a
+# line, as a group's name may hold a space.
 mapped_groups() {
   local v g list out=""
   for v in "$@"; do
     IFS=',' read -r -a list <<< "$v"
-    for g in "${list[@]}"; do g="$(trim "$g")"; g="${g#/}"; [ -z "$g" ] || out="$out $g"; done
+    for g in "${list[@]}"; do g="$(trim "$g")"; g="${g#/}"; [ -z "$g" ] || out="$out$g"$'\n'; done
   done
   printf '%s' "$out"
 }
@@ -152,6 +164,8 @@ NAME_REFUSED='[][<>&"$%!#?;*~/\\|^={}()]'
 name_problem() {
   if [ -z "$1" ] || [ "${#1}" -gt 100 ] || [[ "$1" == *[[:cntrl:]]* ]]; then
     echo "needs a first and a last name, up to 100 characters each"
+  elif odd_text "$1"; then
+    echo "a name holds a control character or an invisible formatting one (a right-to-left override, a zero-width space, say), which can make it look like another"
   elif printf '%s' "$1" | grep "$NAME_REFUSED" > /dev/null; then
     echo "a name holds a character Keycloak refuses in names: ( ) / \\ ; & < > \" \$ % ! # ? * ~ | ^ = [ ] { }"
   fi
@@ -165,17 +179,22 @@ groups_problem() {
     g="$(trim "$g")"
     [ -n "$g" ] || continue
     any=true
+    # one group at a time, compared whole: "kilnmark-designers kilnmark-admins" is no group, though
+    # each half is one
+    if [[ "$g" == *[[:space:]]* ]]; then
+      echo "a group with a space in it: Kilnmark's groups have none; separate groups with ;"; return
+    fi
     # by name, or by what config/.env makes of the group
-    if { [ "$g" = kilnmark-admins ] || [[ " $ADMIN_MAPPED " == *" $g "* ]]; } && [ "$2" != true ]; then
+    if { [ "$g" = kilnmark-admins ] || in_lines "$g" "$ADMIN_MAPPED"; } && [ "$2" != true ]; then
       echo "admins are added one at a time, with people add, never from a file"; return
     fi
-    if { [ "$g" = kilnmark-sensitive-data ] || [[ " $UNMASK_MAPPED " == *" $g "* ]]; } && [ "$3" != true ]; then
+    if { [ "$g" = kilnmark-sensitive-data ] || in_lines "$g" "$UNMASK_MAPPED"; } && [ "$3" != true ]; then
       echo "people who see sensitive values are added one at a time, with people add, never from a file on a production install"; return
     fi
-    if [[ " $KNOWN_GROUPS " != *" $g "* ]]; then
+    if ! in_words "$g" "$KNOWN_GROUPS"; then
       echo "a group that is not one of Kilnmark's ($KNOWN_GROUPS)"; return
     fi
-    if [[ "$seen" == *" $g "* ]]; then echo "a group named twice"; return; fi
+    if in_words "$g" "$seen"; then echo "a group named twice"; return; fi
     seen="$seen$g "
   done
   $any || echo "no group: each person needs at least one of Kilnmark's groups"
@@ -295,7 +314,9 @@ for i in $(seq 1 150); do
     break
   fi
   if [ "$i" = 150 ]; then
-    say "could not sign in to Keycloak at $KEYCLOAK_URL as $KC_ADMIN_USER: it did not start, or the admin password differs from the one it was first started with"
+    # never the address or the admin's user name: an error message echoes no value (it can end
+    # up in a log anyone reads)
+    say "could not sign in to Keycloak as its admin (KILNMARK_KEYCLOAK_ADMIN): it did not start, or the admin password differs from the one it was first started with"
     exit 1
   fi
   sleep 2
@@ -318,38 +339,190 @@ require() {
 # writer with SIGPIPE, which pipefail turns into a failure of the whole pipeline.
 one() { local first=""; IFS= read -r first || true; printf '%s\n' "$first"; cat > /dev/null; }
 
-# Every line of a listing kcadm pages through ($1 the path; $2 its fields), 500 at a time: never only
-# the first page, however many there are. Fails when a page fails, so nobody is missed unsaid.
-# KILNMARK_SETUP_PAGE, a smaller page, is for the tests only (compose never passes it).
+# Text a person chose is read from kcadm's JSON, never its CSV (ADR 0051): a credential's label
+# holding a line break reads, in CSV, as two lines, the second whatever they wrote (a forged
+# "password,kilnmark-temporary,<time>", say). The image has no jq (nor awk or python), so the JSON
+# is read by this small, strict reader, never by sed or a pattern over the raw text.
+RS=$'\x1e'
+US=$'\x1f'
+JSON_STR='^"(([^"\\]|\\.)*)"'
+JSON_ESC='^([^\\]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4})*$'
+JSON_PLAIN='^([^\\]|\\["\\/])*$'
+JSON_NUM='^-?(0|[1-9][0-9]*)([.][0-9]+)?([eE][+-]?[0-9]+)?'
+JSON_AFTER='^[],}[:blank:]]'
+# A JSON text's escapes \" \\ \/ undone (it holds no other), into UNESCAPED: no subshell, as a
+# page of people has thousands.
+json_unescape() {
+  local s="$1"
+  UNESCAPED=""
+  while [[ "$s" == *\\* ]]; do UNESCAPED+="${s%%\\*}"; s="${s#*\\}"; UNESCAPED+="${s:0:1}"; s="${s:1}"; done
+  UNESCAPED+="$s"
+}
+# kcadm's JSON on standard input, as one line for each value that is not an object or a list: its
+# path (each key or index, joined by RS), US, its kind (s a text; x a text holding another escape,
+# a control character escaped, or a character odd_text refuses, left as written; n a number; b true
+# or false; z null), US, the value. Fails, printing nothing, on anything not JSON as kcadm writes it:
+# text after the end, an odd key, a value it cannot read.
+json_leaves() (
+  LC_ALL=C
+  local line rest raw kind val out="" state=V stack=""
+  local -a seg=()
+  # state: V a value; A a value or ] (just after [); K a key or } (just after {); L a key (after a
+  # comma); C a colon; N a comma, or the end of what is open; E nothing more
+  closed() { stack="${stack%?}"; unset 'seg[${#seg[@]}-1]'; if [ -z "$stack" ]; then state=E; else state=N; fi; }
+  emit() { local IFS="$RS"; out+="${seg[*]}$US$1$US$2"$'\n'; }
+  while IFS= read -r line || [ -n "$line" ]; do
+    rest="$line"
+    while :; do
+      rest="${rest#"${rest%%[! $'\t']*}"}"
+      [ -n "$rest" ] || break
+      [ "$state" != E ] || return 1
+      case "${rest:0:1}" in
+        '{')
+          [ "$state" = V ] || [ "$state" = A ] || return 1
+          stack+=o; seg+=(-); state=K; rest="${rest:1}" ;;
+        '[')
+          [ "$state" = V ] || [ "$state" = A ] || return 1
+          stack+=a; seg+=(0); state=A; rest="${rest:1}" ;;
+        '}')
+          [ "${stack: -1}" = o ] && { [ "$state" = N ] || [ "$state" = K ]; } || return 1
+          closed; rest="${rest:1}" ;;
+        ']')
+          [ "${stack: -1}" = a ] && { [ "$state" = N ] || [ "$state" = A ]; } || return 1
+          closed; rest="${rest:1}" ;;
+        ':')
+          [ "$state" = C ] || return 1
+          state=V; rest="${rest:1}" ;;
+        ',')
+          [ "$state" = N ] || return 1
+          if [ "${stack: -1}" = a ]; then seg[-1]=$((seg[-1] + 1)); state=V; else state=L; fi
+          rest="${rest:1}" ;;
+        '"')
+          [[ "$rest" =~ $JSON_STR ]] || return 1
+          raw="${BASH_REMATCH[1]}"; rest="${rest:${#BASH_REMATCH[0]}}"
+          [[ "$raw" =~ $JSON_ESC ]] || return 1
+          if [ "$state" = K ] || [ "$state" = L ]; then
+            # a key is plain text, never empty
+            [ -n "$raw" ] && [[ "$raw" =~ $JSON_PLAIN ]] && ! [[ "$raw" =~ $ODD_RE ]] || return 1
+            json_unescape "$raw"; seg[-1]="$UNESCAPED"; state=C
+          elif [ "$state" = V ] || [ "$state" = A ]; then
+            if [[ "$raw" =~ $JSON_PLAIN ]] && ! [[ "$raw" =~ $ODD_RE ]]; then
+              json_unescape "$raw"; emit s "$UNESCAPED"
+            else
+              emit x "$raw"
+            fi
+            state=N
+          else
+            return 1
+          fi ;;
+        *)
+          [ "$state" = V ] || [ "$state" = A ] || return 1
+          if [[ "$rest" =~ ^(true|false) ]]; then kind=b
+          elif [[ "$rest" =~ ^null ]]; then kind=z
+          elif [[ "$rest" =~ $JSON_NUM ]]; then kind=n
+          else return 1
+          fi
+          val="${BASH_REMATCH[0]}"; rest="${rest:${#val}}"
+          # a word ends at a delimiter: 12x or truex is not JSON
+          [ -z "$rest" ] || [[ "$rest" =~ $JSON_AFTER ]] || return 1
+          emit "$kind" "$val"; state=N ;;
+      esac
+    done
+  done
+  [ "$state" = E ] || return 1
+  printf '%s' "$out"
+)
+# kcadm's JSON on standard input, a list of objects (a listing, with --fields $1, those fields
+# space-separated), as one line for each object: 1 when any text of it is odd (kind x), else 0; then
+# each field's value (a list of texts joined by commas; nothing when absent or null), joined by US.
+# Fails on anything else: not a list of objects, a field holding an object, a list holding anything
+# but texts, an object with none of the fields.
+json_rows() {
+  local leaves path kind val idx rest f n=-1
+  local -a fields=($1)
+  local -A row=() wanted=()
+  for f in "${fields[@]}"; do wanted[$f]=1; done
+  leaves="$(json_leaves)" || return 1
+  [ -n "$leaves" ] || return 0
+  while IFS="$US" read -r path kind val; do
+    idx="${path%%"$RS"*}"
+    [[ "$idx" =~ ^[0-9]+$ ]] && [ "$idx" != "$path" ] || return 1
+    rest="${path#*"$RS"}"
+    if [ "$idx" != "$n" ]; then
+      [ "$idx" -eq $((n + 1)) ] || return 1
+      [ "$n" -lt 0 ] || json_row_out
+      row=(); n="$idx"
+    fi
+    f="${rest%%"$RS"*}"
+    [ "$kind" != x ] || row[.odd]=1
+    # only the fields asked for: a key of another name never fills one, nor the mark of oddness
+    [ -n "${wanted[$f]:-}" ] || continue
+    if [ "$f" != "$rest" ]; then
+      [[ "${rest#*"$RS"}" =~ ^[0-9]+$ ]] && { [ "$kind" = s ] || [ "$kind" = x ]; } || return 1
+      row[$f]="${row[$f]:+${row[$f]},}$val"
+    elif [ "$kind" != z ]; then
+      row[$f]="$val"
+    fi
+  done <<< "$leaves"
+  json_row_out
+}
+json_row_out() {
+  local o="${row[.odd]:-0}" f
+  for f in "${fields[@]}"; do o+="$US${row[$f]:-}"; done
+  printf '%s\n' "$o"
+}
+
+# Every object of a listing kcadm pages through ($1 the path; $2 its fields, space-separated), read
+# as JSON (json_rows: whether odd, then the fields, joined by US), 500 at a time: never only the
+# first page, however many there are. Fails when a page fails or does not read cleanly, so nobody
+# is missed unsaid. KILNMARK_SETUP_PAGE, a smaller page, is for the tests only (compose never
+# passes it).
 PAGE=500
 if [[ "${KILNMARK_SETUP_PAGE:-}" =~ ^[1-9][0-9]{0,2}$ ]] && [ "$KILNMARK_SETUP_PAGE" -le 500 ]; then PAGE="$KILNMARK_SETUP_PAGE"; fi
-all_of() {
-  local first=0 page line n
+all_rows() {
+  local first=0 page rows n
   while :; do
-    page="$(kc get "$1" -r "$REALM" -q first="$first" -q max="$PAGE" --fields "$2" --format csv --noquotes)" || return 1
+    page="$(kc get "$1" -r "$REALM" -q first="$first" -q max="$PAGE" --fields "${2// /,}")" || return 1
+    rows="$(json_rows "$2" <<< "$page")" || return 1
     n=0
-    while IFS= read -r line; do
-      [ -n "$line" ] || continue
-      printf '%s\n' "$line"; n=$((n + 1))
-    done <<< "$page"
+    if [ -n "$rows" ]; then printf '%s\n' "$rows"; n="$(grep -c . <<< "$rows")"; fi
     [ "$n" -eq "$PAGE" ] || return 0
     first=$((first + PAGE))
   done
+}
+# A person's name in what setup says: their user name when it is one of the people commands'
+# (a plain address), else their id, so nothing a person chose is ever printed as it is.
+who_is() {
+  if [[ "$2" =~ ^[a-z0-9._%+@-]+$ ]]; then printf '%s' "$2"; else printf 'the person with id %s' "$1"; fi
 }
 # The temporary password the people commands set (add, import, activate) is marked with this label,
 # so only it expires: Keycloak drops the mark when its person chooses their own (a new password has
 # no label), and a password an admin set in Keycloak's console never has it.
 TEMPORARY_LABEL=kilnmark-temporary
-# When person $1's (an id) temporary password, by its mark, was set, in milliseconds; false when
-# they have none: no password, or one of their own. Whatever else they have (a one-time code set up
-# with it, say), the marked password still decides.
+# When person $1's (an id) temporary password, by its mark, was set, in milliseconds (status 0);
+# status 3 when they have none: no password, or one of their own. Whatever else they have (a
+# one-time code set up with it, say), the marked password still decides. Read as JSON, never CSV: a
+# label a person chose (a one-time code's, set up with the temporary password) can hold a line
+# break, which in CSV forges a marked password with any time they like. Only a credential whose
+# type is exactly password and whose label is exactly the mark counts, and the earliest such time.
+# Status 1 (fail closed: never taken for "none") when the credentials cannot be read, do not read
+# cleanly, hold a text with a control or formatting character (a label, say), or a marked password
+# without a plain time, or one in the future.
 temporary_set_at() {
-  local type label created at="" list
-  list="$(kc get "users/$1/credentials" -r "$REALM" --fields type,userLabel,createdDate --format csv --noquotes)" || return 1
-  while IFS=, read -r type label created; do
-    if [ "$type" = password ] && [ "$label" = "$TEMPORARY_LABEL" ]; then at="$created"; fi
-  done <<< "$list"
-  [[ "$at" =~ ^[0-9]+$ ]] || return 1
+  local raw rows odd type label created at=""
+  raw="$(kc get "users/$1/credentials" -r "$REALM" --fields type,userLabel,createdDate)" || return 1
+  rows="$(json_rows "type userLabel createdDate" <<< "$raw")" || return 1
+  while IFS="$US" read -r odd type label created; do
+    [ -n "$odd" ] || continue
+    [ "$odd" = 0 ] || return 1
+    if [ "$type" = password ] && [ "$label" = "$TEMPORARY_LABEL" ]; then
+      [[ "$created" =~ ^[0-9]{1,15}$ ]] || return 1
+      if [ -z "$at" ] || [ "$created" -lt "$at" ]; then at="$created"; fi
+    fi
+  done <<< "$rows"
+  [ -n "$at" ] || return 3
+  # a time Keycloak cannot have written: more than an hour ahead of this machine's clock
+  [ "$at" -le $(( ( $(date +%s) + 3600 ) * 1000 )) ] || return 1
   printf '%s' "$at"
 }
 # Whether person $1's only credential is that marked temporary password: someone still waiting for
@@ -362,7 +535,8 @@ only_temporary() {
 }
 # Takes away from person $1 (an id) every credential but a password made at $2 (milliseconds) or
 # later: a one-time code someone set up with an unused temporary password, as Keycloak asks for one
-# before the new password. Its person then waits for people activate, as anyone expired does.
+# before the new password. Its person then waits for people activate, as anyone expired does. (CSV
+# is safe here: ids, types and times are Keycloak's own, never a person's text.)
 drop_later_credentials() {
   local cid type created
   while IFS=, read -r cid type created; do
@@ -374,24 +548,41 @@ drop_later_credentials() {
 # control script's timer, hourly) and before people list: anyone enabled who still has to choose
 # their own password more than ACTIVATION_HOURS after their marked temporary one was set is
 # disabled, each said for Kilnmark's audit log. people activate gives them a new one. The operator's
-# KILNMARK_ADMIN_TOKEN stays the way in should a first admin expire.
+# KILNMARK_ADMIN_TOKEN stays the way in should a first admin expire. It fails closed: anyone who
+# still has to choose their own password and whose credentials do not read cleanly (a label holding
+# a control character, say) is disabled too, and named; a listing of the people that does not read
+# cleanly stops the run, saying so, rather than checking nobody unsaid.
 expire_unused() {
-  local now_ms limit_ms users id username enabled rest set_at
+  local now_ms limit_ms users odd id username enabled actions set_at rc who
   now_ms=$(( $(date +%s) * 1000 ))
   # a later "now", for the tests only (compose never passes it): an earlier one would expire nobody
   if [[ "${KILNMARK_SETUP_NOW_MS:-}" =~ ^[0-9]{13}$ ]] && [ "$KILNMARK_SETUP_NOW_MS" -gt "$now_ms" ]; then
     now_ms="$KILNMARK_SETUP_NOW_MS"
   fi
   limit_ms=$(( ACTIVATION_HOURS * 3600 * 1000 ))
-  users="$(all_of users id,username,enabled,requiredActions)"
-  while IFS=, read -r id username enabled rest; do
+  if ! users="$(all_rows users "id username enabled requiredActions")"; then
+    echo "keycloak-setup: the realm's people could not be read cleanly, so no temporary password was checked for expiry: run people expire again, and if it says so again, check the realm's people in Keycloak's console" >&2
+    exit 1
+  fi
+  while IFS="$US" read -r odd id username enabled actions; do
     [ -n "$id" ] && [ "$enabled" = true ] || continue
-    [[ ",$rest," == *",UPDATE_PASSWORD,"* ]] || continue
-    set_at="$(temporary_set_at "$id")" || continue
-    if [ $(( now_ms - set_at )) -gt "$limit_ms" ]; then
+    [[ ",$actions," == *",UPDATE_PASSWORD,"* ]] || continue
+    who="$(who_is "$id" "$username")"
+    # an id goes into kcadm's paths, so only one of Keycloak's own shape (its own, or a directory's)
+    if ! [[ "$id" =~ ^[A-Za-z0-9:._-]+$ ]]; then
+      say "could not check someone for an unused temporary password: their id is not of Keycloak's shape; check the realm's people in Keycloak's console"
+      continue
+    fi
+    rc=0; set_at="$(temporary_set_at "$id")" || rc=$?
+    if [ "$rc" = 3 ]; then
+      continue
+    elif [ "$rc" != 0 ]; then
+      kc update "users/$id" -r "$REALM" -s enabled=false
+      say "disabled $who: their temporary password was not used yet, and their credentials could not be read cleanly (a label holding a control character, say), so when it was set is not known: check them in Keycloak's console (people activate gives them a new one only if they hold nothing else)"
+    elif [ $(( now_ms - set_at )) -gt "$limit_ms" ]; then
       kc update "users/$id" -r "$REALM" -s enabled=false
       drop_later_credentials "$id" "$set_at"
-      say "disabled $username: their temporary password was not used within $ACTIVATION_HOURS hours (people activate gives them a new one)"
+      say "disabled $who: their temporary password was not used within $ACTIVATION_HOURS hours (people activate gives them a new one)"
     fi
   done <<< "$users"
 }
@@ -408,18 +599,44 @@ PACK_MARK=kilnmark_starter_pack
 # is read whole and compared exactly, and one Kilnmark did not write (half of one, or another shape)
 # is refused.
 UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+# The value at path $2 (keys joined by RS) of leaves $1 (json_leaves), as kind US value; fails when
+# it is not there.
+leaf_of() {
+  local p k v
+  while IFS="$US" read -r p k v; do
+    [ "$p" = "$2" ] || continue
+    printf '%s%s%s' "$k" "$US" "$v"; return 0
+  done <<< "$1"
+  return 1
+}
+# Whether the leaves $1 of a group search (briefRepresentation=false) hold, at any depth, a group
+# named exactly kilnmark-starter-pack that carries the mark only setup sets.
+holds_marked_pack_group() {
+  local p k v mark_re="^(.*)${RS}attributes${RS}${PACK_MARK}${RS}[0-9]+\$"
+  local -A named=() marked=()
+  while IFS="$US" read -r p k v; do
+    [ "$k" = s ] || continue
+    if [[ "$p" == *"${RS}name" ]] && [ "$v" = kilnmark-starter-pack ]; then named["${p%"${RS}name"}"]=1; fi
+    if [[ "$p" =~ $mark_re ]] && [ "$v" = true ]; then
+      marked["${BASH_REMATCH[1]}"]=1
+    fi
+  done <<< "$1"
+  for p in "${!named[@]}"; do [ -z "${marked[$p]:-}" ] || return 0; done
+  return 1
+}
 realm_problem() {
-  local mode raw have stamped_mode stamped_id out gid u
+  local mode raw leaves stamped_mode stamped_id out u first top got
   if [ "$STARTER_MODE" = true ]; then mode=starter-pack; else mode=production; fi
+  # the realm's settings, read as JSON (json_leaves): whole, or not at all
   raw="$(kc get "realms/$REALM" 2> /dev/null)" || { echo "its settings could not be read"; return 0; }
-  have="$(tr -d ' \n\r\t' <<< "$raw")"
-  [[ "$have" == *'"realm":"'"$REALM"'"'* ]] || { echo "its settings could not be read"; return 0; }
+  leaves="$(json_leaves <<< "$raw")" || { echo "its settings could not be read"; return 0; }
+  [ "$(leaf_of "$leaves" realm || true)" = "s$US$REALM" ] || { echo "its settings could not be read"; return 0; }
   stamped_mode="-" stamped_id="-"
-  if [[ "$have" == *'"kilnmark_mode":'* ]]; then
-    stamped_mode=""; [[ "$have" =~ \"kilnmark_mode\":\"([^\"]*)\" ]] && stamped_mode="${BASH_REMATCH[1]}"
+  if got="$(leaf_of "$leaves" "attributes${RS}kilnmark_mode")"; then
+    stamped_mode=""; [[ "$got" != s"$US"* ]] || stamped_mode="${got#s"$US"}"
   fi
-  if [[ "$have" == *'"kilnmark_install_id":'* ]]; then
-    stamped_id=""; [[ "$have" =~ \"kilnmark_install_id\":\"([^\"]*)\" ]] && stamped_id="${BASH_REMATCH[1]}"
+  if got="$(leaf_of "$leaves" "attributes${RS}kilnmark_install_id")"; then
+    stamped_id=""; [[ "$got" != s"$US"* ]] || stamped_id="${got#s"$US"}"
   fi
   if [ "$stamped_mode" != "-" ] || [ "$stamped_id" != "-" ]; then
     if [ "$stamped_mode" = "-" ] || [ "$stamped_id" = "-" ] || ! [[ "$stamped_id" =~ $UUID_RE ]] \
@@ -434,20 +651,23 @@ realm_problem() {
     fi
   fi
   [ "$mode" = production ] || return 0
-  # an exact search, which answers a group not there with an empty list: a lookup that fails is
-  # not knowing, never "not there"
-  out="$(kc get groups -r "$REALM" -q search=kilnmark-starter-pack -q exact=true --fields id,name --format csv --noquotes)" \
-    || { echo "its groups could not be read"; return 0; }
-  gid=""
-  while IFS=, read -r g_id g_name; do
-    [ "$g_name" != kilnmark-starter-pack ] || gid="$g_id"
-  done <<< "$out"
-  if [ -n "$gid" ]; then
-    out="$(kc get "groups/$gid" -r "$REALM")" || { echo "its groups could not be read"; return 0; }
-    if tr -d ' \n\r\t' <<< "$out" | grep -F "\"$PACK_MARK\":[\"true\"]" > /dev/null; then
+  # The pack's marked group at any level, not only at the top: an exact search answers with each
+  # top-level group whose tree holds one of that name, with the way down to it (and, with
+  # briefRepresentation=false, their attributes), a page of top-level groups at a time. A lookup
+  # that fails, or an answer that does not read cleanly, is not knowing, never "not there".
+  first=0
+  while :; do
+    out="$(kc get groups -r "$REALM" -q search=kilnmark-starter-pack -q exact=true -q briefRepresentation=false \
+      -q first="$first" -q max="$PAGE")" || { echo "its groups could not be read"; return 0; }
+    leaves="$(json_leaves <<< "$out")" || { echo "its groups could not be read"; return 0; }
+    if holds_marked_pack_group "$leaves"; then
       echo "it holds the Starter Pack's group, which a production install never has"; return 0
     fi
-  fi
+    top=0
+    [ -z "$leaves" ] || top=$(( $(cut -d"$RS" -f1 <<< "$leaves" | cut -d"$US" -f1 | sort -un | tail -n 1) + 1 ))
+    [ "$top" -eq "$PAGE" ] || break
+    first=$((first + PAGE))
+  done
   for u in $EXAMPLE_USERNAMES; do
     out="$(kc get users -r "$REALM" -q username="$u" -q exact=true --fields id --format csv --noquotes)" \
       || { echo "its people could not be read"; return 0; }
@@ -464,14 +684,15 @@ check_realm() {
   exit 1
 }
 stamp_realm() {
-  local mode raw
+  local mode raw leaves
   [[ "${KILNMARK_INSTALL_ID:-}" =~ $UUID_RE ]] || return 0
   # once: a stamp already there was checked by check_realm, and is never written over; a realm that
-  # cannot be read is never taken for one without
-  raw="$(kc get "realms/$REALM")" || { echo "keycloak-setup: the realm $REALM could not be read, so it was not stamped. Nothing was changed" >&2; exit 1; }
-  raw="$(tr -d ' \n\r\t' <<< "$raw")"
-  [[ "$raw" == *'"realm":"'"$REALM"'"'* ]] || { echo "keycloak-setup: the realm $REALM could not be read, so it was not stamped. Nothing was changed" >&2; exit 1; }
-  [[ "$raw" != *'"kilnmark_install_id":'* ]] && [[ "$raw" != *'"kilnmark_mode":'* ]] || return 0
+  # cannot be read, whole, is never taken for one without
+  raw="$(kc get "realms/$REALM")" && leaves="$(json_leaves <<< "$raw")" \
+    && [ "$(leaf_of "$leaves" realm || true)" = "s$US$REALM" ] \
+    || { echo "keycloak-setup: the realm $REALM could not be read, so it was not stamped. Nothing was changed" >&2; exit 1; }
+  ! leaf_of "$leaves" "attributes${RS}kilnmark_install_id" > /dev/null \
+    && ! leaf_of "$leaves" "attributes${RS}kilnmark_mode" > /dev/null || return 0
   if [ "$STARTER_MODE" = true ]; then mode=starter-pack; else mode=production; fi
   kc update "realms/$REALM" -s "attributes.kilnmark_install_id=$KILNMARK_INSTALL_ID" -s "attributes.kilnmark_mode=$mode"
   say "stamped the realm with this install's id and mode"
@@ -499,11 +720,16 @@ if [ "$PERSON_ACTION" = expire ]; then
   exit 0
 fi
 
+# A realm already here is checked before anything is changed, Keycloak's own master realm included,
+# so a refused run has changed nothing, as it says.
+REALM_THERE=false
+if kc get "realms/$REALM" > /dev/null 2>&1; then REALM_THERE=true; check_realm; fi
+
 # Brute-force protection on Keycloak's own admin realm too: its admin signs in on the same pages.
 kc update realms/master -s bruteForceProtected=true -s failureFactor=10
 
 # The realm, in one call.
-if ! kc get "realms/$REALM" > /dev/null 2>&1; then
+if [ "$REALM_THERE" != true ]; then
   say "creating the realm $REALM"
   kc create realms -s realm="$REALM" -s enabled=true \
     -s displayName=Kilnmark -s displayNameHtml=Kilnmark \
@@ -515,7 +741,7 @@ if ! kc get "realms/$REALM" > /dev/null 2>&1; then
     -s 'passwordPolicy=length(12) and notUsername and notEmail' \
     -s ssoSessionIdleTimeout=7200 -s ssoSessionMaxLifespan=28800
 fi
-check_realm
+# A realm already here was checked above; one made just now holds nothing to check.
 
 # A top-level group's id by its path, or nothing: never by search, which also answers with the parent
 # of any subgroup that has the name.
@@ -647,8 +873,12 @@ set_password() {
 # Whether group $1 (an id) carries the mark only setup sets (the whole group: kcadm's --fields
 # drops attributes).
 group_marked() {
-  local a; a="$(kc get "groups/$1" -r "$REALM" 2> /dev/null | tr -d ' \n\r\t')"
-  [[ "$a" == *"\"$GROUP_MARK\":[\"true\"]"* ]]
+  local raw leaves p k v
+  raw="$(kc get "groups/$1" -r "$REALM" 2> /dev/null)" && leaves="$(json_leaves <<< "$raw")" || return 1
+  while IFS="$US" read -r p k v; do
+    [[ "$p" =~ ^attributes${RS}${GROUP_MARK}${RS}[0-9]+$ ]] && [ "$k" = s ] && [ "$v" = true ] && return 0
+  done <<< "$leaves"
+  return 1
 }
 # The pack's group: its id when setup made it, nothing when there is none. A group of that name
 # without the mark is never taken for it: setup stops, changing nothing.
@@ -682,18 +912,18 @@ example_username() {
   return 1
 }
 remove_people() {
-  local gid members id username email link
+  local gid members odd id username email link
   gid="$(starter_group)"
   [ -n "$gid" ] || return 0
-  members="$(all_of "groups/$gid/members" id,username,email,federationLink)"
-  while IFS=, read -r id username email link; do
+  members="$(all_rows "groups/$gid/members" "id username email federationLink")"
+  while IFS="$US" read -r odd id username email link; do
     [ -n "$id" ] || continue
     if example_username "${username,,}" && [ -z "$link" ] && ! federated "$id"; then
       kc delete "users/$id" -r "$REALM"
       say "removed $username (a Starter Pack example person)"
     else
       kc delete "users/$id/groups/$gid" -r "$REALM"
-      say "took $username out of the group $STARTER_GROUP and left them in Keycloak: not one of the example people (another user name, or from a directory or another identity provider)"
+      say "took $(who_is "$id" "$username") out of the group $STARTER_GROUP and left them in Keycloak: not one of the example people (another user name, or from a directory or another identity provider)"
     fi
   done <<< "$members"
   kc delete "groups/$gid" -r "$REALM"
@@ -873,7 +1103,8 @@ if [ "$PERSON_ACTION" = add ] || [ "$PERSON_ACTION" = import ]; then
       if member_paths="$(kc get "users/$uid/groups" -r "$REALM" --fields path --format csv --noquotes)"; then
         while IFS= read -r gp; do
           gp="$(trim "${gp%$'\r'}")"; [ -n "$gp" ] || continue
-          if [[ " $KNOWN_GROUPS $STARTER_GROUP $MAPPED_GROUPS " == *" ${gp##*/} "* ]] && [[ ";$paths_named;" != *";$gp;"* ]]; then extra="${gp#/}"; fi
+          if { in_words "${gp##*/}" "$KNOWN_GROUPS $STARTER_GROUP" || in_lines "${gp##*/}" "$MAPPED_GROUPS"; } \
+            && [[ ";$paths_named;" != *";$gp;"* ]]; then extra="${gp#/}"; fi
         done <<< "$member_paths"
       else
         ok=false
@@ -960,12 +1191,12 @@ expire_unused
 # their own password. No password is shown.
 if [ "$PERSON_ACTION" = list ]; then
   count=0
-  users="$(all_of users id,username,enabled,requiredActions)"
-  while IFS=, read -r id username enabled rest; do
+  users="$(all_rows users "id username enabled requiredActions")"
+  while IFS="$US" read -r odd id username enabled rest; do
     [ -n "$id" ] || continue
     names=""
     while IFS= read -r g; do
-      if [[ " $KNOWN_GROUPS $STARTER_GROUP " == *" $g "* ]]; then names="${names:+$names;}$g"; fi
+      if in_words "$g" "$KNOWN_GROUPS $STARTER_GROUP"; then names="${names:+$names;}$g"; fi
     done < <(kc get "users/$id/groups" -r "$REALM" --fields name --format csv --noquotes)
     change=no
     [[ ",$rest," != *",UPDATE_PASSWORD,"* ]] || change=yes
@@ -973,7 +1204,7 @@ if [ "$PERSON_ACTION" = list ]; then
     elif ! has_password "$id" || [ "$change" = yes ]; then status=waiting-to-be-activated
     else status=disabled
     fi
-    say "person $username groups=${names:-none} status=$status must-choose-password=$change"
+    say "person $(who_is "$id" "$username") groups=${names:-none} status=$status must-choose-password=$change"
     count=$((count + 1))
   done <<< "$users"
   say "people: $count"

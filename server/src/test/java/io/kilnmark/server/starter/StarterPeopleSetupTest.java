@@ -43,7 +43,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * exact addresses an earlier version made are brought into the group; a run never resets an existing
  * person's password unless asked; the realm's own settings are left as they are; once the switch
  * goes, exactly the group's members go, renamed or not; and a production install refuses a realm
- * that has any of the five.
+ * that has any of the five. The people commands: a one-time code's label (a CRLF kept, as Keycloak's
+ * own form keeps it) never forges a temporary password's time, and credentials that do not read
+ * cleanly disable their person (fail closed); groups are compared whole and names hold no
+ * formatting character; the pack's marked group is found at any depth; and a refused run changes
+ * nothing, Keycloak's master realm included.
  */
 @Testcontainers
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -965,5 +969,144 @@ class StarterPeopleSetupTest {
         }
         assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark", stamped).statusCode());
         ok(run(PRODUCTION, "KILNMARK_PEOPLE_ACTION=stamp KILNMARK_INSTALL_ID=" + id, ""));
+    }
+
+    /** Invisible formatting characters, built from their code points so none is in this file. */
+    static final String RLO = Character.toString(0x202E);
+    static final String ZWSP = Character.toString(0x200B);
+    static final String LRI = Character.toString(0x2066);
+    static final String PDI = Character.toString(0x2069);
+    static final String SHY = Character.toString(0xAD);
+
+    static final Map<String, Object> OTP = Map.of("type", "otp", "secretData", "{\"value\":\"JBSWY3DPEHPK3PXP\"}",
+        "credentialData", "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}");
+
+    /**
+     * Someone holding an unused temporary password the people commands set (its label the mark), who
+     * then set up a one-time code labelled {@code label}, made at {@code otpMade}: as someone who
+     * intercepted the temporary password could, since Keycloak asks for the code first. Their id.
+     */
+    private static String waitingWithCode(String username, String label, long otpMade) throws Exception {
+        Map<String, Object> otp = new java.util.HashMap<>(OTP);
+        otp.put("userLabel", label);
+        otp.put("createdDate", otpMade);
+        partialImport(List.of(Map.of("username", username, "email", username, "emailVerified", true, "firstName", "Fo",
+            "lastName", "Rge", "enabled", true, "requiredActions", List.of("UPDATE_PASSWORD"), "credentials",
+            List.of(Map.of("type", "password", "value", VERAS_OWN, "temporary", true), otp))));
+        String who = id(username);
+        for (JsonNode c : JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark/users/" + who + "/credentials", null).body())) {
+            if ("password".equals(c.path("type").asText())) {
+                HttpResponse<String> l = HTTP.send(HttpRequest.newBuilder(URI.create(base() + "/admin/realms/kilnmark/users/" + who
+                    + "/credentials/" + c.path("id").asText() + "/userLabel")).header("Authorization", "Bearer " + admin())
+                    .header("Content-Type", "text/plain").PUT(HttpRequest.BodyPublishers.ofString("kilnmark-temporary")).build(),
+                    HttpResponse.BodyHandlers.ofString());
+                assertEquals(204, l.statusCode(), l.body());
+            }
+        }
+        return who;
+    }
+
+    /** The label of person {@code id}'s one-time code, as Keycloak keeps it. */
+    private static String codeLabel(String id) throws Exception {
+        for (JsonNode c : JSON.readTree(call(admin(), "GET", "/admin/realms/kilnmark/users/" + id + "/credentials", null).body())) {
+            if ("otp".equals(c.path("type").asText())) {
+                return c.path("userLabel").asText();
+            }
+        }
+        return null;
+    }
+
+    @Test
+    @Order(16)
+    void aOneTimeCodesLabelNeverForgesTheTemporaryPasswordsTimeAndOddCredentialsFailClosed() throws Exception {
+        ok(setup("", PRODUCTION, "", ""));   // the realm is there (this test runs on its own too)
+        long now = System.currentTimeMillis();
+        long tenYears = now + 10L * 365 * 24 * 3_600_000L;
+        // Keycloak 26.8's own form for setting up the code keeps a line break in its label, a CRLF;
+        // read as CSV, each of these is a second line, a marked password with a time of the label's
+        // choosing (a future one, or one that does not read as a time)
+        String crlf = waitingWithCode("forge-crlf@bank.example", "phone\r\npassword,kilnmark-temporary,9999999999999", now);
+        String lf = waitingWithCode("forge-lf@bank.example", "phone\npassword,kilnmark-temporary,1", now);
+        waitingWithCode("forge-later@bank.example", "phone\npassword,kilnmark-temporary", tenYears);
+        assertTrue(codeLabel(crlf).contains("\r\n"), "the label keeps its CRLF, as the form's does");
+        assertTrue(codeLabel(lf).contains("\n"));
+        // a formatting character in a label, and an ordinary label with a comma and quotes
+        waitingWithCode("forge-bidi@bank.example", "ph" + RLO + "one", now);
+        waitingWithCode("plain-label@bank.example", "my phone, \"work\"", now);
+        // a code labelled as the mark is not a password, and its long-ago time is not the password's
+        waitingWithCode("typed-mark@bank.example", "kilnmark-temporary", 1_000L);
+
+        // within the window: whoever holds a label that does not read cleanly is disabled at once,
+        // and named (fail closed); the others wait as anyone does
+        ExecResult r = run(PRODUCTION, "KILNMARK_PEOPLE_ACTION=expire", "");
+        ok(r);
+        for (String p : List.of("forge-crlf@bank.example", "forge-lf@bank.example", "forge-later@bank.example",
+            "forge-bidi@bank.example")) {
+            assertTrue(r.getStdout().contains("disabled " + p + ": their temporary password was not used yet, and their "
+                + "credentials could not be read cleanly"), p + ": " + r.getStdout());
+            assertFalse(user(p).path("enabled").asBoolean(), p);
+        }
+        for (String p : List.of("plain-label@bank.example", "typed-mark@bank.example")) {
+            assertTrue(user(p).path("enabled").asBoolean(), p + " is within the window: " + r.getStdout());
+        }
+        assertFalse(r.getStdout().contains("9999999999999") || r.getStdout().contains(RLO), "no label is printed");
+        // past the window, the marked password's own time decides, whatever the code's label says
+        r = run(PRODUCTION, "KILNMARK_PEOPLE_ACTION=expire KILNMARK_SETUP_NOW_MS=" + (now + 73 * 3_600_000L), "");
+        ok(r);
+        for (String p : List.of("plain-label@bank.example", "typed-mark@bank.example")) {
+            assertTrue(r.getStdout().contains("disabled " + p + ": their temporary password was not used within 72 hours"),
+                p + ": " + r.getStdout());
+            assertFalse(user(p).path("enabled").asBoolean(), p);
+        }
+    }
+
+    @Test
+    @Order(17)
+    void groupsAreComparedWholeNamesHoldNoFormattingTheMarkedGroupIsFoundAtAnyDepthAndARefusalChangesNothing()
+        throws Exception {
+        ok(setup("", PRODUCTION, "", ""));   // the realm is there (this test runs on its own too)
+        // a space inside a group, not a ;: never read as Kilnmark's two groups, nor taken half way
+        ExecResult r = addPerson(PRODUCTION, "gus@bank.example", "Gus", "Ng", "kilnmark-designers kilnmark-admins", RITAS_FIRST);
+        assertNotEquals(0, r.getExitCode());
+        assertTrue(r.getStderr().contains("a group with a space in it"), r.getStderr());
+        assertNull(user("gus@bank.example"));
+        r = importPeople(PRODUCTION, null, "email,first_name,last_name,groups" + NL + "hal2@bank.example,Hal,Ng,kilnmark-viewers"
+            + NL + "gus@bank.example,Gus,Ng,kilnmark-designers kilnmark-admins" + NL);
+        assertNotEquals(0, r.getExitCode());
+        assertTrue(r.getStderr().contains("line 3: a group with a space in it"), r.getStderr());
+        assertTrue(r.getStderr().contains("made 0, already there 0, refused 1"), r.getStderr());
+        assertNull(user("hal2@bank.example"), "the whole file is checked first: nobody is made");
+
+        // a name holding an invisible formatting character (a right-to-left override, a zero-width
+        // space, an isolate, a soft hyphen), which [[:cntrl:]] does not see
+        for (String name : List.of("A" + RLO + "my", "Am" + ZWSP + "y", LRI + "Amy" + PDI, "Amy" + SHY)) {
+            r = addPerson(PRODUCTION, "amy@bank.example", name, "Ng", "kilnmark-viewers", RITAS_FIRST);
+            assertNotEquals(0, r.getExitCode(), name);
+            assertTrue(r.getStderr().contains("invisible formatting"), r.getStderr());
+            assertNull(user("amy@bank.example"));
+        }
+        r = importPeople(PRODUCTION, null, "email,first_name,last_name,groups" + NL + "amy@bank.example,Amy,N" + RLO + "g,kilnmark-viewers" + NL);
+        assertNotEquals(0, r.getExitCode());
+        assertTrue(r.getStderr().contains("line 2: a name holds a control character or an invisible formatting one"), r.getStderr());
+        assertNull(user("amy@bank.example"));
+        ok(addPerson(PRODUCTION, "zoe@bank.example", "Zo" + Character.toString(0xEB), "D" + Character.toString(0xED) + "az", "kilnmark-viewers", RITAS_FIRST));   // letters are fine
+
+        // the pack's marked group as a subgroup, two levels down, on production: found, and refused;
+        // and a refused run changes nothing, Keycloak's own master realm included
+        String branch = makeGroup(null, "branch-office");
+        String floor = makeGroup(branch, "floor-2");
+        String sub = makeGroup(floor, GROUP.substring(1));
+        assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark/groups/" + sub, Map.of("name", GROUP.substring(1),
+            "attributes", Map.of("kilnmark_starter_pack", List.of("true")))).statusCode());
+        assertEquals(204, call(admin(), "PUT", "/admin/realms/master", Map.of("bruteForceProtected", false)).statusCode());
+        r = setup("", PRODUCTION, "", "");
+        assertNotEquals(0, r.getExitCode());
+        assertTrue(r.getStderr().contains("holds the Starter Pack's group"), r.getStderr());
+        assertFalse(JSON.readTree(call(admin(), "GET", "/admin/realms/master", null).body()).path("bruteForceProtected")
+            .asBoolean(), "the master realm is as it was");
+        assertEquals(204, call(admin(), "DELETE", "/admin/realms/kilnmark/groups/" + branch, null).statusCode());
+        ok(setup("", PRODUCTION, "", ""));
+        assertTrue(JSON.readTree(call(admin(), "GET", "/admin/realms/master", null).body()).path("bruteForceProtected")
+            .asBoolean(), "an accepted run sets it");
     }
 }

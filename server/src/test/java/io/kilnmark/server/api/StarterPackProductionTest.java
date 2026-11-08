@@ -342,7 +342,8 @@ class StarterPackProductionTest {
     }
 
     @Test
-    void theSamplesAreNeverOfferedHereNorAddedNorTheirTablesMade() {
+    void theSamplesAreNeverOfferedHereNorAddedNorTheirTablesMadeAndEachRefusalIsRecorded() throws Exception {
+        int before = StarterPackApiTest.events(AuditLog.SAMPLES_REFUSED);
         admin().get("/api/v1/samples/offered").then().statusCode(200).body("offered", equalTo(false))
             .body("allowed", equalTo(false));
         admin().contentType(ContentType.JSON).body(Map.of("offered", true)).put("/api/v1/samples/offered").then()
@@ -353,6 +354,13 @@ class StarterPackProductionTest {
             .statusCode(403);
         admin().contentType(ContentType.JSON).body(Map.of("source", "x", "schema", "public")).post("/api/v1/samples/tables")
             .then().statusCode(403);
+        // each refusal is an audit event of its own, saying what was asked (asking whether they are
+        // offered is not a refusal)
+        StarterPackApiTest.eventually(AuditLog.SAMPLES_REFUSED, before + 4);
+        JsonPath ev = admin().get("/api/v1/audit?action=" + AuditLog.SAMPLES_REFUSED + "&limit=4").then().statusCode(200)
+            .extract().jsonPath();
+        assertEquals(java.util.Set.of("offered", "list", "add", "tables"), java.util.Set.copyOf(ev.getList("events.detail.request")));
+        assertEquals(List.of("production", "production", "production", "production"), ev.getList("events.detail.refused"));
         // the templates stay
         admin().get("/api/v1/templates").then().statusCode(200);
     }
