@@ -53,13 +53,13 @@ def request(url, data=None):
     return resp.status, resp.headers.get('Location'), body
 
 
-def follow(url, data=None, hops=15):
+def follow(url, data=None, redirects=15):
     """Follows redirects from a request: (final url, status, body)."""
     status, loc, body = request(url, data)
-    while loc and hops > 0 and status in (301, 302, 303, 307):
+    while loc and redirects > 0 and status in (301, 302, 303, 307):
         url = urllib.parse.urljoin(url, loc)
         status, loc, body = request(url)
-        hops -= 1
+        redirects -= 1
     return url, status, body
 
 
