@@ -3,6 +3,7 @@ package io.kilnmark.server.pipelines;
 import static io.kilnmark.server.Tokens.admin;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItems;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -80,7 +81,7 @@ class SamplesApiTest {
         as(designer).body(Map.of("sources", Map.of("lab-db", "x"))).post("/api/v1/samples").then().statusCode(400)
             .body("error", containsString("not a placeholder"));
         as(designer).body(body).post("/api/v1/samples").then().statusCode(400)
-            .body("error", containsString("no saved source called 'samples-"));
+            .body("error", containsString("names a source that is not saved")).body("error", not(containsString("samples-")));
 
         admin().contentType(ContentType.JSON).body(Map.of("name", "samples-crm", "kind", MemoryConnector.KIND,
             "settings", Map.of("rows", "10"), "password", "samples-secret-1")).post("/api/v1/sources")

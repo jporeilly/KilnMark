@@ -40,6 +40,9 @@ public class SampleResource {
     @jakarta.inject.Inject
     io.kilnmark.server.KilnmarkConfig config;
 
+    @jakarta.inject.Inject
+    io.kilnmark.server.audit.AuditLog audit;
+
     /**
      * {@code GET} and {@code PUT /api/v1/samples/offered}: whether this server offers the samples,
      * and whether it may (a Starter Pack install; never production, ADR 0051).
@@ -82,7 +85,7 @@ public class SampleResource {
             throw new IllegalArgumentException("offered: send {\"offered\": true} or {\"offered\": false}");
         }
         if (!io.kilnmark.server.starter.ModeCheck.samplesAllowed(config)) {
-            throw ApiError.of(Response.Status.CONFLICT, PRODUCTION);
+            throw refused("offered", Response.Status.CONFLICT);
         }
         settings.put(io.kilnmark.server.ServerSettings.SAMPLES_OFFERED, body.offered().toString(), who());
         return new Offered(body.offered(), true);
@@ -90,16 +93,27 @@ public class SampleResource {
 
     /**
      * Everything about the samples but the switch: refused on a production install, always, and
-     * while an admin has them turned off.
+     * while an admin has them turned off. {@code request} names what was asked, for the audit log.
      */
-    private void requireOffered() {
+    private void requireOffered(String request) {
         if (!io.kilnmark.server.starter.ModeCheck.samplesAllowed(config)) {
-            throw ApiError.of(Response.Status.FORBIDDEN, PRODUCTION);
+            throw refused(request, Response.Status.FORBIDDEN);
         }
         if (!settings.samplesOffered()) {
             throw ApiError.of(Response.Status.FORBIDDEN, "The samples are not offered on this server: an admin turns "
                 + "them on under Settings, Administration");
         }
+    }
+
+    /**
+     * A request for the samples on a production install, which never has them (ADR 0051): recorded
+     * as {@code samples.refused}, with what was asked, as a refused turn-on of the Starter Pack is,
+     * then refused with {@code status}.
+     */
+    private jakarta.ws.rs.WebApplicationException refused(String request, Response.Status status) {
+        audit.record(io.kilnmark.server.audit.AuditLog.actor(identity), io.kilnmark.server.audit.AuditLog.SAMPLES_REFUSED,
+            "samples", java.util.Map.of("refused", "production", "request", request));
+        return ApiError.of(status, PRODUCTION);
     }
 
     public SampleResource(Samples samples, SecurityIdentity identity) {
@@ -118,7 +132,7 @@ public class SampleResource {
         @APIResponse(responseCode = "200", description = "The placeholders and the samples"),
         @APIResponse(responseCode = "401", description = "Not signed in")})
     public Samples.Catalogue list() {
-        requireOffered();
+        requireOffered("list");
         return samples.catalogue(sights);
     }
 
@@ -139,7 +153,7 @@ public class SampleResource {
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "403", description = "Not a designer")})
     public Samples.AddResult add(Samples.AddRequest body) {
-        requireOffered();
+        requireOffered("add");
         // what it saves names who asked for it as runs do: a token by its id (ADR 0051)
         return samples.add(body, io.kilnmark.server.audit.AuditLog.requester(identity), AccessRole.highest(identity::hasRole),
             sights);
@@ -162,7 +176,7 @@ public class SampleResource {
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "403", description = "Not a designer")})
     public Samples.TablesResult tables(Samples.TablesRequest body) {
-        requireOffered();
+        requireOffered("tables");
         AccessRole role = AccessRole.highest(identity::hasRole);
         // its run names who asked for it as runs do: a token by its id (ADR 0051)
         return samples.createTables(body, io.kilnmark.server.audit.AuditLog.requester(identity), role, sights);

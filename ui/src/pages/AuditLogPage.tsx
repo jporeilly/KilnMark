@@ -36,6 +36,7 @@ export const ACTIONS: { value: string; label: string; tone: Tone }[] = [
   { value: "schedule.paused", label: "Schedule paused", tone: "warn" },
   { value: "starter.added", label: "Starter Pack turned on", tone: "warn" },
   { value: "starter.removed", label: "Starter Pack turned off", tone: "neutral" },
+  { value: "samples.refused", label: "Samples refused", tone: "bad" },
   { value: "starter.people", label: "Starter Pack people changed", tone: "warn" },
   { value: "api.request", label: "Request", tone: "neutral" },
   { value: "api.refused", label: "Request refused", tone: "bad" },
@@ -79,6 +80,9 @@ export function describe(e: AuditEvent): string {
   if (e.action === "schedule.set" || e.action === "schedule.deleted") {
     const what = d.pipeline ? `Pipeline ${String(d.pipeline)}` : `Flow ${String(d.flow ?? "")}`;
     return `${what}: ${String(d.cron ?? "")} (${String(d.zone ?? "UTC")}), as ${String(d.runAs ?? "steward")}${d.enabled === false ? ", paused" : ""}`;
+  }
+  if (e.action === "samples.refused") {
+    return `Refused, nothing changed: ${String(d.refused ?? "")} (${String(d.request ?? "")})`;
   }
   if (e.action === "starter.added" && d.refused) {
     return `Refused, nothing changed: ${String(d.refused)}`;

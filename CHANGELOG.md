@@ -7,6 +7,13 @@ details.
 
 ### What's new
 
+- **Security fixes to the bundled Keycloak's setup and the server**, from a review of 0.1.2: a
+  one-time code's name can no longer stop an unused temporary password from expiring, and anyone
+  whose sign-in details setup cannot read cleanly is disabled and named rather than left alone;
+  a group with a space in it, or a name with an invisible formatting character, is refused; a
+  Keycloak kept from a Starter Pack install is found however deep its marked group is; a refused
+  setup run changes nothing; and the samples' refusals on a production install are recorded in
+  the audit log.
 - **Two ways to deploy, chosen once at install**: **Production**, for real work, or a **Starter
   Pack** install, for training, demonstrations and development. The mode is recorded at the first
   start, and an install never changes mode: for production, install afresh. INSTALL.md starts with
@@ -128,6 +135,36 @@ details.
 
 ### Details
 
+- **Security: keycloak-setup reads what a person wrote as JSON** (ADR 0051, decisions 10 and 16).
+  The expiry of unused temporary passwords read each person's credentials as kcadm's CSV, where a
+  one-time code's label holding a line break (Keycloak 26.8's form for setting up the code keeps a
+  CRLF) read as a second credential: a password marked `kilnmark-temporary` with whatever time the
+  label said, a future one or none, so it never expired. Credentials are now read as JSON, by a
+  small strict reader in setup.sh (the image has no jq): only a credential whose type is exactly
+  `password` and whose label is exactly `kilnmark-temporary` counts, and the earliest time. It fails
+  closed: anyone still asked to choose their own password whose credentials do not read cleanly
+  (a label with a control or formatting character, a time that is not one, or one more than an
+  hour ahead) is disabled at once, and named for `auth.person_disabled`; a listing of people that
+  does not read cleanly stops the run. Every listing of people, the realm's stamp and the pack's
+  group's mark are read the same way.
+- **Security: the people commands' checks** (ADR 0051, decision 10). Groups are compared whole, one
+  at a time: `kilnmark-designers kilnmark-admins`, with a space for a `;`, passed the admin and
+  sensitive-data checks as a part of the list and stopped an import half way; a group with a space
+  in it is now refused before anything is made. Groups `config/.env` maps to a role are compared
+  whole too, a name with a space included. Names holding a Unicode format or separator character
+  (a right-to-left override or isolate, a zero-width space, a soft hyphen, a byte-order mark), which
+  `[[:cntrl:]]` misses, are refused.
+- **Security: the realm checks** (ADR 0051, decision 16). On production the pack's marked group is
+  found at every level: the exact search answers a subgroup of that name with its top-level group,
+  which was taken for "not there". A realm already there is checked before anything changes, so a
+  refused run no longer turns on brute-force protection in Keycloak's master realm first while
+  saying nothing was changed. setup's sign-in failure no longer names Keycloak's address or its
+  admin's user name.
+- **Security: the server**. A request for the samples on a production install (their list, Add
+  samples, the sample tables, or offering them) is an audit event of its own, `samples.refused`,
+  with what was asked, kept at most 30 a minute for each caller as `api.refused` is; a refused
+  turn-on of the Starter Pack already was one. A source of a kind the server does not have, and the
+  samples' refusals of a source, no longer repeat the kind or the source's name typed.
 - **Samples explained** (ADR 0043): `Samples.explanation` reads a file's opening comment into a
   title, what it shows, `# Why it matters:`, `# Look for:` and `# Needs:`; `GET /api/v1/samples` and
   `GET /api/v1/templates` return it as `explanation`, and `SamplesExplainedTest` fails the build when

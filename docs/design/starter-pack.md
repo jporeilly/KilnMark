@@ -108,7 +108,14 @@ of a subgroup of that name. The pack's group carries the attribute `kilnmark_sta
 as setup makes it: a top-level group of that name without it (a directory's, say) stops setup,
 changing nothing. Every reader of kcadm's output reads all of it (`one` drains its input; `grep`
 without `-q`): a reader that stopped early would end kcadm with SIGPIPE, which pipefail turns into
-"not a member", and an example person would stay. It makes each missing person with one call,
+"not a member", and an example person would stay. Whatever a person may have written (a user
+name, an email, a credential's label) is read from kcadm's JSON, never its CSV, where a label
+holding a line break reads as another line: `json_leaves` and `json_rows` in `setup.sh`, a small,
+strict reader (the image has no jq, awk or python) that refuses anything not JSON as kcadm writes it
+and marks a text holding a control or formatting character (`odd_text`) rather than unescaping it.
+CSV is kept only for Keycloak's own ids, types and times. On production the pack's marked group is
+looked for at every level, by an exact search read as JSON, and a realm already there is checked
+before anything is changed, the master realm included. It makes each missing person with one call,
 already in the group and their role's groups, and deletes them again if the group did not take. Only members of the group are ever changed or deleted: someone else with
 one of the addresses is left as they are. It never resets a member's password unless the action is
 `new-password` (or a run stopped before giving one). On any run where the people are not allowed it

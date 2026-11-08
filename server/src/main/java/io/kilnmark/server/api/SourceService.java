@@ -78,14 +78,19 @@ public class SourceService {
     /**
      * The connector for a kind a source may have here. On production the Starter Pack's example data
      * has none (ConnectorsProducer, ADR 0051): a source of it is refused, by hand or in a bulk import,
-     * and said why.
+     * and said why. The refusal never echoes the kind sent: an error message echoes no value.
      */
     Connector connector(String kind) {
         return connectors.get(kind).orElseThrow(() -> new IllegalArgumentException(
             io.kilnmark.server.starter.ModeCheck.SAMPLE_DATA_KIND.equals(kind)
                 ? io.kilnmark.server.starter.ModeCheck.SAMPLE_DATA_REFUSED
-                : "kind: unknown kind '" + kind + "'; this server supports "
-                    + String.join(", ", connectors.all().stream().map(Connector::kind).toList())));
+                : unknownKind(connectors)));
+    }
+
+    /** Why a kind is refused that no connector here has, naming the kinds there are, never the one sent. */
+    static String unknownKind(Connectors connectors) {
+        return "kind: an unknown kind of source; this server supports "
+            + String.join(", ", connectors.all().stream().map(Connector::kind).toList());
     }
 
     /** A saved source as its connector sees it, with its secret decrypted. */
