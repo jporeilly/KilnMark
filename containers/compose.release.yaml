@@ -276,6 +276,13 @@ services:
       # The install's own id, from Kilnmark's record, handed by the control script's people commands:
       # kept on the realm, so a restore can tell a Keycloak database of another install.
       KILNMARK_INSTALL_ID: ${KILNMARK_INSTALL_ID:-}
+      # The groups config/.env maps to Kilnmark's roles: a person the people commands make is never
+      # put in one they were not given (by a default group of the realm, say).
+      KILNMARK_OIDC_VIEWER_GROUPS: ${KILNMARK_OIDC_VIEWER_GROUPS:-}
+      KILNMARK_OIDC_STEWARD_GROUPS: ${KILNMARK_OIDC_STEWARD_GROUPS:-}
+      KILNMARK_OIDC_DESIGNER_GROUPS: ${KILNMARK_OIDC_DESIGNER_GROUPS:-}
+      KILNMARK_OIDC_ADMIN_GROUPS: ${KILNMARK_OIDC_ADMIN_GROUPS:-}
+      KILNMARK_OIDC_UNMASK_GROUPS: ${KILNMARK_OIDC_UNMASK_GROUPS:-}
       # How long a temporary password may wait unused before its person is disabled: 1 to 720 hours.
       KILNMARK_PEOPLE_ACTIVATION_HOURS: ${KILNMARK_PEOPLE_ACTIVATION_HOURS:-72}
     volumes:

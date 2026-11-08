@@ -239,11 +239,11 @@ converted: Production or Starter Pack.
       admin too: the operator's `KILNMARK_ADMIN_TOKEN` stays the way in. Every listing pages
       through all of the realm's people, however many, and the control script records them 500 to
       a record. The timer runs the control script as the operator (Windows) or the account (Linux), so it
-      is set up only where nobody else may change that script: on Windows `up` makes the install
-      root the user's alone first and refuses while anyone else may still write the script or its
-      folder; on Linux, as root, only when root owns the root and the script and nobody else may
-      write them. The compose project's name (`KILNMARK_PROJECT`), which names the task, must be
-      lower-case letters, digits, `-` and `_`, or the script stops;
+      is set up, and runs, only where nobody else may change what a run uses (decision 15). The
+      compose project's name (`KILNMARK_PROJECT`), which names the task, must be lower-case letters,
+      digits, `-` and `_`, or the script stops. The window holds only while the timer and Kilnmark's
+      database run: on Windows the task runs only while the operator is signed in, and a stopped
+      install expires nobody until its next start, which expires them first;
     - `kilnmark-admins` only through `people add`, one person at a time, never from a file, to keep
       the two-person rules (ADR 0038, ADR 0045) from being got round in bulk; on production so is
       `kilnmark-sensitive-data` (on a Starter Pack install the data is made up, so a class may have it);
@@ -261,7 +261,12 @@ converted: Production or Starter Pack.
       identity provider), never by email; anyone else in the group is only taken out of it, and named;
     - the commands act only where the mode Kilnmark recorded in its own database equals
       `config/.env`'s, and refuse when the database does not answer; `keycloak-setup` is handed the
-      recorded mode, never `.env`'s alone;
+      recorded mode, never `.env`'s alone, and refuses one other than the realm's stamp (decision 16);
+    - a person is made disabled, their groups checked (none that gives a role but those named:
+      Kilnmark's, the pack's, or any `config/.env` maps to a role), then enabled; and a person made
+      or activated whom Kilnmark's audit log could not record is disabled again (fail closed);
+    - on production a sign-in is refused, and recorded, when its groups hold the pack's group or its
+      user name or email is at kilnmark.com;
     - the commands check that Kilnmark answers before changing anything, and each person made
       (`auth.person_added`, with their groups), each import (`auth.people_imported`) and each
       activation (`auth.person_activated`) is in Kilnmark's audit log, from what the control script
@@ -291,7 +296,10 @@ converted: Production or Starter Pack.
     mode, and, on production, one whose realm names none, or holding the pack's group (its mark) or
     any of the five example user names. `restore.sh` run by hand refuses when neither the database
     nor `.env` says the install's mode. `uninstall --purge` removes an image only when no other
-    container on the machine uses it.
+    container on the machine uses it. A known limit: a backup carries checksums, not a signature or
+    a MAC, so a restore trusts whoever can write the backup's files; keep backups where only the
+    operators can write. The first start's record of the mode (`server.mode_recorded`) and the
+    realm's stamp (`auth.realm_stamped`) are audit events.
 
 13. **Secrets stay off command lines, and the samples' login is held by PostgreSQL itself.**
     podman-compose puts every environment setting of a container on podman's command line, which
@@ -315,6 +323,29 @@ converted: Production or Starter Pack.
     start stopped part way through the migrations, or failing after them, leaves the mark, and the
     next start records the mode; a database migrated before modes has no mark and is refused. No
     clock is compared.
+
+15. **The hourly run runs only what nobody else may change.** Before the task or timer is set up,
+    and again at the start of every `people expire` (refused and audited, `auth.expire_refused`,
+    when it fails), the control script checks everything a run uses: the install root, the
+    launcher, the current version (its folder, `compose.yaml` and `keycloak-setup`'s script), the
+    `current` link or `current.txt`, and `config/.env`. On Linux each must be the running
+    account's own and writable by neither its group nor others; as root, root's own, and so must
+    every folder from the root up to `/` (as sshd's StrictModes asks; a sticky `/tmp` counts as
+    unsafe). On Windows `up` makes the root the user's alone first; each must then be owned by the
+    user, SYSTEM or the Administrators, with nobody else able to write it. `install` refuses an
+    existing root owned by anyone else, rather than taking it over (`icacls /setowner`), since its
+    owner could rewrite its permissions whenever they like. `KILNMARK_ENGINE` goes into a unit only
+    as the full path of podman or docker. The tests' hooks (`KILNMARK_TEST_UID`,
+    `KILNMARK_SYSTEMCTL`, `KILNMARK_SYSTEMD_DIR`, `KILNMARK_SCHTASKS`) count only with a marker no
+    release sets.
+
+16. **A realm is one install's, once.** The realm is stamped with the install's id and mode the
+    first time the control script hands them over, and never written over: every run of
+    `keycloak-setup` refuses a realm stamped for another install or mode, and on production one
+    holding the pack's marked group or any of the five example user names (a Keycloak volume kept
+    from a Starter Pack install, say). Restore Kilnmark and its Keycloak together, from the same
+    install's backup. On production the sample-data kind of source is refused at run time too, not
+    only when a source is added.
 
 ## Consequences
 

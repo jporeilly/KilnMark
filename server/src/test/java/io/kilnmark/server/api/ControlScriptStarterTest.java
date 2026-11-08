@@ -555,6 +555,10 @@ class ControlScriptStarterTest {
             assertTrue(body.startsWith("{\"via\":\"expire\",\"disabled\":[\"p" + (i * 500 + 1) + "@bank.example\""), body);
             assertEquals(i < 2 ? 500 : 200, body.split("@bank.example", -1).length - 1, body);
         }
+        // a person Kilnmark cannot record is disabled again (fail closed), and that is said
+        Admin unrecorded = a.run(WITH_KEYCLOAK, ADD, "fail-me@bank.example\nFay\nIl\nkilnmark-viewers\n" + PERSON_PASSWORD, true);
+        assertTrue(unrecorded.out().contains("Kilnmark did not record this in its audit log")
+            && unrecorded.out().contains("So they were disabled again"), unrecorded.out());
         // nothing to do while Keycloak is stopped (port 9: nothing listens)
         Map<String, String> stopped = new LinkedHashMap<>(WITH_KEYCLOAK);
         stopped.put("KILNMARK_KEYCLOAK_PORT", "9");
@@ -583,8 +587,10 @@ class ControlScriptStarterTest {
                 });
             }
             server.createContext("/api/v1/auth/people", x -> {
-                posted.add(new String(x.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-                x.sendResponseHeaders(204, -1);
+                String body = new String(x.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+                posted.add(body);
+                // a record Kilnmark cannot keep, for the people made with this address
+                x.sendResponseHeaders(body.contains("fail-me@") ? 500 : 204, -1);
                 x.close();
             });
             server.start();
@@ -858,20 +864,39 @@ class ControlScriptStarterTest {
         assertTrue(t.run(WITH_KEYCLOAK, List.of("up", "--no-browser")).out().contains("Set up the hourly expiry"));
         // never a task or timer that runs a script others may change, as the user (Windows) or root (Linux)
         if (t.windows()) {
-            Path ps1 = Files.writeString(t.root().resolve("kilnmark.ps1"), "# planted\r\n");
-            Process grant = new ProcessBuilder("icacls.exe", ps1.toString(), "/grant", "*S-1-1-0:(W)").redirectErrorStream(true)
-                .start();
-            grant.getInputStream().readAllBytes();
-            assertEquals(0, grant.waitFor());
-            Timer open = t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"));
-            assertTrue(open.out().contains("was not set up") && open.out().contains("may change"), open.out());
-            List<String> asked = open.schtasks().lines().filter(l -> !l.isBlank()).toList();
-            assertTrue(asked.get(asked.size() - 1).startsWith("/Delete"), "the task it had is taken away, none made: " + asked);
-            Files.delete(ps1);
+            // the launcher, then a file a run reads (config\.env), each writable by everyone
+            for (String file : List.of("kilnmark.ps1", "config\\.env")) {
+                Path planted = t.root().resolve(file);
+                icacls(planted, "/grant", "*S-1-1-0:(W)");
+                Timer open = t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"));
+                assertTrue(open.out().contains("was not set up") && open.out().contains("may be changed by"), file + ": " + open.out());
+                List<String> asked = open.schtasks().lines().filter(l -> !l.isBlank()).toList();
+                assertFalse(asked.get(asked.size() - 1).startsWith("/Create"), "none made, any it had taken away: " + asked);
+                assertFalse(Files.exists(t.root().resolve("schtasks.log.task")), "no task left: " + asked);
+                // and the hourly run itself refuses, and says so
+                String refused = t.run(WITH_KEYCLOAK, List.of("people", "expire")).out();
+                assertTrue(refused.contains("people expire was refused") && refused.contains("may be changed by"), refused);
+                icacls(planted, "/remove:g", "*S-1-1-0");
+            }
         } else {
             Timer asRoot = t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"), Map.of("KILNMARK_TEST_UID", "0"), "");
-            assertTrue(asRoot.out().contains("was not set up: as root") && asRoot.out().contains("is not root's own"),
+            assertTrue(asRoot.out().contains("was not set up") && asRoot.out().contains("may be changed by someone other than"),
                 asRoot.out());
+            String rootRefused = t.run(WITH_KEYCLOAK, List.of("people", "expire"), Map.of("KILNMARK_TEST_UID", "0"), "").out();
+            assertTrue(rootRefused.contains("people expire was refused"), rootRefused);
+            // a file a run reads (config/.env), or the version's setup script, writable by its group
+            // (where chmod means it: Git Bash on Windows keeps NTFS's permissions as they are)
+            boolean posix = !System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win");
+            for (String file : posix ? List.of("config/.env", "current/containers/keycloak/setup.sh") : List.<String>of()) {
+                Path planted = t.root().resolve(file);
+                chmod(planted, "g+w");
+                Timer open = t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"));
+                assertTrue(open.out().contains("was not set up") && open.out().contains(file + " may be changed by someone other"),
+                    file + ": " + open.out());
+                String refused = t.run(WITH_KEYCLOAK, List.of("people", "expire")).out();
+                assertTrue(refused.contains("people expire was refused") && refused.contains("may be changed by"), refused);
+                chmod(planted, "g-w");
+            }
         }
         assertTrue(t.run(WITH_KEYCLOAK, List.of("up", "--no-browser")).out().contains("Set up the hourly expiry"));
         // a project name the timer could not take is refused at once
@@ -890,6 +915,23 @@ class ControlScriptStarterTest {
             purged.out());
         String removed = Files.readString(t.root().resolve("rmi.log"));
         assertTrue(removed.contains("kilnmark-postgres:9.9.9") && !removed.contains("kilnmark-server"), removed);
+    }
+
+    private static void icacls(Path file, String... args) throws Exception {
+        List<String> c = new ArrayList<>(List.of("icacls.exe", file.toString()));
+        c.addAll(List.of(args));
+        Process p = new ProcessBuilder(c).redirectErrorStream(true).start();
+        p.getInputStream().readAllBytes();
+        assertEquals(0, p.waitFor(), String.join(" ", c));
+    }
+
+    /** chmod, through the shell the Linux edition runs with (Git Bash maps it onto Windows' permissions). */
+    private static void chmod(Path file, String mode) throws Exception {
+        String bash = System.getenv("KILNMARK_TEST_BASH");
+        Process p = new ProcessBuilder(bash != null && !bash.isBlank() ? bash : "bash", "-c",
+            "chmod " + mode + " '" + file.toString().replace('\\', '/') + "'").redirectErrorStream(true).start();
+        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertEquals(0, p.waitFor(), out);
     }
 
     private static Path uncheckedRoot(boolean windows) {
@@ -990,6 +1032,7 @@ class ControlScriptStarterTest {
                 + (ok ? "if \"%KILNMARK_PEOPLE_ACTION%\"==\"list\" (echo keycloak-setup: disabled old@bank.example: their temporary password was not used within 72 hours& echo keycloak-setup: person rita@bank.example groups=kilnmark-admins status=active must-choose-password=yes& echo keycloak-setup: people: 1)\r\n"
                     + "if \"%KILNMARK_PEOPLE_ACTION%\"==\"expire\" (for /L %%i in (1,1,1200) do @echo keycloak-setup: disabled p%%i@bank.example: their temporary password was not used within 72 hours)\r\n"
                     + "if \"%KILNMARK_PEOPLE_ACTION%\"==\"expire\" (echo keycloak-setup: people expire: done& exit /b 0)\r\n"
+                    + "if \"%KILNMARK_PEOPLE_ACTION%\"==\"disable\" (echo keycloak-setup: disabled %pw% again: Kilnmark could not record them in its audit log& exit /b 0)\r\n"
                     + "if \"%KILNMARK_PEOPLE_ACTION%\"==\"activate\" (echo keycloak-setup: activated %KILNMARK_PERSON_EMAIL%: they choose their own password at their first sign-in& exit /b 0)\r\n"
                     + "if \"%KILNMARK_PEOPLE_ACTION%\"==\"import\" (echo keycloak-setup: made priya.shah@example.com ^(kilnmark-designers;kilnmark-sensitive-data^): they choose their own password at their first sign-in& echo keycloak-setup: people import: made 1, already there 0, refused 0)\r\n"
                     + "if not \"%KILNMARK_PEOPLE_ACTION%\"==\"add\" exit /b 0\r\n"
@@ -1022,6 +1065,7 @@ class ControlScriptStarterTest {
                 + "    list) echo \"keycloak-setup: disabled old@bank.example: their temporary password was not used within 72 hours\"\n"
                 + "      echo \"keycloak-setup: person rita@bank.example groups=kilnmark-admins status=active must-choose-password=yes\"; echo \"keycloak-setup: people: 1\" ;;\n"
                 + "    activate) echo \"keycloak-setup: activated $KILNMARK_PERSON_EMAIL: they choose their own password at their first sign-in\" ;;\n"
+                + "    disable) echo \"keycloak-setup: disabled $pw again: Kilnmark could not record them in its audit log\" ;;\n"
                 + "    expire) for i in $(seq 1 1200); do echo \"keycloak-setup: disabled p$i@bank.example: their temporary password was not used within 72 hours\"; done\n"
                 + "      echo 'keycloak-setup: people expire: done' ;;\n"
                 + "    import) echo \"keycloak-setup: lines [$(cat | wc -l | tr -d ' ')]\"\n"
@@ -1086,11 +1130,18 @@ class ControlScriptStarterTest {
         Files.writeString(v.resolve("compose.yaml"), "services:\n  kilnmark:\n    image: ghcr.io/jporeilly/kilnmark-server:9.9.9\n");
         Files.createDirectories(root.resolve("config"));
         Files.createDirectories(root.resolve("logs"));
+        // what an hourly run uses, as install leaves it: the launcher at the root, setup's script
+        Files.createDirectories(v.resolve("containers/keycloak"));
+        Files.writeString(v.resolve("containers/keycloak/setup.sh"), "# setup\n");
+        Files.writeString(root.resolve("config/.env"), "");
         if (windows) {
             Files.writeString(root.resolve("current.txt"), "9.9.9\n");
+            Files.writeString(root.resolve("kilnmark.ps1"), "# the launcher\r\n");
         } else {
-            Files.createDirectories(root.resolve("current"));
+            Files.createDirectories(root.resolve("current/containers/keycloak"));
             Files.writeString(root.resolve("current/compose.yaml"), Files.readString(v.resolve("compose.yaml")));
+            Files.writeString(root.resolve("current/containers/keycloak/setup.sh"), "# setup\n");
+            Files.writeString(root.resolve("kilnmark.sh"), "# the launcher\n");
         }
         return root;
     }
@@ -1144,8 +1195,10 @@ class ControlScriptStarterTest {
         pb.environment().put("KILNMARK_SYSTEMCTL", fakeTimerTool(false).toString().replace('\\', '/'));
         pb.environment().put("KILNMARK_SYSTEMD_DIR", root.resolve("systemd").toString().replace('\\', '/'));
         pb.environment().put("KILNMARK_SCHTASKS", fakeTimerTool(true).toString());
-        // an account of its own, as Kilnmark runs as, even where the tests run as root (CI's containers)
+        // an account of its own, as Kilnmark runs as, even where the tests run as root (CI's containers);
+        // the test hooks count only with their marker, which no release sets
         pb.environment().put("KILNMARK_TEST_UID", "1000");
+        pb.environment().put("KILNMARK_TEST_HOOKS", "only-in-kilnmark-tests");
         pb.environment().put("FAKE_TIMER_LOG", root.resolve(System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT)
             .contains("win") ? "schtasks.log" : "systemctl.log").toString());
         pb.environment().put("FAKE_RMI_LOG", root.resolve("rmi.log").toString());

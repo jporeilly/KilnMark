@@ -152,6 +152,7 @@ public class ModeCheck {
         }
         String[] refusal = new String[1];
         boolean[] idMadeLate = new boolean[1];
+        boolean[] recordedNow = new boolean[1];
         String recorded = db.tx(c -> {
             boolean first;
             try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.server_setting WHERE key = ?")) {
@@ -175,6 +176,7 @@ public class ModeCheck {
                 ps.setString(2, configured);
                 if (ps.executeUpdate() == 1) {
                     LOG.infof("Deployment mode recorded at first start: %s", configured);
+                    recordedNow[0] = true;
                 }
             }
             // the install's own id, beside the mode: a backup carries both. One made for a database
@@ -203,6 +205,14 @@ public class ModeCheck {
         });
         if (refusal[0] != null) {
             return refusal[0];
+        }
+        if (recordedNow[0]) {
+            try {
+                audit.record(new io.kilnmark.server.audit.AuditLog.Actor("server (first start)", null),
+                    io.kilnmark.server.audit.AuditLog.MODE_RECORDED, key, java.util.Map.of("mode", configured));
+            } catch (RuntimeException e) {
+                LOG.warnf("Could not record the mode in the audit log (%s)", e.getClass().getSimpleName());
+            }
         }
         if (idMadeLate[0]) {
             LOG.warn("This install had no id of its own (its mode was recorded by an earlier build): one is made now. "

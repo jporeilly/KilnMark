@@ -249,40 +249,76 @@ drop_run_secrets() {
 # With the bundled Keycloak, people expire runs every hour from a systemd timer of this account (a
 # system one when this runs as root), so a temporary password left unused is disabled at most an
 # hour after its window, whether or not Kilnmark starts again. up sets it up, and removes it without
-# the bundled Keycloak; uninstall removes it. KILNMARK_SYSTEMCTL and KILNMARK_SYSTEMD_DIR are for
-# the tests only.
+# the bundled Keycloak; uninstall removes it. KILNMARK_SYSTEMCTL, KILNMARK_SYSTEMD_DIR and
+# KILNMARK_TEST_UID are for the tests only, and count only with their marker, which no release sets.
 expiry_unit="kilnmark-$project-people-expire"
-# who runs this, for the timer (KILNMARK_TEST_UID, for the tests only)
-expiry_uid() { printf '%s' "${KILNMARK_TEST_UID:-$(id -u)}"; }
+test_hooks() { [ "${KILNMARK_TEST_HOOKS:-}" = only-in-kilnmark-tests ]; }
+# who runs this, for the timer
+expiry_uid() { if test_hooks && [ -n "${KILNMARK_TEST_UID:-}" ]; then printf '%s' "$KILNMARK_TEST_UID"; else id -u; fi; }
 expiry_systemctl() {
-  local sc="${KILNMARK_SYSTEMCTL:-systemctl}"
+  local sc=systemctl
+  if test_hooks && [ -n "${KILNMARK_SYSTEMCTL:-}" ]; then sc="$KILNMARK_SYSTEMCTL"; fi
   if [ "$(expiry_uid)" -eq 0 ]; then "$sc" "$@"; else "$sc" --user "$@"; fi
 }
 expiry_dir() {
-  if [ -n "${KILNMARK_SYSTEMD_DIR:-}" ]; then printf '%s' "$KILNMARK_SYSTEMD_DIR"
+  if test_hooks && [ -n "${KILNMARK_SYSTEMD_DIR:-}" ]; then printf '%s' "$KILNMARK_SYSTEMD_DIR"
   elif [ "$(expiry_uid)" -eq 0 ]; then printf '%s' /etc/systemd/system
   else printf '%s' "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
   fi
 }
-# Why a system timer may not run this script as root, or nothing: root runs $root/kilnmark.sh every
-# hour, so it and its folder must be root's own and writable by nobody else.
-expiry_root_problem() {
-  local f perms
-  [ "$(expiry_uid)" -eq 0 ] || return 0
-  for f in "$root" "$root/kilnmark.sh"; do
-    perms="$(stat -c '%u %a' "$f" 2> /dev/null || echo "x 777")"
-    if [ "${perms%% *}" != 0 ] || (( (8#${perms##* } & 8#022) != 0 )); then
-      echo "as root, it would run $root/kilnmark.sh every hour, and $f is not root's own, or others may change it: make both root's, writable by root alone, or run Kilnmark as its own account (sudo ./kilnmark.sh prepare)"
+# Why someone other than the account that runs Kilnmark may change what an hourly run uses, or
+# nothing (ADR 0051): the timer runs $root/kilnmark.sh as this account (as root, a system timer), and
+# that run reads the current version's compose.yaml and keycloak-setup's script, and config/.env.
+# Each must be this account's own (root's, as root) and writable by nobody else; as root, so must
+# every folder from the root up to / (as sshd's StrictModes asks: a sticky /tmp counts as unsafe).
+tree_problem() {
+  local want f info dir cur
+  if [ "$(expiry_uid)" -eq 0 ]; then want=0; else want="$(id -u)"; fi
+  cur="$(readlink -f "$root/current" 2> /dev/null || true)"
+  [ -n "$cur" ] || { echo "there is no current version"; return 0; }
+  # the link itself only by its owner (a link's own permissions mean nothing)
+  info="$(stat -c '%u' "$root/current" 2> /dev/null || echo x)"
+  [ "$info" = "$want" ] || { echo "$root/current may be changed by someone other than the account that runs Kilnmark (it is not that account's own)"; return 0; }
+  for f in "$root" "$root/kilnmark.sh" "$root/versions" "$cur" "$cur/compose.yaml" "$cur/containers/keycloak/setup.sh" \
+    "$root/config" "$root/config/.env"; do
+    info="$(stat -c '%u %a' "$f" 2> /dev/null || echo "x 777")"
+    if [ "${info%% *}" != "$want" ] || (( (8#${info##* } & 8#022) != 0 )); then
+      echo "$f may be changed by someone other than the account that runs Kilnmark (it is not that account's own, or others may write it)"
       return 0
     fi
   done
+  [ "$want" = 0 ] || return 0
+  dir="$(dirname "$(readlink -f "$root")")"
+  while :; do
+    info="$(stat -c '%u %a' "$dir" 2> /dev/null || echo "x 777")"
+    if [ "${info%% *}" != 0 ] || (( (8#${info##* } & 8#022) != 0 )); then
+      echo "$dir, a folder above $root, may be changed by someone other than root"
+      return 0
+    fi
+    [ "$dir" != / ] || return 0
+    dir="$(dirname "$dir")"
+  done
+}
+# Why KILNMARK_ENGINE may not go into the timer's unit, or nothing: only the full path of podman or
+# docker, with nothing a unit file or a shell would read as more.
+engine_problem() {
+  local e="${KILNMARK_ENGINE:-}"
+  [ -n "$e" ] || return 0
+  if test_hooks; then
+    [[ "$e" =~ ^[A-Za-z0-9._/:-]+$ ]] && [ -f "$e" ] || echo "KILNMARK_ENGINE is not a program's path"
+    return 0
+  fi
+  if ! [[ "$e" =~ ^/[A-Za-z0-9._/-]+$ ]] || [ ! -f "$e" ] || [ ! -x "$e" ] || ! [[ "$(basename "$e")" =~ ^(podman|docker)$ ]]; then
+    echo "KILNMARK_ENGINE is not the full path of podman or docker"
+  fi
 }
 expiry_timer_set() {
   local dir service timer engine_line="" why
-  why="$(expiry_root_problem)"
+  why="$(tree_problem)"
+  [ -n "$why" ] || why="$(engine_problem)"
   if [ -n "$why" ]; then
     expiry_timer_remove
-    echo "Warning: the hourly expiry of unused temporary passwords was not set up: $why. Each start expires them too." >&2
+    echo "Warning: the hourly expiry of unused temporary passwords was not set up: $why. Make it so, or run Kilnmark as its own account (sudo ./kilnmark.sh prepare), then run up again. Each start expires them too." >&2
     return 0
   fi
   dir="$(expiry_dir)"
@@ -673,9 +709,14 @@ after_one_offs() {
     people_after_up
     if [ -z "${KILNMARK_INSTALL_ID:-}" ]; then
       id="$(recorded_setting install_id)"
-      if [ -n "$id" ] && ! KILNMARK_PEOPLE_ACTION=stamp KILNMARK_INSTALL_ID="$id" \
-        "${compose[@]}" run --rm -T keycloak-setup < /dev/null > /dev/null 2>&1; then
-        echo "Warning: Keycloak's realm was not told which install it belongs to; the next start tells it. See: ./kilnmark.sh logs keycloak-setup" >&2
+      if [ -n "$id" ]; then
+        local stamped
+        if stamped="$(KILNMARK_PEOPLE_ACTION=stamp KILNMARK_INSTALL_ID="$id" \
+          "${compose[@]}" run --rm -T keycloak-setup < /dev/null 2>&1 | hide_compose_commands)"; then
+          record_own_people "$stamped" stamp
+        else
+          echo "Warning: Keycloak's realm was not told which install it belongs to; the next start tells it. See: ./kilnmark.sh logs keycloak-setup" >&2
+        fi
       fi
     fi
   fi
@@ -1307,14 +1348,29 @@ record_own_people() {
   disabled="$(sed -n 's/^keycloak-setup: disabled \([a-z0-9._%+@-]*\): their temporary password was not used.*$/"\1"/p' <<< "$1" | paste -sd, -)"
   # what an ordinary run of setup did, before the command's own work: its own record
   [ -z "$disabled" ] || post_disabled "$disabled"
+  if grep -q '^keycloak-setup: stamped the realm' <<< "$1"; then
+    code="$(api_call POST /api/v1/auth/people '{"via":"stamp"}')"
+    [ "$code" = 204 ] || echo "Warning: Kilnmark did not record the realm's stamp in its audit log (HTTP $code)." >&2
+  fi
   case "$2" in
-    expire) return 0 ;;
+    expire|stamp) return 0 ;;
     activate) [ -n "$activated" ] || return 0
       code="$(api_call POST /api/v1/auth/people "{\"via\":\"activate\",\"activated\":[$activated]}")" ;;
     *) [ -n "$made$kept" ] || [ "$2" = import ] || return 0
       code="$(api_call POST /api/v1/auth/people "{\"via\":\"$2\",\"made\":[$made],\"kept\":[$kept],\"refused\":${refused:-0}}")" ;;
   esac
-  [ "$code" = 204 ] || echo "Warning: Kilnmark did not record this in its audit log (HTTP $code); Keycloak's admin events have it." >&2
+  [ "$code" = 204 ] && return 0
+  echo "Warning: Kilnmark did not record this in its audit log (HTTP $code); Keycloak's admin events have it." >&2
+  # Nobody stays able to sign in without that record (fail closed): those made or activated just now
+  # are disabled again.
+  local undo
+  undo="$(sed -n 's/^keycloak-setup: made \([a-z0-9._%+@-]*\) (.*$/\1/p; s/^keycloak-setup: activated \([a-z0-9._%+@-]*\): .*$/\1/p' <<< "$1")"
+  [ -n "$undo" ] || return 0
+  if run_people_setup disable <<< "$undo" && grep -q '^keycloak-setup: disabled .* again' <<< "$people_out"; then
+    echo "So they were disabled again, until Kilnmark answers: then give each a temporary password with people activate EMAIL." >&2
+  else
+    echo "Warning: they could not be disabled again either: disable them in Keycloak's console." >&2
+  fi
 }
 
 # Who was disabled ($1: quoted addresses, joined by commas), recorded 500 at a time: Kilnmark takes
@@ -1432,6 +1488,13 @@ cmd_people() {
       # Every hour, from the timer up sets up; by hand too. Nothing to do while Keycloak is stopped:
       # nobody signs in then, and each start expires them first.
       [ $# -eq 0 ] || die "people expire takes no options."
+      # It runs as this account every hour: never what someone else may have changed (ADR 0051)
+      local why; why="$(tree_problem)"
+      if [ -n "$why" ]; then
+        # in a subshell, as every call: its folder's trap is its own
+        ( api_call POST /api/v1/auth/people '{"via":"expire-refused"}' > /dev/null ) || true
+        die "people expire was refused: $why. Make it so, then run it again."
+      fi
       local kcp; kcp="$(setting KILNMARK_KEYCLOAK_PORT)"
       if ! curl -s -f -o /dev/null --max-time 10 "http://localhost:${kcp:-8180}/realms/kilnmark"; then
         echo "Keycloak does not answer, so nothing was expired now: each start of Kilnmark expires unused temporary passwords too."

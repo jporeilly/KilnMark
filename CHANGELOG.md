@@ -285,6 +285,23 @@ details.
   must be lower-case letters, digits, `-` and `_`. `uninstall --purge` keeps, and names, an image
   another install on the machine still uses. The one-offs' per-run folder setting is now
   `KILNMARK_RUN_DIR`.
+- **The hourly expiry runs only what nobody else may change**: before setting the task or timer up,
+  and at the start of every `people expire` (refused and audited when it fails), the control script
+  checks the whole tree a run uses (root, launcher, current version's `compose.yaml` and setup
+  script, `config/.env`) for its owner and who may write it; as root on Linux, every folder up to
+  `/` too. On Windows `install` refuses an existing root someone else owns. `KILNMARK_ENGINE` goes
+  into a unit only as podman's or docker's full path; the tests' hooks need a marker no release sets.
+- **A Keycloak realm is one install's**: stamped once with its id and mode, and every
+  `keycloak-setup` run refuses a realm of another install or mode, or, on production, one holding
+  the Starter Pack's group or example people. The stamp and the first start's record of the mode
+  are audit events (`auth.realm_stamped`, `server.mode_recorded`).
+- **People are made disabled, checked, then enabled**, and never left in a group `config/.env` maps
+  to a role that they were not given; a person Kilnmark's audit log could not record is disabled
+  again. On production a sign-in at kilnmark.com, by user name or email, is refused like the pack's
+  group, and the sample-data kind is refused at run time too.
+- **Smaller fixes**: Windows wipes typed passwords' copies at once, keeps `logs` private, and checks
+  `KILNMARK_PROJECT` before uninstall touches the task; a refused Starter Pack setting is logged
+  without its words. A backup has checksums, not a signature: the backup guide says so.
 - **Guard rails**: the marking, the audit events `starter.added` (a refused attempt too),
   `starter.removed` (naming what it deleted; each schedule deleted with a sample is recorded as a
   `schedule.deleted`) and `starter.people`, and the access review's new `example` column

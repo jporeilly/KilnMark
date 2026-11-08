@@ -65,12 +65,22 @@ public final class OidcAccess {
      * pack's people. Every sign-in, renewal and request with a session is decided here.
      */
     public static Decision decide(KilnmarkConfig config, org.eclipse.microprofile.jwt.JsonWebToken token, Instant now) {
-        if (!io.kilnmark.server.starter.ModeCheck.examplePeopleAllowed(config) && strings(token.getClaim(
+        if (!io.kilnmark.server.starter.ModeCheck.examplePeopleAllowed(config) && (strings(token.getClaim(
             config.auth().oidc().groupsClaim())).stream().anyMatch(g -> STARTER_GROUP.equals(g)
-                || ("/" + STARTER_GROUP).equals(g))) {
+                || ("/" + STARTER_GROUP).equals(g)) || example(token.getClaim("preferred_username"))
+                || example(token.getClaim("email")))) {
             return Decision.refused(STARTER_GROUP_ON_PRODUCTION);
         }
         return decide(config.auth().oidc(), token::getClaim, now);
+    }
+
+    /**
+     * Whether a user name or email is at kilnmark.com, where the Starter Pack's example people are: a
+     * production install lets none of them in, by group, name or address alike.
+     */
+    static boolean example(Object claim) {
+        String v = claim == null ? "" : claim.toString().strip().toLowerCase(java.util.Locale.ROOT);
+        return v.endsWith("@kilnmark.com") || v.endsWith(".kilnmark.com");
     }
 
     /**

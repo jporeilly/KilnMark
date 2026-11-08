@@ -94,7 +94,21 @@ class StarterPackProductionTest {
         assertTrue(imported.getString("rows[0].error").contains("a production install, which never has it"),
             imported.prettify());
         admin().get("/api/v1/sources/my-samples").then().statusCode(404);
+        // and one that reached the store all the same (from before, say) is never read: no connector here
+        if (store.source("leftover-samples").isEmpty()) {
+            store.addSource(new io.kilnmark.graph.store.Records.NewSource("leftover-samples", ModeCheck.SAMPLE_DATA_KIND, Map.of(),
+                null, "left over"));
+        }
+        String yaml = "kilnmark: pipeline/v1\nname: reads-leftover-samples\nnodes:\n  - id: r\n    type: read\n"
+            + "    source: leftover-samples\n    asset: crm/customers.csv\n";
+        JsonPath v = admin().contentType(ContentType.JSON).body(Map.of("yaml", yaml)).post("/api/v1/pipelines/validate")
+            .then().statusCode(200).extract().jsonPath();
+        assertFalse(v.getBoolean("valid"), v.prettify());
+        assertTrue(v.getString("problems.message").contains("no connector for sources of kind 'sample-data'"), v.prettify());
     }
+
+    @jakarta.inject.Inject
+    io.kilnmark.graph.store.GraphStore store;
 
     @Test
     void thePackIsNeverTurnedOnAndTheRefusalIsRecorded() throws Exception {
@@ -228,8 +242,11 @@ class StarterPackProductionTest {
             token("s1", "someone@bank.example", "kilnmark-admins", OidcAccess.STARTER_GROUP), now).refusal());
         assertEquals(OidcAccess.STARTER_GROUP_ON_PRODUCTION, OidcAccess.decide(config,
             token("s2", "someone@bank.example", "kilnmark-viewers", "/" + OidcAccess.STARTER_GROUP), now).refusal());
-        // by the group alone: an address is no sign (no install from before there were modes reaches here)
-        assertNull(OidcAccess.decide(config, token("s3", "Alex.Morgan@kilnmark.com", "kilnmark-admins"), now).refusal());
+        // and by a user name or email at kilnmark.com, outside the group too
+        assertEquals(OidcAccess.STARTER_GROUP_ON_PRODUCTION, OidcAccess.decide(config, token("s3", "Alex.Morgan@kilnmark.com",
+            "kilnmark-admins"), now).refusal());
+        assertEquals(OidcAccess.STARTER_GROUP_ON_PRODUCTION, OidcAccess.decide(config, token("s3b", "someone@eu.kilnmark.com",
+            "kilnmark-viewers"), now).refusal());
         // a real person
         assertNull(OidcAccess.decide(config, token("s4", "rita@bank.example", "kilnmark-admins"), now).refusal());
 
@@ -277,6 +294,14 @@ class StarterPackProductionTest {
             ps.setString(1, older);
             ps.executeUpdate();
         }
+        // the first start's record of the mode is audited too
+        String fresh = "deployment_mode_test_" + System.nanoTime();
+        try (java.sql.Connection c = source.getConnection()) {
+            io.kilnmark.server.DatabaseTls.markNew(c, fresh);
+        }
+        int recorded = StarterPackApiTest.events(AuditLog.MODE_RECORDED);
+        assertNull(modes.checkFor(ModeCheck.PRODUCTION, fresh, new ModeCheck.FirstStart(false, false)));
+        StarterPackApiTest.eventually(AuditLog.MODE_RECORDED, recorded + 1);
         int made = StarterPackApiTest.events(AuditLog.INSTALL_ID_MADE);
         assertNull(modes.checkFor(ModeCheck.PRODUCTION, older, new ModeCheck.FirstStart(false, false)));
         StarterPackApiTest.eventually(AuditLog.INSTALL_ID_MADE, made + 1);

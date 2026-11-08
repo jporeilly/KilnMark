@@ -103,6 +103,10 @@ A restore puts Kilnmark back as it was when the backup was taken. Everything sin
    production, a Keycloak database whose realm does not say which install it is of (take a new
    backup with this version), or holding the Starter Pack's group or example people. Run by hand,
    `restore.sh` refuses when neither the database nor `.env` says this install's mode.
+   A backup's checksums show it is whole, not who made it: there is no signature or MAC, so a
+   restore trusts whoever can write the backup's files. Keep backups where only your operators can
+   write. Restore Keycloak's database with Kilnmark's, from the same install: Keycloak's realm
+   carries the install it belongs to, and refuses another.
    With `--yes`, it:
    - restores the backup into a database of its own, `kilnmark_restoring`, while Kilnmark keeps
      running. If that fails, nothing has changed: Kilnmark still runs on its own database, and the

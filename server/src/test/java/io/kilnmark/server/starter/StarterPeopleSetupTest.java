@@ -185,8 +185,11 @@ class StarterPeopleSetupTest {
         assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark/users/" + user("vera.lane@kilnmark.com")
             .path("id").asText() + "/groups/" + team, null).statusCode());
 
-        ok(setup("", PRODUCTION, "", ""));   // a production run leaves her as she is
-        assertNotNull(user("vera.lane@kilnmark.com"));
+        // a production realm holding one of the example user names is not a production install's: refused
+        ExecResult kept = setup("", PRODUCTION, "", "");
+        assertNotEquals(0, kept.getExitCode());
+        assertTrue(kept.getStderr().contains("holds the Starter Pack's example people"), kept.getStderr());
+        assertNotNull(user("vera.lane@kilnmark.com"), "and left as she is");
 
         ExecResult r = setup("", STARTER, "add", FIRST);
         assertNotEquals(0, r.getExitCode(), "refused without KILNMARK_STARTER=allowed");
@@ -294,9 +297,20 @@ class StarterPeopleSetupTest {
         ok(setup("allowed", STARTER, "add", FIRST));
         ok(setup("allowed", STARTER, "remove", ""));   // starter people --remove
         assertNull(user("dana.reyes@kilnmark.com"));
-        ok(setup("", PRODUCTION, "", ""));
         assertEquals(204, call(admin(), "DELETE", "/admin/realms/kilnmark/users/" + user("vera.lane@kilnmark.com")
             .path("id").asText(), null).statusCode());
+        ok(setup("", PRODUCTION, "", ""));
+        // a production realm with the pack's marked group (a Keycloak kept from a Starter Pack install),
+        // its people gone: refused by the group alone
+        ok(setup("allowed", STARTER, "add", FIRST));
+        for (String person : PEOPLE) {
+            assertEquals(204, call(admin(), "DELETE", "/admin/realms/kilnmark/users/" + id(person), null).statusCode());
+        }
+        ExecResult kept = setup("", PRODUCTION, "", "");
+        assertNotEquals(0, kept.getExitCode());
+        assertTrue(kept.getStderr().contains("holds the Starter Pack's group"), kept.getStderr());
+        ok(setup("allowed", STARTER, "remove", ""));
+        ok(setup("", PRODUCTION, "", ""));
     }
 
     @Test
@@ -785,6 +799,18 @@ class StarterPeopleSetupTest {
         assertTrue(r.getStderr().contains("was put in the group kilnmark-admins"), r.getStderr());
         assertNull(user("fay@bank.example"), "removed again");
         assertEquals(204, call(admin(), "DELETE", "/admin/realms/kilnmark/default-groups/" + admins, null).statusCode());
+        // nor in a group of the site's own that config/.env maps to a role
+        String team = makeGroup(null, "team-admins");
+        assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark/default-groups/" + team, null).statusCode());
+        r = KC.execInContainer("bash", "-c", env("allowed", STARTER, "") + " KILNMARK_OIDC_ADMIN_GROUPS='kilnmark-admins, team-admins'"
+            + " KILNMARK_PEOPLE_ACTION=add KILNMARK_PERSON_EMAIL=hal@bank.example KILNMARK_PERSON_FIRST_NAME=Hal"
+            + " KILNMARK_PERSON_LAST_NAME=Ross KILNMARK_PERSON_GROUPS=kilnmark-viewers; printf '%s\\n' '" + RITAS_FIRST
+            + "' | bash /opt/kilnmark/setup.sh");
+        assertNotEquals(0, r.getExitCode());
+        assertTrue(r.getStderr().contains("was put in the group team-admins"), r.getStderr());
+        assertNull(user("hal@bank.example"), "removed again");
+        assertEquals(204, call(admin(), "DELETE", "/admin/realms/kilnmark/default-groups/" + team, null).statusCode());
+        assertEquals(204, call(admin(), "DELETE", "/admin/realms/kilnmark/groups/" + team, null).statusCode());
 
         // someone put in the pack's group by hand, not at kilnmark.com: only taken out of it
         assertEquals(201, call(admin(), "POST", "/admin/realms/kilnmark/users", Map.of("username", "pat@bank.example",
@@ -838,9 +864,26 @@ class StarterPeopleSetupTest {
         JsonNode attributes = realm().path("attributes");
         assertEquals(id, attributes.path("kilnmark_install_id").asText(), attributes.toString());
         assertEquals(PRODUCTION, attributes.path("kilnmark_mode").asText());
-        // stamp: that alone, as up asks after the server's first start
-        String later = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
-        ok(run(PRODUCTION, "KILNMARK_PEOPLE_ACTION=stamp KILNMARK_INSTALL_ID=" + later, ""));
-        assertEquals(later, realm().path("attributes").path("kilnmark_install_id").asText());
+        assertTrue(r.getStdout().contains("stamped the realm with this install's id and mode"), r.getStdout());
+        // stamped once: the same again changes nothing, and says nothing
+        ExecResult same = run(PRODUCTION, "KILNMARK_PEOPLE_ACTION=stamp KILNMARK_INSTALL_ID=" + id, "");
+        ok(same);
+        assertFalse(same.getStdout().contains("stamped the realm"), same.getStdout());
+        // another install's id, or the other mode, is refused, and the stamp is left as it was
+        String other = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+        ExecResult another = run(PRODUCTION, "KILNMARK_PEOPLE_ACTION=stamp KILNMARK_INSTALL_ID=" + other, "");
+        assertNotEquals(0, another.getExitCode());
+        assertTrue(another.getStderr().contains("belongs to another Kilnmark install"), another.getStderr());
+        ExecResult mode = run(STARTER, "KILNMARK_PEOPLE_ACTION=list", "");
+        assertNotEquals(0, mode.getExitCode());
+        assertTrue(mode.getStderr().contains("stamped for a production install, and this one is starter-pack"), mode.getStderr());
+        assertEquals(id, realm().path("attributes").path("kilnmark_install_id").asText());
+        // people disable: those the control script could not record, disabled again (fail closed)
+        ok(addPerson(PRODUCTION, "gil@bank.example", "Gil", "Lee", "kilnmark-viewers", RITAS_FIRST));
+        assertTrue(user("gil@bank.example").path("enabled").asBoolean(), "made enabled, once its groups were checked");
+        ExecResult off = run(PRODUCTION, "KILNMARK_PEOPLE_ACTION=disable", "gil@bank.example");
+        ok(off);
+        assertTrue(off.getStdout().contains("disabled gil@bank.example again"), off.getStdout());
+        assertFalse(user("gil@bank.example").path("enabled").asBoolean());
     }
 }

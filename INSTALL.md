@@ -515,6 +515,15 @@ Kilnmark as its own account instead, with `prepare`). `KILNMARK_PROJECT`, which 
 lower-case letters, digits, `-` and `_`. A temporary password with a one-time code set up on it,
 but no new password, still expires, and the code is taken away again.
 
+The expiry holds only while the timer and Kilnmark's database run: on Windows the task runs only while
+you are signed in, and a stopped install expires nobody until its next start, which expires them
+first. Before it sets the task or timer up, and at the start of every `people expire`, the script
+checks that nobody else may change what a run uses (the root, the launcher, the current version's
+`compose.yaml` and `keycloak-setup` script, `config/.env`): each must be yours (on Linux as root,
+root's, with every folder above the root root's too) and writable by nobody else. If not, it says
+which, and `people expire` refuses and Kilnmark's audit log records it. On Windows, `install`
+refuses an existing folder someone else owns.
+
 `status` and `check` say whether it is set up. While Keycloak is stopped nobody can sign in, so
 `people expire` does nothing then, and the next start expires them first. The password goes to `keycloak-setup` on its input only:
 never on the screen, in `.env`, a command line or `logs`. Someone already there with that email is
@@ -523,8 +532,12 @@ command again changes nothing. Addresses at kilnmark.com, the Starter Pack's exa
 refused, so a real person is never taken for an example one; people added this way are in exactly
 the Kilnmark groups they were given, and never in the pack's group, so removing the example people
 never removes them: should someone made land in another group of Kilnmark's (the realm has it as a
-default group, say), they are deleted again and the command stops. People cannot change their own
-email, names or user name in the bundled Keycloak: an admin does, in its console. The
+default group, say), they are deleted again and the command stops: as are groups `config/.env`
+maps to a role. People cannot change their own email, names or user name in the bundled Keycloak:
+an admin does, in its console. If Kilnmark's audit log cannot record someone made or activated,
+they are disabled again. Keycloak's realm is stamped once with this install's id and mode:
+`keycloak-setup` then refuses a Keycloak of another install, of the other mode, or, on production,
+one that still has the Starter Pack's people or group. The
 commands act only where the mode Kilnmark recorded in its database is the one `.env` says, and stop
 when the database does not answer.
 Kilnmark's audit log records each person made (`auth.person_added`, with their groups), each import

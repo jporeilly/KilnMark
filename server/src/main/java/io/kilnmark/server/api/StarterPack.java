@@ -560,9 +560,9 @@ public class StarterPack {
                 true);
             sources.checkHosts(d.connector(), d.config());
         } catch (IllegalArgumentException | WebApplicationException e) {
-            // their words can name the host, which the page never shows: the log has them
-            LOG.warnf("Starter Pack: the settings of %s were refused: %s", name, e.getMessage());
-            throw new Problem("The settings of " + name + " were refused (the server's log says why). If this server "
+            // their words can name a host or a value: neither the page nor the log has them
+            LOG.warnf("Starter Pack: the settings of %s were refused (%s)", name, e.getClass().getSimpleName());
+            throw new Problem("The settings of " + name + " were refused. If this server "
                 + "lets sources reach only some hosts (" + HostPolicy.SETTING + "), add the server of Kilnmark's own "
                 + "database to them, then turn the pack on again");
         }

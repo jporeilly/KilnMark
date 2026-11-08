@@ -24,6 +24,9 @@ export const ACTIONS: { value: string; label: string; tone: Tone }[] = [
   { value: "auth.person_disabled", label: "Person disabled", tone: "neutral" },
   { value: "server.start_refused", label: "Start refused", tone: "bad" },
   { value: "server.install_id_made", label: "Install id made", tone: "neutral" },
+  { value: "server.mode_recorded", label: "Mode recorded", tone: "neutral" },
+  { value: "auth.realm_stamped", label: "Keycloak realm stamped", tone: "neutral" },
+  { value: "auth.expire_refused", label: "Expiry refused", tone: "bad" },
   { value: "access.review", label: "Access review viewed", tone: "neutral" },
   { value: "unmask.requested", label: "Sensitive values asked for", tone: "warn" },
   { value: "unmask.approved", label: "Sensitive values approved", tone: "warn" },
@@ -91,6 +94,15 @@ export function describe(e: AuditEvent): string {
   }
   if (e.action === "auth.person_disabled") {
     return `Disabled ${String(d.person ?? "")}: their temporary password went unused`;
+  }
+  if (e.action === "server.mode_recorded") {
+    return `Recorded at the first start: ${String(d.mode ?? "")}`;
+  }
+  if (e.action === "auth.realm_stamped") {
+    return "The bundled Keycloak's realm was told which install it belongs to";
+  }
+  if (e.action === "auth.expire_refused") {
+    return String(d.reason ?? "");
   }
   if (e.action === "server.install_id_made") {
     return "This install was given an id of its own: backups taken before do not name it, so take a new one";

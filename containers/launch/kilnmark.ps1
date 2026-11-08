@@ -239,10 +239,11 @@ function Remove-RunSecrets {
 # are signed in to Windows (the Podman machine or Docker Desktop runs only then too), so a temporary
 # password left unused is disabled at most an hour after its window, whether or not Kilnmark starts
 # again. up sets it up, and removes it without the bundled Keycloak; uninstall removes it.
-# KILNMARK_SCHTASKS is for the tests only.
+# KILNMARK_SCHTASKS is for the tests only, and counts only with their marker, which no release sets.
+function Test-TestHooks { return ($env:KILNMARK_TEST_HOOKS -ceq 'only-in-kilnmark-tests') }
 function Get-ExpiryTaskName { return ('Kilnmark ' + $Project + ' people expire') }
 function Invoke-Schtasks {
-    $exe = 'schtasks.exe'; if ($env:KILNMARK_SCHTASKS) { $exe = $env:KILNMARK_SCHTASKS }
+    $exe = 'schtasks.exe'; if ((Test-TestHooks) -and $env:KILNMARK_SCHTASKS) { $exe = $env:KILNMARK_SCHTASKS }
     & $exe @args *> $null
     return ($LASTEXITCODE -eq 0)
 }
@@ -268,17 +269,42 @@ function Get-OthersWriting([string]$Path) {
     return $out
 }
 
+# Whether $Path's owner is you, SYSTEM or the Administrators: an owner may rewrite its permissions
+# whenever they like.
+function Test-OwnerOk([string]$Path) {
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $sid = ''
+    try { $sid = (New-Object Security.Principal.NTAccount((Get-Acl $Path).Owner)).Translate([Security.Principal.SecurityIdentifier]).Value } catch { $sid = '' }
+    return (@($me, 'S-1-5-18', 'S-1-5-32-544') -contains $sid)
+}
+
+# Why someone other than you may change what an hourly run uses, or nothing (ADR 0051): the task
+# runs kilnmark.ps1 from the install root as you, and that run reads the current version's
+# compose.yaml and keycloak-setup's script, config\.env and current.txt. Each, and the folders that
+# hold them, must be owned by you (or SYSTEM, or the Administrators) and writable by nobody else.
+function Get-TreeProblem {
+    $dir = Get-CurrentDir
+    foreach ($p in @($script:Root, (Join-Path $script:Root 'kilnmark.ps1'), (Join-Path $script:Root 'current.txt'),
+            (Join-Path $script:Root 'versions'), $dir, (Join-Path $dir 'compose.yaml'),
+            (Join-Path $dir 'containers\keycloak\setup.sh'), (Join-Path $script:Root 'config'),
+            (Join-Path $script:Root 'config\.env'))) {
+        if (-not (Test-Path -LiteralPath $p)) { return ($p + ' is not there') }
+        if (-not (Test-OwnerOk $p)) { return ($p + ' is owned by someone other than you, who may change it whenever they like') }
+        $others = @(Get-OthersWriting $p)
+        if ($others.Count -gt 0) { return ($p + ' may be changed by ' + (($others | Select-Object -Unique) -join ', ')) }
+    }
+    return ''
+}
+
 # The task runs kilnmark.ps1 from the install root as you, every hour: the root (with versions\ and
-# the launchers in it) is made yours alone first, and the task is not set up while anyone else may
-# still change the script or its folder, since they would run what they wrote as you.
+# the launchers in it) is made yours alone first, and the task is not set up while anyone else owns
+# or may still change what a run uses, since they would run what they wrote as you.
 function Set-ExpiryTask {
     Protect-Folder $script:Root
-    $ps1 = Join-Path $script:Root 'kilnmark.ps1'
-    $others = @(Get-OthersWriting $script:Root)
-    if (Test-Path $ps1) { $others += @(Get-OthersWriting $ps1) }
-    if ($others.Count -gt 0) {
+    $why = Get-TreeProblem
+    if ($why) {
         Remove-ExpiryTask
-        Write-Host ('Warning: the hourly expiry of unused temporary passwords was not set up: ' + (($others | Select-Object -Unique) -join ', ') + ' may change ' + $ps1 + ' or its folder, and the task would run it as you. Take that right away (or install where only you and the administrators can write), then run up again. Each start expires them too.') -ForegroundColor Yellow
+        Write-Host ('Warning: the hourly expiry of unused temporary passwords was not set up: ' + $why + ', and the task would run it as you. Make it yours alone (or install where only you and the administrators can write), then run up again. Each start expires them too.') -ForegroundColor Yellow
         return
     }
     $had = Test-ExpiryTask
@@ -298,9 +324,13 @@ function Get-ExpiryState {
     return 'not set up'
 }
 
+function Assert-Project {
+    if ($Project -cnotmatch '^[a-z0-9][a-z0-9_-]*$') { Fail 'KILNMARK_PROJECT is lower-case letters, digits, - and _, starting with a letter or a digit. Nothing was changed.' }
+}
+
 function Get-ComposeArgs {
     # a compose project's name, as compose and the hourly expiry's scheduled task take it
-    if ($Project -cnotmatch '^[a-z0-9][a-z0-9_-]*$') { Fail 'KILNMARK_PROJECT is lower-case letters, digits, - and _, starting with a letter or a digit. Nothing was changed.' }
+    Assert-Project
     Select-Engine
     $env = Join-Path $script:Root 'config\.env'
     if (-not (Test-Path $env)) { Fail ('There is no ' + $env + '. Run: kilnmark.cmd install') }
@@ -681,6 +711,9 @@ function Invoke-Up([string[]]$Options) {
     Update-Settings
     if (-not (Test-ImagesPresent $v)) { Fail ('The images of Kilnmark ' + $v + ' are not here. Get them with one of: kilnmark.cmd pull, kilnmark.cmd load-images FILE, kilnmark.cmd build') }
     Write-Host ('Starting Kilnmark ' + $v + ' ...')
+    # what the scripts said, yours only (an install from before kept it open)
+    $logs = Join-Path $script:Root 'logs'
+    if (Test-Path -LiteralPath $logs) { Protect-Folder $logs }
     try {
         Write-RunSecrets
         Set-InstallIdForSetup
@@ -698,8 +731,9 @@ function Invoke-Up([string[]]$Options) {
                     $env:KILNMARK_PEOPLE_ACTION = 'stamp'; $env:KILNMARK_INSTALL_ID = $id
                     try {
                         $base = Get-ComposeArgs
-                        & $script:Engine @base run --rm -T keycloak-setup *> $null
+                        $stamped = @(& $script:Engine @base run --rm -T keycloak-setup 2>&1 | ForEach-Object { '' + $_ } | Where-Object { -not (Test-ComposeCommand $_) })
                         if ($LASTEXITCODE -ne 0) { Write-Host "Warning: Keycloak's realm was not told which install it belongs to; the next start tells it. See: kilnmark.cmd logs keycloak-setup" -ForegroundColor Yellow }
+                        else { Send-OwnPeopleDone $stamped 'stamp' }
                     } finally { Remove-Item Env:KILNMARK_PEOPLE_ACTION -ErrorAction SilentlyContinue }
                 }
             }
@@ -772,7 +806,7 @@ function New-Folders {
             catch { Fail ('Cannot create ' + $p + '. Choose another folder with -Root.') }
         }
     }
-    foreach ($d in @('config', 'certs', 'backups')) { Protect-Folder (Join-Path $script:Root $d) }
+    foreach ($d in @('config', 'certs', 'backups', 'logs')) { Protect-Folder (Join-Path $script:Root $d) }
 }
 
 function Copy-Launchers([string]$V) {
@@ -841,6 +875,10 @@ function Invoke-Install([string[]]$Options) {
     # A Starter Pack install always has the bundled Keycloak: its example people live there.
     if ($script:WithStarter) { $script:WithAuth = $true }
     if (-not $script:WithAuth) { Read-SignIn }
+    # never into a root someone else owns: they could rewrite its permissions whenever they like
+    if ((Test-Path -LiteralPath $script:Root) -and -not (Test-OwnerOk $script:Root)) {
+        Fail ($script:Root + ' exists and is owned by someone other than you: install into a folder of your own, or have its owner remove it. Nothing was installed.')
+    }
     New-Folders
     Start-Log 'install'
     Install-Release $Here $v
@@ -944,6 +982,7 @@ function Invoke-Uninstall([string[]]$Options) {
     $purge = $false
     foreach ($o in $Options) { if ($o -eq '-Purge') { $purge = $true } else { Fail ('Unknown option ' + $o + '.') } }
     $v = Get-CurrentVersion
+    Assert-Project
     Remove-ExpiryTask
     if (-not $purge) {
         [void](Invoke-Compose down)
@@ -1077,6 +1116,12 @@ function Send-PeopleDone([string[]]$Lines) {
 
 # The password for the example people: typed twice, not shown, at a console; else one line on
 # standard input (a pipe). Never shown, never on a command line, never in a file.
+# A secure string's text, its unmanaged copy wiped and freed at once.
+function ConvertFrom-Secret([Security.SecureString]$Secret) {
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secret)
+    try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+}
+
 function Read-PeoplePassword {
     if ([Console]::IsInputRedirected) {
         $first = [Console]::In.ReadLine()
@@ -1085,8 +1130,8 @@ function Read-PeoplePassword {
     } else {
         $a = Read-Host -AsSecureString 'A password for the example people (12 characters or more, not shown)'
         $b = Read-Host -AsSecureString 'The same again'
-        $first = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($a))
-        $second = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($b))
+        $first = ConvertFrom-Secret $a
+        $second = ConvertFrom-Secret $b
         if ($first -cne $second) { Fail 'The two did not match. Nothing was changed.' }
         $second = $null
     }
@@ -1172,7 +1217,7 @@ function Write-NoPerson([string]$Message) {
 
 function Read-Secret([string]$Prompt) {
     $a = Read-Host -AsSecureString $Prompt
-    return [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($a))
+    return (ConvertFrom-Secret $a)
 }
 
 # Asks for one person: at a console, the password twice, not shown; else lines on standard input
@@ -1288,9 +1333,27 @@ function Send-OwnPeopleDone([string[]]$Lines, [string]$Via) {
     } elseif ($Via -ne 'expire' -and ($made.Count -gt 0 -or $kept.Count -gt 0 -or $Via -eq 'import')) {
         $bodies += ('{"via":"' + $Via + '","made":[' + ($made -join ',') + '],"kept":[' + ($kept -join ',') + '],"refused":' + $refused + '}')
     }
+    if (@($Lines | Where-Object { $_.StartsWith('keycloak-setup: stamped the realm') }).Count -gt 0) { $bodies += '{"via":"stamp"}' }
+    $undo = @()
     foreach ($b in $bodies) {
         $code = Invoke-KilnmarkApi 'POST' '/api/v1/auth/people' $b
-        if ($code -ne '204') { Write-Host ("Warning: Kilnmark did not record this in its audit log (HTTP " + $code + "); Keycloak's admin events have it.") -ForegroundColor Yellow }
+        if ($code -ne '204') {
+            Write-Host ("Warning: Kilnmark did not record this in its audit log (HTTP " + $code + "); Keycloak's admin events have it.") -ForegroundColor Yellow
+            if ($b.StartsWith('{"via":"add"') -or $b.StartsWith('{"via":"import"') -or $b.StartsWith('{"via":"activate"')) {
+                foreach ($line in $Lines) {
+                    if ($line -cmatch '^keycloak-setup: (made|activated) ([a-z0-9._%+@-]+)[ :]') { $undo += $Matches[2] }
+                }
+            }
+        }
+    }
+    # Nobody stays able to sign in without that record (fail closed): disabled again.
+    if ($undo.Count -gt 0) {
+        $out = Invoke-PeopleSetup 'disable' $null $undo
+        if ($script:PeopleOk -and @($out | Where-Object { $_ -match '^keycloak-setup: disabled .* again' }).Count -gt 0) {
+            Write-Host 'So they were disabled again, until Kilnmark answers: then give each a temporary password with people activate EMAIL.' -ForegroundColor Yellow
+        } else {
+            Write-Host "Warning: they could not be disabled again either: disable them in Keycloak's console." -ForegroundColor Yellow
+        }
     }
 }
 
@@ -1405,6 +1468,12 @@ function Invoke-People([string[]]$Options) {
         }
         'expire' {
             # Every hour, from the scheduled task up sets up (which names the project); by hand too.
+            # Never what someone else may have changed (ADR 0051): refused, and recorded.
+            $why = Get-TreeProblem
+            if ($why) {
+                [void](Invoke-KilnmarkApi 'POST' '/api/v1/auth/people' '{"via":"expire-refused"}')
+                Fail ('people expire was refused: ' + $why + '. Make it yours alone, then run it again.')
+            }
             # Nothing to do while Keycloak is stopped: nobody signs in then, and each start expires them first.
             $kc = Get-Setting 'KILNMARK_KEYCLOAK_PORT'; if (-not $kc) { $kc = '8180' }
             if (-not (Test-Answers ('http://localhost:' + $kc + '/realms/kilnmark'))) {

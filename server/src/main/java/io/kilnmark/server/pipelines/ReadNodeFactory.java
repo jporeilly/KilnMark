@@ -123,6 +123,7 @@ public final class ReadNodeFactory implements NodeFactory {
             if (s.isEmpty()) {
                 problems.add("source: there is no saved source called '" + name + "'");
             } else {
+                // on production the example data's kind has no connector (PipelineCompilers): refused here
                 Optional<Connector> c = sources.connector(s.get().kind());
                 if (c.isEmpty()) {
                     problems.add("source: this server has no connector for sources of kind '" + s.get().kind() + "'");
