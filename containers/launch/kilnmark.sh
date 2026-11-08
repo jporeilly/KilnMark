@@ -272,8 +272,9 @@ expiry_dir() {
 # Each must be this account's own (root's, as root) and writable by nobody else; as root, so must
 # every folder from the root up to / (as sshd's StrictModes asks: a sticky /tmp counts as unsafe).
 tree_problem() {
-  local want f info dir cur
-  if [ "$(expiry_uid)" -eq 0 ]; then want=0; else want="$(id -u)"; fi
+  local want f info dir cur as_root=0
+  # as root (the timer is a system unit), root must own it all; else the account that runs this
+  if [ "$(expiry_uid)" -eq 0 ]; then want=0; as_root=1; else want="$(id -u)"; fi
   cur="$(readlink -f "$root/current" 2> /dev/null || true)"
   [ -n "$cur" ] || { echo "there is no current version"; return 0; }
   # the link itself only by its owner (a link's own permissions mean nothing)
@@ -287,7 +288,7 @@ tree_problem() {
       return 0
     fi
   done
-  [ "$want" = 0 ] || return 0
+  [ "$as_root" = 1 ] || return 0
   dir="$(dirname "$(readlink -f "$root")")"
   while :; do
     info="$(stat -c '%u %a' "$dir" 2> /dev/null || echo "x 777")"
