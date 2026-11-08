@@ -74,7 +74,9 @@ that was told, and when a run takes longer than its `run: warn_after`.
 
 ![Settings › Notifications: the kinds of event shown in Kilnmark, each with what it means](images/notification-settings.png)
 
-Notifications appear in Kilnmark for every role, with nothing to set up. Each one says what
+Notifications appear in Kilnmark for every role, with nothing to set up, for people who use an API
+token. People who sign in through your identity provider get none yet, and this page offers them no
+choices. Each one says what
 happened and links to where to look: the asset, the source or the issue list. Open
 **Settings**, then **Notifications**, to see your latest ones under **Your latest
 notifications** and to mark them read.

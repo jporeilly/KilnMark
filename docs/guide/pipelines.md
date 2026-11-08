@@ -618,7 +618,7 @@ told, is in [Owners of pipelines and flows](notifications.md#owners-of-pipelines
 
 ## Reading a run
 
-![A run's page: its summary (status, version, times, rows written, quality) and where each node spent its time](images/pipeline-run-page.png)
+![A run's page: its summary (status, version, who asked for it, times, rows written, quality), its tries, and where each node spent its time](images/pipeline-run-page.png)
 
 Open a run from the **History** tab. The page updates itself until the run ends, and says when its
 status changes.
@@ -650,7 +650,7 @@ status changes.
   it ended, its start, first row, last row and end, its share of the run, rows in and out, peak
   memory, quality and error. **Show the timeline as a table** gives the same as figures.
 
-  ![The Run timeline panel of a pipeline run: the run's row, then customers, check, clean and aside, each bar lighter while it waits for its first row, with its time and the gate's or write's quality after it in words, and the details of the chosen node check below: a gate that finished, first row at 117 ms, 240 rows in and out, quarantined 10](images/pipeline-run-timeline.png)
+  ![The Run timeline panel of a pipeline run: the run's row, then customers, check, clean and aside, each bar lighter while it waits for its first row, with its time and the gate's or write's quality after it in words, and the details of the chosen node check below: a gate that finished, first row at 288 ms, 240 rows in and out, quarantined 10](images/pipeline-run-timeline.png)
 - **Rows per second through the run:** a line per node of the rows it handled each second, from
   the snapshots taken every two seconds, with its peak at the right. Under it, an amber band shows
   how full its output queue was (**Held up**: the taller and stronger, the fuller; full means the

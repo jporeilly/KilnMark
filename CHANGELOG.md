@@ -142,6 +142,15 @@ details.
 
 ### Details
 
+- **README and screenshots from 0.1.2**: the README says what Kilnmark does now (the two
+  deployment modes, the people commands, the new nodes, which row wins, rows that fail, run
+  retries, Run again from the failure and the samples that explain themselves), and every
+  screenshot in the guides and the README is retaken from a Starter Pack install of 0.1.2, on the
+  samples, as the role the text describes. Two new ones: the errors port in
+  [Rows that fail](docs/guide/rows-that-fail.md) and a failed flow run in
+  [Run again from the failure](docs/guide/flows.md#run-again-from-the-failure). Descriptions now
+  match what each picture shows, and the notifications guide says that people who sign in through
+  an identity provider get no notifications yet.
 - **The documentation's groups and moves** (`ui/src/docs/groups.ts`): the groups the Documentation
   page shows, and where each page or section that moved went, which the viewer follows for an old
   link and for a link inside a guide. `groups.test.ts` fails when a guide is in no group, when a
