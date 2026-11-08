@@ -28,15 +28,11 @@ tried again: **Pipeline run failed** and **Flow run failed** come once, after th
 how many tries were made and why there were no more. A run that succeeds on a later try tells
 nobody.
 
-**Owners are always told.** A pipeline's or flow's owners
-([Owners](pipelines.md#owners)) get its **run failed**, **run recovered** and **taking longer than
-expected** notifications in the app, and by email when their email is on and their address
-confirmed, even if their own choices leave the kind out; the hourly limit and the digest still
-apply. Each sees what their role may see, and a team address what a viewer sees. When no owner can
-be told, admins are told in their place. Everyone else gets them as their own choices say.
+**Owners are always told** about their pipeline's or flow's runs: see
+[Owners of pipelines and flows](#owners-of-pipelines-and-flows), below.
 
 A pipeline has a quality threshold when its YAML sets one, such as `quality: {min_score: 0.95}`
-(see [Building and running a pipeline](pipelines.md#quality-of-what-a-run-writes)). Each run
+(see [Quality of what a run writes](quality-gates.md#quality-of-what-a-run-writes)). Each run
 measures the quality of every table or file it writes; when the lowest score is below the
 threshold, the notification names the write node and says the score and the threshold.
 
@@ -50,11 +46,37 @@ threshold and flow notices are told each time they happen, once per run.
 
 ![How an event reaches you: told once per problem, to everyone whose choices include it, in the app, and by email when it is on, confirmed and the severity is reached](images/notifications-flow.svg)
 
+## Owners of pipelines and flows
+
+Each pipeline and each flow has **owners**: the people, or team addresses, who answer for it. They
+are told when its run fails after its last try, when it runs again successfully after a failure
+that was told, and when a run takes longer than its `run: warn_after`.
+
+- The pipeline's or flow's page shows them under **Owners**. Designers and admins choose **Change
+  owners** and give up to 10 sign-in names (as Kilnmark shows who did something) or team
+  addresses, one a line. A team address must be one an admin added under **Settings**, **Email**
+  ([Team addresses](#team-addresses)). Others see a team address as "A team address".
+- **By default the owner is whoever first saved it.** Owners are kept apart from the YAML, so
+  changing them makes no new version. Each change is in the [audit log](audit-log.md).
+- **Owners are always told**: its **run failed**, **run recovered** and **taking longer than
+  expected** notifications reach them in the app, and by email when their email is on and their
+  address confirmed, even if their own choices leave the kind out. The hourly limit and the digest
+  still apply. Each sees what their role may see, and a team address what a viewer sees. Everyone
+  else gets them as their own choices say.
+- **Owning gives no rights.** An owner who is a viewer still cannot run or change the pipeline or
+  flow, and a run never acts as its owner: it acts as whoever, or whichever schedule, started it.
+- **With no owner**, the page says so, and admins are told in their place. The same holds when no
+  owner can be told (a person whose token no longer works, or who has not used Kilnmark lately).
+  People who sign in through your identity provider get no notifications yet, so name a team
+  address too.
+
 ## In the app
 
 ![Settings › Notifications: the kinds of event shown in Kilnmark, each with what it means](images/notification-settings.png)
 
-Notifications appear in Kilnmark for every role, with nothing to set up. Each one says what
+Notifications appear in Kilnmark for every role, with nothing to set up, for people who use an API
+token. People who sign in through your identity provider get none yet, and this page offers them no
+choices. Each one says what
 happened and links to where to look: the asset, the source or the issue list. Open
 **Settings**, then **Notifications**, to see your latest ones under **Your latest
 notifications** and to mark them read.

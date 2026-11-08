@@ -59,7 +59,7 @@ nodes:
 A connection has `from`, `to` and `when`: `success` (the default), `failure`, `always`, or a
 condition on what earlier nodes reported, such as `"load.score >= good"`. The condition language,
 and why an unknown value takes neither branch, are in [Building and running a
-flow](flows.md#writing-a-flow).
+flow](flows.md#conditions).
 
 Who may do what: designers save flows, stewards run and cancel them, and viewers see them and their
 runs. A flow with a `sql` node, or a `wait-for` node with a query, is saved only by a designer whose

@@ -74,22 +74,54 @@ connections:
 ```
 
 - **Nodes** do the work: `run-pipeline` runs a saved pipeline, `for-each` runs one once for each
-  item of a list, `notify` sends a notice, `wait` waits a while, `stop` ends the flow, and `sql`
-  runs statements on a PostgreSQL source.
+  item of a list, `sql` runs statements on a PostgreSQL source, `check-source` checks a source
+  holds what the work needs, `wait-for` waits for a file or a query, `wait` waits a while, `notify`
+  sends a notice, and `stop` ends the flow.
 - **Connections** say what runs after what, and when: `success` (the default), `failure`,
   `always`, or a condition on what an earlier node reported, such as its `score`,
-  `quarantined_share`, `rows_written` or `status`.
+  `quarantined_share`, `rows_written` or `status` ([Conditions](#conditions), below).
 - **Parameters** are values each run can change. One with no default must be given when the flow
   runs.
 
 Every node type, with each setting it takes, its type and default, and an example, is in
 [Reference: flow nodes](reference-flow-nodes.md).
 
-Nodes with no connection between them run at the same time. The full format, the condition
-language and how a run decides what starts next are in the design notes (`docs/design/flows.md`). The sample flows that ship with Kilnmark, in `samples/08-flows`,
-show one idea each, and each says in the Library what it shows, what to look for and what it needs:
+Nodes with no connection between them run at the same time. The sample flows that ship with
+Kilnmark, in `samples/08-flows`, show one idea each, and each says in the Library what it shows, what to look for and what it needs:
 `sample-retries` tries a run and a node again only where it is safe, and `sample-checks-and-waits`
 checks a source and waits for a file before the work, with a priority on each pipeline.
+
+## Conditions
+
+A connection with a condition is taken when the node it leaves succeeded and the condition is
+true. A condition is a small language over what earlier nodes reported and the flow's parameters;
+it never runs code:
+
+```text
+clean.quarantined_share < 0.02 and clean.score >= good
+clean.status = 'failed' or (clean.rows_written = 0 and region != 'APAC')
+```
+
+- **Values.** `<node>.status` is `succeeded`, `failed` or `cancelled` for every node. The other
+  values each node reports, such as a `run-pipeline` node's `score` (the lowest measured quality
+  of what it wrote, 0 to 1) or a `for-each` node's `failed`, are listed in its entry in
+  [Reference: flow nodes](reference-flow-nodes.md). A parameter is read by its name.
+- **Quality words** are the lowest score of a band, as the app shows them: `good` is 0.95, `fair`
+  0.8 and `poor` 0.
+- **Writing it.** Numbers (`0.02`, `-1`), text in single quotes, `true` and `false`; `=`, `!=`,
+  `<`, `<=`, `>` and `>=`; `and`, `or` and `not`; brackets. Comparisons do not chain, and both
+  sides of one are the same kind (number, text or true or false), checked when the flow is saved;
+  true and false compare only with `=` and `!=`. Any other operator, such as `==` or `<>`, is
+  refused rather than guessed at. A condition is at most 1,000 characters, with at most 32 levels
+  of brackets and `not`.
+- **Unknown is not false.** A score nothing measured is unknown, and so is a comparison with it,
+  with SQL's rules for `and`, `or` and `not`. A connection is taken only when its condition is
+  true, so an unknown answer takes neither it nor its opposite: a flow with `< 0.02` on one
+  connection and `>= 0.02` on the other skips both when nothing was measured. Add a `failure` or
+  `always` connection, or write the condition so that it covers the case.
+- **Only nodes that must have ended.** A condition may name the node the connection leaves and
+  the nodes before it. Naming any other node is a problem when the flow is saved ("Unknown value
+  'c.score'"), rather than a value that is sometimes missing.
 
 ## Running one pipeline for each item
 
@@ -199,12 +231,12 @@ connections:
   has `for`, and `notify` and `stop` nodes end at once.
 - On the diagram, choose the node and set **Timeout** on its Settings tab; leave it blank for none.
 
-![The flow's diagram with the run-pipeline node takings chosen: its Settings tab shows Pipeline sample-volume, a blank Version, and Timeout 2h, with the hint "Stopped and failed past it: 30m, 2h, 1d. Blank for none."](images/flow-node-timeout.png)
+![The diagram of the flow nightly-takings with the run-pipeline node takings chosen: its Settings tab shows Pipeline sample-volume, a blank Version, Timeout 2s with the hint "Stopped and failed past it: 30m, 2h, 1d. Blank for none.", Priority Normal, and blank Tries again and Wait before trying again](images/flow-node-timeout.png)
 
 On the run's page the node shows **Failed** with **Timed out** beside it, and its message says how
 long it was allowed:
 
-![A run of nightly-takings in which the takings node timed out: the diagram outlines takings red as Failed, its notice node too-slow green as Succeeded through the on failure connection, and done as Skipped; the run timeline has a red bar for takings, chosen, with its details below (Failed, took 3.1 s, "Took longer than 2s and was stopped; its pipeline run was cancelled", reported timed_out true); the Nodes table shows takings as Failed and Timed out, with a link to its pipeline run](images/flow-run-timed-out.png)
+![A run of nightly-takings in which the takings node timed out: the diagram outlines takings red as Failed, its notice node too-slow green as Succeeded through the on failure connection, and done as Skipped; the run timeline has a red bar for takings, chosen, with its details below (Failed, took 2.9 s, "Took longer than 2s and was stopped; its pipeline run was cancelled", reported timed_out true); the Nodes table shows takings as Failed and Timed out, with a link to its pipeline run](images/flow-run-timed-out.png)
 
 ## Trying a node again after a failure
 
@@ -315,6 +347,8 @@ run:
 A failed flow run can be run again by hand from where it failed: open it and choose **Run again
 from the failure** (stewards and above, never someone whose role is below the run's own).
 
+![A failed run of the flow stock-check: Run again from the failure beside its name; the summary says one node succeeded, one failed and one was skipped, and why it failed (the node fees, which runs the pipeline sample-gate-stop); under Tries, try 1 failed and was not tried again, as the flow has no retries](images/flow-run-again.png)
+
 - It is one more try of the same run, with the same version, values and server variables, acting
   as the run did. Nodes that succeeded keep what they did; the rest run again, and a for-each node
   runs only its items that did not succeed. A node with retries of its own runs again with them.
@@ -329,25 +363,11 @@ from the failure** (stewards and above, never someone whose role is below the ru
 
 ## Owners
 
-Each flow has **owners**: the people, or team addresses, who answer for it. They are told when
-its run fails after its last try, when it runs again successfully after a failure that was told,
-and when a run takes longer than its `run: warn_after`.
-
-- The flow's page shows them under **Owners**. Designers and admins choose **Change owners** and give up
-  to 10 sign-in names (as Kilnmark shows who did something) or team addresses, one a line. A team
-  address must be one an admin added under **Settings**, **Email**. Others see a team address as
-  "A team address".
-- **By default the owner is whoever first saved it.** Owners are kept apart from the YAML, so
-  changing them makes no new version. Each change is in the [audit log](audit-log.md).
-- **Owners are always told**, in Kilnmark and by email when they have email on with a confirmed
-  address, even if their own choices leave that kind out. Each sees what their role may see, as
-  anyone does. Everyone else is told as their own choices say.
-- **Owning gives no rights.** An owner who is a viewer still cannot run or change the flow, and a
-  run never acts as its owner: it acts as whoever, or whichever schedule, started it.
-- **With no owner**, the page says so, and admins are told in their place. The same holds when no
-  owner can be told (a person whose token no longer works, or who has not used Kilnmark lately).
-  People who sign in through your identity provider get no notifications yet, so name a team
-  address too.
+Each flow has **owners**: the people, or team addresses, who answer for it. They are told when its
+run fails after its last try, when it runs again successfully after a failure that was told, and
+when a run takes longer than its `run: warn_after`. The flow's page shows them under **Owners**, and
+designers and admins choose **Change owners**. Who can be an owner, and how they are told, is in
+[Owners of pipelines and flows](notifications.md#owners-of-pipelines-and-flows).
 
 ## Choosing which runs start first
 
@@ -383,7 +403,7 @@ nodes:
 - On the diagram, choose the node and set **Priority** on its Settings tab. A node of high or low
   priority says so under its name.
 
-![The flow close-of-day on the diagram: products, a run-pipeline node saying "products-copy, high priority", then totals saying "category-totals, low priority", then a notice. The products node is chosen, and its Settings tab shows Pipeline products-copy, a blank Version and Timeout, and Priority High](images/flow-node-priority.png)
+![The sample flow sample-checks-and-waits on the diagram: a check-source node, then accounts, a run-pipeline node saying "sample-read-write-csv, high priority", a wait for its file, then customers saying "sample-dedupe, low priority", with a notice on each failure. The accounts node is chosen, and its Settings tab shows Pipeline sample-read-write-csv, a blank Version and Timeout, and Priority High](images/flow-node-priority.png)
 
 ## Checking a source before the work starts
 
@@ -441,7 +461,7 @@ connections:
   with none, a check that hangs is stopped after 10 minutes. A file path copied from the catalogue
   (`%23` for `#`) finds the file, as a read node does.
 
-![A run of morning-orders: the check-source node arrived, "2 files on sample-data", is outlined red as Failed; its on failure connection led to the notice tell, which succeeded, and the load node was skipped. The Nodes table says arrived failed with "1 of 2 files is missing on sample-data: incoming/orders-today.csv"](images/flow-check-source-run.png)
+![A run of morning-orders: the check-source node arrived, "2 files on starter-samples-files", is outlined red as Failed; its on failure connection led to the notice tell, which succeeded, and the load node was skipped. The run timeline shows the same, and the Nodes table says arrived failed with "1 of 2 files is missing on starter-samples-files: incoming/orders-today.csv"](images/flow-check-source-run.png)
 
 ## Waiting until a file arrives or a query is true
 
@@ -536,7 +556,7 @@ The panel under the diagram has the same tabs as a pipeline's:
 - **Run**, **History** and **Versions** show the latest run, every run and every saved version.
 - **Schedules** shows its schedules; designers and admins add and change them there.
 
-![A flow's page: the diagram, with the node copy, which runs a pipeline, joined from its out connector to a notice and to a second pipeline by two amber connections labelled with their conditions, and to a closing notice by a red dashed connection on failure that runs round the nodes between; the second pipeline joins the closing notice on success. Under it the Nodes tab, a table giving each node, what it does, what it runs after, and its status, start, time and result in the latest run](images/flow-diagram-edit.png)
+![The page of the sample flow sample-quality-decides: the diagram, with the node check, which runs a pipeline, joined from its out connector to a notice and to a second pipeline by two amber connections labelled with their conditions, and to a stop node by a red dashed connection on failure that runs round the nodes between; the notice joins the stop node on success. Under it the Nodes tab, a table giving each node, what it does, what it runs after, and its status, start, time and result in the latest run](images/flow-diagram-edit.png)
 
 - **Add a node.** In the **Nodes** tab, choose its type (and, for one that runs a pipeline, the
   pipeline), then **Add node**. It gets an id from its type or pipeline, and the settings it starts
@@ -670,7 +690,7 @@ A run page is laid out as a pipeline run's, in this order:
   item's start to its last item's end. Viewers see the items' values when they
   are written in the flow, not when they came from the run's values.
 
-![The Diagram, Run timeline and Nodes panels of a run page that succeeded: the diagram shows each node as a card, the two pipeline nodes and the closing notice outlined green as Succeeded and the other notice dashed as Skipped, each with its status in its card; the run timeline nests the flow, its two pipeline nodes (each with its pipeline's name and time) and, under each, its pipeline's nodes, with the flow's details below; the Nodes table gives each node's status, start, time taken, rows written and score, with a link to its pipeline run](images/flow-run-page.png)
+![The Diagram, Run timeline and Nodes panels of a run page that succeeded: the diagram shows each node as a card, the two pipeline nodes outlined green as Succeeded and the notice and the stop node dashed as Skipped, each with its status in its card; the run timeline nests the flow, its two pipeline nodes (each with its pipeline's name and time) and, under each, its pipeline's nodes, with the flow's details below; the Nodes table gives each node's status, start, time taken, rows written and score, with a link to its pipeline run](images/flow-run-page.png)
 
 A node's message says that a pipeline failed and where to look, never why: why can quote values
 from the data, and the pipeline run's own page shows it to those who may see it.
@@ -691,7 +711,7 @@ runs it started that are still going are cancelled. What they had already writte
 Designers and admins can delete a flow they no longer need. Open it and choose **Delete**, beside
 **Run now**. The page asks first, naming the flow and saying what goes and what stays:
 
-![The flow nightly-customers's page after Delete was chosen: under its name, with Run now and Delete beside it, a warning asks "Delete the flow nightly-customers? Its versions, its runs with what each node did, and its schedules are deleted. The pipeline runs it started stay, with what they wrote and the lineage they recorded. This cannot be undone.", with the buttons Delete nightly-customers and Cancel, the focus on Cancel](images/flow-delete-confirm.png)
+![The page of the flow morning-orders after Delete was chosen: under its name, with Run now and Delete beside it, a warning asks "Delete the flow morning-orders? Its versions, its runs with what each node did, and its schedules are deleted. The pipeline runs it started stay, with what they wrote and the lineage they recorded. This cannot be undone.", with the buttons Delete morning-orders and Cancel, the focus on Cancel](images/flow-delete-confirm.png)
 
 ![What deleting a flow does: the flow and every version of it, its runs with what each node did, and its schedules (each recorded in the audit log) are deleted; the pipeline runs it started stay in their pipelines' history, with the tables and files they wrote, and their lineage and quality results in the catalogue. Deleting is refused while a run of the flow is queued or running](images/flow-delete.svg)
 
@@ -713,7 +733,3 @@ Library then shows it as not added, and **Add samples** adds it again.
 
 Through the API: `DELETE /api/v1/flows/<name>` (designers and admins) answers 204 when the flow is
 deleted, 404 when there is no such flow, and 409 while a run is queued or running.
-
-## What is not here yet
-
-- Changing a node's settings on the diagram: for now, change them in the YAML.

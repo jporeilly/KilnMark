@@ -51,7 +51,7 @@ import io.kilnmark.server.quality.Scores;
  * guess, a dimension that cannot be judged gets no score, and the words say what was unknown and
  * which assumptions were made (most often, that a node's rows are like the rows it was given).
  *
- * <p>The rules per node are documented in docs/guide/pipelines.md, "Predicted quality".
+ * <p>The rules per node are documented in docs/guide/quality-gates.md, "Predicted quality".
  */
 final class QualityPredictor {
 

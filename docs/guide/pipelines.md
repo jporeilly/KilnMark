@@ -9,8 +9,8 @@ catalogue with where it came from.
 
 ## Before you start
 
-- **Your role.** Everyone signed in can see pipelines and their runs. You need the steward or
-  admin role to add, change, run or delete them.
+- **Your role.** Everyone signed in can see pipelines and their runs. You need the steward role or
+  above to run them, and the designer role or above to add, change or delete them.
 - **Sources.** Pipelines name saved sources; they never hold passwords. Add the sources first
   (see **Sources**), and scan the ones you read from, so Kilnmark knows their columns.
 - **Writing needs permission.** Every source is read-only to pipelines until a designer or an
@@ -162,8 +162,8 @@ Once a run has finished, each node on the canvas shows the rows it passed on and
 (Finished, Ended early, Stopped by the engine or Failed), and each connection its rows. Each write
 and each quality gate also shows its measured quality, as a percentage and a word (Good, Fair or
 Poor), and a gate what it did with the rows, such as "900 passed · 100 quarantined" (see
-[Quality gates](#quality-gates)), beside the score Kilnmark predicted for it (see
-[Predicted quality](#predicted-quality)). The nodes table under the canvas, and the node's settings panel
+[Quality gates](quality-gates.md)), beside the score Kilnmark predicted for it (see
+[Predicted quality](quality-gates.md#predicted-quality)). The nodes table under the canvas, and the node's settings panel
 with its score per dimension and each rule's result, say the same in words.
 
 Each kind has its own look, and its own words, so none depends on colour: the rows (and
@@ -281,7 +281,7 @@ nodes:
 - Each node has an **id** (small letters, digits, `-` and `_`) and a **type**. The other keys are
   the node's settings.
 - An optional `quality:` block sets the pipeline's quality threshold (see
-  [Quality of what a run writes](#quality-of-what-a-run-writes)).
+  [Quality of what a run writes](quality-gates.md#quality-of-what-a-run-writes)).
 - **input** says which node feeds this one: `input: customers` takes that node's main output.
   `input: joined.rejected` takes another output port, here the rows a lookup could not match.
   A node with several inputs names each one: `inputs: {main: spend, lookup: customers}`.
@@ -369,27 +369,18 @@ PostgreSQL source with Allow SQL on.
 The `write` node takes `source` and where to write: `table` for a database, `path` for a file
 (or `target` for either). Files also take `format`: `csv` or `parquet`.
 
-`mode` says what happens to what is already there:
-
-| Mode | What it does |
-| --- | --- |
-| `create` | Writes a new table or file, and fails if it exists. The default. |
-| `append` | Adds the rows to what is there. |
-| `replace` | Writes the rows in place of what is there, swapping them in at the end. |
-| `upsert` | Updates rows with the same `key` and adds the rest. Needs `key`, such as `key: [customer_id]`. |
-
-A write node also takes the settings of the source's writer, such as `commit_every` for large
-table writes, `overwrite` and `delimiter` for files, `compression` for Parquet, and
-`profile_output: false` to skip profiling what is written. They are written beside the node's other
-settings, as in [Writing data from a pipeline](writing-data.md), which describes them; a setting the
-source's writer does not take is a problem, with its line.
+`mode` says what happens to what is already there: `create` (the default), `append`, `replace` or
+`upsert`. A write node also takes the settings of the source's writer, such as `commit_every` for
+large table writes or `compression` for Parquet; a setting the source's writer does not take is a
+problem, with its line. The modes, the writer settings and the rights each needs are in
+[Writing data from a pipeline](writing-data.md).
 
 The nodes between reading and writing (filter, compute, select, lookup, join, aggregate, union,
-dedupe, route, limit, sort and window) are described in [Pipeline nodes and expressions](pipeline-nodes.md). The quality
-gate is described below. The node
-catalogue (`GET /api/v1/node-types`) lists every type this server has, with the settings each takes,
-and the [Components reference](components-reference.md) describes each of them, with every
-setting, its type and default, and an example.
+dedupe, route, limit, sort and window), and the gate, are in
+[Reference: pipeline nodes](reference-pipeline-nodes.md), with every setting, its type and default,
+and an example; the language their conditions and columns use is in [Expressions](expressions.md).
+The node catalogue (`GET /api/v1/node-types`) lists every type this server has, with the settings
+each takes.
 
 ## Parameters and server variables
 
@@ -476,7 +467,7 @@ kind, or a parameter the pipeline does not take, is refused at once.
 Designers and admins set them with `PUT /api/v1/variables/{name}` (`{ "type": "text", "value":
 "sales_prod", "description": "..." }`) and delete them with `DELETE`; everyone with the steward role
 can list them. Every change is kept, with who made it and when, also after a variable is deleted
-(`GET /api/v1/variables/{name}/changes`). A Settings page for them follows with the flows pages.
+(`GET /api/v1/variables/{name}/changes`). There is no page for them in the app yet: use the API.
 
 Server variables are never secrets: they are shown to stewards and recorded with every run. A name
 that looks like a credential (`password`, `token`, `secret`, `api_key` and the like) is refused.
@@ -485,224 +476,9 @@ Passwords and keys belong in a source, which holds them encrypted.
 ## Quality gates
 
 A `gate` node checks the rows passing through it against quality rules, in the same pass that moves
-them: nothing is read twice. Its rules are
-
-- **the asset's own rules**: the enabled rules of the table or file read upstream, as stewards set
-  them in **Quality** (on unless you set `asset_rules: false`). When rows reach the gate from more
-  than one read node, name the one whose rules apply with `rules_from: <read node id>`;
-- **rules written on the gate**, for this pipeline only, under `rules`.
-
-```yaml
-  - id: check
-    type: gate
-    input: customers
-    on_fail: quarantine          # stop (the default), quarantine or warn
-    rules:
-      - {type: not_null, field: email}
-      - {name: known country, type: allowed_values, field: country, values: [GB, IE, FR]}
-      - {type: in_range, field: amount, min: 0, max: 10000, fail_above: 0.01}
-    max_failing_share: 0.05      # stop the run if more than 5% of rows fail a rule
-
-  - id: good
-    type: write
-    input: check                 # the rows that passed
-    source: warehouse
-    table: crm.customers_clean
-    mode: replace
-
-  - id: aside
-    type: write
-    input: check.quarantine      # the rows that failed
-    source: warehouse
-    table: quarantine.customers
-    mode: append
-```
-
-On the canvas, the gate is in the **Quality** folder, with two outputs: `out` and `quarantine`. Its
-settings panel lists the rules written on it, each with its check, its column and the check's own
-settings.
-
-### Writing rules on a gate
-
-Each rule has a `type` and, except for checks of the whole data, a `field` (a column arriving at the
-gate). The checks and their own settings are those of rules made in **Quality**:
-
-| Type | Fails a row when | Its settings |
-| --- | --- | --- |
-| `not_null` | The value is empty | `blank_is_missing: true` counts blank text as empty too |
-| `unique` | The value was seen in an earlier row: the first row with it passes, each repeat fails | `fields: [a, b]` for a key of several columns, instead of `field` |
-| `allowed_values` | The value is not in the list | `values` |
-| `matches_pattern` | The value does not match the regular expression | `regex` |
-| `in_range` | The value is below `min` or above `max` | `min`, `max` (either may be left out) |
-| `freshness` | (Whole data) The latest date or time is older than allowed | `max_age_hours` |
-| `row_count` | (Whole data) There are fewer than `min` or more than `max` rows | `min`, `max` |
-| `row_count_change` | (Whole data) The row count changed by more than `max_change` (0.2 for 20%) since the asset's last scan | `max_change` |
-
-Empty values pass every check but `not_null`. Every rule may also have a `name` (by default its
-column and type, such as "email not null"), a `dimension`, and its own limit: `fail_above` is how
-many rows may fail before the rule fails, as a share of the rows checked (0.01 for 1%) or, with
-`unit: count`, a number of rows; it is 0 when left out, so any failing row fails the rule.
-`warn_above` makes the rule warn below that. Rules that run in a database, `references` and
-`custom_sql`, cannot check rows in a pipeline; make them rules on the asset instead.
-
-A gate counts only the repeats of a key as failing for `unique`, so its count, its result, its score
-and the rows it sets aside agree. (A `unique` rule run on the asset in **Quality** counts every row of
-a repeated key.) To find repeats, a gate keeps each key it has seen as a short fingerprint, about 96
-bytes whatever the key's length, up to 1,048,576 different keys (about 96 MB). Past that it stops
-checking for repeats: the rule shows **Could not run**, says how many repeats it had found and set
-aside before then, and the rows after it are not checked for repeats. Use the asset's `unique` rule,
-which runs in the database, for larger tables.
-
-### What happens when rows fail
-
-![What a gate does with a row that fails its rules: stop fails the run, quarantine sets the row aside, warn lets it through and records it](images/gate-on-fail.svg)
-
-`on_fail` decides:
-
-| `on_fail` | Rows | The run |
-| --- | --- | --- |
-| `stop` (the default) | All go on to `out` | Fails when any rule fails by its own limit, or a threshold below is crossed. It stops as soon as a rule cannot pass any more (a failing row where none may fail, or more failing rows than its count allows); otherwise when the rows end. The writes after the gate have not reached the end of their rows, so they do not commit. |
-| `quarantine` | Rows failing any rule go to `quarantine`; the rest to `out` | Goes on, unless a threshold below is crossed, or a check of the whole data (row count, freshness) fails: no row can be set aside for that. |
-| `warn` | All go on to `out` | Goes on whatever fails. What failed is recorded with the run. |
-
-A stop gate holds back only the writes after it, and only because they commit at the end of their
-rows. So Kilnmark refuses, with a problem at the setting:
-
-- a write after a stop gate with `commit_every` in mode `create`, `append` or `upsert`, which commits
-  as the rows arrive. (`replace` swaps the new rows in at the end, so it may keep `commit_every`.)
-- a `limit` after a stop gate: it ends the rows early, so the gate never sees their end.
-
-And it notes, without stopping the pipeline:
-
-- a write that gets the same rows by another path, not through the gate (read → gate → good, and
-  read → raw): it is written even when the gate stops the run;
-- `on_fail: quarantine` with nothing connected to `quarantine`: the failing rows are dropped;
-- something connected to `quarantine` when `on_fail` is `stop` or `warn`: it never gets rows, and a
-  write there in mode `replace` or `create` empties or creates an empty table on every run.
-
-Two thresholds judge the rows as a whole, with `stop` and `quarantine` (with `warn` they are
-recorded only):
-
-- `max_failing_share`: the run stops when more than this share of the rows (0 to 1) fail at least
-  one rule. A share equal to it is allowed.
-- `min_score`: the run stops when the gate's score (below) is under this (0 to 1). A score equal
-  to it is allowed.
-
-A run the gate stopped says why, naming the rule and its counts, for example "The quality gate
-stopped the run: rule 'email not null' failed on 120 of 9,000 rows (1.3%), more than its limit of 1%".
-If a rule's column does not arrive at the gate, the rule cannot run: it is shown as **Could not
-run** and does not fail the rows. A gate with no rows to check passes every check of rows, but a
-`row_count` with a `min` fails, and so does `freshness`: there is no latest value to be recent.
-If the run ends the gate's rows before it sees their end (another node failed), it shows what it
-checked so far and says it saw only the first rows.
-
-The gate always uses the rules as they are when the run starts. It checks every row: it does not yet
-reuse a recent result of the asset's rules when the data has not changed.
-
-## Quality of what a run writes
-
-Every run measures quality as it goes, without reading anything again:
-
-- **Each gate** gets a score from its rules' results: for each rule, the share of rows that passed,
-  by the rule's dimension (completeness, validity and so on), and overall the mean of the
-  dimensions.
-- **Each write** gets a score from the profile made of the rows as they were written (see
-  [What Kilnmark records about what you write](#what-kilnmark-records-about-what-you-write)): the
-  same measures the catalogue makes after a scan, such as empty values, repeated keys and competing
-  formats, per dimension and overall. Measures that need history, such as freshness and volume,
-  are left out: the rows of one run have none. An `append` or `upsert`, and a write with
-  `profile_output: false`, is not profiled, so it has no score, and the run says so.
-
-The run's page lists them under **Quality**: each write and gate with its score as a percentage and
-a word, its score per dimension, and for a gate what it decided, its row counts and each rule's
-result. The run's summary shows the lowest score of what it wrote.
-
-To be told when a run writes data below a level, give the pipeline a threshold:
-
-```yaml
-kilnmark: pipeline/v1
-name: customer-billing
-quality:
-  min_score: 0.95
-nodes:
-  ...
-```
-
-When a run succeeds but a write scores below `min_score`, everyone following the pipeline's
-notifications is told, once for that run, naming the write (**Pipeline quality below threshold**, see
-[Notifications and email alerts](notifications.md)). The threshold only tells; to stop a run on
-quality, use a gate.
-
-## Predicted quality
-
-Before a pipeline runs, Kilnmark predicts the quality of each write and gate from what the catalogue
-already knows about the tables and files it reads: their profiles (empty values, distinct values,
-value shapes, formats, most common values, spread), accepted patterns, relationships and rule
-results. No data is read. The estimate is carried through the nodes, each with its own rule, and
-each write is then scored with the same measures a run uses for what it wrote, so the prediction
-and the measurement compare directly.
-
-On the canvas, each write and gate shows **Predicted ≈ 91%**, in a violet chip with a dashed edge (an estimate), a moment after you stop
-editing; select it to see the score per dimension, what a gate is expected to do with each rule,
-and what the estimate could not tell or had to assume. A read node that has not been scanned has
-no profile, so what follows it is **unknown**: scan its source first. Kilnmark never fills a gap
-with a guess; a dimension it cannot judge has no score. The chip says how many things the estimate
-could not tell ("1 unknown"); the node's settings list them.
-
-The estimate uses a column's values (its most common values and its spread) only when you may see
-them, as the Quality pages decide: not at all for viewers, and for a column marked sensitive only
-for designers and admins. Otherwise what depends on them, such as how many rows `salary <= 50000` keeps, is
-unknown, so the estimate never gives the values away.
-
-How each node carries the estimate:
-
-| Node | Rule |
-| --- | --- |
-| `read` | The asset's latest profile; with `row_limit`, the first rows are taken to be like the rest |
-| `filter`, `route` | `is [not] null` drops the known share of empty values; `=`, `<>`, `in` use the column's most common values when they account for every value (for a number or time, a value not among them is unknown, since it may be written another way); `<`, `>`, `between` use its quantiles, and bounds on one column joined with `and` make one range; `regex_match` tests each value shape with several letters and digits, and is unknown when they disagree or the pattern names particular letters or digits; `not` leaves out the rows where its test is empty, as SQL does; other conditions joined with `and` and `or` are combined as if independent, which the estimate says. Anything else keeps an unknown share of rows. The columns not tested are taken to be spread the same in the rows kept |
-| `compute` | A copied column keeps its profile; `trim` removes padding, `lower`/`upper` change case, `coalesce(x, 'v')` fills the empty values, `parse_date` empties the values in other shapes, `format_date` writes one shape. Arithmetic and joined text are empty when any part is. Other expressions are unknown |
-| `select` | Kept and renamed columns keep their profile; a cast keeps its empty values |
-| `lookup` | Rows with no match are the main key's empty values plus the share of its distinct values missing from the lookup side, from the stored relationship or the two columns' sketches. `keep` leaves those rows with empty lookup columns; `drop` and `rejected` take them out. With no relationship or sketches, unknown |
-| `aggregate` | One row per distinct value of a single group column; each group is unique. Several group columns, or an input whose rows are unknown: the row count is unknown |
-| `union` | Rows add up; each column's shares are weighted by its inputs' rows, a column an input lacks is empty there. Uniqueness is not predicted |
-| `dedupe` | One row per distinct key value; the key becomes unique. Whole rows: unchanged when a column is already unique |
-| `limit` | At most its rows, taken to be like the rest |
-| `gate` | Each rule's failing share from the column as it arrives (empty values, distinct values, most common values, value shapes, quantiles); for one of the asset's own rules on a column that arrives unchanged, its last result when the profile cannot tell. `quarantine` takes the failing share out of `out` (rules counted as failing independently), and what the rules guarantee holds there (no empty values for a not-null rule) |
-
-When a run starts, each write's and gate's prediction is stored with it. The run's page then shows
-**measured beside predicted**, per dimension, with the gap and what it says: a wide gap means the
-catalogue's metadata, or the pipeline, needs attention (a source changed since its last scan, or a
-node does something the estimate could not see).
-
-### Suggestions
-
-**Suggestions** on the canvas toolbar (or the panel's **Suggestions** tab) lists nodes that would raise a write's predicted score, each
-with its predicted effect (an estimate), such as "Predicted 89% → 94% (+5 points, estimate)":
-
-- trim the spaces from padded text columns;
-- standardise a column whose dates are written in several formats (to `yyyy-MM-dd`; dates such as
-  `01/02/2024` are read day first);
-- keep one row per key when a key repeats;
-- drop the rows whose key has no match in the related table, with a lookup (the score does not
-  measure this, so the suggestion says how many rows it leaves out);
-- set aside, with a quarantining gate, rows outside a column's accepted patterns, or without a key.
-
-A suggestion that takes rows out (a dedupe, a gate, a lookup that drops rows with no match) also says
-how many fewer rows reach the write, since fewer rows can score higher. Choose **Add** to insert a
-suggestion's nodes before the write: the YAML changes only where the nodes go, and one **Undo** takes
-it out again. Suggestions are for designers and admins.
-
-When an admin sets a model for **Pipeline suggestions** under **AI models**, it ranks and explains
-the suggestions and may add its own. It sees metadata only (asset and column names, kinds, shares
-and value shapes, never a value from the data) and only of sources whose AI rule lets that model
-see them: a source set to `none` is never shown, and one set to `local_only` only to a local
-model. What it suggests is checked before it is shown: only node types this server has, settings
-those nodes take, and columns that reach that point; anything else is left out, and the panel says
-how many. A node that would read another table is only shown to the model when that table's source allows it.
-The model is asked when the panel opens and when you choose **Ask again**, at most six times a minute
-for each person; after an edit or an **Add**, only Kilnmark's own suggestions are worked out again.
-Without a model, or when it is refused, slow or fails, the suggestions are Kilnmark's own and the
-panel says why. Turn **Ask the AI model too** off to skip it.
+them, and stops the run, sets failing rows aside or lets them through with a warning. Every run
+also measures the quality of what it writes, and Kilnmark predicts it before the run. All of this is
+in [Quality gates](quality-gates.md).
 
 ## Checking as you type
 
@@ -834,27 +610,13 @@ run:
 
 Each pipeline has **owners**: the people, or team addresses, who answer for it. They are told when
 its run fails after its last try, when it runs again successfully after a failure that was told,
-and when a run takes longer than its `run: warn_after`.
-
-- The pipeline's page shows them under **Owners**. Designers and admins choose **Change owners** and give up
-  to 10 sign-in names (as Kilnmark shows who did something) or team addresses, one a line. A team
-  address must be one an admin added under **Settings**, **Email**. Others see a team address as
-  "A team address".
-- **By default the owner is whoever first saved it.** Owners are kept apart from the YAML, so
-  changing them makes no new version. Each change is in the [audit log](audit-log.md).
-- **Owners are always told**, in Kilnmark and by email when they have email on with a confirmed
-  address, even if their own choices leave that kind out. Each sees what their role may see, as
-  anyone does. Everyone else is told as their own choices say.
-- **Owning gives no rights.** An owner who is a viewer still cannot run or change the pipeline, and a
-  run never acts as its owner: it acts as whoever, or whichever schedule, started it.
-- **With no owner**, the page says so, and admins are told in their place. The same holds when no
-  owner can be told (a person whose token no longer works, or who has not used Kilnmark lately).
-  People who sign in through your identity provider get no notifications yet, so name a team
-  address too.
+and when a run takes longer than its `run: warn_after`. The pipeline's page shows them under
+**Owners**, and designers and admins choose **Change owners**. Who can be an owner, and how they are
+told, is in [Owners of pipelines and flows](notifications.md#owners-of-pipelines-and-flows).
 
 ## Reading a run
 
-![A run's page: its summary (status, version, times, rows written, quality) and where each node spent its time](images/pipeline-run-page.png)
+![A run's page: its summary (status, version, who asked for it, times, rows written, quality), its tries, and where each node spent its time](images/pipeline-run-page.png)
 
 Open a run from the **History** tab. The page updates itself until the run ends, and says when its
 status changes.
@@ -886,7 +648,7 @@ status changes.
   it ended, its start, first row, last row and end, its share of the run, rows in and out, peak
   memory, quality and error. **Show the timeline as a table** gives the same as figures.
 
-  ![The Run timeline panel of a pipeline run: the run's row, then customers, check, clean and aside, each bar lighter while it waits for its first row, with its time and the gate's or write's quality after it in words, and the details of the chosen node check below: a gate that finished, first row at 117 ms, 240 rows in and out, quarantined 10](images/pipeline-run-timeline.png)
+  ![The Run timeline panel of a pipeline run: the run's row, then customers, check, clean and aside, each bar lighter while it waits for its first row, with its time and the gate's or write's quality after it in words, and the details of the chosen node check below: a gate that finished, first row at 288 ms, 240 rows in and out, quarantined 10](images/pipeline-run-timeline.png)
 - **Rows per second through the run:** a line per node of the rows it handled each second, from
   the snapshots taken every two seconds, with its peak at the right. Under it, an amber band shows
   how full its output queue was (**Held up**: the taller and stronger, the fuller; full means the

@@ -124,6 +124,6 @@ class DocSectionsTest {
                 assertTrue(ids.contains(r.asText()), "no section " + r.asText() + " for: " + item.path("question"));
             }
         }
-        assertTrue(items >= 15 && items <= 25, "15 to 25 questions: " + items);
+        assertTrue(items >= 15 && items <= 35, "15 to 35 questions: " + items);
     }
 }

@@ -251,6 +251,12 @@ commit of main starts `.github/workflows/release.yml`, which builds, signs and c
 and leaves a draft GitHub release to publish ([Supply chain](design/supply-chain.md),
 [ADR 0033](adr/0033-sboms-scanning-and-signed-releases.md)).
 
+**Release candidates.** A pull request that touches the release's files rehearses the release, and
+keeps its package for three days as the workflow artifact `kilnmark-<version>-rc`, so it can be
+installed on a test machine before any tag. Fetch it with `gh run download <run id> -R
+jporeilly/KilnMark -n kilnmark-<version>-rc`. It is signed with the rehearsal's throwaway key,
+whose public half is in it as `rc-cosign.pub`: install with `KILNMARK_COSIGN_PUB` set to that file.
+
 Once, before the first signed release, the owner makes the release key on their own machine:
 
 ```
@@ -1210,8 +1216,9 @@ settings, writer settings and abilities, `CommonSettings`, `FlowDefinition`'s co
 a component has no entry or a page has one for a component the server lacks, when a flow node's or
 rule's hand-written settings table names other keys than the reader takes (the flow node and rule
 tables are hand-written: only their keys are checked, not their types or defaults), when the
-expression function tables in `pipeline-nodes.md` miss a function, when the images under Versions
-tested are not exactly those the integration tests use, and when an entry has no example. Every
+expression function tables in `expressions.md` miss a function, when the drivers guide does not name
+each shipped driver at its version, when the images under Versions tested are not exactly those the
+integration tests use, and when an entry has no example. Every
 YAML example on the pages is a whole pipeline or flow, checked as saving checks it against stub
 sources; every JSON example is a rule, checked as `POST /api/v1/quality/rules` checks it. After
 changing a setting, a connector or a node, run `./gradlew :server:writeReference -PskipUi` and
@@ -1238,8 +1245,13 @@ they stay sharp at GitHub's width.
   scripts, Kilnmark, a grant), green for what succeeds, red and dashed for what fails or is
   refused. Change the script and run it again; never edit an SVG by hand. Keep a diagram 760
   wide and let it grow down: the guide's column shows it at about nine tenths.
-- **Screenshots** come from a running Kilnmark with the sample data only: no lab source names,
-  no real people or tokens, the header cropped off, the light theme, 1200 pixels wide.
+- **Screenshots** come from a running Kilnmark with the sample data only, best a Starter Pack
+  install signed in as the example person whose role the text describes: no lab source names,
+  no real people or tokens, the light theme, a 1440 by 900 window with the sidebar and the header
+  cropped off, so 1200 pixels wide (keep the header only where the picture is about it, such as
+  the Starter Pack marking). A close-up of a panel or a dialog is cropped to it. Never show a
+  token, a password, a one-time-code key or a QR code: hide the QR code before taking Keycloak's
+  setup page.
 - Give every picture a description that says what it shows, for people who cannot see it.
 
 ## Rules

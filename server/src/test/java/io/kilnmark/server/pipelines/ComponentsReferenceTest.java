@@ -170,7 +170,7 @@ class ComponentsReferenceTest {
         Set<String> documented = new TreeSet<>();
         Pattern call = Pattern.compile("`([a-z_][a-z0-9_]*)\\(");
         boolean inTable = false;
-        for (String line : read("pipeline-nodes.md").split("\n")) {
+        for (String line : read(ComponentsReference.EXPRESSIONS).split("\n")) {
             if (line.startsWith("| Function |")) {
                 inTable = true;
             } else if (!line.startsWith("|")) {
@@ -185,7 +185,34 @@ class ComponentsReferenceTest {
         Set<String> expected = new TreeSet<>(Expression.functions());
         expected.addAll(Expression.aggregates());
         expected.addAll(Expression.windowFunctions());
-        assertEquals(expected, documented, "the functions in pipeline-nodes.md's tables");
+        assertEquals(expected, documented, "the functions in " + ComponentsReference.EXPRESSIONS + "'s tables");
+    }
+
+    /**
+     * The drivers guide names each driver Kilnmark ships at the version the build ships
+     * (gradle/libs.versions.toml), and every connector that ships one is in its table.
+     */
+    @Test
+    void theDriversGuideNamesTheDriversShippedAtTheirVersions() throws Exception {
+        String toml = Files.readString(REPO.resolve("gradle/libs.versions.toml"), StandardCharsets.UTF_8);
+        List<List<String>> table = rows(read(ComponentsReference.DRIVERS), "| Driver | Version | Licence | Used by |");
+        Map<String, String> shipped = Map.of("postgresql", "the PostgreSQL JDBC driver", "mssql-jdbc",
+            "the Microsoft JDBC Driver for SQL Server", "mariadb-java-client", "MariaDB Connector/J");
+        for (Map.Entry<String, String> e : shipped.entrySet()) {
+            Matcher m = Pattern.compile("(?m)^" + Pattern.quote(e.getKey()) + " = \"([^\"]+)\"").matcher(toml);
+            assertTrue(m.find(), "no version of " + e.getKey() + " in libs.versions.toml");
+            String version = m.group(1);
+            assertTrue(table.stream().anyMatch(r -> r.get(0).contains(e.getValue().replace("the ", ""))
+                && code(r.get(1)).equals(version)), ComponentsReference.DRIVERS + " does not list " + e.getValue()
+                + " at " + version + ": " + table);
+        }
+        for (Map.Entry<String, String> e : ComponentsReference.SHIPPED_DRIVERS.entrySet()) {
+            if (!e.getValue().isEmpty()) {
+                String name = e.getValue().replaceAll(" \\(.*$", "").replace("the ", "");
+                assertTrue(table.stream().anyMatch(r -> r.get(0).contains(name) && r.get(3).contains(e.getKey())),
+                    ComponentsReference.DRIVERS + " does not say " + name + " is used by " + e.getKey());
+            }
+        }
     }
 
     @Test
