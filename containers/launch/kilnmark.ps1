@@ -1,26 +1,32 @@
-# Kilnmark's control script for Windows (INSTALL.md, "A. Install a release"; ADR 0044). Windows
+# Kilnmark's control script for Windows (INSTALL.md; ADR 0044, ADR 0051 decision 17). Windows
 # PowerShell 5.1 or later; run it through kilnmark.cmd, which passes -ExecutionPolicy Bypass:
-#   kilnmark.cmd install [-Root DIR] [-Offline IMAGES] [-Auth] [-Starter] [-SkipVerify]
-#   kilnmark.cmd up | down | restart | status | logs | check | backup | restore | upgrade | ...
+#   kilnmark.cmd install [-Answers install.conf] [-Offline IMAGES]   the guided install
+#   kilnmark.cmd up | down | restart | status | logs | check | configure | backup | restore | ...
 #   kilnmark.cmd help
-# Run with no command, it starts Kilnmark (up). The install root holds versions\<version>\ (a
-# release, never edited), current.txt (which version runs), config\.env (this site's settings and
-# secrets), certs\, backups\ and logs\. Data stays in the compose project's volumes. No command
-# prints a secret. This file is ASCII only: Windows PowerShell 5.1 misreads anything else.
+# install, upgrade and uninstall ask Windows for an administrator (UAC) for the one step that
+# changes C:\Program Files and C:\ProgramData; every other command runs as the operator, the account
+# that runs Kilnmark, never elevated. Run with no command, it starts Kilnmark (up). The program
+# folder (C:\Program Files\Kilnmark, the Administrators') holds versions\<version>\ (a release,
+# never edited), current.txt (which version runs), the launchers and data-folder.txt, which names
+# the data folder (C:\ProgramData\Kilnmark, the operator's, SYSTEM's and the Administrators'):
+# config\.env (this site's settings and secrets), config\install.conf (the install's answers),
+# certs\, backups\ and logs\. Data stays in the compose project's volumes. No command prints a
+# secret. This file is ASCII only: Windows PowerShell 5.1 misreads anything else.
 
 $ErrorActionPreference = 'Continue'   # native tools are judged by their exit codes, not stderr
 # Podman says on every compose command that it runs an external compose tool: not news here.
 $env:PODMAN_COMPOSE_WARNING_LOGS = 'false'
 $Here = $PSScriptRoot
 $Registry = 'ghcr.io/jporeilly'
-$DefaultRoot = 'C:\Kilnmark'
-# The compose project: kilnmark, unless KILNMARK_PROJECT names another (a second install on one
-# machine, or a developer's machine whose source checkout already uses kilnmark).
-$Project = 'kilnmark'; if ($env:KILNMARK_PROJECT) { $Project = $env:KILNMARK_PROJECT }
+$DefaultProgram = Join-Path $env:ProgramFiles 'Kilnmark'
+$DefaultData = Join-Path $env:ProgramData 'Kilnmark'
+# The compose project (set once the data folder is known, below): KILNMARK_PROJECT from the
+# environment, else config\.env's, else kilnmark.
+$Project = ''; if ($env:KILNMARK_PROJECT) { $Project = $env:KILNMARK_PROJECT }
 # Compose fills ${NAME} from this process's environment before config\.env. These must mean what
 # config\.env says, as this script reads them (ADR 0051), so a value set outside never counts.
 $OneRun = @('KILNMARK_STARTER_PEOPLE_ACTION', 'KILNMARK_PEOPLE_ACTION', 'KILNMARK_PERSON_EMAIL', 'KILNMARK_PERSON_FIRST_NAME', 'KILNMARK_PERSON_LAST_NAME', 'KILNMARK_PERSON_GROUPS', 'KILNMARK_INSTALL_ID', 'KILNMARK_RUN_DIR')
-foreach ($n in (@('KILNMARK_MODE', 'KILNMARK_STARTER', 'KILNMARK_ENV_FILE') + $OneRun)) {
+foreach ($n in (@('KILNMARK_MODE', 'KILNMARK_STARTER', 'KILNMARK_ENV_FILE', 'KILNMARK_CERTS_DIR') + $OneRun)) {
     Remove-Item ('Env:' + $n) -ErrorAction SilentlyContinue
 }
 $Launchers = @('kilnmark.ps1', 'kilnmark.cmd', 'start-kilnmark.cmd', 'stop-kilnmark.cmd', 'create-shortcut.ps1', 'kilnmark.ico')
@@ -30,35 +36,80 @@ $Rest = @()
 if ($args.Count -gt 0) { $Command = [string]$args[0]; if ($args.Count -gt 1) { $Rest = @($args[1..($args.Count - 1)]) } }
 
 $script:Root = $null
+$script:Data = $null
 $script:Engine = $null
 $script:SkipVerify = $false
 $script:KeyOverride = $null
 $script:Offline = $null
 $script:Build = $false
-$script:WithAuth = $false
 $script:WithStarter = $false
 $script:Problems = New-Object System.Collections.ArrayList
+$script:Fixes = New-Object System.Collections.ArrayList
 $script:Warnings = New-Object System.Collections.ArrayList
+$script:WarningFixes = New-Object System.Collections.ArrayList
+$script:Passed = New-Object System.Collections.ArrayList
 $script:Logging = $false
 
+# --- progress: [n/N] steps, each OK or FAILED, with the time it took ---------------------------
+$script:StepN = 0; $script:StepTotal = 0; $script:StepTitle = ''; $script:StepClock = $null
+function Set-Steps([int]$Total, [int]$Done = 0) { $script:StepTotal = $Total; $script:StepN = $Done }
+function Get-Took { if ($script:StepClock) { return ('{0:0.0} s' -f $script:StepClock.Elapsed.TotalSeconds) }; return '0.0 s' }
+function Start-Step([string]$Title) {
+    $script:StepN++; $script:StepTitle = $Title; $script:StepClock = [Diagnostics.Stopwatch]::StartNew()
+    Write-Host ('[' + $script:StepN + '/' + $script:StepTotal + '] ' + $Title)
+}
+function Complete-Step {
+    if ($script:StepTitle) { Write-Host ('[' + $script:StepN + '/' + $script:StepTotal + '] OK (' + (Get-Took) + '): ' + $script:StepTitle) -ForegroundColor Green }
+    $script:StepTitle = ''
+}
+
+# A failure inside a step ends it FAILED, with the time it took and one line saying why.
 function Fail([string]$Message) {
-    Write-Host ('Error: ' + $Message) -ForegroundColor Red
+    if ($script:StepTitle) {
+        Write-Host ('[' + $script:StepN + '/' + $script:StepTotal + '] FAILED (' + (Get-Took) + '): ' + $script:StepTitle + ': ' + $Message) -ForegroundColor Red
+        $script:StepTitle = ''
+    } else {
+        Write-Host ('Error: ' + $Message) -ForegroundColor Red
+    }
+    if ($script:ResultFile) { try { [IO.File]::WriteAllText($script:ResultFile, ('FAILED ' + $Message)) } catch { } }
     if ($script:Logging) { try { Stop-Transcript | Out-Null } catch { } }
     exit 1
 }
+$script:ResultFile = $null
 
 function Show-Usage {
     @'
 Kilnmark control script.
 
-  install [-Root DIR] [-Offline IMAGES.tar.gz] [-Auth] [-Starter] [-Build] [-SkipVerify] [-NoStart]
-                       First setup: checks, folders, settings with new secrets, images, start.
-                       A production install, unless -Starter: a Starter Pack install, for
-                       training and development only, which never becomes a production one,
-                       always with the bundled Keycloak; the Starter Pack's example data is
-                       turned on, and starter people adds the example people. A production
-                       install asks how people sign in (-Auth: the bundled Keycloak). With
-                       the bundled Keycloak, install offers to add Kilnmark's first admin.
+Installing (it asks Windows for an administrator, UAC, for the step that needs one, and says why):
+  install [-Answers FILE] [-Starter] [-ProgramDir DIR] [-DataDir DIR] [-Operator NAME]
+          [-Offline IMAGES.tar.gz] [-Build] [-SkipVerify] [-NoStart] [-DryRun]
+                       The guided install: it asks the questions (the mode, how people sign in,
+                       the email domain, the host name, the ports, TLS, the first admin), each
+                       with its default and checked as you answer, or reads them from an answers
+                       file (install.conf.example says every key; it holds no secrets). Then the
+                       program folder (C:\Program Files\Kilnmark, the Administrators'), the data
+                       folder (C:\ProgramData\Kilnmark, yours, SYSTEM's and the Administrators'),
+                       settings with new secrets, the images, the start and the first admin, each
+                       step OK or FAILED. Run it from a prompt that is not elevated: Podman runs
+                       as you. -DryRun checks the answers and the prerequisites, changing nothing.
+  upgrade ARCHIVE [-Offline IMAGES] [-NoBackup] [-SkipVerify]
+                       Back up, place the new version beside this one, and start it.
+  uninstall [-Purge]   Stop Kilnmark, remove its hourly task and the program folder. -Purge also
+                       deletes its volumes, images and the data folder (backups too).
+
+Every day, as the operator, from a prompt that is not elevated:
+  up [-NoBrowser]      Start Kilnmark (and Keycloak with the bundled Keycloak); wait until it
+                       answers; open it in the browser. The default command.
+  down                 Stop. Every volume, so all data, is kept.
+  restart [SERVICE]    Restart everything (a stop, then up), or one service.
+  status               Version, folders, containers, health and the last backup.
+  logs [SERVICE] [-f]  The last 200 lines of the logs, or follow them.
+  check                Check the prerequisites and the install, for its mode, changing nothing:
+                       each problem with the command that fixes it.
+  configure [KEY=VALUE ...]
+                       Show the install's answers, or change one: checked, written to
+                       config\.env, and only what it affects run again. The mode never changes.
   people add | people import FILE | people activate EMAIL | people list | people expire
                        With the bundled Keycloak, in either mode: add one person of your own (any
                        of Kilnmark's groups, admins included; install asks for the first admin
@@ -73,28 +124,20 @@ Kilnmark control script.
                        On a Starter Pack install, the five example people in the bundled Keycloak
                        (with KILNMARK_STARTER=allowed): add them, give them all a new password, or
                        remove them. You type the password (or pipe it in): it is never shown.
-  up [-NoBrowser]      Start Kilnmark (and Keycloak when .env turns on the auth profile); wait
-                       until it answers; open it in the browser. The default command.
-  down                 Stop. Every volume, so all data, is kept.
-  restart [SERVICE]    Restart everything (a stop, then up), or one service.
-  status               Version, containers, health, ports and the last backup.
-  logs [SERVICE] [-f]  The last 200 lines of the logs, or follow them.
-  check                Check the prerequisites and the settings, changing nothing.
   verify FILE [-Key PUB]   Check a downloaded file's signature (cosign) against Kilnmark's key.
   load-images FILE [-SkipVerify]   Load the offline images file.
   pull [-SkipVerify]   Pull this version's images from ghcr.io and check their signatures.
   build                Build the images here from containers\, instead of pulling or loading.
-  backup [DIR]         Back up the database and the keys (default: ROOT\backups).
+  backup [DIR]         Back up the database and the keys (default: the data folder's backups).
   restore BACKUP [-Yes] [-WithoutKeys]   Put Kilnmark back to a backup.
-  upgrade ARCHIVE [-Offline IMAGES] [-NoBackup] [-SkipVerify]
-                       Back up, unpack the new version beside this one, and start it.
-  uninstall [-Purge]   Stop Kilnmark. -Purge also deletes its volumes (all data) and images.
   version | help
 '@ | Write-Host
 }
 
 # --- where things are ------------------------------------------------------------------------
 
+# The program folder: this script's folder when it holds versions\, else two folders up when this
+# script runs from versions\<version>\, else (a release folder not yet installed) none.
 function Find-Root {
     if ($env:KILNMARK_ROOT) { return $env:KILNMARK_ROOT }
     if (Test-Path (Join-Path $Here 'versions')) { return $Here }
@@ -104,9 +147,21 @@ function Find-Root {
 }
 $script:Root = Find-Root
 
+# The data folder, as data-folder.txt in the program folder names it (install writes it; only the
+# Administrators may change it): none when Kilnmark is not installed here.
+function Find-Data {
+    if (-not $script:Root) { return $null }
+    $f = Join-Path $script:Root 'data-folder.txt'
+    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $null }
+    $d = ([IO.File]::ReadAllText($f)).Trim()
+    if (-not $d) { return $null }
+    return $d
+}
+$script:Data = Find-Data
+
 function Get-VersionOf([string]$Dir) {
     $file = Join-Path $Dir 'compose.yaml'
-    if (-not (Test-Path $file)) { return $null }
+    if (-not (Test-Path -LiteralPath $file)) { return $null }
     foreach ($line in [IO.File]::ReadAllLines($file)) {
         if ($line -match '^\s*image: .*/kilnmark-server:(\S+)\s*$') { return $Matches[1] }
     }
@@ -114,14 +169,37 @@ function Get-VersionOf([string]$Dir) {
 }
 
 function Get-CurrentDir {
-    if (-not $script:Root) { Fail 'Kilnmark is not installed here. Run: kilnmark.cmd install' }
+    if (-not $script:Root) { Fail 'Kilnmark is not installed here. Install it with: kilnmark.cmd install, from the unpacked release folder' }
     $marker = Join-Path $script:Root 'current.txt'
-    if (-not (Test-Path $marker)) { Fail ('No version is installed in ' + $script:Root + '.') }
+    if (-not (Test-Path -LiteralPath $marker)) { Fail ('No version is installed in ' + $script:Root + '.') }
+    if (-not $script:Data) { Fail ((Join-Path $script:Root 'data-folder.txt') + " does not name Kilnmark's data folder: install Kilnmark afresh.") }
     $v = ([IO.File]::ReadAllText($marker)).Trim()
     return (Join-Path (Join-Path $script:Root 'versions') $v)
 }
 
 function Get-CurrentVersion { return (Get-VersionOf (Get-CurrentDir)) }
+
+# A path relative to a folder, with forward slashes, as compose takes it on every engine (some
+# compose tools split a Windows path at its drive letter's colon); none across drives.
+function Get-RelativePath([string]$From, [string]$To) {
+    $a = @([IO.Path]::GetFullPath($From).TrimEnd('\') -split '\\')
+    $b = @([IO.Path]::GetFullPath($To).TrimEnd('\') -split '\\')
+    if ($a[0] -ne $b[0]) { return $null }
+    $i = 0
+    while ($i -lt $a.Count -and $i -lt $b.Count -and $a[$i] -eq $b[$i]) { $i++ }
+    $parts = @()
+    for ($j = $i; $j -lt $a.Count; $j++) { $parts += '..' }
+    for ($j = $i; $j -lt $b.Count; $j++) { $parts += $b[$j] }
+    if ($parts.Count -eq 0) { return '.' }
+    return ($parts -join '/')
+}
+
+# Whether this runs elevated (as an administrator, after UAC).
+function Test-Elevated {
+    if ((Test-TestHooks) -and $env:KILNMARK_TEST_ELEVATED) { return ($env:KILNMARK_TEST_ELEVATED -ceq 'yes') }
+    $p = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
 
 # --- engine and compose ------------------------------------------------------------------------
 
@@ -146,8 +224,9 @@ function Select-Engine {
 
 # A setting from config\.env as compose reads it (an export in front too); empty when it is not set.
 function Get-Setting([string]$Name) {
-    $file = Join-Path $script:Root 'config\.env'
-    if (-not (Test-Path $file)) { return '' }
+    if (-not $script:Data) { return '' }
+    $file = Join-Path $script:Data 'config\.env'
+    if (-not (Test-Path -LiteralPath $file)) { return '' }
     $value = ''
     foreach ($line in [IO.File]::ReadAllLines($file)) {
         # the name's case exactly, as compose reads it
@@ -159,6 +238,8 @@ function Get-Setting([string]$Name) {
     else { $value = ($value -replace '\s#.*$', '').Trim() }
     return $value
 }
+if (-not $Project) { $Project = Get-Setting 'KILNMARK_PROJECT' }
+if (-not $Project) { $Project = 'kilnmark' }
 
 # The deployment mode (ADR 0051): production, or starter-pack for training and development, in
 # ASCII lower case, as the server reads it. The server refuses anything else, and so does this.
@@ -214,7 +295,7 @@ function Get-RunSecretLine([string]$Name) {
 }
 function Write-RunSecrets {
     if ($script:RunSecrets) { return }
-    $base = Join-Path $script:Root 'config\run'
+    $base = Join-Path $script:Data 'config\run'
     if (-not (Test-Path $base)) { New-Item -ItemType Directory $base | Out-Null }
     Get-ChildItem $base -Directory -Filter 'r.*' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } |
         ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
@@ -225,7 +306,10 @@ function Write-RunSecrets {
     $script:RunSecrets = $dir
     Write-UnixText (Join-Path $dir 'keycloak-setup.env') @((Get-RunSecretLine 'KILNMARK_KEYCLOAK_ADMIN_PASSWORD'), (Get-RunSecretLine 'KILNMARK_OIDC_CLIENT_SECRET'))
     Write-UnixText (Join-Path $dir 'samples-db.env') @((Get-RunSecretLine 'KILNMARK_DB_PASSWORD'), (Get-RunSecretLine 'KILNMARK_SAMPLES_DB_PASSWORD'))
-    $env:KILNMARK_RUN_DIR = '../../config/run/' + $name
+    # relative to compose.yaml, on the same drive (some compose tools split a drive letter's colon)
+    $rel = Get-RelativePath (Get-CurrentDir) $dir
+    if (-not $rel) { Remove-RunSecrets; Fail 'The data folder is on another drive than the program folder, which compose cannot take: install Kilnmark afresh with both on one drive.' }
+    $env:KILNMARK_RUN_DIR = $rel
 }
 function Remove-RunSecrets {
     if ($script:RunSecrets) { Remove-Item $script:RunSecrets -Recurse -Force -ErrorAction SilentlyContinue }
@@ -235,11 +319,12 @@ function Remove-RunSecrets {
 
 # --- the hourly expiry of unused temporary passwords (ADR 0051) ---------------------------------
 
-# With the bundled Keycloak, people expire runs every hour from a scheduled task of yours, while you
-# are signed in to Windows (the Podman machine or Docker Desktop runs only then too), so a temporary
-# password left unused is disabled at most an hour after its window, whether or not Kilnmark starts
-# again. up sets it up, and removes it without the bundled Keycloak; uninstall removes it.
-# KILNMARK_SCHTASKS is for the tests only, and counts only with their marker, which no release sets.
+# With the bundled Keycloak, people expire runs every hour from a scheduled task of the operator's,
+# while they are signed in to Windows (the Podman machine or Docker Desktop runs only then too), so
+# a temporary password left unused is disabled at most an hour after its window, whether or not
+# Kilnmark starts again. up sets it up, and removes it without the bundled Keycloak; uninstall
+# removes it. KILNMARK_SCHTASKS is for the tests only, and counts only with their marker, which no
+# release sets.
 function Test-TestHooks { return ($env:KILNMARK_TEST_HOOKS -ceq 'only-in-kilnmark-tests') }
 function Get-ExpiryTaskName { return ('Kilnmark ' + $Project + ' people expire') }
 function Invoke-Schtasks {
@@ -251,17 +336,18 @@ function Test-ExpiryTask { return (Invoke-Schtasks /Query /TN (Get-ExpiryTaskNam
 # Rights that change a file or folder, or what is in a folder: writing, appending, attributes,
 # adding or deleting what is in it, deleting, permissions, ownership, and the generic write and all.
 $TreeWrites = [long](0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x40000000 -bor 0x10000000)
-# Above the install root, what lets someone move a folder (or what is in it) away, or change who
-# may: deleting what is in it, deleting it, permissions, ownership, and all.
+# Above a root, what lets someone move a folder (or what is in it) away, or change who may:
+# deleting what is in it, deleting it, permissions, ownership, and all.
 $AboveWrites = [long](0x40 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x10000000)
 $TrustedInstaller = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
-# Who other than you, SYSTEM and the Administrators holds any of $Mask's rights on $Path: their
-# names, or nothing. An app container's or a capability's SID (S-1-15-2-, S-1-15-3-) never counts:
-# it only narrows what a process of someone who holds the right anyway may do. A conditional entry
-# for anyone else counts, whatever it grants: what it grants hangs on more than who they are.
-function Get-OthersWriting([string]$Path, [long]$Mask = $TreeWrites) {
+# Who other than you, SYSTEM and the Administrators (above a root, TrustedInstaller too, which
+# holds C:\Program Files) holds any of $Mask's rights on $Path: their names, or nothing. An app
+# container's or a capability's SID (S-1-15-2-, S-1-15-3-) never counts: it only narrows what a
+# process of someone who holds the right anyway may do. A conditional entry for anyone else
+# counts, whatever it grants: what it grants hangs on more than who they are.
+function Get-OthersWriting([string]$Path, [long]$Mask = $TreeWrites, [switch]$Above) {
     $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    $ok = @($me, 'S-1-5-18', 'S-1-5-32-544', 'S-1-3-0')
+    $ok = @($me, 'S-1-5-18', 'S-1-5-32-544', 'S-1-3-0'); if ($Above) { $ok += $TrustedInstaller }
     $out = @()
     $acl = Get-Acl -LiteralPath $Path
     foreach ($ace in $acl.Access) {
@@ -283,8 +369,8 @@ function Get-OthersWriting([string]$Path, [long]$Mask = $TreeWrites) {
     return $out
 }
 
-# Whether $Path's owner is you, SYSTEM or the Administrators (above the root, TrustedInstaller too,
-# which owns C:\): an owner may rewrite its permissions whenever they like.
+# Whether $Path's owner is you, SYSTEM or the Administrators (above a root, TrustedInstaller too,
+# which owns C:\ and C:\Program Files): an owner may rewrite its permissions whenever they like.
 function Test-OwnerOk([string]$Path, [switch]$Above) {
     $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $sid = ''
@@ -293,37 +379,63 @@ function Test-OwnerOk([string]$Path, [switch]$Above) {
     return ($ok -contains $sid)
 }
 
-# Why someone other than you may change $Path, or nothing: it must be there, no link or junction,
-# owned by you (or SYSTEM, or the Administrators), and writable by nobody else.
+# Why someone other than you, SYSTEM or the Administrators may change $Path, or nothing: it must be
+# there, no link or junction, owned by one of them, and writable by nobody else.
 function Get-ItemProblem([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return ($Path + ' is not there') }
     $item = Get-Item -LiteralPath $Path -Force
     if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return ($Path + ' is a link or a junction, which an hourly run would follow') }
-    if (-not (Test-OwnerOk $Path)) { return ($Path + ' is owned by someone other than you, who may change it whenever they like') }
+    if (-not (Test-OwnerOk $Path)) { return ($Path + ' is owned by someone other than you, SYSTEM or the Administrators, who may change it whenever they like') }
     $others = @(Get-OthersWriting $Path)
     if ($others.Count -gt 0) { return ($Path + ' may be changed by ' + (($others | Select-Object -Unique) -join ', ')) }
     return ''
 }
 
-# Why someone other than you may change what an hourly run uses, or nothing (ADR 0051, decision 15):
-# the task runs kilnmark.ps1 from the install root as you, and that run reads current.txt, the
-# current version's compose.yaml and keycloak-setup's script, and config\.env, and writes to logs\.
-# Each, and every folder from the root down to it, must pass Get-ItemProblem, and current.txt must
-# name a folder directly in versions\. Above the root, so nobody can move it away and put another in
-# its place, every folder up to the drive's must be owned by you, SYSTEM, the Administrators or
-# TrustedInstaller, with nobody else able to delete what is in it, delete it, or change who may.
+# Why a folder above $Top (a root) may let someone else move it away and put another in its place,
+# or nothing: every folder up to the drive's must be no link or junction, owned by you, SYSTEM, the
+# Administrators or TrustedInstaller, with nobody else able to delete what is in it, delete it, or
+# change who may.
+function Get-AboveProblem([string]$Top) {
+    $dir = Split-Path $Top -Parent
+    while ($dir) {
+        $why = ''
+        $item = Get-Item -LiteralPath $dir -Force -ErrorAction SilentlyContinue
+        if (-not $item) { $why = 'could not be read' }
+        elseif (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { $why = 'is a link or a junction, which leads wherever someone made it lead' }
+        elseif (-not (Test-OwnerOk $dir -Above)) { $why = 'is owned by someone other than you, SYSTEM, the Administrators or TrustedInstaller' }
+        else {
+            $others = @(Get-OthersWriting $dir $AboveWrites -Above)
+            if ($others.Count -gt 0) { $why = 'lets ' + (($others | Select-Object -Unique) -join ', ') + ' delete what is in it or change who may' }
+        }
+        if ($why) { return ($dir + ', a folder above ' + $Top + ', ' + $why + ', so they could move it away and put another in its place') }
+        $parent = Split-Path $dir -Parent
+        if (-not $parent -or $parent -eq $dir) { break }
+        $dir = $parent
+    }
+    return ''
+}
+
+# Why someone other than you, SYSTEM or the Administrators may change what an hourly run uses, or
+# nothing (ADR 0051, decisions 15 and 17): the task runs kilnmark.ps1 from the program folder as
+# you, and that run reads current.txt, data-folder.txt, the current version's compose.yaml and
+# keycloak-setup's script there, and config\.env in the data folder, and writes to its logs\. Each,
+# and every folder from its root down to it, must pass Get-ItemProblem, and current.txt must name a
+# folder directly in versions\. Above each root, every folder must pass Get-AboveProblem.
 function Get-TreeProblem {
     $top = [IO.Path]::GetFullPath($script:Root).TrimEnd('\')
+    if (-not $script:Data) { return ((Join-Path $top 'data-folder.txt') + " does not name Kilnmark's data folder") }
+    $data = [IO.Path]::GetFullPath($script:Data).TrimEnd('\')
     $marker = Join-Path $top 'current.txt'
     $v = ''
     if (Test-Path -LiteralPath $marker -PathType Leaf) { $v = ([IO.File]::ReadAllText($marker)).Trim() }
     if ($v -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$') { return ($marker + ' does not name a version in ' + (Join-Path $top 'versions')) }
-    $rels = @('kilnmark.ps1', 'current.txt', ('versions\' + $v + '\compose.yaml'), ('versions\' + $v + '\containers\keycloak\setup.sh'), 'config\.env')
-    if (Test-Path -LiteralPath (Join-Path $top 'logs')) { $rels += 'logs' }
+    $items = @(@($top, 'kilnmark.ps1'), @($top, 'current.txt'), @($top, 'data-folder.txt'), @($top, ('versions\' + $v + '\compose.yaml')),
+        @($top, ('versions\' + $v + '\containers\keycloak\setup.sh')), @($data, 'config\.env'))
+    if (Test-Path -LiteralPath (Join-Path $data 'logs')) { $items += , @($data, 'logs') }
     $seen = @{}
-    foreach ($rel in $rels) {
-        $p = $top
-        $parts = @($rel -split '\\')
+    foreach ($item in $items) {
+        $p = $item[0]
+        $parts = @($item[1] -split '\\')
         for ($i = -1; $i -lt $parts.Count; $i++) {
             if ($i -ge 0) { $p = Join-Path $p $parts[$i] }
             if ($seen.ContainsKey($p)) { continue }
@@ -332,23 +444,9 @@ function Get-TreeProblem {
             if ($why) { return $why }
         }
     }
-    $dir = Split-Path $top -Parent
-    while ($dir) {
-        $why = ''
-        $item = Get-Item -LiteralPath $dir -Force -ErrorAction SilentlyContinue
-        if (-not $item) { $why = 'could not be read' }
-        elseif (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { $why = 'is a link or a junction, which leads wherever someone made it lead' }
-        elseif (-not (Test-OwnerOk $dir -Above)) { $why = 'is owned by someone other than you, SYSTEM, the Administrators or TrustedInstaller' }
-        else {
-            $others = @(Get-OthersWriting $dir $AboveWrites)
-            if ($others.Count -gt 0) { $why = 'lets ' + (($others | Select-Object -Unique) -join ', ') + ' delete what is in it or change who may' }
-        }
-        if ($why) { return ($dir + ', a folder above ' + $top + ', ' + $why + ', so they could move the install away and put another in its place') }
-        $parent = Split-Path $dir -Parent
-        if (-not $parent -or $parent -eq $dir) { break }
-        $dir = $parent
-    }
-    return ''
+    $why = Get-AboveProblem $top
+    if ($why) { return $why }
+    return (Get-AboveProblem $data)
 }
 
 # people expire runs as you every hour: never what someone else may have changed (ADR 0051, decision
@@ -356,11 +454,11 @@ function Get-TreeProblem {
 # nothing more (never config\.env, nor the admin token in it). Task Scheduler's history (an event
 # log) keeps the failed run, and a line goes to logs\ where that folder passes the same check.
 function Assert-ExpireTree {
-    if (-not $script:Root) { Fail 'Kilnmark is not installed here. Run: kilnmark.cmd install' }
+    if (-not $script:Root -or -not $script:Data) { Fail 'Kilnmark is not installed here. Install it with: kilnmark.cmd install, from the unpacked release folder' }
     $why = Get-TreeProblem
     if (-not $why) { return }
-    $msg = 'people expire was refused: ' + $why + '. Make it yours alone, then run it again.'
-    $logs = Join-Path $script:Root 'logs'
+    $msg = 'people expire was refused: ' + $why + '. Make it so (kilnmark.cmd check says how), then run it again.'
+    $logs = Join-Path $script:Data 'logs'
     if ((Test-Path -LiteralPath $logs) -and -not (Get-ItemProblem $logs)) {
         $file = Join-Path $logs ('people-expire-' + (Get-Date).ToUniversalTime().ToString('yyyyMMdd') + '.log')
         if (-not (Test-Path -LiteralPath $file) -or -not (Get-ItemProblem $file)) {
@@ -370,22 +468,19 @@ function Assert-ExpireTree {
     Fail $msg
 }
 
-# The task runs kilnmark.ps1 from the install root as you, every hour: the root (with versions\ and
-# the launchers in it) is made yours alone first, and the task is not set up while anyone else owns
-# or may still change what a run uses, since they would run what they wrote as you.
+# The task runs kilnmark.ps1 from the program folder as you, every hour: it is not set up while
+# anyone else owns or may change what a run uses, since they would run what they wrote as you.
 function Set-ExpiryTask {
-    # judged as it was before this start made the root yours alone (Invoke-Up), never once cleaned
-    $why = $script:TreeBefore
-    if ($why) { $why = $why + ' until this start (it is yours alone now, but what was changed meanwhile cannot be told: check it, or install the release again)' }
-    else { $why = Get-TreeProblem }
+    $why = Get-TreeProblem
     if ($why) {
         Remove-ExpiryTask
-        Write-Host ('Warning: the hourly expiry of unused temporary passwords was not set up: ' + $why + ', and the task would run it as you. Make it yours alone (or install where only you and the administrators can write), then run up again. Each start expires them too.') -ForegroundColor Yellow
+        Write-Host ('Warning: the hourly expiry of unused temporary passwords was not set up: ' + $why + ', and the task would run it as you. Make it so (kilnmark.cmd check says how), then run up again. Each start expires them too.') -ForegroundColor Yellow
         return
     }
     $had = Test-ExpiryTask
-    # the script's path quoted, for a root with a space in it; Windows PowerShell (and PowerShell
-    # before 7.3) hands a native program a quote inside an argument as it is, which would end it there
+    # the script's path quoted, for a folder with a space in it (C:\Program Files); Windows
+    # PowerShell (and PowerShell before 7.3) hands a native program a quote inside an argument as
+    # it is, which would end it there
     $q = '"'
     if ($PSVersionTable.PSVersion.Major -lt 7 -or -not (Get-Variable PSNativeCommandArgumentPassing -ErrorAction SilentlyContinue) -or $PSNativeCommandArgumentPassing -eq 'Legacy') { $q = '\"' }
     # Windows PowerShell by its full path, never whichever powershell.exe the task's PATH finds first
@@ -414,9 +509,13 @@ function Get-ComposeArgs {
     # a compose project's name, as compose and the hourly expiry's scheduled task take it
     Assert-Project
     Select-Engine
-    $env = Join-Path $script:Root 'config\.env'
-    if (-not (Test-Path $env)) { Fail ('There is no ' + $env + '. Run: kilnmark.cmd install') }
-    $list = @('compose', '-p', $Project, '--env-file', $env, '-f', (Join-Path (Get-CurrentDir) 'compose.yaml'))
+    $env = Join-Path $script:Data 'config\.env'
+    if (-not (Test-Path -LiteralPath $env)) { Fail ('There is no ' + $env + '. Install Kilnmark with: kilnmark.cmd install, from the unpacked release folder') }
+    $dir = Get-CurrentDir
+    $list = @('compose', '-p', $Project, '--env-file', $env, '-f', (Join-Path $dir 'compose.yaml'))
+    # HTTPS's certificate and key, in the data folder: relative to compose.yaml, on the same drive
+    $certs = Get-RelativePath $dir (Join-Path $script:Data 'certs\https')
+    if ($certs) { $env:KILNMARK_CERTS_DIR = $certs }
     # Some compose tools read COMPOSE_PROFILES from the env file and some do not: name each one.
     foreach ($p in ((Get-Setting 'COMPOSE_PROFILES') -split ',')) {
         if ($p.Trim()) { $list += @('--profile', $p.Trim()) }
@@ -469,8 +568,8 @@ function Test-ImagesPresent([string]$V) {
 # --- logging -----------------------------------------------------------------------------------
 
 function Start-Log([string]$Name, [switch]$Daily) {
-    if (-not $script:Root) { return }
-    $dir = Join-Path $script:Root 'logs'
+    if (-not $script:Data) { return }
+    $dir = Join-Path $script:Data 'logs'
     if (-not (Test-Path $dir)) { return }
     # the hourly expiry keeps one log a day, not one a run
     $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ'); if ($Daily) { $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd') }
@@ -567,63 +666,250 @@ function Get-ImagesFor([string]$V) {
 
 # --- checks ------------------------------------------------------------------------------------
 
-# A port as config\.env sets it, else as the environment does (for install), else the default.
-function Get-Port([string]$Name, [int]$Default) {
+# What check found: each problem and warning with the command that fixes it, and what passed.
+function Add-Problem([string]$What, [string]$Fix = '') { [void]$script:Problems.Add($What); [void]$script:Fixes.Add($Fix) }
+function Add-Warning([string]$What, [string]$Fix = '') { [void]$script:Warnings.Add($What); [void]$script:WarningFixes.Add($Fix) }
+function Add-Passed([string]$What) { [void]$script:Passed.Add($What) }
+
+# A port as the install's answers or config\.env set it, else as the environment does, else the default.
+function Get-Port([string]$Name, [int]$Default, [string]$Key) {
     $v = ''
-    if ($script:Root -and (Test-Path (Join-Path $script:Root 'config\.env'))) { $v = Get-Setting $Name }
+    if ($Key -and $script:Answers.ContainsKey($Key)) { $v = $script:Answers[$Key] }
+    if (-not $v -and $script:Data -and (Test-Path -LiteralPath (Join-Path $script:Data 'config\.env'))) { $v = Get-Setting $Name }
     if (-not $v) { $v = [Environment]::GetEnvironmentVariable($Name) }
-    if ($v) { return [int]$v }
+    $n = 0
+    if ($v -and [int]::TryParse($v, [ref]$n)) { return $n }
     return $Default
 }
 
 function Test-PortBusy([int]$Port) {
+    if ($Port -lt 1 -or $Port -gt 65535) { return $false }
     $c = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue
     return [bool]$c
 }
+# A free port near $Port, for a fix to name.
+function Get-FreePort([int]$Port) {
+    $p = $Port + 1
+    for ($i = 0; $i -lt 200; $i++) {
+        if ($p -gt 65535) { $p = 20000 }
+        if (-not (Test-PortBusy $p)) { return $p }
+        $p++
+    }
+    return $Port
+}
+# The command that moves Kilnmark off a busy port: configure on an install, else the answer.
+function Get-PortFix([int]$Port) {
+    $key = 'port'
+    if ($Port -eq (Get-Port 'KILNMARK_HTTPS_PORT' 8443 'https_port')) { $key = 'https_port' }
+    if ($Port -eq (Get-Port 'KILNMARK_DB_PORT' 5442 'db_port')) { $key = 'db_port' }
+    if ($Port -eq (Get-Port 'KILNMARK_KEYCLOAK_PORT' 8180 'keycloak_port')) { $key = 'keycloak_port' }
+    $alt = Get-FreePort $Port
+    if ($script:Data -and (Test-Path -LiteralPath (Join-Path $script:Data 'config\install.conf'))) { return ((Join-Path $script:Root 'kilnmark.cmd') + ' configure ' + $key + '=' + $alt) }
+    return ('answer ' + $alt + ' for ' + $key + ' (in an answers file: ' + $key + '=' + $alt + ')')
+}
 
-function Test-Prerequisites([bool]$Running) {
-    $hasEngine = (Get-Command podman -ErrorAction SilentlyContinue) -or (Get-Command docker -ErrorAction SilentlyContinue) -or $env:KILNMARK_ENGINE
-    if (-not $hasEngine) {
-        [void]$script:Problems.Add('Install Podman Desktop (Podman 5 or later, with a machine) or Docker Desktop.')
+# WSL's version, as wsl.exe reports it (empty when it says nothing). KILNMARK_WSL is the tests'.
+function Get-WslVersion {
+    $w = 'wsl.exe'; if ((Test-TestHooks) -and $env:KILNMARK_WSL) { $w = $env:KILNMARK_WSL }
+    $text = ''
+    try { $text = ((& $w --version 2> $null | Out-String) -replace "`0", '') } catch { $text = '' }
+    if ($text -match 'WSL[^0-9\r\n]*([0-9][0-9.]*)') { return $Matches[1] }
+    return ''
+}
+$WslFix = 'Invoke-WebRequest https://github.com/microsoft/WSL/releases/download/2.7.11/wsl.2.7.11.0.x64.msi -OutFile $env:TEMP\wsl.msi; Start-Process msiexec.exe -Verb RunAs -Wait -ArgumentList "/i $env:TEMP\wsl.msi"; wsl --shutdown'
+
+# The prerequisites: the engine and its compose, its version, its machine, cgroups, memory, WSL,
+# disk, the tools, and (when nothing runs) free ports. -Running: Kilnmark answers; -Keycloak: it
+# has the bundled Keycloak (5 GB of memory, not 4). Never starts the Podman machine.
+function Test-Prerequisites([bool]$Running, [bool]$Keycloak = $false) {
+    $engine = $env:KILNMARK_ENGINE
+    if (-not $engine) {
+        if (Get-Command podman -ErrorAction SilentlyContinue) { $engine = 'podman' }
+        elseif (Get-Command docker -ErrorAction SilentlyContinue) { $engine = 'docker' }
+    }
+    if (-not $engine) {
+        Add-Problem 'Neither Podman nor Docker is installed.' 'winget install RedHat.Podman-Desktop (then make its machine: podman machine init --rootful)'
     } else {
-        Select-Engine
-        if ($script:Engine -eq 'podman') {
-            $v = (& podman version --format '{{.Client.Version}}' | Out-String).Trim()
-            $major = 0; [void][int]::TryParse(($v -split '\.')[0], [ref]$major)
-            if ($major -lt 5) { [void]$script:Problems.Add('Podman ' + $v + ' is too old: Kilnmark needs Podman 5 or later.') }
-            $mem = (& podman info --format '{{.Host.MemTotal}}' | Out-String).Trim()
-        } else {
-            $mem = (& docker info --format '{{.MemTotal}}' | Out-String).Trim()
+        $docker = ($engine -like '*docker*')
+        & $engine compose version *> $null
+        if ($LASTEXITCODE -eq 0) { Add-Passed ($engine + ' compose works') }
+        elseif ($docker) { Add-Problem ("'" + $engine + " compose' does not work.") 'winget install Docker.DockerCompose' }
+        else { Add-Problem ("'" + $engine + " compose' does not work: Podman needs a compose tool.") 'winget install Docker.DockerCompose' }
+        $info = $true
+        & $engine info *> $null
+        if ($LASTEXITCODE -ne 0) {
+            $info = $false
+            if ($docker) { Add-Problem 'Docker Desktop is not running.' 'start Docker Desktop' }
+            else { Add-Problem 'The Podman machine is not running (or there is none).' 'podman machine start (none yet: podman machine init --rootful, then podman machine start)' }
         }
-        $bytes = [int64]0
-        if ([int64]::TryParse($mem, [ref]$bytes) -and $bytes -gt 0 -and $bytes -lt 4026531840) {
-            [void]$script:Warnings.Add('The container engine has ' + [int]($bytes / 1MB) + ' MB of memory; Kilnmark wants 4 GB (5 GB with Keycloak). Give the Podman machine or Docker Desktop more.')
+        if (-not $docker) {
+            $v = (& $engine version --format '{{.Client.Version}}' 2> $null | Select-Object -First 1 | Out-String).Trim()
+            $major = 0; [void][int]::TryParse(($v -split '\.')[0], [ref]$major)
+            if ($major -ge 5) { Add-Passed ('Podman ' + $v) }
+            else { $shown = $v; if (-not $shown -or $major -eq 0) { $shown = 'of an unknown version' }; Add-Problem ('Podman ' + $shown + ' is too old: Kilnmark needs Podman 5 or later.') 'winget upgrade RedHat.Podman-Desktop' }
+            if ($info) {
+                $cg = (& $engine info --format '{{.Host.CgroupsVersion}}' 2> $null | Select-Object -First 1 | Out-String).Trim()
+                $ctl = (& $engine info --format '{{.Host.CgroupControllers}}' 2> $null | Select-Object -First 1 | Out-String).Trim()
+                if ($cg -eq 'v1') { Add-Problem 'The Podman machine uses cgroups v1: rootless Podman needs cgroups v2.' 'add kernelCommandLine = cgroup_no_v1=all under [wsl2] in %UserProfile%\.wslconfig, then wsl --shutdown' }
+                elseif ($cg -eq 'v2' -and (' ' + ($ctl -replace '[\[\]]', ' ') + ' ') -notmatch ' pids ') { Add-Problem "Podman cannot use cgroups' pids controller, so no container starts (WSL 3.0.x breaks crun's pids controller: Podman needs WSL 2.7.11)." $WslFix }
+                elseif ($cg -eq 'v2') { Add-Passed 'cgroups v2, with the pids controller' }
+            }
+            $wv = Get-WslVersion
+            if ($wv -match '^2\.7\.11(\.|$)') { Add-Passed ('WSL ' + $wv) }
+            elseif (-not $wv) { Add-Warning "Cannot tell WSL's version: Podman needs WSL 2.7.11, and WSL 3.0.x breaks crun's pids controller." 'wsl --version' }
+            elseif ($wv -match '^(3\.|2\.9\.)') { Add-Problem ('WSL ' + $wv + " breaks crun's pids controller, so no Podman container starts: Podman needs WSL 2.7.11.") $WslFix }
+            else { Add-Warning ('WSL ' + $wv + " is not the one Podman is known to work with here: WSL 2.7.11 (3.0.x breaks crun's pids controller).") $WslFix }
+        }
+        if ($info) {
+            $mem = (& $engine info --format $(if ($docker) { '{{.MemTotal}}' } else { '{{.Host.MemTotal}}' }) 2> $null | Select-Object -First 1 | Out-String).Trim()
+            $bytes = [int64]0
+            $want = 4; if ($Keycloak) { $want = 5 }
+            if ([int64]::TryParse($mem, [ref]$bytes) -and $bytes -gt 0) {
+                if ($bytes -lt ($want * 1GB - 256MB)) {
+                    $fix = 'podman machine stop; podman machine set --memory 6144; podman machine start'; if ($docker) { $fix = 'Docker Desktop: Settings, Resources, Memory' }
+                    $with = ''; if ($Keycloak) { $with = ' with the bundled Keycloak' }
+                    Add-Warning ('The container engine has ' + [int]($bytes / 1MB) + ' MB of memory; Kilnmark wants ' + $want + ' GB' + $with + '.') $fix
+                } else { Add-Passed ([string][int]($bytes / 1MB) + ' MB of memory for containers') }
+            }
         }
     }
-    if (-not (Get-Command curl.exe -ErrorAction SilentlyContinue)) { [void]$script:Problems.Add('curl.exe is missing (it comes with Windows 10 1803 and later).') }
-    if (-not (Get-Command tar.exe -ErrorAction SilentlyContinue)) { [void]$script:Problems.Add('tar.exe is missing (it comes with Windows 10 1803 and later).') }
-    if (-not (Get-Cosign)) { [void]$script:Warnings.Add("cosign is not installed: downloads and images cannot be checked against Kilnmark's signature (winget install Sigstore.Cosign; -SkipVerify goes on without).") }
-    $target = $DefaultRoot; if ($script:Root) { $target = $script:Root }
+    if (Get-Command curl.exe -ErrorAction SilentlyContinue) { Add-Passed 'curl.exe' } else { Add-Problem 'curl.exe is missing (it comes with Windows 10 1803 and later).' 'update Windows (Settings, Windows Update)' }
+    if (Get-Command tar.exe -ErrorAction SilentlyContinue) { Add-Passed 'tar.exe' } else { Add-Problem 'tar.exe is missing (it comes with Windows 10 1803 and later).' 'update Windows (Settings, Windows Update)' }
+    if (-not (Get-Cosign)) { Add-Warning "cosign is not installed: downloads and images cannot be checked against Kilnmark's signature (-SkipVerify goes on without)." 'winget install Sigstore.Cosign' }
+    $target = $script:Data
+    if (-not $target) { $target = Get-Answer 'data_dir' }
     $drive = (Split-Path $target -Qualifier).TrimEnd(':')
     $d = Get-PSDrive $drive -ErrorAction SilentlyContinue
-    if ($d -and $d.Free -lt 10GB) { [void]$script:Warnings.Add('Less than 10 GB free on ' + $drive + ':; images, data and backups need more.') }
+    if ($d -and $d.Free -lt 10GB) { Add-Warning ('Less than 10 GB free on ' + $drive + ':; images, data and backups need more.') 'podman system prune (removes unused images), or free space on that drive' }
+    elseif ($d) { Add-Passed ([string][int]($d.Free / 1GB) + ' GB free on ' + $drive + ':') }
     if (-not $Running) {
-        foreach ($p in @((Get-Port 'KILNMARK_PORT' 8780), (Get-Port 'KILNMARK_HTTPS_PORT' 8443), (Get-Port 'KILNMARK_DB_PORT' 5442))) {
-            if (Test-PortBusy $p) { [void]$script:Problems.Add('Port ' + $p + ' is in use: free it, or set another port in config\.env (KILNMARK_PORT, KILNMARK_HTTPS_PORT, KILNMARK_DB_PORT).') }
+        $ports = @((Get-Port 'KILNMARK_PORT' 8780 'port'), (Get-Port 'KILNMARK_HTTPS_PORT' 8443 'https_port'), (Get-Port 'KILNMARK_DB_PORT' 5442 'db_port'))
+        if ($Keycloak) { $ports += (Get-Port 'KILNMARK_KEYCLOAK_PORT' 8180 'keycloak_port') }
+        foreach ($p in ($ports | Select-Object -Unique)) {
+            if (Test-PortBusy $p) { Add-Problem ('Port ' + $p + ' is in use.') (Get-PortFix $p) } else { Add-Passed ('port ' + $p + ' is free') }
         }
     }
 }
 
+# Why a folder is not as install leaves it, or nothing: no link or junction; owned by the
+# Administrators (or SYSTEM, or for the data folder the operator); and nobody but $Allowed (SIDs)
+# able to change it.
+function Get-FolderProblem([string]$Dir, [string[]]$Allowed, [string[]]$Owners) {
+    if (-not (Test-Path -LiteralPath $Dir)) { return ($Dir + ' is missing') }
+    $item = Get-Item -LiteralPath $Dir -Force
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return ($Dir + ' is a link or a junction') }
+    $owner = ''
+    try { $owner = (Get-Acl -LiteralPath $Dir).GetOwner([Security.Principal.SecurityIdentifier]).Value } catch { $owner = '' }
+    if ($Owners -notcontains $owner) { return ($Dir + ' is owned by someone install did not give it to') }
+    $acl = Get-Acl -LiteralPath $Dir
+    foreach ($ace in $acl.Access) {
+        if ($ace.AccessControlType -ne 'Allow') { continue }
+        if (([long]$ace.FileSystemRights -band $TreeWrites) -eq 0) { continue }
+        $sid = ''
+        try { $sid = $ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch { $sid = '' + $ace.IdentityReference }
+        if ($sid -like 'S-1-15-2-*' -or $sid -like 'S-1-15-3-*') { continue }
+        if ($Allowed -notcontains $sid) { return ($Dir + ' may be changed by ' + $ace.IdentityReference + ', whom install did not give it to') }
+    }
+    return ''
+}
+
+# The install itself, by its mode (ADR 0051): who runs this, who owns the folders, what is running.
+function Test-Install([bool]$Running) {
+    $mode = Get-Setting 'KILNMARK_MODE'
+    $kc = Join-Path $script:Root 'kilnmark.cmd'
+    if ($mode -ceq 'production' -or $mode -ceq 'starter-pack') { Add-Passed ('a ' + $mode + ' install') }
+    else { Add-Problem 'KILNMARK_MODE in config\.env is not production or starter-pack: Kilnmark does not start.' ('set KILNMARK_MODE back to the mode it was installed with in ' + (Join-Path $script:Data 'config\.env')) }
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $operator = Get-OperatorSid
+    if (Test-Elevated) { Add-Warning "check runs elevated here: Kilnmark's day-to-day commands run as the operator, from a prompt that is not elevated." ('open a prompt that is not elevated, then: ' + $kc + ' check') }
+    elseif ($operator -and $operator -ne $me) { Add-Warning ('Kilnmark runs as ' + (Get-Answer 'operator') + ', not as you, so you cannot start or change it.') ('sign in to Windows as ' + (Get-Answer 'operator') + ', then: ' + $kc + ' check') }
+    if (-not $operator) { $operator = $me }
+    $ba = 'S-1-5-32-544'; $sy = 'S-1-5-18'; $ti = $TrustedInstaller
+    $why = Get-FolderProblem $script:Root @($ba, $sy, $ti) @($ba, $sy, $ti)
+    if (-not $why) { Add-Passed 'the program folder is the Administrators'', and nobody else may change it' }
+    else { Add-Problem $why ('in an elevated prompt: icacls "' + $script:Root + '" /setowner *S-1-5-32-544 /T /C && icacls "' + $script:Root + '" /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX /T /C') }
+    $why = Get-FolderProblem $script:Data @($ba, $sy, $operator) @($ba, $sy, $operator)
+    if (-not $why) { Add-Passed 'the data folder is the operator''s, SYSTEM''s and the Administrators'' alone' }
+    else { Add-Problem $why ('in an elevated prompt: icacls "' + $script:Data + '" /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F *' + $operator + ':(OI)(CI)M /T /C') }
+    if (Test-KeycloakOn) {
+        # the second line of defence: what the hourly run uses, as it checks it
+        $why = Get-TreeProblem
+        if (-not $why) { Add-Passed 'nobody else may change what the hourly run uses' }
+        else { Add-Problem ($why + '.') ('in an elevated prompt: icacls "' + $script:Root + '" /reset /T /C, then run install''s permissions again: icacls "' + $script:Root + '" /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX /T /C') }
+    }
+    $envFile = Join-Path $script:Data 'config\.env'
+    if ($mode -ceq 'starter-pack') {
+        if (-not (Test-KeycloakOn)) { Add-Problem 'A Starter Pack install needs the bundled Keycloak (auth in COMPOSE_PROFILES): it does not start without.' ('put COMPOSE_PROFILES=auth back in ' + $envFile + ', then ' + $kc + ' up') }
+        if ((Get-Setting 'KILNMARK_STARTER') -cne 'allowed') { Add-Warning 'KILNMARK_STARTER is not allowed in config\.env, so the example people cannot be added (and are removed at the next start).' ('add KILNMARK_STARTER=allowed to ' + $envFile) }
+    } elseif ($mode -ceq 'production') {
+        if (Get-Setting 'KILNMARK_STARTER') { Add-Problem 'KILNMARK_STARTER is set on a production install, which never has the example people.' ('delete the line KILNMARK_STARTER from ' + $envFile) }
+        if (-not (Test-KeycloakOn) -and (Get-Setting 'KILNMARK_OIDC_ENABLED') -eq 'true') {
+            if ((Get-Setting 'KILNMARK_OIDC_ISSUER') -and (Get-Setting 'KILNMARK_OIDC_CLIENT_ID') -and (Get-Setting 'KILNMARK_OIDC_CLIENT_SECRET')) { Add-Passed 'sign-in with your identity provider is set up' }
+            else { Add-Problem 'Sign-in with your identity provider lacks its issuer, client id or client secret.' ($kc + ' configure identity=own') }
+        }
+    }
+    $hostName = Get-Answer 'host'
+    if ($hostName -and -not (Test-LocalHost $hostName) -and (Get-Answer 'tls') -eq 'off') {
+        Add-Warning ('Kilnmark is reached as ' + $hostName + ' over plain HTTP: its sign-in cookies need HTTPS.') ($kc + ' configure tls=on tls_cert=FILE tls_key=FILE (or tls=proxy behind a proxy that ends TLS)')
+    }
+    if ($Running) {
+        Add-Passed ('Kilnmark answers at ' + (Get-LocalUrl))
+        $recorded = Get-RecordedMode
+        if ($recorded -and $recorded -cne $mode) { Add-Problem ('KILNMARK_MODE in config\.env (' + $mode + ') differs from the mode Kilnmark recorded at its first start (' + $recorded + ').') ('set KILNMARK_MODE=' + $recorded + ' in ' + $envFile) }
+        if (Test-KeycloakOn) {
+            $port = Get-Setting 'KILNMARK_KEYCLOAK_PORT'; if (-not $port) { $port = '8180' }
+            if (Test-Answers ('http://localhost:' + $port + '/realms/kilnmark')) { Add-Passed 'Keycloak answers' }
+            else { Add-Problem 'Keycloak does not answer.' ($kc + ' restart, then ' + $kc + ' logs keycloak') }
+        }
+    } else {
+        Add-Warning 'Kilnmark is not running.' ($kc + ' up')
+    }
+    if (Test-KeycloakOn) {
+        $expiry = Get-ExpiryState
+        Write-Host ('People expiry: ' + $expiry)
+        if ($expiry -eq 'not set up') { Add-Warning 'The hourly expiry of unused temporary passwords is not set up.' ($kc + ' up') }
+    }
+    $last = Get-ChildItem (Join-Path $script:Data 'backups') -Directory -Filter 'kilnmark-*' -ErrorAction SilentlyContinue | Sort-Object Name | Select-Object -Last 1
+    if (-not $last) { Add-Warning ('There is no backup in ' + (Join-Path $script:Data 'backups') + '.') ($kc + ' backup') }
+    elseif ($last.LastWriteTime -lt (Get-Date).AddHours(-26)) { Add-Warning 'The last backup is more than a day old.' ($kc + ' backup (every day, from Task Scheduler)') }
+    else { Add-Passed 'a backup from the last day' }
+}
+
 function Write-Checks {
-    foreach ($w in $script:Warnings) { Write-Host ('Warning: ' + $w) -ForegroundColor Yellow }
-    foreach ($p in $script:Problems) { Write-Host ('Problem: ' + $p) -ForegroundColor Red }
+    foreach ($p in $script:Passed) { Write-Host ('OK: ' + $p) }
+    for ($i = 0; $i -lt $script:Warnings.Count; $i++) {
+        Write-Host ('Warning: ' + $script:Warnings[$i]) -ForegroundColor Yellow
+        if ($script:WarningFixes[$i]) { Write-Host ('  Fix: ' + $script:WarningFixes[$i]) }
+    }
+    for ($i = 0; $i -lt $script:Problems.Count; $i++) {
+        Write-Host ('Problem: ' + $script:Problems[$i]) -ForegroundColor Red
+        if ($script:Fixes[$i]) { Write-Host ('  Fix: ' + $script:Fixes[$i]) }
+    }
     return ($script:Problems.Count -eq 0)
+}
+
+function Invoke-Check([string[]]$Options) {
+    if ($Options.Count -gt 0) { Fail 'check takes no options.' }
+    if ($script:Data -and (Test-Path -LiteralPath (Join-Path $script:Data 'config\.env'))) {
+        [void](Read-InstalledAnswers)
+        $running = Test-Answers ((Get-LocalUrl) + '/q/health/ready')
+        Write-Host ('Checking Kilnmark in ' + $script:Root + ' (data in ' + $script:Data + '), a ' + (Get-Setting 'KILNMARK_MODE') + ' install')
+        Test-Prerequisites $running (Test-KeycloakOn)
+        Test-Install $running
+        $added = Get-NewSettings (Join-Path (Get-CurrentDir) '.env.example')
+        if ($added.Count -gt 0) { Write-Host ("Settings in this version's .env.example that config\.env does not mention: " + ($added -join ' ')) }
+    } else {
+        Write-Host 'Checking this machine for a Kilnmark install'
+        Write-Host '(install asks Windows for an administrator, UAC, for the one step that needs one, and says why)'
+        Test-Prerequisites $false $false
+    }
+    if (Write-Checks) { Write-Host 'All checks passed.' } else { exit 1 }
 }
 
 # Settings this version's .env.example names that config\.env does not mention at all.
 function Get-NewSettings([string]$Example) {
-    $env = Join-Path $script:Root 'config\.env'
-    if (-not ((Test-Path $Example) -and (Test-Path $env))) { return @() }
+    $env = Join-Path $script:Data 'config\.env'
+    if (-not ((Test-Path -LiteralPath $Example) -and (Test-Path -LiteralPath $env))) { return @() }
     $have = [IO.File]::ReadAllText($env)
     $out = @()
     foreach ($line in [IO.File]::ReadAllLines($Example)) {
@@ -686,83 +972,10 @@ function Protect-Folder([string]$Dir) {
     catch { Fail ('Could not make ' + $Dir + ' yours alone (its permissions could not be set), so nothing more was done. Check who owns it, and that you may change its permissions.') }
 }
 
-# A folder of yours alone: made with those permissions from its first moment (never made, then
-# locked), or, already there, checked as an hourly run checks what it uses (yours, no link or
-# junction, nobody else able to change it). With -Empty, a folder made now must hold nothing.
-function New-OwnFolder([string]$Dir, [switch]$Empty) {
-    $made = $false
-    if (-not (Test-Path -LiteralPath $Dir)) {
-        try {
-            # Windows PowerShell's .NET makes it with them; PowerShell 7's through FileSystemAclExtensions
-            $di = New-Object IO.DirectoryInfo($Dir)
-            if ($PSVersionTable.PSVersion.Major -ge 6) { [IO.FileSystemAclExtensions]::Create($di, (New-OwnSecurity)) } else { $di.Create((New-OwnSecurity)) }
-            $made = $true
-        }
-        catch { Fail ('Cannot create ' + $Dir + '. Choose another folder with -Root.') }
-    }
-    $why = Get-ItemProblem $Dir
-    if ($why) { Fail ($why + ', so nothing was put in it. Remove it, or choose another folder with -Root.') }
-    if ($made -and $Empty -and @(Get-ChildItem -LiteralPath $Dir -Force).Count -gt 0) {
-        Fail ($Dir + ' held something the moment it was made: someone else may be at work there. Nothing was put in it.')
-    }
-}
-
-function New-Settings([string]$Example) {
-    $config = Join-Path $script:Root 'config'
-    $env = Join-Path $config '.env'
-    # never written into a folder, or over a file, someone else may change or that leads elsewhere
-    New-OwnFolder $config
-    if (Test-Path -LiteralPath $env) { $why = Get-ItemProblem $env; if ($why) { Fail ($why + ', so no settings were written.') } }
-    Copy-Item $Example (Join-Path $config '.env.example') -Force
-    if (Test-Path $env) { Write-Host ('Keeping the settings in ' + $env + '.'); return }
-    Copy-Item $Example $env
-    Set-Line $env 'KILNMARK_DB_PASSWORD' (New-RandomValue)
-    Set-Line $env 'KILNMARK_ADMIN_TOKEN' ('km_' + (New-RandomValue))
-    # The deployment mode (ADR 0051), fixed at the first start: -Starter makes a Starter Pack install,
-    # for training and development, which never becomes a production one.
-    if ($script:WithStarter) {
-        Set-Line $env 'KILNMARK_MODE' 'starter-pack'
-        Set-Line $env 'KILNMARK_SAMPLES_DB_PASSWORD' (New-RandomValue)
-    } else {
-        Set-Line $env 'KILNMARK_MODE' 'production'
-    }
-    # Relative to compose.yaml in versions\<version>\: compose tools read it the same everywhere.
-    Set-Line $env 'KILNMARK_CERTS_DIR' '../../certs/https'
-    # Other ports, when install was run with them set ($env:KILNMARK_PORT = '9780'; kilnmark.cmd install).
-    foreach ($k in @('KILNMARK_PORT', 'KILNMARK_HTTPS_PORT', 'KILNMARK_DB_PORT', 'KILNMARK_KEYCLOAK_PORT')) {
-        $val = [Environment]::GetEnvironmentVariable($k)
-        if ($val) { Set-Line $env $k $val }
-    }
-    if ($script:WithAuth) {
-        Set-Line $env 'COMPOSE_PROFILES' 'auth'
-        Set-Line $env 'KILNMARK_KEYCLOAK_DB_PASSWORD' (New-RandomValue)
-        Set-Line $env 'KILNMARK_KEYCLOAK_ADMIN_PASSWORD' (New-RandomValue)
-        Set-Line $env 'KILNMARK_OIDC_ENABLED' 'true'
-        Set-Line $env 'KILNMARK_OIDC_ISSUER' 'http://keycloak:8080/realms/kilnmark'
-        Set-Line $env 'KILNMARK_OIDC_CLIENT_ID' 'kilnmark'
-        Set-Line $env 'KILNMARK_OIDC_CLIENT_SECRET' (New-RandomValue)
-        Set-Line $env 'KILNMARK_OIDC_PROVIDER_NAME' 'Keycloak'
-        Set-Line $env 'KILNMARK_OIDC_VIEWER_GROUPS' 'kilnmark-viewers'
-        Set-Line $env 'KILNMARK_OIDC_STEWARD_GROUPS' 'kilnmark-stewards'
-        Set-Line $env 'KILNMARK_OIDC_DESIGNER_GROUPS' 'kilnmark-designers'
-        Set-Line $env 'KILNMARK_OIDC_ADMIN_GROUPS' 'kilnmark-admins'
-        Set-Line $env 'KILNMARK_OIDC_UNMASK_GROUPS' 'kilnmark-sensitive-data'
-        # Other ports: where browsers reach Keycloak and Kilnmark follows them, so sign-in never sends
-        # people to another install's Keycloak on the default port.
-        $kc = [Environment]::GetEnvironmentVariable('KILNMARK_KEYCLOAK_PORT')
-        if ($kc) { Set-Line $env 'KILNMARK_KEYCLOAK_URL' ('http://localhost:' + $kc) }
-        $kp = [Environment]::GetEnvironmentVariable('KILNMARK_PORT')
-        if ($kp) { Set-Line $env 'KILNMARK_URL' ('http://localhost:' + $kp) }
-        # A trial install with Keycloak: the Starter Pack may add its example people (ADR 0051).
-        if ($script:WithStarter) { Set-Line $env 'KILNMARK_STARTER' 'allowed' }
-    }
-    Write-Host ('Wrote ' + $env + ' with new secrets (readable by you only).')
-}
-
 # Secrets later versions added, as config\.env now asks: run before every start, so upgrade and up
 # keep them right. Each new secret is random.
 function Update-Settings {
-    $env = Join-Path $script:Root 'config\.env'
+    $env = Join-Path $script:Data 'config\.env'
     if (-not (Test-Path $env)) { return }
     # Every install since deployment modes (ADR 0051) has one; an install from before them (0.1.1 or
     # earlier, a preview) is never upgraded.
@@ -793,13 +1006,388 @@ function Update-Settings {
     }
     # Upgrading: an earlier version's compose.yaml edited to mount a folder of your own at /srv/files.
     if (-not $files) {
-        $old = @(Get-ChildItem (Join-Path $script:Root 'versions') -Filter 'compose.yaml' -Recurse -ErrorAction SilentlyContinue |
+        $old = @(Get-ChildItem -LiteralPath (Join-Path $script:Root 'versions') -Filter 'compose.yaml' -Recurse -ErrorAction SilentlyContinue |
             Where-Object { [IO.File]::ReadAllText($_.FullName) -match '(?m)^\s*-\s*[^#\s][^#\n]*:/srv/files:ro' })
         if ($old.Count -gt 0) {
             Write-Host 'Warning: an earlier version mounted a folder of your own at /srv/files. Now set KILNMARK_FILES_DIR in' -ForegroundColor Yellow
             Write-Host 'config\.env to its full path: Kilnmark sees it read-only at /srv/share, so point its file sources there.' -ForegroundColor Yellow
         }
     }
+}
+
+# --- the install's answers (ADR 0051, decision 17) ---------------------------------------------
+
+# Each answer install asks for, or reads from an answers file (install.conf.example says each). An
+# answers file holds no secrets: secrets are generated, or typed (not shown) or piped in when asked.
+$script:Answers = @{}
+$script:AnswerLines = @{}
+$AnswerKeys = @('mode', 'identity', 'email_domain', 'host', 'port', 'https_port', 'db_port', 'keycloak_port', 'tls', 'tls_cert', 'tls_key',
+    'oidc_issuer', 'oidc_client_id', 'oidc_provider_name', 'oidc_viewer_groups', 'oidc_steward_groups', 'oidc_designer_groups',
+    'oidc_admin_groups', 'oidc_unmask_groups', 'admin_email', 'admin_first_name', 'admin_last_name', 'project', 'program_dir', 'data_dir', 'user', 'operator')
+# Answers no configure changes: each needs a new install.
+$FixedKeys = @('mode', 'project', 'program_dir', 'data_dir', 'operator')
+function Get-AnswerDefault([string]$Key) {
+    switch -CaseSensitive ($Key) {
+        'mode' { return 'production' }
+        'identity' { if ((Get-Answer 'mode') -ceq 'starter-pack') { return 'bundled' } else { return 'own' } }
+        'host' { return 'localhost' }
+        'port' { return '8780' }
+        'https_port' { return '8443' }
+        'db_port' { return '5442' }
+        'keycloak_port' { return '8180' }
+        'tls' { return 'off' }
+        'oidc_provider_name' { return 'your organisation' }
+        'oidc_viewer_groups' { return 'kilnmark-viewers' }
+        'oidc_steward_groups' { return 'kilnmark-stewards' }
+        'oidc_designer_groups' { return 'kilnmark-designers' }
+        'oidc_admin_groups' { return 'kilnmark-admins' }
+        'oidc_unmask_groups' { return 'kilnmark-sensitive-data' }
+        'project' { return 'kilnmark' }
+        'program_dir' { return $DefaultProgram }
+        'data_dir' { return $DefaultData }
+        'operator' { return [Security.Principal.WindowsIdentity]::GetCurrent().Name }
+    }
+    return ''
+}
+function Get-Answer([string]$Key) { if ($script:Answers.ContainsKey($Key)) { return [string]$script:Answers[$Key] }; return (Get-AnswerDefault $Key) }
+function Test-KnownKey([string]$Key) { return ($AnswerKeys -ccontains $Key) }
+# Whether an answer means anything with the others: the identity provider's for own, Keycloak's and
+# the first admin's for bundled, the certificate's for tls=on.
+function Test-Relevant([string]$Key) {
+    if ($Key.StartsWith('oidc_')) { return ((Get-Answer 'identity') -ceq 'own') }
+    switch -CaseSensitive ($Key) {
+        'keycloak_port' { return ((Get-Answer 'identity') -ceq 'bundled') }
+        'admin_email' { return ((Get-Answer 'identity') -ceq 'bundled') }
+        'admin_first_name' { return ((Get-Answer 'identity') -ceq 'bundled' -and [bool](Get-Answer 'admin_email')) }
+        'admin_last_name' { return ((Get-Answer 'identity') -ceq 'bundled' -and [bool](Get-Answer 'admin_email')) }
+        'tls_cert' { return ((Get-Answer 'tls') -ceq 'on') }
+        'tls_key' { return ((Get-Answer 'tls') -ceq 'on') }
+        # the Linux edition's: the account that runs Kilnmark there
+        'user' { return $false }
+    }
+    return $true
+}
+function Test-LocalHost([string]$Name) { return ($Name -ceq 'localhost' -or $Name -ceq '127.0.0.1') }
+# The operator's SID, from the answers (or you): empty when Windows does not know the name.
+function Get-OperatorSid {
+    $name = Get-Answer 'operator'
+    if (-not $name) { return '' }
+    if ($name -like 'S-1-*') { return $name }
+    try { return (New-Object Security.Principal.NTAccount($name)).Translate([Security.Principal.SecurityIdentifier]).Value } catch { return '' }
+}
+
+# Why an answer cannot be taken, or nothing. Never the value itself.
+function Get-AnswerProblem([string]$Key, [string]$Value) {
+    $v = $Value
+    switch -CaseSensitive ($Key) {
+        'mode' { if ($v -cnotmatch '^(production|starter-pack)$') { return 'mode is production or starter-pack' } }
+        'identity' {
+            if ($v -cnotmatch '^(bundled|own)$') { return "identity is bundled (Kilnmark's own Keycloak) or own (your organisation's identity provider)" }
+            if ($v -ceq 'own' -and (Get-Answer 'mode') -ceq 'starter-pack') { return 'a Starter Pack install signs in with the bundled Keycloak only: identity is bundled' }
+        }
+        'email_domain' {
+            if ($v -and $v -cnotmatch '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$') { return 'email_domain is a domain name in lower case, such as bank.example' }
+            if ($v -ceq 'kilnmark.com' -or $v.EndsWith('.kilnmark.com')) { return "kilnmark.com is the Starter Pack's example people's domain: give your organisation's" }
+        }
+        'host' {
+            if (-not ((Test-LocalHost $v) -or $v -cmatch '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$' -or $v -cmatch '^[0-9]{1,3}(\.[0-9]{1,3}){3}$')) {
+                return 'host is a host name in lower case (kilnmark.bank.example), an IPv4 address or localhost'
+            }
+        }
+        'tls' { if ($v -cnotmatch '^(off|on|proxy)$') { return 'tls is off, on (Kilnmark ends TLS with your certificate) or proxy (a proxy in front ends it)' } }
+        'tls_cert' {
+            $ok = $false; try { $ok = (Test-Path -LiteralPath $v -PathType Leaf) -and ([IO.File]::ReadAllText($v) -match 'BEGIN CERTIFICATE') } catch { $ok = $false }
+            if (-not $ok) { return 'tls_cert is the full path of a PEM certificate (with its chain) that install can read' }
+        }
+        'tls_key' {
+            $ok = $false; try { $ok = (Test-Path -LiteralPath $v -PathType Leaf) -and ([IO.File]::ReadAllText($v) -match 'PRIVATE KEY') } catch { $ok = $false }
+            if (-not $ok) { return "tls_key is the full path of the certificate's PEM private key, which install can read" }
+        }
+        'oidc_issuer' { if ($v -cnotmatch '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^\s"''\\]*)?$') { return "oidc_issuer is your identity provider's issuer URL, starting https://" } }
+        'oidc_client_id' { if ($v -cnotmatch '^[A-Za-z0-9._:/@-]+$') { return 'oidc_client_id is the client id your identity provider gave Kilnmark' } }
+        'admin_email' {
+            if (-not $v) { return '' }
+            if ($v -cnotmatch '^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$') { return 'admin_email is an email address in lower case' }
+            if ($v.EndsWith('@kilnmark.com') -or $v.EndsWith('.kilnmark.com')) { return "kilnmark.com addresses are the Starter Pack's example people: give one of your own organisation" }
+            $d = Get-Answer 'email_domain'
+            if ($d -and -not ($v.EndsWith('@' + $d) -or $v.EndsWith('.' + $d))) { return 'admin_email is not at email_domain' }
+        }
+        'project' { if ($v -cnotmatch '^[a-z0-9][a-z0-9_-]*$') { return 'project is lower-case letters, digits, - and _, starting with a letter or a digit' } }
+        'operator' { if (-not (Get-OperatorSid)) { return 'operator is an account Windows knows, as DOMAIN\name or name' } }
+    }
+    if ($Key -cin @('port', 'https_port', 'db_port', 'keycloak_port')) {
+        $n = 0
+        if ($v -cnotmatch '^[0-9]{1,5}$' -or -not [int]::TryParse($v, [ref]$n) -or $n -lt 1 -or $n -gt 65535) { return ($Key + ' is a port number from 1 to 65535') }
+    }
+    if ($Key -cin @('oidc_provider_name', 'oidc_viewer_groups', 'oidc_steward_groups', 'oidc_designer_groups', 'oidc_admin_groups', 'oidc_unmask_groups')) {
+        if (-not $v -or $v -match '[\p{Cc}"''\\]') { return ($Key + ' is needed, with no quote, backslash or control character') }
+    }
+    if ($Key -cin @('admin_first_name', 'admin_last_name')) { if (-not $v -or $v -match '\p{Cc}') { return ($Key + ' is needed for the first admin') } }
+    if ($Key -cin @('program_dir', 'data_dir')) {
+        if ($v -cnotmatch '^[A-Za-z]:\\' -or $v -match '[\p{Cc}"*?<>|%]' -or $v.Substring(2).Contains(':')) { return ($Key + ' is a full path, such as C:\Program Files\Kilnmark, with no " * ? < > | % in it') }
+    }
+    return ''
+}
+# Why the answers do not go together, one line each. -Ports: busy ports count too.
+function Get-AnswersProblems([switch]$Ports) {
+    $out = @(); $seen = @{}
+    foreach ($k in @('port', 'https_port', 'db_port', 'keycloak_port')) {
+        if (-not (Test-Relevant $k)) { continue }
+        $p = Get-Answer $k
+        if ($seen.ContainsKey($p)) { $out += ($k + ' is a port another answer uses already') }
+        $seen[$p] = $true
+        $n = 0
+        if ($Ports -and [int]::TryParse($p, [ref]$n) -and (Test-PortBusy $n)) { $out += ($k + ': port ' + $n + ' is in use (port ' + (Get-FreePort $n) + ' is free)') }
+    }
+    if (-not (Test-LocalHost (Get-Answer 'host')) -and (Get-Answer 'tls') -ceq 'off') {
+        $out += 'tls: people sign in over HTTPS only, so from other machines Kilnmark needs tls on or proxy (or host localhost)'
+    }
+    $a = (Get-Answer 'program_dir').TrimEnd('\'); $b = (Get-Answer 'data_dir').TrimEnd('\')
+    if ($a -eq $b -or ($b + '\').StartsWith($a + '\', [StringComparison]::OrdinalIgnoreCase) -or ($a + '\').StartsWith($b + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        $out += 'program_dir and data_dir are two folders, neither inside the other'
+    } elseif ($a.Length -ge 2 -and $b.Length -ge 2 -and $a.Substring(0, 2) -ne $b.Substring(0, 2)) {
+        $out += 'data_dir is on the same drive as program_dir: compose reaches it by a relative path'
+    }
+    return $out
+}
+# Every answer that means something, checked; each problem one line, by key (and line in a file).
+function Test-AllAnswers([switch]$Ports) {
+    $errs = @()
+    foreach ($k in $AnswerKeys) {
+        if (-not (Test-Relevant $k)) { continue }
+        $why = Get-AnswerProblem $k (Get-Answer $k)
+        if ($why) {
+            $at = ''; if ($script:AnswerLines.ContainsKey($k)) { $at = ' (line ' + $script:AnswerLines[$k] + ')' }
+            $errs += ($k + $at + ': ' + $why)
+        }
+    }
+    $errs += @(Get-AnswersProblems -Ports:$Ports)
+    foreach ($e in $errs) { Write-Host ('Answer: ' + $e) -ForegroundColor Red }
+    return ($errs.Count -eq 0)
+}
+
+# Reads an answers file: KEY=VALUE lines, # comments; refuses a secret, an unknown key or a key twice.
+function Read-Answers([string]$File) {
+    if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { Fail 'There is no answers file that install can read there.' }
+    $errs = @(); $n = 0
+    foreach ($raw in [IO.File]::ReadAllLines($File)) {
+        $n++
+        $line = $raw.TrimEnd("`r")
+        if ($line -match '^\s*(#.*)?$') { continue }
+        if ($line -cnotmatch '^\s*([a-z_]+)\s*=(.*)$') { $errs += ('line ' + $n + ' is not KEY=VALUE'); continue }
+        $k = $Matches[1]; $v = $Matches[2].Trim()
+        if ($k -match '(password|secret|token)') { $errs += ('line ' + $n + ': ' + $k + ' is a secret, and an answers file holds none: install generates them, or asks'); continue }
+        if (-not (Test-KnownKey $k)) { $errs += ('line ' + $n + ': ' + $k + ' is not an answer install knows (install.conf.example lists them)'); continue }
+        if ($script:AnswerLines.ContainsKey($k)) { $errs += ('line ' + $n + ': ' + $k + ' is given twice'); continue }
+        if ($v.Length -ge 2 -and (($v.StartsWith('"') -and $v.EndsWith('"')) -or ($v.StartsWith("'") -and $v.EndsWith("'")))) { $v = $v.Substring(1, $v.Length - 2) }
+        $script:Answers[$k] = $v; $script:AnswerLines[$k] = $n
+    }
+    if ($errs.Count -gt 0) {
+        foreach ($e in $errs) { Write-Host ('Answers file: ' + $e) -ForegroundColor Red }
+        Fail 'The answers file has the problems above, so nothing was changed.'
+    }
+}
+# The answers this install was made with, from config\install.conf in the data folder.
+function Read-InstalledAnswers {
+    if (-not $script:Data) { return $false }
+    $f = Join-Path $script:Data 'config\install.conf'
+    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $false }
+    Read-Answers $f
+    $script:AnswerLines = @{}
+    return $true
+}
+# config\install.conf: the answers that mean something, never a secret.
+function Write-Answers([string]$File) {
+    $lines = @("# Kilnmark's install answers (no secrets). configure changes them; the mode never changes.", '# Every key is explained in install.conf.example, in the release.')
+    foreach ($k in $AnswerKeys) { if (Test-Relevant $k) { $lines += ($k + '=' + (Get-Answer $k)) } }
+    Write-UnixText $File $lines
+}
+function Show-Answers { foreach ($k in $AnswerKeys) { if (Test-Relevant $k) { Write-Host ('  ' + $k + '=' + (Get-Answer $k)) } } }
+
+# Asks one question at a console, with its default, until the answer is one install can take.
+function Read-Answer([string]$Key, [string]$Question) {
+    $d = Get-Answer $Key
+    $shown = $d; if (-not $shown) { $shown = 'none' }
+    while ($true) {
+        $v = Read-Host ($Question + ' [' + $shown + ']')
+        if ($null -eq $v) { Fail 'No answer was given, so nothing was installed.' }
+        $v = $v.Trim(); if (-not $v) { $v = $d }
+        if ($v -ceq 'none' -and -not $d) { $v = '' }
+        $script:Answers[$Key] = $v
+        $why = Get-AnswerProblem $Key $v
+        $n = 0
+        if (-not $why -and $Key.EndsWith('port') -and [int]::TryParse($v, [ref]$n) -and (Test-PortBusy $n)) { $why = 'port ' + $n + ' is in use (port ' + (Get-FreePort $n) + ' is free)' }
+        if (-not $why) { return }
+        Write-Host ('  ' + $why + '. Try again.') -ForegroundColor Yellow
+        $script:Answers.Remove($Key)
+    }
+}
+
+# A secret typed twice, not shown, at a console, else one line on standard input: in
+# $script:SecretValue, never shown or written anywhere but config\.env (the client secret) or Keycloak.
+$script:SecretValue = ''
+function Read-SecretValue([string]$Question) {
+    if ([Console]::IsInputRedirected) {
+        $s = [Console]::In.ReadLine(); if ($null -eq $s) { $s = '' }; $script:SecretValue = $s.TrimEnd("`r")
+    } else {
+        $a = Read-Secret ($Question + ' (not shown)')
+        $b = Read-Secret 'The same again'
+        if ($a -cne $b) { $a = $null; $b = $null; Fail 'The two did not match. Nothing was changed.' }
+        $script:SecretValue = $a; $a = $null; $b = $null
+    }
+    if ($script:SecretValue -match '\p{Cc}') { $script:SecretValue = ''; Fail 'It holds a control character (a tab, say), which it may not. Nothing was changed.' }
+}
+
+# The questions, each with its default and checked as it is answered.
+function Read-AllAnswers {
+    Write-Host 'Answer each question, or press Enter for the default in [brackets].'
+    Read-Answer 'mode' 'Mode: production, for real work, or starter-pack, for training and development only (it never becomes production)'
+    if ((Get-Answer 'mode') -ceq 'starter-pack') {
+        $script:Answers['identity'] = 'bundled'
+        Write-Host 'A Starter Pack install signs in with the bundled Keycloak, where its example people are.'
+    } else {
+        Read-Answer 'identity' "How people sign in: own (your organisation's identity provider, recommended for banks) or bundled (Kilnmark's own Keycloak)"
+    }
+    Read-Answer 'email_domain' "Your organisation's email domain, which people's addresses end in (Enter for none)"
+    Read-Answer 'host' 'The host name people reach Kilnmark on'
+    Read-Answer 'tls' 'TLS: off, on (Kilnmark ends TLS with your certificate) or proxy (a proxy in front ends it)'
+    if ((Get-Answer 'tls') -ceq 'on') {
+        Read-Answer 'tls_cert' 'Your certificate, with its chain: the full path of its PEM file'
+        Read-Answer 'tls_key' 'Its private key: the full path of its PEM file'
+        Read-Answer 'port' "Kilnmark's port for plain HTTP, which it sends on to HTTPS"
+        Read-Answer 'https_port' "Kilnmark's HTTPS port"
+    } else {
+        Read-Answer 'port' "Kilnmark's port"
+        # published whether or not TLS is on, so it must be free either way
+        Read-Answer 'https_port' "Kilnmark's HTTPS port, published for when TLS is on"
+    }
+    Read-Answer 'db_port' "The port of Kilnmark's own database, on this machine only"
+    if ((Get-Answer 'identity') -ceq 'bundled') {
+        Read-Answer 'keycloak_port' "Keycloak's port, on this machine only"
+        Read-Answer 'admin_email' "Kilnmark's first admin, a person of your own: their email, which is their user name (Enter to skip)"
+        if (Get-Answer 'admin_email') {
+            Read-Answer 'admin_first_name' 'Their first name'
+            Read-Answer 'admin_last_name' 'Their last name'
+        }
+    } else {
+        Read-Answer 'oidc_issuer' "Your identity provider's issuer URL"
+        Read-Answer 'oidc_client_id' 'The client id it gave Kilnmark'
+        Read-Answer 'oidc_provider_name' 'Its name, for the sign-in button (Sign in with ...)'
+        Read-Answer 'oidc_admin_groups' "Its group (or groups, comma-separated) of Kilnmark's admins"
+        Read-Answer 'oidc_designer_groups' 'Its group of designers'
+        Read-Answer 'oidc_steward_groups' 'Its group of stewards'
+        Read-Answer 'oidc_viewer_groups' 'Its group of viewers'
+        Read-Answer 'oidc_unmask_groups' 'Its group of designers who see sensitive values'
+    }
+}
+
+# The secrets the answers need, asked before anything changes: the identity provider's client
+# secret (own), or the first admin's temporary password (bundled, with a first admin).
+$script:AdminPassword = ''
+function Read-InstallSecrets {
+    if ((Get-Answer 'identity') -ceq 'own') {
+        Read-SecretValue 'The client secret your identity provider gave Kilnmark'
+        if (-not $script:SecretValue) { Fail 'The client secret is needed for sign-in with your identity provider. Nothing was changed.' }
+    } elseif (Get-Answer 'admin_email') {
+        Read-SecretValue 'A temporary password for the first admin, 12 characters or more (they choose their own at their first sign-in)'
+        $script:AdminPassword = $script:SecretValue; $script:SecretValue = ''
+        if ($script:AdminPassword.Length -lt 12) { $script:AdminPassword = ''; Fail "The first admin's temporary password is 12 characters or more (pipe it in on one line, or leave admin_email empty). Nothing was changed." }
+    }
+}
+
+# --- secrets and settings from the answers ----------------------------------------------------
+
+# Removes KEY from the file, as a commented line.
+function Remove-Line([string]$File, [string]$Key) {
+    $lines = @([IO.File]::ReadAllLines($File))
+    $hit = $false
+    $out = foreach ($l in $lines) { if ($l -cmatch ('^\s*(export\s+)?' + $Key + '\s*=')) { $hit = $true; '# ' + $Key + '=' } else { $l } }
+    if ($hit) { Write-UnixText $File @($out) }
+}
+# COMPOSE_PROFILES with the auth profile (-On) or without it, keeping the others.
+function Set-AuthProfile([string]$File, [bool]$On) {
+    $list = @(((Get-Setting 'COMPOSE_PROFILES') -replace '\s', '') -split ',' | Where-Object { $_ -and $_ -cne 'auth' })
+    if ($On) { $list += 'auth' }
+    if ($list.Count -gt 0) { Set-Line $File 'COMPOSE_PROFILES' ($list -join ',') } else { Remove-Line $File 'COMPOSE_PROFILES' }
+}
+function Set-NewSecret([string]$File, [string]$Key, [string]$Value) { if (-not (Get-Setting $Key)) { Set-Line $File $Key $Value } }
+# config\.env from the answers: every setting an answer decides, written again each time, and each
+# secret new where there is none (-NewClient: the bundled Keycloak's client secret afresh).
+function Write-Env([switch]$NewClient) {
+    $env = Join-Path $script:Data 'config\.env'
+    if (-not (Test-Path -LiteralPath $env)) { Copy-Item -LiteralPath (Join-Path (Get-CurrentDir) '.env.example') -Destination $env }
+    Set-NewSecret $env 'KILNMARK_DB_PASSWORD' (New-RandomValue)
+    Set-NewSecret $env 'KILNMARK_ADMIN_TOKEN' ('km_' + (New-RandomValue))
+    Set-Line $env 'KILNMARK_MODE' (Get-Answer 'mode')
+    if ((Get-Answer 'mode') -ceq 'starter-pack') { Set-NewSecret $env 'KILNMARK_SAMPLES_DB_PASSWORD' (New-RandomValue) }
+    Set-Line $env 'KILNMARK_PROJECT' (Get-Answer 'project')
+    if (Get-Answer 'email_domain') { Set-Line $env 'KILNMARK_EMAIL_DOMAIN' (Get-Answer 'email_domain') } else { Remove-Line $env 'KILNMARK_EMAIL_DOMAIN' }
+    Set-Line $env 'KILNMARK_PORT' (Get-Answer 'port')
+    Set-Line $env 'KILNMARK_HTTPS_PORT' (Get-Answer 'https_port')
+    Set-Line $env 'KILNMARK_DB_PORT' (Get-Answer 'db_port')
+    $hostName = Get-Answer 'host'
+    switch -CaseSensitive (Get-Answer 'tls') {
+        'on' {
+            $url = 'https://' + $hostName; if ((Get-Answer 'https_port') -ne '443') { $url += ':' + (Get-Answer 'https_port') }
+            Set-Line $env 'KILNMARK_TLS_CERT_FILE' '/etc/kilnmark/tls/server.crt'
+            Set-Line $env 'KILNMARK_TLS_KEY_FILE' '/etc/kilnmark/tls/server.key'
+            Set-Line $env 'KILNMARK_HTTP_PLAIN' 'redirect'
+            Remove-Line $env 'KILNMARK_OIDC_BEHIND_TLS_PROXY'
+        }
+        'proxy' {
+            $url = 'https://' + $hostName
+            foreach ($k in @('KILNMARK_TLS_CERT_FILE', 'KILNMARK_TLS_KEY_FILE', 'KILNMARK_HTTP_PLAIN')) { Remove-Line $env $k }
+            Set-Line $env 'KILNMARK_HTTP_HSTS' 'always'
+            Set-Line $env 'KILNMARK_OIDC_BEHIND_TLS_PROXY' 'true'
+        }
+        default {
+            $url = 'http://' + $hostName + ':' + (Get-Answer 'port')
+            foreach ($k in @('KILNMARK_TLS_CERT_FILE', 'KILNMARK_TLS_KEY_FILE', 'KILNMARK_HTTP_PLAIN', 'KILNMARK_OIDC_BEHIND_TLS_PROXY')) { Remove-Line $env $k }
+        }
+    }
+    Set-Line $env 'KILNMARK_URL' $url
+    Set-Line $env 'KILNMARK_OIDC_ENABLED' 'true'
+    if ((Get-Answer 'identity') -ceq 'bundled') {
+        Set-AuthProfile $env $true
+        Set-NewSecret $env 'KILNMARK_KEYCLOAK_DB_PASSWORD' (New-RandomValue)
+        Set-NewSecret $env 'KILNMARK_KEYCLOAK_ADMIN_PASSWORD' (New-RandomValue)
+        if ($NewClient -or -not (Get-Setting 'KILNMARK_OIDC_CLIENT_SECRET')) { Set-Line $env 'KILNMARK_OIDC_CLIENT_SECRET' (New-RandomValue) }
+        Set-Line $env 'KILNMARK_KEYCLOAK_PORT' (Get-Answer 'keycloak_port')
+        # Keycloak is published on this machine only: from other machines, a proxy that ends TLS
+        if (Test-LocalHost $hostName) { $kc = 'http://localhost:' + (Get-Answer 'keycloak_port') } else { $kc = 'https://' + $hostName + ':' + (Get-Answer 'keycloak_port') }
+        Set-Line $env 'KILNMARK_KEYCLOAK_URL' $kc
+        Set-Line $env 'KILNMARK_OIDC_ISSUER' 'http://keycloak:8080/realms/kilnmark'
+        Set-Line $env 'KILNMARK_OIDC_CLIENT_ID' 'kilnmark'
+        Set-Line $env 'KILNMARK_OIDC_PROVIDER_NAME' 'Keycloak'
+        Set-Line $env 'KILNMARK_OIDC_VIEWER_GROUPS' 'kilnmark-viewers'
+        Set-Line $env 'KILNMARK_OIDC_STEWARD_GROUPS' 'kilnmark-stewards'
+        Set-Line $env 'KILNMARK_OIDC_DESIGNER_GROUPS' 'kilnmark-designers'
+        Set-Line $env 'KILNMARK_OIDC_ADMIN_GROUPS' 'kilnmark-admins'
+        Set-Line $env 'KILNMARK_OIDC_UNMASK_GROUPS' 'kilnmark-sensitive-data'
+        # a Starter Pack install's example people may be added (ADR 0051)
+        if ((Get-Answer 'mode') -ceq 'starter-pack') { Set-Line $env 'KILNMARK_STARTER' 'allowed' } else { Remove-Line $env 'KILNMARK_STARTER' }
+    } else {
+        Set-AuthProfile $env $false
+        Remove-Line $env 'KILNMARK_STARTER'
+        Set-Line $env 'KILNMARK_OIDC_ISSUER' (Get-Answer 'oidc_issuer')
+        Set-Line $env 'KILNMARK_OIDC_CLIENT_ID' (Get-Answer 'oidc_client_id')
+        if ($script:SecretValue) { Set-Line $env 'KILNMARK_OIDC_CLIENT_SECRET' $script:SecretValue }
+        Set-Line $env 'KILNMARK_OIDC_PROVIDER_NAME' (Get-Answer 'oidc_provider_name')
+        Set-Line $env 'KILNMARK_OIDC_VIEWER_GROUPS' (Get-Answer 'oidc_viewer_groups')
+        Set-Line $env 'KILNMARK_OIDC_STEWARD_GROUPS' (Get-Answer 'oidc_steward_groups')
+        Set-Line $env 'KILNMARK_OIDC_DESIGNER_GROUPS' (Get-Answer 'oidc_designer_groups')
+        Set-Line $env 'KILNMARK_OIDC_ADMIN_GROUPS' (Get-Answer 'oidc_admin_groups')
+        Set-Line $env 'KILNMARK_OIDC_UNMASK_GROUPS' (Get-Answer 'oidc_unmask_groups')
+    }
+    $script:SecretValue = ''
+}
+# The certificate and key for tls=on, into certs\https.
+function Copy-Certs {
+    if ((Get-Answer 'tls') -cne 'on') { return }
+    try {
+        Copy-Item -LiteralPath (Get-Answer 'tls_cert') -Destination (Join-Path $script:Data 'certs\https\server.crt') -Force -ErrorAction Stop
+        Copy-Item -LiteralPath (Get-Answer 'tls_key') -Destination (Join-Path $script:Data 'certs\https\server.key') -Force -ErrorAction Stop
+    } catch { Fail ('The certificate or its key could not be copied into ' + (Join-Path $script:Data 'certs\https') + '.') }
 }
 
 # --- start, stop, health -----------------------------------------------------------------------
@@ -814,7 +1402,7 @@ function Get-LocalUrl {
 }
 
 function Test-Answers([string]$Url) {
-    & curl.exe -k -L -s -f -o NUL $Url *> $null
+    & curl.exe -k -L -s -f --max-time 10 -o NUL $Url *> $null
     return ($LASTEXITCODE -eq 0)
 }
 
@@ -831,17 +1419,9 @@ function Invoke-Up([string[]]$Options) {
     $browser = $true
     foreach ($o in $Options) { if ($o -eq '-NoBrowser') { $browser = $false } else { Fail ('Unknown option ' + $o + '.') } }
     $v = Get-CurrentVersion
-    # The root yours alone at every start, whatever the profile (ADR 0051, decision 15). What an
-    # hourly run uses is judged first, as it was: what others could change until now is not trusted
-    # for being cleaned now (Set-ExpiryTask).
-    $script:TreeBefore = Get-TreeProblem
-    Protect-Folder $script:Root
     Update-Settings
     if (-not (Test-ImagesPresent $v)) { Fail ('The images of Kilnmark ' + $v + ' are not here. Get them with one of: kilnmark.cmd pull, kilnmark.cmd load-images FILE, kilnmark.cmd build') }
     Write-Host ('Starting Kilnmark ' + $v + ' ...')
-    # what the scripts said, yours only (an install from before kept it open)
-    $logs = Join-Path $script:Root 'logs'
-    if (Test-Path -LiteralPath $logs) { Protect-Folder $logs }
     try {
         Write-RunSecrets
         Set-InstallIdForSetup
@@ -920,136 +1500,243 @@ function Show-Status {
     $u = Get-LocalUrl
     if (Test-Answers ($u + '/q/health/ready')) { Write-Host ('Health: ready at ' + $u) } else { Write-Host ('Health: not answering at ' + $u) }
     if (Test-KeycloakOn) { Write-Host ('People expiry: ' + (Get-ExpiryState)) }
-    $last = Get-ChildItem (Join-Path $script:Root 'backups') -Directory -Filter 'kilnmark-*' -ErrorAction SilentlyContinue | Sort-Object Name | Select-Object -Last 1
-    if ($last) { Write-Host ('Last backup: ' + $last.Name) } else { Write-Host ('Last backup: none in ' + (Join-Path $script:Root 'backups')) }
+    Write-Host ('Program folder: ' + $script:Root + '; data folder: ' + $script:Data)
+    $last = Get-ChildItem (Join-Path $script:Data 'backups') -Directory -Filter 'kilnmark-*' -ErrorAction SilentlyContinue | Sort-Object Name | Select-Object -Last 1
+    if ($last) { Write-Host ('Last backup: ' + $last.Name) } else { Write-Host ('Last backup: none in ' + (Join-Path $script:Data 'backups')) }
 }
 
-# --- install, upgrade, uninstall ---------------------------------------------------------------
+# --- install, upgrade, uninstall --------------------------------------------------------------
 
-function New-Folders {
-    # The root first, yours alone from the moment it is made: C:\ lets every signed-in user change
-    # what is made in a new folder there, and what is put in it after takes its permissions. One
-    # there already (yours: install checked) is made yours alone, then checked.
-    if (Test-Path -LiteralPath $script:Root) {
-        Protect-Folder $script:Root
-        $why = Get-ItemProblem $script:Root
-        if ($why) { Fail ($why + ', so nothing was put in it.') }
-    } else {
-        New-OwnFolder $script:Root -Empty
+# Day-to-day commands run as the operator, from a prompt that is not elevated.
+function Assert-Operator([string]$What) {
+    if (Test-Elevated) { Fail ($What + ' runs as the operator, from a prompt that is not elevated: open one without "Run as administrator", then run it again.') }
+    if (-not $script:Data) { return }
+    $f = Join-Path $script:Data 'config\install.conf'
+    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return }
+    $name = ''
+    foreach ($l in [IO.File]::ReadAllLines($f)) { if ($l -cmatch '^operator=(.*)$') { $name = $Matches[1].Trim() } }
+    if (-not $name) { return }
+    $sid = ''
+    try { $sid = (New-Object Security.Principal.NTAccount($name)).Translate([Security.Principal.SecurityIdentifier]).Value } catch { $sid = '' }
+    if ($sid -and $sid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) {
+        Fail ('Kilnmark runs as ' + $name + ': sign in to Windows as them to run ' + $What + '.')
     }
-    # Each folder in it the same way: one there already that is not yours, or is a link or a
-    # junction, stops the install before anything is written into it.
-    foreach ($d in @('versions', 'config', 'certs', 'certs\https', 'backups', 'logs')) { New-OwnFolder (Join-Path $script:Root $d) }
+}
+
+# Runs a part of install, upgrade or uninstall as an administrator: Windows asks (UAC), and it runs
+# in a window of its own; its log is in the data folder's logs. The tests run it as they are.
+function Invoke-Elevated([string]$Script, [string[]]$Arguments) {
+    $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $line = '-NoProfile -ExecutionPolicy Bypass -File "' + $Script + '"'
+    foreach ($a in $Arguments) { if ($a.StartsWith('-')) { $line += ' ' + $a } else { $line += ' "' + $a.TrimEnd('\') + '"' } }
+    try {
+        if (Test-TestHooks) { $p = Start-Process -FilePath $shell -ArgumentList $line -PassThru -NoNewWindow -ErrorAction Stop }
+        else { $p = Start-Process -FilePath $shell -ArgumentList $line -Verb RunAs -PassThru -ErrorAction Stop }
+    } catch { Fail 'Windows did not run it as an administrator (UAC was declined, or no administrator could allow it), so nothing was changed.' }
+    # the handle first, or Windows PowerShell may not keep the exit code
+    $null = $p.Handle
+    $p.WaitForExit()
+    return $p.ExitCode
+}
+# A new folder of your own for a moment's files (a step's answers and result), deleted after.
+function New-WorkFolder {
+    $work = Join-Path ([IO.Path]::GetTempPath()) ('kilnmark-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory $work | Out-Null
+    Protect-Folder $work
+    return $work
+}
+# What an elevated part said: OK, or FAILED with one line saying why; it failed if nothing was said.
+function Read-ElevatedResult([string]$File, [int]$Code) {
+    $text = ''
+    if (Test-Path -LiteralPath $File) { $text = ([IO.File]::ReadAllText($File)).Trim() }
+    if ($Code -eq 0 -and $text.StartsWith('OK')) { return }
+    if ($text.StartsWith('FAILED ')) { Fail $text.Substring(7) }
+    Fail ('it stopped as an administrator (code ' + $Code + '): its log is in the data folder''s logs')
+}
+
+# A folder made with these permissions from its first moment, nothing inherited: $Entries holds
+# pairs of a SID and its rights. Owned by the Administrators. The tests, which run as they are and
+# play the administrator, keep their own ownership and full control, as the Administrators have.
+function New-ProtectedFolder([string]$Dir, [object[]]$Entries) {
+    if (Test-Path -LiteralPath $Dir) { Fail ($Dir + ' is there already: install makes it afresh. Remove it (uninstall -Purge), or choose another folder. Nothing was changed.') }
+    if (Test-TestHooks) { $Entries += , @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'FullControl') }
+    $sec = New-Object Security.AccessControl.DirectorySecurity
+    $sec.SetAccessRuleProtection($true, $false)
+    $inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    foreach ($e in $Entries) {
+        $sid = New-Object Security.Principal.SecurityIdentifier($e[0])
+        $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, [Security.AccessControl.FileSystemRights]$e[1], $inherit, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)))
+    }
+    if (-not (Test-TestHooks)) { $sec.SetOwner((New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544'))) }
+    try {
+        $parent = Split-Path $Dir -Parent
+        if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory $parent -ErrorAction Stop | Out-Null }
+        $di = New-Object IO.DirectoryInfo($Dir)
+        if ($PSVersionTable.PSVersion.Major -ge 6) { [IO.FileSystemAclExtensions]::Create($di, $sec) } else { $di.Create($sec) }
+    } catch { Fail ($Dir + ' could not be made with its permissions.') }
 }
 
 function Copy-Launchers([string]$V) {
     $dir = Join-Path (Join-Path $script:Root 'versions') $V
     foreach ($f in $Launchers) {
         $src = Join-Path $dir $f
-        if (Test-Path $src) { Copy-Item $src (Join-Path $script:Root $f) -Force }
+        if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination (Join-Path $script:Root $f) -Force }
     }
     Write-UnixText (Join-Path $script:Root 'current.txt') @($V)
 }
 
-function Install-Release([string]$Source, [string]$V) {
-    $dest = Join-Path (Join-Path $script:Root 'versions') $V
-    New-OwnFolder (Join-Path $script:Root 'versions')
-    if (Test-Path -LiteralPath $dest) {
-        $why = Get-ItemProblem $dest
-        if ($why) { Fail ($why + ', so the release was not used. Remove it, then install again.') }
-        Write-Host ('Kilnmark ' + $V + ' is already in ' + $dest + '.')
-    }
-    else {
-        Copy-Item $Source ($dest + '.part') -Recurse
-        Rename-Item ($dest + '.part') $V
-        Write-Host ('Placed Kilnmark ' + $V + ' in ' + $dest + '.')
-    }
-    Copy-Launchers $V
-}
-
-# How people sign in to a production install, asked at a console (with input redirected, or with
-# -Auth, nothing is asked): the organisation's own identity provider, the bundled Keycloak, or API
-# tokens only. Only the bundled Keycloak changes what install writes; the others are config\.env's.
-$script:OwnProvider = $false
-function Read-SignIn {
-    if ([Console]::IsInputRedirected) { return }
-    Write-Host 'How will people sign in to Kilnmark?'
-    Write-Host "  1  Your organisation's own identity provider (recommended for banks and other regulated organisations)"
-    Write-Host "  2  The bundled Keycloak, which this install sets up, with Kilnmark's first admin"
-    Write-Host '  3  API tokens only, for now'
-    $answer = Read-Host '1, 2 or 3 [1]'
-    if (-not $answer) { $answer = '1' }
-    switch ($answer.Trim()) {
-        '1' { $script:OwnProvider = $true }
-        '2' { $script:WithAuth = $true }
-        '3' { }
-        default { Fail 'Answer 1, 2 or 3. Nothing was installed.' }
-    }
-}
-
 function Invoke-Install([string[]]$Options) {
-    $start = $true
+    $start = $true; $dry = $false; $answers = $null; $cli = @{}
     for ($i = 0; $i -lt $Options.Count; $i++) {
         switch ($Options[$i]) {
-            '-Root' { $i++; $script:Root = $Options[$i] }
+            '-Answers' { $i++; $answers = $Options[$i] }
+            '-ProgramDir' { $i++; $cli['program_dir'] = [IO.Path]::GetFullPath($Options[$i]).TrimEnd('\') }
+            '-DataDir' { $i++; $cli['data_dir'] = [IO.Path]::GetFullPath($Options[$i]).TrimEnd('\') }
+            '-Operator' { $i++; $cli['operator'] = $Options[$i] }
             '-Offline' { $i++; $script:Offline = (Resolve-Path $Options[$i]).Path }
-            '-Auth' { $script:WithAuth = $true }
             '-Starter' { $script:WithStarter = $true }
             '-Build' { $script:Build = $true }
             '-SkipVerify' { $script:SkipVerify = $true }
             '-NoStart' { $start = $false }
+            '-DryRun' { $dry = $true }
             default { Fail ('Unknown option ' + $Options[$i] + '. See: kilnmark.cmd help') }
         }
     }
-    if (-not (Test-Path (Join-Path $Here 'compose.yaml'))) { Fail 'Run install from the unpacked release folder, kilnmark-<version>.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $Here 'compose.yaml'))) { Fail 'Run install from the unpacked release folder, kilnmark-<version>.' }
     $v = Get-VersionOf $Here
     if (-not $v) { Fail "Cannot tell this release's version from its compose.yaml." }
-    if (-not $script:Root) { $script:Root = $DefaultRoot }
-    $script:Root = [IO.Path]::GetFullPath($script:Root)
-    if ($script:Root -match '\s') { Fail 'Choose a folder without spaces for -Root.' }
-    Write-Host ('Installing Kilnmark ' + $v + ' in ' + $script:Root)
-    Test-Prerequisites $false
-    if (-not (Write-Checks)) { Fail 'Fix the problems above, then run install again.' }
-    # A Starter Pack install always has the bundled Keycloak: its example people live there.
-    if ($script:WithStarter) { $script:WithAuth = $true }
-    if (-not $script:WithAuth) { Read-SignIn }
-    # never into a root someone else owns: they could rewrite its permissions whenever they like
-    if ((Test-Path -LiteralPath $script:Root) -and -not (Test-OwnerOk $script:Root)) {
-        Fail ($script:Root + ' exists and is owned by someone other than you: install into a folder of your own, or have its owner remove it. Nothing was installed.')
+    if ((Test-Elevated) -and -not $dry) { Fail 'Run install from a prompt that is not elevated: it asks Windows for an administrator (UAC) only for the step that needs one, and runs Podman as you, the operator.' }
+    if ($answers) { Read-Answers ((Resolve-Path $answers).Path) }
+    foreach ($k in $cli.Keys) { $script:Answers[$k] = $cli[$k] }
+    if ($script:WithStarter) {
+        if ($script:Answers.ContainsKey('mode') -and $script:Answers['mode'] -cne 'starter-pack') { Fail '-Starter makes a Starter Pack install, and the answers say another mode: choose one. Nothing was changed.' }
+        $script:Answers['mode'] = 'starter-pack'
     }
-    New-Folders
-    Start-Log 'install'
-    Install-Release $Here $v
-    New-Settings (Join-Path (Join-Path (Join-Path $script:Root 'versions') $v) '.env.example')
-    Get-ImagesFor $v
-    # Asked before the start, which takes a while, so nobody waits to answer.
-    $script:PeopleSoft = $true
-    $admin = $null
-    if ($start -and $script:WithAuth) { $admin = Read-Person 'kilnmark-admins' }
+    Write-Host ('Installing Kilnmark ' + $v)
+    if (-not $answers) {
+        if ([Console]::IsInputRedirected) { Fail 'There is no console to ask the questions at: give the answers in a file (-Answers install.conf; install.conf.example says each).' }
+        Read-AllAnswers
+        Write-Host 'Install with these answers:'
+        Show-Answers
+        $yes = Read-Host 'Go on? [Y/n]'
+        if ($yes -and $yes -notmatch '^[Yy]') { Fail 'Nothing was installed.' }
+    }
+    # the steps: the answers, the prerequisites, the folders (as an administrator) and the images;
+    # then the start, the first admin and the Starter Pack where they apply
+    $total = 4
     if ($start) {
+        $total++
+        if ((Get-Answer 'identity') -ceq 'bundled' -and (Get-Answer 'admin_email')) { $total++ }
+        if ((Get-Answer 'mode') -ceq 'starter-pack') { $total++ }
+    }
+    if ($dry) { $total = 2 }
+    Set-Steps $total
+    Start-Step 'Check the answers'
+    if (-not (Test-AllAnswers -Ports)) { Fail 'Some answers cannot be taken (above), so nothing was changed.' }
+    $operatorSid = Get-OperatorSid
+    if (-not $dry) { Read-InstallSecrets }
+    Complete-Step
+    Start-Step 'Check the prerequisites'
+    Test-Prerequisites $false ((Get-Answer 'identity') -ceq 'bundled')
+    if (-not (Write-Checks)) { Fail 'Fix the problems above (each says how), then run install again.' }
+    Complete-Step
+    $prog = Get-Answer 'program_dir'; $data = Get-Answer 'data_dir'
+    if ($dry) {
+        Write-Host ('Install would place Kilnmark ' + $v + ' in ' + $prog + " (the Administrators'), keep its data in " + $data + ' (' + (Get-Answer 'operator') + "'s, SYSTEM's and the Administrators'), and run it as " + (Get-Answer 'operator') + ', with these answers:')
+        Show-Answers
+        Write-Host 'Nothing was changed (-DryRun).'
+        return
+    }
+    Start-Step ('Make ' + $prog + ' and ' + $data + ', as an administrator')
+    Write-Host ('Windows now asks for an administrator (UAC): only administrators may write ' + $prog + ' and ' + $data + '. That part runs in a window of its own, and its log goes to ' + (Join-Path $data 'logs') + '.')
+    $work = New-WorkFolder
+    try {
+        Write-Answers (Join-Path $work 'answers.conf')
+        $result = Join-Path $work 'result.txt'
+        $code = Invoke-Elevated (Join-Path $Here 'kilnmark.ps1') @('_install-elevated', '-Answers', (Join-Path $work 'answers.conf'), '-OperatorSid', $operatorSid, '-Result', $result)
+        Read-ElevatedResult $result $code
+    } finally { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
+    $script:Root = $prog; $script:Data = $data; $script:Project = Get-Answer 'project'
+    # your organisation's client secret, written by you (the operator may change config\.env)
+    if ((Get-Answer 'identity') -ceq 'own' -and $script:SecretValue) { Set-Line (Join-Path $data 'config\.env') 'KILNMARK_OIDC_CLIENT_SECRET' $script:SecretValue; $script:SecretValue = '' }
+    Complete-Step
+    Start-Log 'install'
+    Start-Step 'Get the images'
+    Get-ImagesFor $v
+    Complete-Step
+    if ($start) {
+        Start-Step 'Start Kilnmark'
         Invoke-Up @('-NoBrowser')
-        if ($admin) { [void](New-Person $admin) }
-        if ($script:WithStarter) {
+        Complete-Step
+        if ((Get-Answer 'identity') -ceq 'bundled' -and (Get-Answer 'admin_email')) {
+            Start-Step 'Add the first admin'
+            $person = @{ Email = (Get-Answer 'admin_email'); First = (Get-Answer 'admin_first_name'); Last = (Get-Answer 'admin_last_name'); Groups = 'kilnmark-admins'; Password = $script:AdminPassword }
+            $script:AdminPassword = ''
+            if (-not (New-Person $person)) { Fail 'The first admin was not added (above): add them with people add.' }
+            Complete-Step
+        }
+        if ((Get-Answer 'mode') -ceq 'starter-pack') {
+            Start-Step 'Turn the Starter Pack on'
             Invoke-StarterOn
-            if ($script:WithAuth) {
-                Write-Host ('Add the example people, with a password you type: ' + (Join-Path $script:Root 'kilnmark.cmd') + ' starter people')
-            }
+            Complete-Step
         }
     }
-    $envFile = Join-Path $script:Root 'config\.env'
-    if ($script:OwnProvider) {
-        Write-Host ''
-        Write-Host ("To sign in with your organisation's identity provider, fill in the KILNMARK_OIDC_ settings in " + $envFile + ',')
-        Write-Host ('then run ' + (Join-Path $script:Root 'kilnmark.cmd') + ' restart (INSTALL.md, "Sign in with your identity provider").')
-    }
+    $script:AdminPassword = ''
+    $kc = Join-Path $prog 'kilnmark.cmd'
     Write-Host ''
-    Write-Host ('Kilnmark ' + $v + ' is installed in ' + $script:Root + '.')
-    Write-Host ('  Sign in with the admin token: it is KILNMARK_ADMIN_TOKEN in ' + $envFile + '.')
-    Write-Host '  Then make a token of your own under API tokens, and keep it safe.'
-    Write-Host ('  Control it with: ' + (Join-Path $script:Root 'kilnmark.cmd') + ' up | down | status | backup | help')
-    Write-Host ('  Shortcuts on the desktop and in the Start menu: powershell -ExecutionPolicy Bypass -File ' + (Join-Path $script:Root 'create-shortcut.ps1'))
+    Write-Host ('Kilnmark ' + $v + ' is installed: the program in ' + $prog + ', its data in ' + $data + ', run by ' + (Get-Answer 'operator') + '.')
+    Write-Host ('  Sign in with the admin token, KILNMARK_ADMIN_TOKEN in ' + (Join-Path $data 'config\.env') + '; then make a token of your own under API tokens, and keep it safe.')
+    Write-Host ('  Every day, from a prompt that is not elevated: "' + $kc + '" up | down | status | check | backup | help')
+    Write-Host ('  Change an answer later: "' + $kc + '" configure KEY=VALUE')
+    Write-Host ('  Shortcuts on the desktop and in the Start menu: powershell -ExecutionPolicy Bypass -File "' + (Join-Path $prog 'create-shortcut.ps1') + '"')
     Write-Host '  Back it up every day, for example from Task Scheduler: kilnmark.cmd backup'
+    if ((Get-Answer 'mode') -ceq 'starter-pack') { Write-Host ('  Add the example people, with a password you type: "' + $kc + '" starter people') }
+    if ((Get-Answer 'identity') -ceq 'own') { Write-Host ('  Register Kilnmark in your identity provider with the redirect URI ' + (Get-Setting 'KILNMARK_URL') + '/api/v1/auth/login.') }
     Stop-Log
+}
+
+# install's part as an administrator: the program folder (the Administrators', read-only to
+# everyone else), the data folder (the operator's, SYSTEM's and the Administrators', nobody else's),
+# the release, data-folder.txt, config\.env with new secrets and config\install.conf.
+function Invoke-InstallElevated([string[]]$Options) {
+    $file = $null; $operatorSid = $null
+    for ($i = 0; $i -lt $Options.Count; $i++) {
+        switch ($Options[$i]) {
+            '-Answers' { $i++; $file = $Options[$i] }
+            '-OperatorSid' { $i++; $operatorSid = $Options[$i] }
+            '-Result' { $i++; $script:ResultFile = $Options[$i] }
+            default { Fail ('Unknown option ' + $Options[$i] + '.') }
+        }
+    }
+    if (-not (Test-Elevated) -and -not (Test-TestHooks)) { Fail 'This part of install needs an administrator.' }
+    if ($operatorSid -cnotmatch '^S-1-[0-9-]+$') { Fail 'The operator was not named.' }
+    Read-Answers $file
+    if (-not (Test-AllAnswers)) { Fail 'Some answers cannot be taken (above), so nothing was changed.' }
+    $v = Get-VersionOf $Here
+    $prog = Get-Answer 'program_dir'; $data = Get-Answer 'data_dir'
+    if ((Test-Path -LiteralPath (Join-Path $prog 'versions')) -or (Test-Path -LiteralPath (Join-Path $prog 'kilnmark.ps1'))) {
+        Fail ('Kilnmark is installed in ' + $prog + ' already: upgrade it, or uninstall it first. Nothing was changed.')
+    }
+    if (Test-Path -LiteralPath $data) { Fail ($data + ' is there already: uninstall the earlier install with -Purge, or remove it, or choose another data folder (-DataDir). Nothing was changed.') }
+    $ba = 'S-1-5-32-544'; $sy = 'S-1-5-18'
+    New-ProtectedFolder $prog @(@($ba, 'FullControl'), @($sy, 'FullControl'), @('S-1-5-32-545', 'ReadAndExecute'))
+    New-ProtectedFolder $data @(@($ba, 'FullControl'), @($sy, 'FullControl'), @($operatorSid, 'Modify'))
+    $script:Root = $prog; $script:Data = $data
+    foreach ($d in @('config', 'certs', 'certs\https', 'backups', 'logs')) { New-Item -ItemType Directory (Join-Path $data $d) | Out-Null }
+    Start-Log 'install-elevated'
+    New-Item -ItemType Directory (Join-Path $prog 'versions') | Out-Null
+    $dest = Join-Path (Join-Path $prog 'versions') $v
+    Copy-Item -LiteralPath $Here -Destination $dest -Recurse
+    Copy-Launchers $v
+    Write-UnixText (Join-Path $prog 'data-folder.txt') @($data)
+    Write-Host ('Placed Kilnmark ' + $v + ' in ' + $dest + '.')
+    Copy-Item -LiteralPath (Join-Path $dest '.env.example') -Destination (Join-Path $data 'config\.env.example')
+    Write-Env
+    Write-Answers (Join-Path $data 'config\install.conf')
+    Copy-Certs
+    Write-Host ('Wrote ' + (Join-Path $data 'config\.env') + " with new secrets (the operator's, SYSTEM's and the Administrators' alone) and config\install.conf (the answers).")
+    Stop-Log
+    [IO.File]::WriteAllText($script:ResultFile, 'OK')
 }
 
 function Invoke-Upgrade([string[]]$Options) {
@@ -1062,9 +1749,13 @@ function Invoke-Upgrade([string[]]$Options) {
             default { if ($Options[$i].StartsWith('-')) { Fail ('Unknown option ' + $Options[$i] + '.') } else { $archive = $Options[$i] } }
         }
     }
-    if (-not ($archive -and (Test-Path $archive))) { Fail 'Say which release to upgrade to: kilnmark.cmd upgrade kilnmark-<version>.zip' }
+    if (-not ($archive -and (Test-Path -LiteralPath $archive))) { Fail 'Say which release to upgrade to: kilnmark.cmd upgrade kilnmark-<version>.zip' }
     $archive = (Resolve-Path $archive).Path
+    if (Test-Elevated) { Fail 'Run upgrade from a prompt that is not elevated: it asks Windows for an administrator (UAC) only for the step that needs one.' }
     $old = Get-CurrentVersion
+    $total = 5; if ($backup) { $total = 6 }
+    Set-Steps $total
+    Start-Step 'Check the new release'
     # An install from before deployment modes is never upgraded (ADR 0051): refused before anything
     # changes, by config\.env and by what the database recorded.
     Update-Settings
@@ -1073,68 +1764,131 @@ function Invoke-Upgrade([string[]]$Options) {
     if ($recorded -cne (Get-Setting 'KILNMARK_MODE')) { Fail 'KILNMARK_MODE in config\.env differs from the mode Kilnmark recorded at its first start: set it back. Nothing was changed.' }
     Start-Log 'upgrade'
     Test-FileSignature $archive
-    $versions = Join-Path $script:Root 'versions'
-    $tmp = Join-Path $versions ('.unpack-' + [Guid]::NewGuid().ToString('N'))
-    # yours alone before the new release is unpacked into it (ADR 0051, decision 15)
-    Protect-Folder $script:Root
-    New-Item -ItemType Directory $tmp | Out-Null
-    & tar.exe -xf $archive -C $tmp
-    if ($LASTEXITCODE -ne 0) { Remove-Item $tmp -Recurse -Force; Fail ((Split-Path $archive -Leaf) + ' could not be unpacked.') }
-    $src = (Get-ChildItem $tmp -Directory | Select-Object -First 1).FullName
+    $work = New-WorkFolder
+    & tar.exe -xf $archive -C $work
+    if ($LASTEXITCODE -ne 0) { Remove-Item -LiteralPath $work -Recurse -Force; Fail ((Split-Path $archive -Leaf) + ' could not be unpacked.') }
+    $src = (Get-ChildItem -LiteralPath $work -Directory | Select-Object -First 1).FullName
     $new = Get-VersionOf $src
-    if (-not $new) { Remove-Item $tmp -Recurse -Force; Fail "Cannot tell the new release's version." }
-    if ($new -eq $old) { Remove-Item $tmp -Recurse -Force; Fail ('Kilnmark ' + $old + ' is already the running version.') }
+    if (-not $new) { Remove-Item -LiteralPath $work -Recurse -Force; Fail "Cannot tell the new release's version." }
+    if ($new -eq $old) { Remove-Item -LiteralPath $work -Recurse -Force; Fail ('Kilnmark ' + $old + ' is already the running version.') }
     $vn = $null; $vo = $null
     if ([version]::TryParse($new, [ref]$vn) -and [version]::TryParse($old, [ref]$vo) -and $vn -lt $vo) {
-        Remove-Item $tmp -Recurse -Force; Fail ($new + ' is older than the running ' + $old + ': upgrade only goes forward (go back with restore).')
+        Remove-Item -LiteralPath $work -Recurse -Force; Fail ($new + ' is older than the running ' + $old + ': upgrade only goes forward (go back with restore).')
     }
-    if ($backup) { Invoke-Backup @() }
-    $dest = Join-Path $versions $new
-    if (-not (Test-Path $dest)) { Move-Item $src $dest }
-    Remove-Item $tmp -Recurse -Force
-    Get-ImagesFor $new
-    $added = Get-NewSettings (Join-Path $dest '.env.example')
-    Copy-Item (Join-Path $dest '.env.example') (Join-Path $script:Root 'config\.env.example') -Force
-    Copy-Launchers $new
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:Root 'kilnmark.ps1') up -NoBrowser
+    Complete-Step
+    try {
+        if ($backup) { Start-Step ('Back up Kilnmark ' + $old); Invoke-Backup @(); Complete-Step }
+        Start-Step 'Get the images'
+        if ($script:Offline) { Import-Images $script:Offline } elseif (-not (Test-ImagesPresent $new)) { Get-Images $new }
+        if (-not (Test-ImagesPresent $new)) { Fail ('The images of Kilnmark ' + $new + ' are still missing after that.') }
+        Complete-Step
+        Start-Step ('Place Kilnmark ' + $new + ' and switch to it, as an administrator')
+        Write-Host ('Windows now asks for an administrator (UAC): only administrators may write ' + $script:Root + '.')
+        $result = Join-Path $work 'result.txt'
+        $code = Invoke-Elevated (Join-Path $src 'kilnmark.ps1') @('_place-version', '-Source', $src, '-ProgramDir', $script:Root, '-Keep', $old, '-Result', $result)
+        Read-ElevatedResult $result $code
+        Complete-Step
+    } finally { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
+    Copy-Item -LiteralPath (Join-Path (Join-Path (Join-Path $script:Root 'versions') $new) '.env.example') -Destination (Join-Path $script:Data 'config\.env.example') -Force
+    $added = Get-NewSettings (Join-Path $script:Data 'config\.env.example')
+    Start-Step ('Start Kilnmark ' + $new)
+    $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    & $shell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:Root 'kilnmark.ps1') up -NoBrowser
     if ($LASTEXITCODE -ne 0) {
         Write-Host ('Kilnmark ' + $new + ' did not start: stopping it and starting ' + $old + ' again.') -ForegroundColor Red
         [void](Invoke-Compose down)
-        Copy-Launchers $old
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:Root 'kilnmark.ps1') up -NoBrowser
-        if ($LASTEXITCODE -eq 0) { Write-Host ('Kilnmark ' + $old + ' runs again. See why ' + $new + ' did not start in logs\.') -ForegroundColor Red }
-        else {
-            Write-Host ('Kilnmark ' + $old + ' does not start either: ' + $new + ' may have changed its database already.') -ForegroundColor Red
-            Write-Host 'Put it back to the backup taken above: kilnmark.cmd restore <that backup> -Yes' -ForegroundColor Red
-        }
-        Stop-Log; exit 1
+        $code = Invoke-Elevated (Join-Path $script:Root 'kilnmark.ps1') @('_use-version', '-Version', $old, '-ProgramDir', $script:Root)
+        & $shell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:Root 'kilnmark.ps1') up -NoBrowser
+        if ($LASTEXITCODE -eq 0) { Fail ('Kilnmark ' + $new + ' did not start, so ' + $old + ' runs again. See why ' + $new + ' did not start in ' + (Join-Path $script:Data 'logs') + '.') }
+        Fail ('Kilnmark ' + $old + ' does not start either: ' + $new + ' may have changed its database already. Put it back to the backup taken above: kilnmark.cmd restore <that backup> -Yes')
     }
+    Complete-Step
     if ($added.Count -gt 0) { Write-Host ('Settings new in ' + $new + ' (see config\.env.example): ' + ($added -join ' ')) }
-    # Keep the two newest versions.
-    $all = Get-ChildItem $versions -Directory | Where-Object { -not $_.Name.StartsWith('.') } | Sort-Object { try { [version]$_.Name } catch { [version]'0.0' } }
-    $drop = @($all | Select-Object -SkipLast 2)
-    foreach ($d in $drop) { if ($d.Name -ne $new -and $d.Name -ne $old) { Remove-Item $d.FullName -Recurse -Force } }
     Write-Host ('Upgraded Kilnmark from ' + $old + ' to ' + $new + '.')
     Stop-Log
+}
+
+# upgrade's part as an administrator: the new release copied into the program folder, the launchers
+# and current.txt switched to it, and the versions but the two newest removed.
+function Invoke-PlaceVersion([string[]]$Options) {
+    $src = $null; $keep = $null
+    for ($i = 0; $i -lt $Options.Count; $i++) {
+        switch ($Options[$i]) {
+            '-Source' { $i++; $src = $Options[$i] }
+            '-ProgramDir' { $i++; $script:Root = $Options[$i] }
+            '-Keep' { $i++; $keep = $Options[$i] }
+            '-Result' { $i++; $script:ResultFile = $Options[$i] }
+            default { Fail ('Unknown option ' + $Options[$i] + '.') }
+        }
+    }
+    if (-not (Test-Elevated) -and -not (Test-TestHooks)) { Fail 'This part of upgrade needs an administrator.' }
+    $new = Get-VersionOf $src
+    if (-not $new -or $new -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$') { Fail "Cannot tell the new release's version." }
+    $versions = Join-Path $script:Root 'versions'
+    $dest = Join-Path $versions $new
+    if (-not (Test-Path -LiteralPath $dest)) { Copy-Item -LiteralPath $src -Destination $dest -Recurse }
+    Copy-Launchers $new
+    $all = Get-ChildItem -LiteralPath $versions -Directory | Where-Object { -not $_.Name.StartsWith('.') } | Sort-Object { try { [version]$_.Name } catch { [version]'0.0' } }
+    foreach ($d in @($all | Select-Object -SkipLast 2)) { if ($d.Name -ne $new -and $d.Name -ne $keep) { Remove-Item -LiteralPath $d.FullName -Recurse -Force } }
+    [IO.File]::WriteAllText($script:ResultFile, 'OK')
+}
+
+function Invoke-UseVersion([string[]]$Options) {
+    $v = $null
+    for ($i = 0; $i -lt $Options.Count; $i++) {
+        switch ($Options[$i]) { '-Version' { $i++; $v = $Options[$i] } '-ProgramDir' { $i++; $script:Root = $Options[$i] } default { Fail ('Unknown option ' + $Options[$i] + '.') } }
+    }
+    if (-not (Test-Elevated) -and -not (Test-TestHooks)) { Fail 'This part of upgrade needs an administrator.' }
+    if ($v -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$' -or -not (Test-Path -LiteralPath (Join-Path (Join-Path $script:Root 'versions') $v))) { Fail ('Kilnmark ' + $v + ' is not in ' + $script:Root + '.') }
+    Copy-Launchers $v
 }
 
 function Invoke-Uninstall([string[]]$Options) {
     $purge = $false
     foreach ($o in $Options) { if ($o -eq '-Purge') { $purge = $true } else { Fail ('Unknown option ' + $o + '.') } }
+    [void](Get-CurrentVersion)
+    Assert-Operator 'uninstall'
+    if ($purge) {
+        Write-Host ("This deletes all of Kilnmark's data: its database, the key to stored passwords, Keycloak's, and " + $script:Data + ' with every backup in it.')
+        Write-Host 'Back up first, somewhere else, if you might want any of it. Type DELETE to go on:'
+        if ([Console]::IsInputRedirected) { $answer = [Console]::In.ReadLine(); if ($null -eq $answer) { $answer = '' }; $answer = $answer.Trim() } else { $answer = Read-Host }
+        if ($answer -cne 'DELETE') { Fail 'Nothing was deleted.' }
+    }
+    $total = 2
+    Set-Steps $total
+    Start-Step 'Stop Kilnmark and remove its hourly task'
+    Invoke-StopForUninstall $purge
+    Complete-Step
+    $what = $script:Root; if ($purge) { $what = $script:Root + ' and ' + $script:Data }
+    Start-Step ('Remove ' + $what + ', as an administrator')
+    Write-Host ('Windows now asks for an administrator (UAC): only administrators may remove ' + $what + '.')
+    # run from a copy, since the program folder it removes holds this script
+    $work = New-WorkFolder
+    try {
+        $copy = Join-Path $work 'kilnmark.ps1'
+        Copy-Item -LiteralPath (Join-Path $script:Root 'kilnmark.ps1') -Destination $copy
+        $result = Join-Path $work 'result.txt'
+        $arguments = @('_uninstall-elevated', '-ProgramDir', $script:Root, '-DataDir', $script:Data, '-Result', $result)
+        if ($purge) { $arguments += '-Purge' }
+        Set-Location ([IO.Path]::GetTempPath())
+        $code = Invoke-Elevated $copy $arguments
+        Read-ElevatedResult $result $code
+    } finally { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
+    Complete-Step
+    if ($purge) { Write-Host 'Kilnmark is uninstalled, and its data deleted.' }
+    else { Write-Host ('Kilnmark is uninstalled. Its data (volumes) and ' + $script:Data + ' (settings, backups, logs) are kept: uninstall -Purge deletes them, or install afresh with another data folder.') }
+}
+
+# The operator's part of uninstall: no task, nothing running; with -Purge, no volumes nor images.
+function Invoke-StopForUninstall([bool]$Purge) {
     $v = Get-CurrentVersion
     Assert-Project
     Remove-ExpiryTask
-    if (-not $purge) {
-        [void](Invoke-Compose down)
-        Write-Host ('Kilnmark is stopped and will not start again by itself. Its data and ' + $script:Root + ' are kept.')
-        Write-Host 'To delete the data too: kilnmark.cmd uninstall -Purge'
+    if (-not $Purge) {
+        [void](Invoke-ComposeQuietly down)
+        Write-Host 'Kilnmark is stopped and will not start again by itself. Its data is kept.'
         return
     }
-    Write-Host "This deletes all of Kilnmark's data: its database, the key to stored passwords, and Keycloak's."
-    Write-Host 'Back up first (kilnmark.cmd backup) if you might want any of it. Type DELETE to go on:'
-    # typed at a console, or one line on standard input (a pipe)
-    if ([Console]::IsInputRedirected) { $answer = [Console]::In.ReadLine(); if ($null -eq $answer) { $answer = '' }; $answer = $answer.Trim() } else { $answer = Read-Host }
-    if ($answer -cne 'DELETE') { Fail 'Nothing was deleted.' }
     [void](Invoke-Compose --profile auth --profile ai down -v)
     # An image another install on this machine still runs is kept: removing it, or its name, would
     # stop that install starting again.
@@ -1144,7 +1898,101 @@ function Invoke-Uninstall([string[]]$Options) {
         if ($users) { $kept += $i } else { & $script:Engine rmi $i *> $null }
     }
     if ($kept.Count -gt 0) { Write-Host ('Kept the images ' + ($kept -join ' ') + ': other containers on this machine use them (another install, say).') }
-    Write-Host ("Kilnmark's containers, volumes and images are deleted. " + $script:Root + ' is kept: delete it yourself if you wish.')
+    Write-Host "Kilnmark's containers, volumes and images are deleted."
+}
+
+# uninstall's part as an administrator: the program folder goes, and with -Purge the data folder.
+function Invoke-UninstallElevated([string[]]$Options) {
+    $prog = $null; $data = $null; $purge = $false
+    for ($i = 0; $i -lt $Options.Count; $i++) {
+        switch ($Options[$i]) {
+            '-ProgramDir' { $i++; $prog = $Options[$i] }
+            '-DataDir' { $i++; $data = $Options[$i] }
+            '-Purge' { $purge = $true }
+            '-Result' { $i++; $script:ResultFile = $Options[$i] }
+            default { Fail ('Unknown option ' + $Options[$i] + '.') }
+        }
+    }
+    if (-not (Test-Elevated) -and -not (Test-TestHooks)) { Fail 'This part of uninstall needs an administrator.' }
+    # only a Kilnmark program folder: it names this data folder, and holds versions\
+    $named = ''
+    try { $named = ([IO.File]::ReadAllText((Join-Path $prog 'data-folder.txt'))).Trim() } catch { $named = '' }
+    if (-not (Test-Path -LiteralPath (Join-Path $prog 'versions')) -or $named -ne $data) { Fail ($prog + ' is not the Kilnmark install that names ' + $data + ': nothing was removed.') }
+    try { Remove-Item -LiteralPath $prog -Recurse -Force -ErrorAction Stop } catch { Fail ($prog + ' could not be removed (is a file in it open?).') }
+    if ($purge) { try { Remove-Item -LiteralPath $data -Recurse -Force -ErrorAction Stop } catch { Fail ($data + ' could not be removed (is a file in it open?).') } }
+    [IO.File]::WriteAllText($script:ResultFile, 'OK')
+}
+
+# --- configure: change an answer later (ADR 0051, decision 17) --------------------------------
+
+function Invoke-Configure([string[]]$Options) {
+    [void](Get-CurrentVersion)
+    if (-not (Read-InstalledAnswers)) { Fail ((Join-Path $script:Data 'config\install.conf') + ", the install's answers, is missing, so configure cannot tell what install chose. Nothing was changed.") }
+    $kc = Join-Path $script:Root 'kilnmark.cmd'
+    if ($Options.Count -eq 0) {
+        Write-Host ("This install's answers (" + (Join-Path $script:Data 'config\install.conf') + '):')
+        Show-Answers
+        Write-Host ('Change one with: ' + $kc + ' configure KEY=VALUE (install.conf.example says each).')
+        return
+    }
+    $identityWas = Get-Answer 'identity'
+    $changed = @()
+    Set-Steps 3
+    Start-Step 'Check the new answers'
+    foreach ($a in $Options) {
+        if ($a -cnotmatch '^([a-z_]+)=(.*)$') { Fail 'Say each change as KEY=VALUE, such as port=9780.' }
+        $k = $Matches[1]; $v = $Matches[2].Trim()
+        if ($k -match '(password|secret|token)') { Fail ($k + ' is a secret: configure asks for one when an answer needs it, and none is given on a command line.') }
+        if (-not (Test-KnownKey $k)) { Fail ($k + ' is not an answer install knows (install.conf.example lists them).') }
+        if (($FixedKeys -ccontains $k) -and $v -cne (Get-Answer $k)) {
+            if ($k -ceq 'mode') { Fail "An install's mode never changes (ADR 0051): for the other mode, install Kilnmark afresh. Nothing was changed." }
+            Fail ($k + ' is fixed at install: changing it needs a new install. Nothing was changed.')
+        }
+        if ($v -ceq (Get-Answer $k)) { continue }
+        $script:Answers[$k] = $v
+        $changed += $k
+    }
+    if ($changed.Count -eq 0) { Complete-Step; Write-Host 'Nothing changed: those are the answers already.'; return }
+    foreach ($k in $changed) {
+        if (-not (Test-Relevant $k)) { Fail ($k + ' means nothing with this install''s other answers (with identity=' + (Get-Answer 'identity') + ' and tls=' + (Get-Answer 'tls') + '). Nothing was changed.') }
+        $n = 0
+        if ($k.EndsWith('port') -and [int]::TryParse((Get-Answer $k), [ref]$n) -and (Test-PortBusy $n)) { Fail ($k + ': port ' + $n + ' is in use (port ' + (Get-FreePort $n) + ' is free). Nothing was changed.') }
+    }
+    if (-not (Test-AllAnswers)) { Fail 'Some answers cannot be taken (above), so nothing was changed.' }
+    if ((Get-Answer 'identity') -ceq 'own' -and ($identityWas -cne 'own' -or $changed -ccontains 'oidc_client_id')) {
+        Read-SecretValue 'The client secret your identity provider gave Kilnmark'
+        if (-not $script:SecretValue) { Fail 'The client secret is needed for sign-in with your identity provider. Nothing was changed.' }
+    }
+    $restart = $false; $person = $false
+    foreach ($k in $changed) {
+        if ($k -ceq 'email_domain') { continue }
+        if ($k -cin @('admin_email', 'admin_first_name', 'admin_last_name')) { $person = $true } else { $restart = $true }
+    }
+    if ($person) {
+        if (-not (Get-Answer 'admin_email')) { Fail 'admin_email is needed to add a first admin. Nothing was changed.' }
+        Read-InstallSecrets
+    }
+    Complete-Step
+    Start-Step 'Write the settings'
+    Copy-Certs
+    if ($identityWas -cne (Get-Answer 'identity') -and (Get-Answer 'identity') -ceq 'bundled') { Write-Env -NewClient } else { Write-Env }
+    Write-Answers (Join-Path $script:Data 'config\install.conf')
+    Write-Host ('Wrote config\.env and config\install.conf: ' + ($changed -join ' ') + '.')
+    Complete-Step
+    Start-Step 'Run again what the change affects'
+    $running = Test-Answers ((Get-LocalUrl) + '/q/health/ready')
+    if ($restart) {
+        if ($running) { Write-Host 'Restarting Kilnmark, so every container takes the new settings ...'; Invoke-Down; Invoke-Up @('-NoBrowser') }
+        else { Write-Host ('Kilnmark is not running: the change takes effect at its next start (' + $kc + ' up).') }
+    }
+    if ($person) {
+        if (-not $running -and -not $restart) { Fail ('Kilnmark is not running, so the first admin was not added: start it (' + $kc + ' up), then run configure again.') }
+        $p = @{ Email = (Get-Answer 'admin_email'); First = (Get-Answer 'admin_first_name'); Last = (Get-Answer 'admin_last_name'); Groups = 'kilnmark-admins'; Password = $script:AdminPassword }
+        $script:AdminPassword = ''
+        if (-not (New-Person $p)) { Fail 'The first admin was not added (above).' }
+    }
+    if (-not $restart -and -not $person) { Write-Host ('Nothing to run again: ' + ($changed -join ' ') + ' takes effect as it is.') }
+    Complete-Step
 }
 
 # --- the Starter Pack (ADR 0051) ----------------------------------------------------------------
@@ -1329,7 +2177,7 @@ function Invoke-Starter([string[]]$Options) {
     [void](Get-CurrentVersion)
     Update-Settings
     $profiles = ',' + ((Get-Setting 'COMPOSE_PROFILES') -replace '\s', '') + ','
-    if (-not $profiles.Contains(',auth,')) { Fail 'The example people need the bundled Keycloak: the auth profile (INSTALL.md, "Keycloak, if you have no identity provider").' }
+    if (-not $profiles.Contains(',auth,')) { Fail 'The example people need the bundled Keycloak: the auth profile (docs/guide/install/production-bundled-keycloak.md).' }
     if (-not (Test-StarterMode)) { Fail "This is a production install: it never has the Starter Pack's example people. Nothing was changed." }
     $password = ''
     if ($action -ne 'remove') {
@@ -1407,7 +2255,7 @@ function Read-Person([string]$Groups) {
     $email = ($email -replace '\s', '').ToLowerInvariant()
     if (-not $email) {
         if ($Groups) {
-            Write-Host ('No first admin was made. Add people later with ' + (Join-Path $script:Root 'kilnmark.cmd') + ' people add (or people import, or Keycloak''s console: INSTALL.md, "Keycloak, if you have no identity provider").')
+            Write-Host ('No first admin was made. Add people later with ' + (Join-Path $script:Root 'kilnmark.cmd') + ' people add (or people import, or Keycloak''s console: docs/guide/install/production-bundled-keycloak.md).')
         } else {
             Write-NoPerson 'No email was given. Nobody was made.'
         }
@@ -1675,7 +2523,7 @@ function Write-Sums([string]$Dir, [string[]]$Files) {
 }
 
 function Invoke-Backup([string[]]$Options) {
-    $dest = Join-Path $script:Root 'backups'
+    $dest = Join-Path $script:Data 'backups'
     if ($Options.Count -gt 0) { $dest = $Options[0] }
     $v = Get-CurrentVersion
     $now = (Get-Date).ToUniversalTime()
@@ -1737,7 +2585,7 @@ function Invoke-Restore([string[]]$Options) {
         switch ($o) { '-Yes' { $yes = $true } '-WithoutKeys' { $keys = $false } default { if ($o.StartsWith('-')) { Fail ('Unknown option ' + $o + ': only -Yes and -WithoutKeys.') } else { $src = $o } } }
     }
     if (-not ($src -and (Test-Path (Join-Path $src 'backup.txt')) -and (Test-Path (Join-Path $src 'SHA256SUMS')))) {
-        Fail 'Say which backup to restore, a folder made by backup: kilnmark.cmd restore C:\Kilnmark\backups\kilnmark-<time> -Yes'
+        Fail 'Say which backup to restore, a folder made by backup: kilnmark.cmd restore C:\ProgramData\Kilnmark\backups\kilnmark-<time> -Yes'
     }
     $src = (Resolve-Path $src).Path
     # The backup must be whole, and no newer than this release.
@@ -1872,7 +2720,7 @@ function Invoke-Restore([string[]]$Options) {
     }
 
     # The restore is recorded by Kilnmark at its next start, from restored.properties beside the key.
-    $stage = Join-Path $script:Root ('backups\.restore-' + $stamp)
+    $stage = Join-Path $script:Data ('backups\.restore-' + $stamp)
     New-Item -ItemType Directory $stage | Out-Null
     Write-UnixText (Join-Path $stage 'restored.properties') @(('backup=' + (Split-Path $src -Leaf)), ('takenAt=' + $taken), ('version=' + $from), ('previousDatabase=' + $before), ('keys=' + $keys.ToString().ToLower()))
     if ($keys) {
@@ -1924,8 +2772,14 @@ function Invoke-Restore([string[]]$Options) {
 
 # --- main --------------------------------------------------------------------------------------
 
+# Day-to-day commands run as the operator, from a prompt that is not elevated.
+if ($Command -notin @('install', 'upgrade', 'uninstall', 'check', 'version', 'help', '-h', '--help', '/?', '_install-elevated', '_place-version', '_use-version', '_uninstall-elevated')) {
+    Assert-Operator $Command
+}
 switch ($Command) {
     'install' { Invoke-Install $Rest }
+    'upgrade' { Invoke-Upgrade $Rest }
+    'uninstall' { Invoke-Uninstall $Rest }
     { $_ -in @('up', 'start') } { Start-Log 'up'; Invoke-Up $Rest; Stop-Log }
     { $_ -in @('down', 'stop') } { Start-Log 'down'; Invoke-Down; Stop-Log }
     'restart' { Start-Log 'restart'; Invoke-Restart $Rest; Stop-Log }
@@ -1936,21 +2790,8 @@ switch ($Command) {
         foreach ($a in $Rest) { if ($a -eq '-f') { $follow = @('-f') } else { $svc += $a } }
         & $script:Engine @base logs --tail 200 @follow @svc
     }
-    'check' {
-        $running = $false
-        if ($script:Root -and (Test-Path (Join-Path $script:Root 'config\.env'))) { $running = Test-Answers ((Get-LocalUrl) + '/q/health/ready') }
-        Test-Prerequisites $running
-        if ($script:Root -and (Test-Path (Join-Path $script:Root 'config\.env'))) {
-            $added = Get-NewSettings (Join-Path (Get-CurrentDir) '.env.example')
-            if ($added.Count -gt 0) { Write-Host ("Settings in this version's .env.example that config\.env does not mention: " + ($added -join ' ')) }
-            if (Test-KeycloakOn) {
-                $expiry = Get-ExpiryState
-                Write-Host ('People expiry: ' + $expiry)
-                if ($expiry -eq 'not set up') { [void]$script:Warnings.Add('The hourly expiry of unused temporary passwords is not set up: kilnmark.cmd up sets it up (a scheduled task).') }
-            }
-        }
-        if (Write-Checks) { Write-Host 'All checks passed.' } else { exit 1 }
-    }
+    'check' { Invoke-Check $Rest }
+    'configure' { Start-Log 'configure'; Invoke-Configure $Rest; Stop-Log }
     'verify' {
         $file = $null
         for ($i = 0; $i -lt $Rest.Count; $i++) { if ($Rest[$i] -eq '-Key') { $i++; $script:KeyOverride = $Rest[$i] } else { $file = $Rest[$i] } }
@@ -1972,9 +2813,14 @@ switch ($Command) {
     'starter' { Start-Log 'starter'; Invoke-Starter $Rest; Stop-Log }
     'people' { if ($Rest.Count -gt 0 -and $Rest[0] -eq 'expire') { Assert-ExpireTree; Start-Log 'people-expire' -Daily } else { Start-Log 'people' }; Invoke-People $Rest; Stop-Log }
     'restore' { Start-Log 'restore'; Invoke-Restore $Rest; Stop-Log }
-    'upgrade' { Invoke-Upgrade $Rest }
-    'uninstall' { Invoke-Uninstall $Rest }
-    'version' { if ($script:Root) { Write-Host ('Kilnmark ' + (Get-CurrentVersion)) } else { Write-Host ('Kilnmark ' + (Get-VersionOf $Here) + ' (not installed)') } }
+    # the parts of install, upgrade and uninstall that run as an administrator, and the operator's
+    # part of uninstall
+    '_install-elevated' { Invoke-InstallElevated $Rest }
+    '_place-version' { Invoke-PlaceVersion $Rest }
+    '_use-version' { Invoke-UseVersion $Rest }
+    '_uninstall-elevated' { Invoke-UninstallElevated $Rest }
+    '_stop-for-uninstall' { Start-Log 'uninstall'; Invoke-StopForUninstall ($Rest -contains '-Purge'); Stop-Log }
+    'version' { if ($script:Root -and $script:Data) { Write-Host ('Kilnmark ' + (Get-CurrentVersion)) } else { Write-Host ('Kilnmark ' + (Get-VersionOf $Here) + ' (not installed)') } }
     { $_ -in @('help', '-h', '--help', '/?') } { Show-Usage }
     default { Show-Usage; exit 2 }
 }

@@ -69,7 +69,7 @@ with a non-zero exit code):
 0 2 * * * /opt/kilnmark/kilnmark.sh backup /srv/backups
 ```
 
-On Windows, a Task Scheduler task running `C:\Kilnmark\kilnmark.cmd backup D:\backups` does the
+On Windows, a Task Scheduler task running `"C:\Program Files\Kilnmark\kilnmark.cmd" backup D:\backups`, run as the operator, does the
 same.
 
 Keep as many as your retention policy asks, and at least one copy off the machine. Back up again

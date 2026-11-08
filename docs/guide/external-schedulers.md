@@ -163,7 +163,7 @@ profile. Control-M takes exit code 0 as Ended OK and any other as Ended Not OK; 
 actions on the codes you want handled apart, for example a notice to the data team on 1 and a
 rerun after ten minutes on 5. To start the work again after a failure, rerun with the key changed
 (`--key daily-load-%%ORDERID-2`), or order the job again. On a Windows agent the command is
-`C:\Kilnmark\kilnmark-run.cmd pipeline daily-load ...`.
+`C:\Tools\Kilnmark\kilnmark-run.cmd pipeline daily-load ...`.
 
 **As a Web Services REST job**, without the script. Keep the token in the job's connection profile,
 as Control-M keeps other secrets, and send it as `Authorization: Bearer <token>`. Then:
@@ -271,7 +271,7 @@ day's date:
 set KILNMARK_URL=https://kilnmark.example.com:8443
 set KILNMARK_TOKEN_FILE=C:\ProgramData\Kilnmark\scheduler.token
 for /f %%d in ('powershell.exe -NoProfile -Command "Get-Date -Format yyyyMMdd"') do set DAY=%%d
-call C:\Kilnmark\kilnmark-run.cmd pipeline daily-load --timeout 3h --key daily-load-%DAY% >> C:\ProgramData\Kilnmark\logs\daily-load.log 2>&1
+call C:\Tools\Kilnmark\kilnmark-run.cmd pipeline daily-load --timeout 3h --key daily-load-%DAY% >> C:\ProgramData\Kilnmark\logs\daily-load.log 2>&1
 exit /b %errorlevel%
 ```
 

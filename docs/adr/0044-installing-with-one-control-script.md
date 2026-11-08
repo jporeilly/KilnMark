@@ -1,6 +1,8 @@
 # 0044 Installing and running Kilnmark with one control script, from signed images
 
-Status: Accepted (5 November 2026)
+Status: Accepted (5 November 2026); decisions 3 and 4 amended by
+[ADR 0051, decision 17](0051-starter-pack.md) (8 November 2026): `prepare` went into a guided
+`install` run as root, and one install root became a program folder and a data folder.
 
 ## Context
 
@@ -45,8 +47,9 @@ A release was a folder to copy, a `.env` to fill in by hand with two secrets, an
    `docker` group can act as root on the machine, so rootless Podman is the default and the
    recommendation. Every other command runs as that account (owner
    decision, 5 November 2026). On Windows, Kilnmark runs as the person who installs it.
-4. **An install root**: `/opt/kilnmark` or `C:\Kilnmark` by default, any folder without spaces
-   with `--root`. It holds:
+4. **An install root** (since 0.1.2 a program folder and a data folder, ADR 0051 decision 17:
+   `/opt/kilnmark` and `/var/opt/kilnmark`, or `C:\Program Files\Kilnmark` and
+   `C:\ProgramData\Kilnmark`). It held:
    - `versions/<version>/`, a release that is never edited, with `current` (a symlink) or
      `current.txt` naming the one that runs;
    - `config/.env` and the version's `.env.example` beside it;

@@ -152,6 +152,17 @@ class BackupModeAndInstallTest {
         Thread.sleep(1100);
         String none = run(List.of(bash, script, "backups"), release, env);
         assertTrue(none.contains("Backup failed: the database has no deployment mode or install id recorded"), none);
+        // the compose command a word a line, as the control script gives it: a path with a space stays
+        // one word (C:\Program Files, or /opt/my kilnmark)
+        Path spaced = Files.createDirectories(Files.createTempDirectory("kilnmark compose").resolve("with space"));
+        Path fakeSpaced = Files.copy(fake, spaced.resolve("compose.sh"));
+        executable(fakeSpaced);
+        env.remove("KILNMARK_COMPOSE");
+        env.put("KILNMARK_COMPOSE_LINES", fakeSpaced.toString().replace('\\', '/'));
+        env.put("FAKE_LIVE_ID", ID);
+        Thread.sleep(1100);
+        String lines = run(List.of(bash, script, "backups"), release, env);
+        assertTrue(lines.contains("Backed up Kilnmark 9.9.9"), lines);
         // the Windows edition writes the same two lines
         String ps = Files.readString(ControlScriptStarterTest.LAUNCH.resolve("kilnmark.ps1"));
         assertTrue(ps.contains("('deployment_mode=' + $mode), ('install_id=' + $installId))"), "backup.txt in both editions");
@@ -170,6 +181,7 @@ class BackupModeAndInstallTest {
             Files.writeString(root.resolve("current.txt"), "9.9.9\n");
             Files.createDirectories(root.resolve("config"));
             Files.writeString(root.resolve("config/.env"), "KILNMARK_MODE=" + mode + "\nCOMPOSE_PROFILES=auth\n");
+            Files.writeString(root.resolve("data-folder.txt"), root + "\n");
             Path backup = backup(fileMode, fileId);
             Map<String, String> env = a.env();
             env.put("KILNMARK_ROOT", root.toString());
