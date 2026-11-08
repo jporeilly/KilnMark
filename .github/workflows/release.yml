@@ -163,6 +163,24 @@ jobs:
           rm -f "$RUNNER_TEMP/cosign.key"
           ls -la
 
+      # A rehearsal keeps its package as a release candidate for three days, so it can be installed on
+      # a test machine without a tag. It is signed with the rehearsal's throwaway key, whose public
+      # half goes with it as rc-cosign.pub (install with KILNMARK_COSIGN_PUB set to that file). The
+      # private half was deleted above and is never in it.
+      - name: Keep the release candidate
+        if: github.event_name == 'pull_request'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: cp "$RUNNER_TEMP/verify.pub" out/rc-cosign.pub
+      - name: Upload the release candidate
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kilnmark-${{ steps.version.outputs.version }}-rc
+          path: out/
+          retention-days: 3
+          if-no-files-found: error
+
       # The release installed as a customer would (INSTALL.md, section A): prepare as root makes the
       # kilnmark account and /opt/kilnmark; then, as that account, install from the offline images
       # file on Docker, status, check, a backup, a restore of it, down, up, and a purge.

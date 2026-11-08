@@ -251,6 +251,12 @@ commit of main starts `.github/workflows/release.yml`, which builds, signs and c
 and leaves a draft GitHub release to publish ([Supply chain](design/supply-chain.md),
 [ADR 0033](adr/0033-sboms-scanning-and-signed-releases.md)).
 
+**Release candidates.** A pull request that touches the release's files rehearses the release, and
+keeps its package for three days as the workflow artifact `kilnmark-<version>-rc`, so it can be
+installed on a test machine before any tag. Fetch it with `gh run download <run id> -R
+jporeilly/KilnMark -n kilnmark-<version>-rc`. It is signed with the rehearsal's throwaway key,
+whose public half is in it as `rc-cosign.pub`: install with `KILNMARK_COSIGN_PUB` set to that file.
+
 Once, before the first signed release, the owner makes the release key on their own machine:
 
 ```
