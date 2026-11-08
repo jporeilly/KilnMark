@@ -14,7 +14,7 @@ work so the two never mix:
 
 ## Samples
 
-![The Library's Samples tab: the samples grouped by what they show, each a pipeline or a flow, with the last run of those added](images/library-samples.png)
+![The Library's Samples tab: the samples grouped by what they show, each a pipeline or a flow, with the last run of those added; About this sample is open on sample-read-columns-where, giving What it shows, Why it matters, Look for when it runs and Needs](images/library-samples.png)
 
 The **Samples** tab lists every sample by what it shows: reading and writing, filtering and
 routing, transforming, combining, totals, quality gates, parameters, flows and volume. Each row
@@ -64,7 +64,7 @@ sample here, reading those tables: nothing to prepare, and every sample can run.
 off takes all of it out again. A production install never has the pack: its page under
 **Settings** says so and offers nothing. The templates are here on every install.
 
-![Settings, Starter Pack, after turning it on: what the pack holds, the run creating the sample tables, the control script's commands for the example people, and each step of turning it on with how it went](images/starter-pack-settings.png)
+![Settings, Starter Pack, on: what the pack holds, the run that created the sample tables, the control script's commands for the example people, and which example accounts have signed in](images/starter-pack-settings.png)
 
 ![The Library's Samples tab after the Starter Pack was turned on: every sample added, with the marking saying this is a Starter Pack install, for training and development only, with its example data and accounts on](images/library-starter-pack.png)
 

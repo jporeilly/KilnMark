@@ -120,4 +120,4 @@ works as above, with Kilnmark's own look:
   password and the code, and you are in. A code works once, so wait for the app to show a new one
   if it still shows the code you just set up with. From then on, each sign-in asks for both.
 
-![Keycloak's page for setting up the one-time code: install an authenticator app, scan the QR code (blurred here), type the code it shows and a name for the device](images/keycloak-one-time-code.png)
+![Keycloak's page for setting up the one-time code: install an authenticator app, scan the QR code (hidden here), type the code it shows and a name for the device](images/keycloak-one-time-code.png)

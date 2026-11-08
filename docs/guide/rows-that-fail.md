@@ -27,6 +27,11 @@ while the others carry on:
   mode: replace
 ```
 
+The sample `sample-rows-that-fail` does the same with a supplier feed: the one row whose SKU
+cannot be read goes to its own file, and the run carries on with the others.
+
+![The sample pipeline sample-rows-that-fail on the canvas after a run: the read node feed passes 62 rows to the compute node numbered; 61 rows leave its out port for the write out, and the one row that failed leaves its errors port, on a dashed connection labelled errors, for the write aside](images/rows-that-fail-canvas.png)
+
 | Node | A row fails when |
 | --- | --- |
 | `compute` | an expression fails on it |
