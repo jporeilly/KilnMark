@@ -4,7 +4,7 @@
  * it. Every figure is an estimate and is labelled so wherever it is shown. Calls and pure word
  * helpers, unit tested; loaded with the pipeline pages, outside the main bundle.
  */
-import { call, rating, type QualityScore } from "../api";
+import { call, rating, type QualityScore, plural } from "../api";
 import { dimensionWord, percent } from "./quality";
 
 export type PredictedRule = {
@@ -92,7 +92,7 @@ export function predictedWords(p: Pick<PredictedQuality, "overall"> | null | und
 export function pointsWords(delta: number): string {
   const n = Math.round(delta * 100);
   if (n === 0) return "no change";
-  return `${n > 0 ? "+" : "−"}${Math.abs(n)} ${Math.abs(n) === 1 ? "point" : "points"}`;
+  return `${n > 0 ? "+" : "−"}${plural(Math.abs(n), "point")}`;
 }
 
 /** A suggestion's effect: "Predicted 89% → 94% (+5 points, estimate)". */
@@ -142,7 +142,7 @@ export function gapWords(measured: QualityScore | null | undefined, predicted: Q
   }
   const side = gap < 0 ? "below" : "above";
   const points = Math.abs(Math.round(gap * 100));
-  const lead = points === 0 ? "Measured overall as predicted" : `Measured ${points} ${points === 1 ? "point" : "points"} ${side} the estimate`;
+  const lead = points === 0 ? "Measured overall as predicted" : `Measured ${plural(points, "point")} ${side} the estimate`;
   const where =
     widest && Math.abs(Math.round(widest.gap! * 100)) > 2
       ? `; the widest gap is in ${dimensionWord(widest.dimension).toLowerCase()} (${pointsWords(widest.gap!)}). Check the metadata of what this node reads, or the nodes before it.`

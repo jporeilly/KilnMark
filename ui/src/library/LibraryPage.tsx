@@ -12,6 +12,7 @@ import {
   type SampleExplanation,
   type SampleInfo,
   type Template,
+  plural,
 } from "../api";
 import { Tabs, TabPanel, useTabsId } from "../components/ui";
 import { useTitle } from "../components/useTitle";
@@ -48,6 +49,15 @@ export function explains(e: SampleExplanation | null): e is SampleExplanation {
 }
 
 /**
+ * A part of an explanation as the start of a sentence: its first word capitalised ("the note under
+ * the read node" reads "The note under the read node") when it is a plain word. A part that starts
+ * with something to type (inputs:, lpad, group_by, shop-db, ${…}) is left as written.
+ */
+export function sentenceStart(text: string): string {
+  return /^[a-z][a-z']*\s/.test(text) ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+}
+
+/**
  * A sample's or template's explanation, from the comment its file starts with: what it shows (for a
  * template, what it is for), why it matters, what to look for, and what it needs. Parts left out are
  * not shown.
@@ -67,7 +77,7 @@ export function Explanation({ explanation: e, template = false }: { explanation:
         .map(([label, text]) => (
           <div key={label}>
             <dt>{label}</dt>
-            <dd>{text}</dd>
+            <dd>{sentenceStart(text)}</dd>
           </div>
         ))}
     </dl>
@@ -150,7 +160,7 @@ function SamplesTab({ designer }: { designer: boolean }) {
       <div className="lib-bar">
         <p>
           {catalogue
-            ? `${catalogue.samples.length} samples; ${added} added here. Added samples run like any pipeline or flow, and stay listed here, never on the Pipelines or Flows page.`
+            ? `${plural(catalogue.samples.length, "sample")}; ${added} added here. Added samples run like any pipeline or flow, and stay listed here, never on the Pipelines or Flows page.`
             : ""}
         </p>
         {designer && <AddSamples onAdded={load} />}

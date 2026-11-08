@@ -4,6 +4,7 @@
  * setting each problem belongs to. Pure functions, unit tested.
  */
 import type { PipelineColumn, PipelineProblem, PipelineValidation, NodeType, NodeTypeSetting } from "../../api";
+import { plural } from "../../api";
 import type { GraphNode, Value } from "./model";
 
 export const KINDS = [
@@ -101,13 +102,13 @@ export function nodeSummary(node: GraphNode): string {
       return parts.join("; ");
     }
     case "union":
-      return `${node.inputs.length} ${node.inputs.length === 1 ? "input" : "inputs"}`;
+      return `${plural(node.inputs.length, "input")}`;
     case "dedupe":
       return `${s.key != null ? `key ${text(s.key)}` : "whole rows"} · ${whichRowWords(node)}`;
     case "route":
       return keysOf(s.routes).join(", ");
     case "limit":
-      return s.rows != null ? `first ${t("rows")} rows` : "";
+      return s.rows != null ? `first ${t("rows")} ${t("rows") === "1" ? "row" : "rows"}` : "";
     case "sort":
       return s.by != null ? `by ${text(s.by)}` : "";
     case "window": {
@@ -117,7 +118,7 @@ export function nodeSummary(node: GraphNode): string {
     case "gate": {
       const n = Array.isArray(s.rules) ? s.rules.length : 0;
       const own = s.asset_rules === false || s.asset_rules === "false" ? "" : "asset's rules";
-      const written = n ? `${n} ${n === 1 ? "rule" : "rules"}` : "";
+      const written = n ? `${plural(n, "rule")}` : "";
       const checks = [own, written].filter(Boolean).join(" + ");
       return [s.on_fail != null ? t("on_fail") : "stop", checks].filter(Boolean).join(" · ");
     }

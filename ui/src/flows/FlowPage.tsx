@@ -16,6 +16,7 @@ import {
   type FlowVersion,
   type FlowVersionSummary,
   samplesApi,
+  plural,
 } from "../api";
 import { go, href } from "../router";
 import { useTitle } from "../components/useTitle";
@@ -33,6 +34,8 @@ import { starterFlow } from "./template";
 import { SchedulesSection } from "../schedules/SchedulesSection";
 import { ScheduledNext, useSchedules } from "../schedules/SchedulesTable";
 import "../pipelines/pipelines.css";
+import { Who } from "../components/Who";
+import { noticeText, statusIn, type Notice } from "../components/runNotice";
 
 const FlowDiagram = lazy(() => import("./FlowDiagram"));
 
@@ -94,7 +97,7 @@ export function FlowPage({
   const [error, setError] = useState<string | null>(null);
   const [failures, setFailures] = useState(0);
   const [conflict, setConflict] = useState(false);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<Notice>("");
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [versions, setVersions] = useState<FlowVersionSummary[] | null>(null);
@@ -413,7 +416,7 @@ export function FlowPage({
 
   const queued = (run: FlowRun) => {
     setError(null);
-    setNotice(`Run ${run.id} of version ${run.version} is queued.`);
+    setNotice({ run: run.id, of: `version ${run.version}` });
     loadLists();
   };
 
@@ -426,7 +429,7 @@ export function FlowPage({
         : ""
       : problems.length === 0
         ? "No problems found."
-        : `${problems.length} ${problems.length === 1 ? "problem" : "problems"} found.`;
+        : `${plural(problems.length, "problem")} found.`;
   const unsavedRun = dirty && !isNew;
 
   if (loadError && !detail && !isNew) {
@@ -526,7 +529,7 @@ export function FlowPage({
       )}
       {viewing && shown && (
         <p className="small muted">
-          Saved {formatTime(shown.createdAt)} by {shown.author}
+          Saved {formatTime(shown.createdAt)} by <Who name={shown.author} />
           {shown.message && <>: “{shown.message}”</>}. Read-only.{" "}
           {name && <a href={href.flow(name)}>Back to the latest version</a>}
         </p>
@@ -534,7 +537,7 @@ export function FlowPage({
       {fromTemplate && <p className="hint">{fromTemplate}</p>}
       {name && detail && !viewing && <OwnersSection kind="flow" name={name} role={role} />}
       <p role="status" className="notice">
-        {notice}
+        {noticeText(notice, typeof notice === "string" ? null : statusIn(runs, notice.run))}
       </p>
       {error && (
         <p role="alert" className="error" tabIndex={-1} ref={errorRef}>
@@ -759,7 +762,7 @@ export function FlowPage({
                           </td>
                           <td>{r.version}</td>
                           <td className="small">
-                            {formatTime(r.requestedAt)} by {r.requestedBy}
+                            {formatTime(r.requestedAt)} by <Who name={r.requestedBy} />
                           </td>
                           <td>{took(r.startedAt, r.finishedAt)}</td>
                           <td>{formatNumber(r.rowsWritten)}</td>
@@ -789,11 +792,11 @@ export function FlowPage({
                       {!v.valid && (
                         <span className="pl-bad">
                           {" "}
-                          · {v.problems} {v.problems === 1 ? "problem" : "problems"}
+                          · {plural(v.problems, "problem")}
                         </span>
                       )}
                       <div className="small muted">
-                        {formatTime(v.createdAt)} by {v.author}
+                        {formatTime(v.createdAt)} by <Who name={v.author} />
                         {v.message && <>: {v.message}</>}
                       </div>
                     </li>

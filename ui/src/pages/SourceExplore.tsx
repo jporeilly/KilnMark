@@ -7,6 +7,7 @@ import {
   type Preview,
   type TableDetail,
   type TableForeignKey,
+  plural,
 } from "../api";
 import { PreviewTable } from "../components/PreviewTable";
 import { GenerateSql } from "./GenerateSql";
@@ -174,7 +175,7 @@ function Tables({ source, schema, table }: { source: string; schema: string; tab
 export function estimateText(t: TableDetail): string {
   if (t.kind !== "table" && t.kind !== "partitioned table") return "A view: its rows are counted when read.";
   if (t.estimatedRows == null) return "The database keeps no estimate of its rows.";
-  return `About ${formatNumber(t.estimatedRows)} ${t.estimatedRows === 1 ? "row" : "rows"} (the database's estimate).`;
+  return `About ${plural(t.estimatedRows, "row")} (the database's estimate).`;
 }
 
 function Table({ source, kind, path }: { source: string; kind: string; path: string }) {
@@ -227,7 +228,7 @@ function Table({ source, kind, path }: { source: string; kind: string; path: str
       {detail && (
         <>
           <p className="small" aria-live="polite">
-            {count != null ? `${formatNumber(count)} ${count === 1 ? "row" : "rows"}, counted just now.` : estimateText(detail)}{" "}
+            {count != null ? `${plural(count, "row")}, counted just now.` : estimateText(detail)}{" "}
             {count == null && (
               <Button onClick={countNow} disabled={counting}>
                 {counting ? "Counting…" : "Count exactly"}

@@ -9,6 +9,7 @@ import {
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { Button, Card, EmptyState, PageHeader, StatusChip, type Tone } from "../components/ui";
+import { Who } from "../components/Who";
 
 const STATE: Record<string, { tone: Tone; label: string }> = {
   ready: { tone: "good", label: "Ready" },
@@ -184,7 +185,9 @@ export function JdbcDriversPage() {
                         SHA-256 <span className="mono" title={h.sha256}>{h.sha256.slice(0, 16)}…</span>
                       </div>
                     </td>
-                    <td className="small">{h.by}</td>
+                    <td className="small">
+                    <Who name={h.by} />
+                  </td>
                   </tr>
                 ))}
               </tbody>

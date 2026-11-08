@@ -11,6 +11,7 @@ const catalogue: Catalogue = new Map([
   ["route", type("route", "transform", ["in"], ["out"])],
   ["filter", type("filter", "transform", ["in"], ["out", "rejected"])],
   ["write", type("write", "sink", ["in"], [])],
+  ["join", type("join", "transform", ["left", "right"], ["out"])],
 ]);
 
 const graph = (yaml: string) => {
@@ -70,5 +71,43 @@ nodes:
     // Stacked without overlapping, in the same column.
     expect(at.kept.x).toBe(at.others.x);
     expect(at.others.y).toBeGreaterThan(at.kept.y);
+  });
+
+  test("a join's inputs are stacked in the order of its ports, left above right (sample-join)", () => {
+    // Written so that a layout by the order of the YAML, or by name, puts customers on top.
+    for (const yaml of [
+      `kilnmark: pipeline/v1
+name: sample-join
+nodes:
+  - id: orders
+    type: read
+  - id: customers
+    type: read
+  - id: joined
+    type: join
+    inputs: { left: orders, right: customers }
+  - id: out
+    type: write
+    input: joined
+`,
+      `kilnmark: pipeline/v1
+name: demo
+nodes:
+  - id: customers
+    type: read
+  - id: orders
+    type: read
+  - id: joined
+    type: join
+    inputs: { left: orders, right: customers }
+  - id: out
+    type: write
+    input: joined
+`,
+    ]) {
+      const at = autoLayout(graph(yaml), catalogue);
+      expect(at.orders.x).toBe(at.customers.x);
+      expect(topToBottom(at, ["customers", "orders"])).toEqual(["orders", "customers"]);
+    }
   });
 });

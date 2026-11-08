@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type ReactNode } from "react";
-import { formatNumber } from "../api";
+import { formatNumber, plural } from "../api";
 import { go, href } from "../router";
 import { browseApi, type BrowseAsset, type BrowseContainer, type BrowseSource } from "./browseApi";
 import { containerIcon, formatLabel, Icon, sourceWords } from "./icons";
@@ -101,7 +101,7 @@ export function BrowseTree({
               error: null,
             },
           }));
-          setAnnouncement(`${source}: ${page.total} ${page.total === 1 ? "item" : "items"}`);
+          setAnnouncement(`${source}: ${plural(page.total, "item")}`);
         })
         .catch((e: Error) => {
           if (gen !== generation.current) return;
@@ -132,7 +132,7 @@ export function BrowseTree({
               error: null,
             },
           }));
-          setAnnouncement(`${container || "top level"}: ${page.total} ${page.total === 1 ? "asset" : "assets"}`);
+          setAnnouncement(`${container || "top level"}: ${plural(page.total, "asset")}`);
         })
         .catch((e: Error) => {
           if (gen !== generation.current) return;
@@ -395,7 +395,7 @@ export function BrowseTree({
                     {s.label}
                   </span>
                   <span className="tree-meta" id={`${domId(sid)}-meta`}>
-                    {words.kind} · {formatNumber(s.assets)} {s.assets === 1 ? "asset" : "assets"}
+                    {words.kind} · {plural(s.assets, "asset")}
                   </span>
                 </TreeRow>
                 {open && (
@@ -431,7 +431,7 @@ export function BrowseTree({
                               {c.name || "(top level)"}
                             </span>
                             <span className="tree-meta" id={`${domId(cid)}-meta`}>
-                              {formatNumber(c.assets)} {c.assets === 1 ? "asset" : "assets"}
+                              {plural(c.assets, "asset")}
                             </span>
                           </TreeRow>
                           {copen && (

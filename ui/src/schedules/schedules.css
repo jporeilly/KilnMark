@@ -35,8 +35,20 @@
   min-width: 200px;
 }
 
+/*
+ * Names wrap, so a long sign-in name or pipeline name never pushes the last time it was due and the
+ * row's buttons out of view: at 1240px every column shows without scrolling.
+ */
 .sc-target,
-.sc-setby,
+.sc-setby {
+  overflow-wrap: anywhere;
+}
+
+.sc-setby {
+  min-width: 12ch;
+  max-width: 24ch;
+}
+
 .sc-nowrap {
   white-space: nowrap;
 }

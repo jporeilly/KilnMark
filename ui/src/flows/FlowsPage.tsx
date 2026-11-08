@@ -5,6 +5,8 @@ import { useTitle } from "../components/useTitle";
 import { docHref } from "../docs/links";
 import { FlowRunStatus, RunFlowButton } from "./RunFlow";
 import "../pipelines/pipelines.css";
+import { Who } from "../components/Who";
+import { lastRunStatus, noticeText, type Notice } from "../components/runNotice";
 
 /**
  * A team's own flows: what each does, its latest version, its last run; Run now for stewards, New
@@ -18,7 +20,7 @@ export function FlowsPage({ role }: { role: AccessRole }) {
   const flows = all?.filter((f) => !f.library) ?? null;
   const samples = all?.filter((f) => f.library).length ?? 0;
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<Notice>("");
 
   const load = useCallback(() => {
     flowsApi
@@ -60,7 +62,7 @@ export function FlowsPage({ role }: { role: AccessRole }) {
         saved as YAML with every version. <a href={docHref("flows")}>How to build and run one</a>.
       </p>
       <p role="status" className="notice">
-        {notice}
+        {noticeText(notice, typeof notice === "string" ? null : lastRunStatus(all, notice.run))}
       </p>
       {error && (
         <p role="alert" className="error">
@@ -110,7 +112,7 @@ export function FlowsPage({ role }: { role: AccessRole }) {
                       Version {f.latestVersion}
                       {!f.valid && <div className="small pl-bad">Has problems: cannot run</div>}
                       <div className="small muted">
-                        Saved {formatTime(f.updatedAt)} by {f.updatedBy}
+                        Saved {formatTime(f.updatedAt)} by <Who name={f.updatedBy} />
                       </div>
                     </td>
                     <td>
@@ -131,7 +133,7 @@ export function FlowsPage({ role }: { role: AccessRole }) {
                           title={f.valid ? undefined : "Fix its problems first"}
                           onQueued={(run) => {
                             setError(null);
-                            setNotice(`Run ${run.id} of ${f.displayName} is queued.`);
+                            setNotice({ run: run.id, of: f.displayName });
                             load();
                           }}
                           onError={setError}

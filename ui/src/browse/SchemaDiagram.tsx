@@ -12,7 +12,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { layoutBoxes } from "./diagramLayout";
-import { formatNumber } from "../api";
+import { plural } from "../api";
 import { go, href } from "../router";
 import type { DiagramTable, Relationship } from "./browseApi";
 import { formatLabel } from "./icons";
@@ -52,7 +52,7 @@ function TableBox({ data }: NodeProps<TableNode>) {
         <span className="dg-sub">
           {table.external || centre ? `${table.source}: ${table.container || "(top level)"} · ` : ""}
           {formatLabel(table.format)}
-          {table.rowCount != null ? ` · ${formatNumber(table.rowCount)} rows` : ""}
+          {table.rowCount != null ? ` · ${plural(table.rowCount, "row")}` : ""}
         </span>
       </div>
       <ul className="dg-cols">
@@ -118,7 +118,7 @@ export default function SchemaDiagram({
         position: at.get(urn) ?? { x: 0, y: 0 },
         data: { table: b.table, columns: b.columns, hidden: b.hidden, centre: urn === centre },
         draggable: true,
-        ariaLabel: `${b.table.name}, ${formatLabel(b.table.format)}, ${b.table.columns.length} columns`,
+        ariaLabel: `${b.table.name}, ${formatLabel(b.table.format)}, ${plural(b.table.columns.length, "column")}`,
       };
     });
     const handle = (urn: string, field: string, side: "in" | "out") => {

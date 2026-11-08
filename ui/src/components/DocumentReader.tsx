@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { documentsApi, type DocumentPage, type DocumentProfile, type FindResult } from "../api";
+import { documentsApi, type DocumentPage, type DocumentProfile, type FindResult, plural } from "../api";
 import { SnippetText } from "./SnippetText";
 import "./documents.css";
 
@@ -174,7 +174,7 @@ function Reader({ urn, name }: { urn: string; name: string }) {
               (found
                 ? found.total === 0
                   ? `“${found.query}” is not in this document.`
-                  : `“${found.query}”: ${found.total} ${found.total === 1 ? "match" : "matches"} on ${found.pages.length} ${
+                  : `“${found.query}”: ${plural(found.total, "match", "matches")} on ${found.pages.length} ${
                       found.pages.length === 1 ? kind.toLowerCase() : `${kind.toLowerCase()}s`
                     }`
                 : "")}
@@ -184,7 +184,7 @@ function Reader({ urn, name }: { urn: string; name: string }) {
               {found.pages.map((p) => (
                 <li key={p.number}>
                   <button type="button" onClick={() => setPage(p.number)} aria-current={p.number === page ? "true" : undefined}>
-                    <strong>{label(p.number)}</strong> ({p.count} {p.count === 1 ? "match" : "matches"}):{" "}
+                    <strong>{label(p.number)}</strong> ({plural(p.count, "match", "matches")}):{" "}
                     <SnippetText snippet={p.snippet} />
                   </button>
                 </li>

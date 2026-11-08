@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, formatNumber, formatTime, type Asset, type DocumentAsset } from "../api";
+import { api, formatTime, type Asset, type DocumentAsset, plural } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { TableDetails } from "../asset/TableDetails";
@@ -89,8 +89,8 @@ export function AssetPage({ urn, tab }: { urn: string; tab?: string | null }) {
 
   const meta = [
     asset.kind.charAt(0).toUpperCase() + asset.kind.slice(1),
-    asset.rowCount != null ? `${formatNumber(asset.rowCount)} rows` : null,
-    !isDocument ? `${asset.fields.length} ${asset.fields.length === 1 ? "column" : "columns"}` : null,
+    asset.rowCount != null ? plural(asset.rowCount, "row") : null,
+    !isDocument ? `${plural(asset.fields.length, "column")}` : null,
     asset.lastScannedAt ? `scanned ${formatAgo(asset.lastScannedAt)}` : null,
   ].filter(Boolean);
 

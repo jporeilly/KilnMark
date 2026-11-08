@@ -1,4 +1,5 @@
 import { isMap, isScalar, isSeq, parseDocument, type Scalar } from "yaml";
+import { plural } from "../api";
 
 /** A node type in words, as the diagram and the run page say it. */
 export const TYPE_WORDS: Record<string, string> = {
@@ -57,7 +58,7 @@ function summaryOf(type: string, node: { get: (k: string) => unknown }): string 
       const items = node.get("items");
       if (isSeq(items)) {
         const n = items.items.length;
-        return `${pipeline} for each of ${n} ${n === 1 ? "item" : "items"}${priority}`;
+        return `${pipeline} for each of ${plural(n, "item")}${priority}`;
       }
       const from = get("items")?.trim().match(/^\$\{\s*([a-z][a-z0-9_]*)\s*\}$/);
       return (from ? `${pipeline} for each of ${from[1]}` : `${pipeline} for each item`) + priority;
@@ -81,7 +82,7 @@ function summaryOf(type: string, node: { get: (k: string) => unknown }): string 
         return isSeq(list) ? list.items.length : 0;
       };
       const [t, f] = [count("tables"), count("files")];
-      const what = [t ? `${t} ${t === 1 ? "table" : "tables"}` : "", f ? `${f} ${f === 1 ? "file" : "files"}` : ""]
+      const what = [t ? `${plural(t, "table")}` : "", f ? `${plural(f, "file")}` : ""]
         .filter(Boolean)
         .join(" and ");
       return what ? `${what} on ${on}` : `That ${on} can be reached`;

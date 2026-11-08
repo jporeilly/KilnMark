@@ -622,6 +622,45 @@ details.
   own compose commands), and `up` and `down` show compose's container ids and names only when
   compose fails. Their own lines still say what happened.
 
+### Fixed
+
+From walking a 0.1.2 Starter Pack install, in the web UI:
+
+- **Schedules tables keep every column in view.** A long sign-in name no longer widens the table on
+  the Schedules page and a pipeline's or flow's Schedules tab, so **Last time it was due** and
+  **Edit**, **Pause** and **Delete** show at 1240px. Names wrap, and a person who signs in through
+  the identity provider shows by their `sso:` name, with the provider's ID for them on hover.
+- **One way of naming who did something.** A token shows by its name everywhere, whether the
+  server recorded it as `KILNMARK_ADMIN_TOKEN` or `token 1 (KILNMARK_ADMIN_TOKEN)`: who saved a
+  pipeline or flow, who asked for a run, who set a schedule, made a token or turned the Starter
+  Pack on (`Who.tsx`).
+- **Settings, Notifications tells a provider sign-in the truth**: people who sign in through the
+  identity provider get no notifications yet. It no longer says that sign-in is off.
+- **Explore shows `text`**, not `text(2147483647)`: a size a database driver gives for "no limit"
+  is not shown as a size, as the generated SQL already treats it.
+- **Counts read right for one**: "1 sign-in", "1 row in", "errors · 1 row", "1 address is", and
+  every other count on the screen, through one helper (`plural`); a test fails on a count printed
+  before a plural noun without it.
+- **Fit leaves the overview map clear**: on a tall window the canvas no longer fits nodes under the
+  map in the bottom-right corner (sample-gate-quarantine, sample-sort).
+- **The browser tab's title follows every move**: each route sets its title, so a flow's page no
+  longer keeps the title of the pipeline before it, and Admins only pages have one too.
+- **Run timelines tell the time as the rest of Kilnmark does**, 24-hour ("17:17:06"), whatever the
+  browser's language; so does a run's next try.
+- **"Run 12 of version 1 is queued." keeps up with the run**: on a pipeline's or flow's page and on
+  the Pipelines and Flows lists it says when the run is running, has succeeded or has failed,
+  without a reload.
+- **The access review's advice on a Starter Pack install**: a Starter Pack install is for training
+  and development only; for real data, install Kilnmark afresh in production mode (ADR 0051). It no
+  longer suggests turning the pack off, which would leave the example people in Keycloak.
+- **Auto-layout orders a join's inputs by their ports**: on sample-join, orders (`left`) sits above
+  customers (`right`), so their connections no longer cross.
+- **Smaller things**: the Library's **Look for when it runs** and the other parts of a sample's
+  explanation start with a capital, unless they start with something to type; the Pipeline choice
+  on a flow's node is wider, so long names are not cut off, and no longer offers `sample-tables`,
+  which Kilnmark keeps to copy the sample data; a `stop` node has its own icon (a raised hand) in a
+  flow run's timeline, as on the diagram, not a tick.
+
 ## 0.1.1 (6 November 2026)
 
 ### What's new

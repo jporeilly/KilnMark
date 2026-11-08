@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { allows, formatNumber, pipelinesApi, rating, type AccessRole, type PipelineNodeQuality } from "../api";
+import { allows, formatNumber, pipelinesApi, rating, type AccessRole, type PipelineNodeQuality, plural } from "../api";
 import { Meter, StatusChip, type FillTone, type Tone } from "../components/ui";
 import {
   DECISION_WORDS,
@@ -334,7 +334,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
                 ) : (
                   <span className="mono">{w.target}</span>
                 )}{" "}
-                in {w.source} ({w.mode}), by node <span className="mono">{w.node}</span>: {formatNumber(w.rows)} rows.
+                in {w.source} ({w.mode}), by node <span className="mono">{w.node}</span>: {plural(w.rows, "row")}.
                 {!w.registered && <span className="muted"> Not in the catalogue.</span>}
               </li>
             ))}

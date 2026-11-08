@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState, type FormEvent } from "react";
 import { go, href } from "../router";
 import { browseApi, type Diagram, type DiagramScope, type Relationship } from "./browseApi";
 import { RelationshipTable } from "./RelationshipTable";
+import { plural } from "../api";
 
 const SchemaDiagram = lazy(() => import("./SchemaDiagram"));
 
@@ -98,19 +99,19 @@ export function DiagramSection({ scope, title }: { scope: DiagramScope; title: s
         <>
           <p className="muted" role="status">
             {diagram.truncated
-              ? `Showing ${diagram.tables.filter((t) => !t.external).length} of ${diagram.total} tables. ` +
+              ? `Showing ${diagram.tables.filter((t) => !t.external).length} of ${plural(diagram.total, "table")}. ` +
                 "Narrow them with the filter, or centre on one table to see it and its neighbours."
               : diagram.tables.length === 0
                 ? applied
                   ? "No tables match the filter."
                   : "No tables with columns here."
-                : `${diagram.tables.length} ${diagram.tables.length === 1 ? "table" : "tables"}, ` +
-                  `${diagram.relationships.filter((r) => r.status !== "rejected").length} relationships. ` +
+                : `${plural(diagram.tables.length, "table")}, ` +
+                  `${plural(diagram.relationships.filter((r) => r.status !== "rejected").length, "relationship")}. ` +
                   "Solid lines are declared or accepted; dashed lines are proposals."}
           </p>
           {diagram.relationshipsTruncated && (
             <p className="warning" role="status">
-              These tables have more than {diagram.relationships.length.toLocaleString("en-GB")} relationships; only
+              These tables have more than {plural(diagram.relationships.length, "relationship")}; only
               that many are drawn and listed. Narrow the tables with the filter, or centre on one table.
             </p>
           )}

@@ -8,6 +8,7 @@ import {
   type ImportOptions,
   type ImportReport,
   type Source,
+  plural,
 } from "../api";
 import { AddConnection } from "../components/AddConnection";
 import { SourceTile } from "../components/ConnectorTile";
@@ -143,7 +144,7 @@ export function SourcesPage({ role, add = false }: { role: AccessRole; add?: boo
               {h.word}
             </p>
             <p className="km-row-detail">
-              {formatNumber(s.assets)} {s.assets === 1 ? "asset" : "assets"}
+              {plural(s.assets, "asset")}
               {when && s.lastRun?.status !== "running" && ` · scanned ${day.format(new Date(when))}`}
               {Object.keys(s.formats).length > 0 &&
                 ` · ${Object.entries(s.formats)

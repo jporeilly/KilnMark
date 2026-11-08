@@ -293,8 +293,10 @@ public class NotificationResource {
     private Long me() {
         Long me = tokenId();
         if (me == null) {
-            throw ApiError.of(Response.Status.CONFLICT, "Sign-in is off on this server, so there is no one to keep "
-                + "choices for. Sign in with an API token to choose your notifications.");
+            throw ApiError.of(Response.Status.CONFLICT, provider()
+                ? PROVIDER_NONE + " There are no choices to keep."
+                : "Sign-in is off on this server, so there is no one to keep choices for. Sign in with an API token "
+                    + "to choose your notifications.");
         }
         return me;
     }
@@ -302,11 +304,26 @@ public class NotificationResource {
     private MySettings view(NotificationStore.Subscriber saved, Subscription s) {
         MailSettings m = mail.settings();
         boolean available = tokenId() != null;
-        return new MySettings(available, available ? null : "Sign-in is off on this server, so notifications have "
-            + "no one to go to.", saved != null, s.email(), s.enabled(), ids(s.kinds()), s.minSeverity().id(),
+        return new MySettings(available, available ? null : unavailable(provider()), saved != null, s.email(), s.enabled(), ids(s.kinds()), s.minSeverity().id(),
             s.mode().id(), s.digestHour(), s.sources(), ids(s.inAppKinds()), ZoneId.systemDefault().getId(), m.ready(),
             m.notReady(), kindChoices(), m.requireConfirmation(), saved != null && saved.confirmedAt() != null,
             saved == null ? null : saved.confirmSentAt(), saved == null ? null : saved.paused(), m.allowedDomains());
+    }
+
+    /** What a provider sign-in is told: notifications go to API tokens only, for now. */
+    static final String PROVIDER_NONE = "People who sign in through your identity provider get no notifications yet.";
+
+    /**
+     * Why the caller has no notification choices: they signed in through the identity provider, which
+     * notifications do not reach yet, or sign-in is off, so there is no one to send them to.
+     */
+    static String unavailable(boolean provider) {
+        return provider ? PROVIDER_NONE + " There is nothing to choose here."
+            : "Sign-in is off on this server, so notifications have no one to go to.";
+    }
+
+    private boolean provider() {
+        return io.kilnmark.server.auth.OidcIdentityAugmentor.fromProvider(identity);
     }
 
     static List<String> ids(java.util.Set<NotificationKind> kinds) {

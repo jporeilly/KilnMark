@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { allows, flowsApi, pipelinesApi, type AccessRole, type Schedule } from "../api";
+import { allows, flowsApi, pipelinesApi, type AccessRole, type Schedule, plural } from "../api";
 import { go, href, type ScheduleFilter } from "../router";
 import { useTitle } from "../components/useTitle";
 import { docHref } from "../docs/links";
@@ -107,7 +107,7 @@ export function SchedulesPage({ role, show }: { role: AccessRole; show: Schedule
         />
         {admin && schedules && schedules.length > 0 && (
           <p className="hint sc-review">
-            For access reviews: {schedules.length === 1 ? "this schedule runs" : `these ${schedules.length} schedules run`}{" "}
+            For access reviews: {schedules.length === 1 ? "this schedule runs" : `these ${plural(schedules.length, "schedule")} run`}{" "}
             in the name of {people === 1 ? "one person" : `${people} people`}, under <strong>Set by</strong>. When
             someone&apos;s token is revoked or expires, or they lose their role, Kilnmark pauses the schedules they set,
             and those set by someone who signs in with your organisation&apos;s login once they have not signed in for 30

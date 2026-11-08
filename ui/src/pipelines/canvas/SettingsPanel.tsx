@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type PipelineColumn, type PipelineProblem, type PipelineNodeQuality, type PipelineValidation, type Source, type NodeType } from "../../api";
+import { api, formatNumber, type PipelineColumn, type PipelineProblem, type PipelineNodeQuality, type PipelineValidation, type Source, type NodeType, plural } from "../../api";
 import { dimensionWord, percent, RULE_STATUS_WORDS, nodeQualityWords } from "../quality";
 import type { PredictedQuality } from "../prediction";
 import { PredictedSection } from "./PredictedSection";
@@ -362,7 +362,7 @@ export function SettingsPanel({
                     <li key={`${i}-${r.origin}`}>
                       {r.name}: {RULE_STATUS_WORDS[r.status] ?? r.status}
                       {r.status !== "error" && r.total > 0 && !["freshness", "row_count", "row_count_change"].includes(r.type)
-                        ? `, ${r.failing.toLocaleString("en-GB")} of ${r.total.toLocaleString("en-GB")} rows failing`
+                        ? `, ${formatNumber(r.failing)} of ${plural(r.total, "row")} failing`
                         : ""}
                       {r.status === "error" && r.message ? ` (${r.message})` : ""}
                     </li>

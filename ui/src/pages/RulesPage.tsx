@@ -9,6 +9,7 @@ import {
   type AccessRole,
   type QualityRule,
   type RuleView,
+  plural,
 } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
@@ -85,7 +86,7 @@ export function RulesPage({ role, urn, unmask = false }: { role: AccessRole; urn
     <>
       <PageHeader
         title="Quality rules"
-        meta={rules ? `${rules.length} ${rules.length === 1 ? "rule" : "rules"}${filter.trim() ? " on this asset" : ""}` : undefined}
+        meta={rules ? `${plural(rules.length, "rule")}${filter.trim() ? " on this asset" : ""}` : undefined}
         lead="Checks on assets, each tagged with a dimension. They run after every scan and on demand: as SQL in databases, and while streaming files."
         actions={
           steward && !editing ? (

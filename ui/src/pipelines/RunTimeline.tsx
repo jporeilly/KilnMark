@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { IconClockHour4, IconHourglass, IconRoute, IconStack2 } from "@tabler/icons-react";
-import { formatNumber, type PipelineRunDetail, type PipelineNodeQuality } from "../api";
+import { formatClock, formatNumber, type PipelineRunDetail, type PipelineNodeQuality, plural } from "../api";
 import { formatBytes, formatDuration } from "./RunStatus";
 import { StatTile, StatusChip, type Tone } from "../components/ui";
 import { scoreTone, scoreWords } from "./quality";
@@ -126,7 +126,7 @@ export function RunTimeline({
   const onPath = new Set(showPath && path ? path.nodes : []);
   const quality = new Map((detail.quality ?? []).map((q) => [q.node, q]));
   const longest = slowestNode(t);
-  const summary = `Timeline of ${t.rows.length} ${t.rows.length === 1 ? "node" : "nodes"} over ${offsetWords(t.span)}${
+  const summary = `Timeline of ${plural(t.rows.length, "node")} over ${offsetWords(t.span)}${
     t.live ? ", so far" : ""
   }${slowest ? `; the slowest node now is ${slowest.node}` : ""}${
     path && showPath ? `; the critical path is ${path.nodes.join(", ")}` : ""
@@ -338,7 +338,7 @@ export function RunTimeline({
 /** The run in one sentence: what started when, how long it took and how it ended. */
 function runSentence(detail: PipelineRunDetail, span: number, live: boolean): string {
   const r = detail.run;
-  const at = r.startedAt ? new Date(r.startedAt).toLocaleTimeString() : null;
+  const at = r.startedAt ? formatClock(r.startedAt, true) : null;
   if (!at) return `${r.pipeline} has not started yet.`;
   return live
     ? `${r.pipeline} started ${at} and has been running for ${offsetWords(span)}.`

@@ -17,13 +17,13 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import { Graph, layout } from "@dagrejs/dagre";
-import { IconClockSearch, IconPlugConnected, IconBell, IconHandStop, IconHourglass, IconPlayerPlay, IconRepeat, IconSql, IconBox } from "@tabler/icons-react";
 import "@xyflow/react/dist/style.css";
 import type { FlowNodeStatus } from "../api";
 import { useColourScheme } from "../theme/appearance";
 import { FlowStatus, flowStatusWords } from "./RunFlow";
 import { bowOffsets, connectionSentence, TYPE_WORDS, whenWords, type ConnectionKind, type FlowGraph, type FlowGraphNode, type Point } from "./graph";
 import { inColumn, roundedPath, steps, type Columns } from "./route";
+import { FlowNodeIcon } from "./nodeIcons";
 import "../pipelines/canvas/canvas.css";
 import "./flows.css";
 
@@ -37,18 +37,6 @@ const PORT_Y = 102;
 const LABEL_HEIGHT = 20;
 /** How round a connection's corners are, as on a pipeline's canvas. */
 const CORNER = 8;
-
-/** Each node type's icon. */
-const ICONS: Record<string, typeof IconBox> = {
-  "run-pipeline": IconPlayerPlay,
-  "for-each": IconRepeat,
-  notify: IconBell,
-  wait: IconHourglass,
-  stop: IconHandStop,
-  sql: IconSql,
-  "check-source": IconPlugConnected,
-  "wait-for": IconClockSearch,
-};
 
 /** About how wide a connection's label is drawn (11px semibold, with its padding). */
 const labelWidth = (text: string) => Math.ceil(text.length * 6.6) + 16;
@@ -81,12 +69,11 @@ type BowedEdge = Edge<BowData, "bowed">;
  */
 function FlowNodeBox({ data, selected }: NodeProps<FlowCard>) {
   const { node, status } = data;
-  const Icon = ICONS[node.type] ?? IconBox;
   return (
     <div className={`cv-node fd-card fd-type-${node.type}${status ? ` fd-status-${status}` : ""}${selected ? " is-selected" : ""}`}>
       <div className="cv-node-head">
         <span className="cv-node-icon">
-          <Icon size={18} stroke={1.8} aria-hidden="true" />
+          <FlowNodeIcon type={node.type} size={18} />
         </span>
         <span className="cv-node-kind">{TYPE_WORDS[node.type] ?? node.type}</span>
       </div>

@@ -1,5 +1,6 @@
 import { parse } from "yaml";
 import type { FlowParameter, Schedule } from "../api";
+import { plural } from "../api";
 import type { Tone } from "../components/ui";
 
 /**
@@ -114,7 +115,7 @@ export function cronWords(cron: string): string | null {
     case "monthly":
       return `On the ${ordinal(p.day)} of each month at ${p.time}`;
     case "hourly":
-      return p.minute === 0 ? "Every hour, on the hour" : `Every hour at ${p.minute} ${p.minute === 1 ? "minute" : "minutes"} past`;
+      return p.minute === 0 ? "Every hour, on the hour" : `Every hour at ${plural(p.minute, "minute")} past`;
     case "minutes":
       return p.every === 1 ? "Every minute" : `Every ${p.every} minutes`;
     case "custom":

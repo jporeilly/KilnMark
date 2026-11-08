@@ -10,6 +10,7 @@ import {
   type HistoryRun,
   type Source,
   type TestResult,
+  plural,
 } from "../api";
 import { Status } from "../components/Status";
 import { ScanAction } from "../components/ScanAction";
@@ -131,7 +132,7 @@ export function SourcePage({
         meta={
           <>
             {connector?.displayName ?? source.kind} · Source ID <span className="mono">{source.name}</span> ·{" "}
-            {formatNumber(source.assets)} {source.assets === 1 ? "asset" : "assets"}
+            {plural(source.assets, "asset")}
           </>
         }
         chips={<Status run={source.lastRun} />}
@@ -363,7 +364,7 @@ function DeleteSource({ source, runs }: { source: Source; runs: number }) {
               the source <span className="mono">{source.name}</span> and its stored password;
             </li>
             <li>
-              {formatNumber(source.assets)} {source.assets === 1 ? "asset" : "assets"}, with their fields and profiles;
+              {plural(source.assets, "asset")}, with their fields and profiles;
             </li>
             <li>
               its scan history ({formatNumber(runs)}

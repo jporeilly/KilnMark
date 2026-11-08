@@ -10,6 +10,7 @@ import {
 } from "../api";
 import { href } from "../router";
 import { DataTable, StatusChip } from "../components/ui";
+import { Who } from "../components/Who";
 import { cronWords, outcomeOf, valuesText, whenText } from "./cron";
 
 /** One pipeline's or flow's schedules (or every schedule), read again on demand. */
@@ -234,10 +235,16 @@ export function SchedulesTable({
                 </td>
               )}
               <td>
-                <div className="sc-setby">{s.updatedBy}</div>
+                <div className="sc-setby">
+                  <Who name={s.updatedBy} />
+                </div>
                 <div className="small muted">Runs as {s.runAs}</div>
                 <div className="small muted sc-nowrap">{formatTime(s.updatedAt)}</div>
-                {s.createdBy !== s.updatedBy && <div className="small muted">Added by {s.createdBy}</div>}
+                {s.createdBy !== s.updatedBy && (
+                  <div className="small muted">
+                    Added by <Who name={s.createdBy} />
+                  </div>
+                )}
               </td>
               <td>
                 <ScheduleState s={s} />

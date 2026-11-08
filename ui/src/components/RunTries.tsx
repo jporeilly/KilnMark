@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   allows,
   flowsApi,
+  formatClock,
   formatTime,
   pipelinesApi,
   type AccessRole,
@@ -12,7 +13,7 @@ import {
 
 /** "14:05": when a run's next try starts, in the reader's time. */
 export function clock(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return formatClock(iso);
 }
 
 /**

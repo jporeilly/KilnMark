@@ -721,8 +721,25 @@ export const api = {
 const numbers = new Intl.NumberFormat("en-GB");
 export const formatNumber = (n: number | null | undefined) => (n == null ? "–" : numbers.format(n));
 
+/**
+ * A count with its noun, singular for exactly one: "1 row", "2 rows", "1,204 sign-ins". Every count
+ * the screen shows goes through this, so none reads "1 rows". `many` for a plural that is not the
+ * noun with an s ("1 address", "2 addresses").
+ */
+export const plural = (n: number | null | undefined, one: string, many = `${one}s`) =>
+  `${formatNumber(n)} ${n === 1 ? one : many}`;
+
+/** The app's one way of telling the time: 24-hour, as in Britain ("8 Nov 2026, 17:17"; "17:17:06"). */
 const times = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" });
+const clockMinutes = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+const clockSeconds = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
 export const formatTime = (iso: string | null | undefined) => (iso ? times.format(new Date(iso)) : "–");
+/**
+ * A time of day alone, 24-hour as formatTime is: "17:17", or "17:17:06" with `seconds`, for a run's
+ * timeline, where a node can take less than a minute. "–" when there is none.
+ */
+export const formatClock = (iso: string | null | undefined, seconds = false) =>
+  iso ? (seconds ? clockSeconds : clockMinutes).format(new Date(iso)) : "–";
 
 /** How long a run took, in words; "–" until it has started and finished. */
 export function formatDuration(run: Run): string {

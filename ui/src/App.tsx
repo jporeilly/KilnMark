@@ -1,6 +1,7 @@
 import React, { lazy, Suspense, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { allows, api, ApiError, markProviderSession, qualityApi, session, SIGNED_OUT, type Me } from "./api";
-import { go, href, useRoute } from "./router";
+import { go, href, routeTitle, useRoute } from "./router";
+import { useRouteTitle } from "./components/useTitle";
 import { HomePage } from "./pages/HomePage";
 import { SearchPage } from "./pages/SearchPage";
 import { AssetPage } from "./pages/AssetPage";
@@ -178,6 +179,8 @@ function useMedia(query: string): boolean {
  */
 function Shell({ me }: { me: Me }) {
   const route = useRoute();
+  // Every move sets the tab's title, whatever page (or Admins only notice) is shown.
+  useRouteTitle(routeTitle(route));
   const searchBox = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState(route.page === "search" ? route.q : "");
   const first = useRef(true);

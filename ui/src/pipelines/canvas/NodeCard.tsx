@@ -24,7 +24,7 @@ import {
   IconTableRow,
   IconTimeline,
 } from "@tabler/icons-react";
-import { formatNumber, formatScore, type PipelineNodeQuality } from "../../api";
+import { formatScore, type PipelineNodeQuality, plural } from "../../api";
 import { StatusChip, type Tone } from "../../components/ui";
 import { gateWords, scoreTone, scoreWords } from "../quality";
 import { ESTIMATE, type PredictedQuality } from "../prediction";
@@ -107,13 +107,13 @@ export function runWords(run: NodeRunInfo): string {
 
 /** "5,000 rows out", else "4,771 rows in", else nothing. */
 const rowsWords = (run: NodeRunInfo) =>
-  run.rowsOut != null ? `${formatNumber(run.rowsOut)} rows out` : run.rowsIn != null ? `${formatNumber(run.rowsIn)} rows in` : "";
+  run.rowsOut != null ? `${plural(run.rowsOut, "row")} out` : run.rowsIn != null ? `${plural(run.rowsIn, "row")} in` : "";
 
 /** While the run goes: "1,200 rows out", "340 rows/s" (or what it is doing), and "Slowest". */
 function liveWords(run: NodeRunInfo): string[] {
   const l = run.live!;
   const moved = (run.rowsOut ?? 0) > 0 || (run.rowsIn ?? 0) > 0;
-  const rows = (run.rowsOut ?? 0) > 0 || run.rowsIn == null ? `${formatNumber(run.rowsOut ?? 0)} rows out` : `${formatNumber(run.rowsIn)} rows in`;
+  const rows = (run.rowsOut ?? 0) > 0 || run.rowsIn == null ? `${plural(run.rowsOut ?? 0, "row")} out` : `${plural(run.rowsIn, "row")} in`;
   const doing = l.state === "running" && l.rate != null ? rateWords(l.rate) : LIVE_WORDS[l.state];
   return [moved || l.state === "running" ? rows : "", doing, l.slowest ? "Slowest" : ""].filter(Boolean);
 }
@@ -146,7 +146,7 @@ export type Chip = {
 export function nodeChips(d: Pick<NodeData, "problems" | "run" | "quality" | "predicted">): Chip[][] {
   const { problems, run, quality, predicted } = d;
   const first: Chip[] = [];
-  if (problems > 0) first.push({ kind: "problems", tone: "bad", text: `${problems} ${problems === 1 ? "problem" : "problems"}` });
+  if (problems > 0) first.push({ kind: "problems", tone: "bad", text: `${plural(problems, "problem")}` });
   if (run?.live) {
     // While the run goes: rows so far and the rate in one chip, and the node holding the run back.
     // Short on the chip (a node is narrow): "23,370 out · 12,400 rows/s"; in full in its title and the node's name.
@@ -189,7 +189,7 @@ export function nodeChips(d: Pick<NodeData, "problems" | "run" | "quality" | "pr
     const n = predicted.unknown.length;
     // Short on the chip (a node is narrow); in full in its title, the node's name and its settings.
     const unknown = n ? ` · ${n} unknown` : "";
-    const untold = n ? `; ${n} ${n === 1 ? "thing" : "things"} it could not tell, listed in the node's settings` : "";
+    const untold = n ? `; ${plural(n, "thing")} it could not tell, listed in the node's settings` : "";
     const text = predicted.overall == null ? "Predicted: unknown" : `Predicted ≈ ${formatScore(predicted.overall)}`;
     estimate.push({
       kind: "predicted",

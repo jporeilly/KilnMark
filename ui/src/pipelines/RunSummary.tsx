@@ -6,6 +6,7 @@ import { belowThreshold, nodeQualityWords, percent } from "./quality";
 import { formatBytes, formatDuration, RunStatus, runTime } from "./RunStatus";
 import { rateWords } from "./live";
 import { runOrigin, shareWords } from "./timeline";
+import { Who } from "../components/Who";
 
 /** How often a queued or running run is looked at again, here and on the run page. */
 export const RUN_POLL_MS = 2000;
@@ -124,7 +125,7 @@ export function RunFacts({ run: r, rowsRead }: { run: PipelineRun; rowsRead?: nu
         </dd>
         <dt>Asked for</dt>
         <dd>
-          {formatTime(r.requestedAt)} by {r.requestedBy}
+          {formatTime(r.requestedAt)} by <Who name={r.requestedBy} />
         </dd>
         <dt>Started</dt>
         <dd>{formatTime(r.startedAt)}</dd>

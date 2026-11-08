@@ -3,12 +3,11 @@
  * from the times Kilnmark records for each node and for each pipeline run a node started, and
  * what those pipeline runs wrote. Nothing here is estimated. Pure, unit tested.
  */
-import { formatNumber, type FlowNodeRun, type FlowNodeStatus, type FlowRunDetail } from "../api";
+import { type FlowNodeRun, type FlowNodeStatus, type FlowRunDetail, plural } from "../api";
 import { offsetWords } from "../pipelines/timeline";
 
 const ms = (iso: string | null | undefined) => (iso ? Date.parse(iso) : null);
 const num = (n: FlowNodeRun, k: string) => (typeof n.reported?.[k] === "number" ? (n.reported[k] as number) : null);
-const plural = (n: number, one: string, many: string) => `${formatNumber(n)} ${n === 1 ? one : many}`;
 
 /** Whether a run-pipeline or sql node took longer than its timeout and was stopped (ADR 0041). */
 export function timedOut(n: FlowNodeRun): boolean {
@@ -25,13 +24,13 @@ export function timedOutItems(n: FlowNodeRun): Set<number> {
 export function reportedWords(n: FlowNodeRun): string {
   const out: string[] = [];
   const written = num(n, "rows_written");
-  if (written != null) out.push(`${formatNumber(written)} rows written`);
+  if (written != null) out.push(`${plural(written, "row")} written`);
   const score = num(n, "score");
   if (score != null) out.push(`score ${Math.round(score * 100)}%`);
   const aside = num(n, "quarantined_share");
   if (aside != null) out.push(`${(aside * 100).toFixed(aside < 0.1 ? 1 : 0)}% set aside`);
   const changed = num(n, "rows_affected");
-  if (changed != null) out.push(`${formatNumber(changed)} rows changed`);
+  if (changed != null) out.push(`${plural(changed, "row")} changed`);
   return out.join(", ");
 }
 

@@ -193,6 +193,84 @@ export const href = {
   relationships: (status = "proposed") => `#/relationships?status=${encodeURIComponent(status)}`,
 };
 
+/**
+ * Every route's title for the browser tab, set on each move (useRouteTitle), so no tab keeps the
+ * title of the page before. A page may say more once it has loaded (useTitle): an asset's name, a
+ * guide's title. The home page's is empty: the tab shows the product's name alone.
+ */
+export function routeTitle(r: Route): string {
+  const named = (kind: string, name: string | null, version: number | null) =>
+    name == null ? `New ${kind}` : version != null ? `${name}, version ${version}` : name;
+  switch (r.page) {
+    case "home":
+      return "";
+    case "search":
+      return r.q ? `${r.ask ? "Ask" : "Search"}: ${r.q}` : "Search";
+    case "asset":
+      return "Asset";
+    case "sources":
+      return "Sources";
+    case "source":
+      return r.name;
+    case "tokens":
+      return "API tokens";
+    case "settings":
+      return "Settings";
+    case "notifications":
+      return "Notifications";
+    case "email":
+      return "Email";
+    case "email-log":
+      return "Sent emails";
+    case "audit":
+      return "Audit log";
+    case "access-review":
+      return "Access review";
+    case "starter-pack":
+      return "Starter Pack";
+    case "drivers":
+      return "Drivers";
+    case "jdbc-drivers":
+      return "JDBC drivers";
+    case "rules":
+      return "Quality rules";
+    case "issues":
+      return "Issues";
+    case "signout":
+      return "Sign out";
+    case "ai":
+      return "AI models";
+    case "ai-usage":
+      return "AI usage";
+    case "docs":
+      return "Documentation";
+    case "browse":
+      return "Browse";
+    case "relationships":
+      return "Relationships";
+    case "pipelines":
+      return "Pipelines";
+    case "pipeline":
+      return named("pipeline", r.name, r.version);
+    case "pipeline-run":
+      return `Pipeline run ${r.id}`;
+    case "flows":
+      return "Flows";
+    case "flow":
+      return named("flow", r.name, r.version);
+    case "flow-run":
+      return `Flow run ${r.id}`;
+    case "schedules":
+      return "Schedules";
+    case "library":
+      return r.tab === "templates" ? "Library: templates" : "Library: samples";
+    default: {
+      const none: never = r;
+      return none;
+    }
+  }
+}
+
 export function go(to: string) {
   window.location.hash = to;
 }
