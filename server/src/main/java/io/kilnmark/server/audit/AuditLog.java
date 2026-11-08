@@ -149,6 +149,13 @@ public class AuditLog {
     /** An admin turned the Starter Pack off, removing what it added; detail: steps, and what went. */
     public static final String STARTER_PACK_REMOVED = "starter.removed";
     /**
+     * The samples API refused a request on a production install, which never has the samples (ADR
+     * 0051); detail: refused (production), request (list, add, tables or offered). Any viewer may
+     * ask, so kept at most {@link #REFUSALS_PER_MINUTE} a minute for each caller, as
+     * {@link #API_REFUSED} is.
+     */
+    public static final String SAMPLES_REFUSED = "samples.refused";
+    /**
      * The control script's starter people made, gave a new password to, or removed the Starter
      * Pack's example people in the bundled Keycloak (ADR 0051); detail: action, people.
      */
@@ -182,7 +189,7 @@ public class AuditLog {
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
         SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, MAX_RUNS_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
         SIGN_OUT, PERSON_ADDED, PEOPLE_IMPORTED, PERSON_ACTIVATED, PERSON_DISABLED, START_REFUSED, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED, SCHEDULE_SET,
-        SCHEDULE_DELETED, SCHEDULE_PAUSED, STARTER_PACK_ADDED, STARTER_PACK_REMOVED, STARTER_PEOPLE, INSTALL_ID_MADE, MODE_RECORDED, REALM_STAMPED,
+        SCHEDULE_DELETED, SCHEDULE_PAUSED, STARTER_PACK_ADDED, STARTER_PACK_REMOVED, SAMPLES_REFUSED, STARTER_PEOPLE, INSTALL_ID_MADE, MODE_RECORDED, REALM_STAMPED,
         PIPELINE_OWNERS_SET,
         FLOW_OWNERS_SET, FLOW_RUN_AGAIN);
 
@@ -472,7 +479,7 @@ public class AuditLog {
             throw new IllegalArgumentException("not an audit action: " + action);
         }
         boolean keep = true;
-        if (API_REFUSED.equals(action)) {
+        if (API_REFUSED.equals(action) || SAMPLES_REFUSED.equals(action)) {
             // Each token, each provider sign-in (its sso: name), and everyone not signed in together
             String who = actor.tokenId() != null ? "token " + actor.tokenId()
                 : actor.name() != null && actor.name().startsWith(OidcIdentityAugmentor.PREFIX) ? actor.name()
