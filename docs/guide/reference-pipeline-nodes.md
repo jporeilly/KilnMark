@@ -27,7 +27,7 @@ its line.
 
 ## How nodes connect
 
-![A pipeline on the canvas with the Nodes panel open: nodes grouped by what they do, the Transform folder open showing Compute columns, Select columns and Sort rows, and a pipeline of a read, a sort and a write, each joined from its out port to the next node's in port](images/node-palette.png)
+![A pipeline on the canvas with the Nodes panel open: nodes grouped by what they do, the Transform folder open showing Compute columns, Select columns, Sort rows and Window functions, and a pipeline of a read, a sort and a write, each joined from its out port to the next node's in port](images/node-palette.png)
 
 Every node has named **ports**, which each entry below lists. Most nodes read from `in` and write
 to `out`; some have more, such as a filter's `rejected`, a gate's `quarantine` or a route's named

@@ -93,7 +93,7 @@ Or collect the container's own output, where the same lines appear, and filter o
 
 ## Reading it
 
-![Settings › Audit log: newest events first, each with when, who (and which token), what, on what, and its details](images/audit-log-page.png)
+![Settings › Audit log: newest events first, each with when, who (a person who signed in, shown by user name and fixed ID, or a token), what, on what, and its details: here a sign-in, two requests refused, and a sign-in given no role because it used no second factor](images/audit-log-page.png)
 
 The page shows the newest events first, a hundred at a time; **Show older events** loads the next
 hundred. **Show** narrows it to one kind of event. Through the API, `action` filters, `limit` sets

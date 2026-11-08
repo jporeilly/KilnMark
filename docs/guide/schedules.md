@@ -110,7 +110,7 @@ shows:
 The line under the pipeline's or flow's name says when it next runs on a schedule; choosing it
 shows the tab.
 
-![The Schedules tab under a pipeline's canvas, with Add a schedule: two schedules, both on. The first runs on weekdays at 06:30 in Europe/London with its values, set by first admin to run as steward; its next run is Monday at 06:30 and last time it Started, with a link to its pipeline run. The second runs every hour in UTC with the defaults, set by data-team; its next run is shown in the viewer's time and in UTC, and last time it was Skipped because a run was still going. Each row has Edit, Pause and Delete](images/schedules-section.png)
+![The Schedules tab under the canvas of sample-orders-by-status, with Add a schedule: two schedules, both on. The first runs on weekdays at 07:15 in Europe/London with the defaults, set by Dana Reyes, who signs in through the identity provider, to run as steward; its next run is Monday at 07:15 and it has not run yet. The second runs every 15 minutes in UTC with its values, set by an admin token; its next run is shown in the viewer's time and in UTC, and last time it Started, with a link to its pipeline run. The table scrolls sideways to each row's Edit, Pause and Delete](images/schedules-section.png)
 
 ## Adding a schedule
 
@@ -266,7 +266,7 @@ on, its next run and what happened last time. Choose **On**, **Paused**, **Pause
 schedule that is off, whoever paused it; **Paused by Kilnmark** only those Kilnmark paused because
 whoever set them lost the role or has not signed in for 30 days.
 
-![The Schedules page: filters for All 6, On 4, Paused 2, Paused by Kilnmark 1 and Failed last time 0; a note for access reviews saying the 6 schedules run in the name of 3 people, that Kilnmark pauses the schedules of someone whose token is revoked or who loses their role, or who has not signed in for 30 days, and that a team's designer token suits work that must outlive any one person; and a table of every schedule with when it runs, the pipeline or flow it runs, linked, who set it and its role, its state and next run, the last time it was due, and Edit, Pause or Resume, and Delete. The last time it was due reads Started with a link to the run, Skipped because a run was still going, Not run yet for the one a person paused, and, in amber, Paused: setter lost the role for the one set by a token that was revoked](images/schedules-page.png)
+![The Schedules page, as an admin sees it: filters for All 4, On 3, Paused 1, Paused by Kilnmark 0 and Failed last time 0; a note for access reviews saying the 4 schedules run in the name of 2 people, that Kilnmark pauses the schedules of someone whose token is revoked or who loses their role, or who has not signed in for 30 days, and that a team's designer token suits work that must outlive any one person; and a table of every schedule with when it runs, the pipeline or flow it runs, linked, who set it and its role, and its state and next run, one of them paused. The table scrolls sideways to the last time each was due and to Edit, Pause or Resume, and Delete](images/schedules-page.png)
 
 **For access reviews**, admins see a note saying how many people the schedules run in the name of.
 Read the **Set by** column. When someone's token is revoked or expires, or they lose their role,
