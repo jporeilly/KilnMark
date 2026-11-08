@@ -311,7 +311,9 @@ details.
   is not yours, or is a link or a junction, stops the install before anything is written into it.
   A start writes the root's permissions afresh by your SID (others' entries go too), and `install`,
   `upgrade` and `up` stop when they cannot. Folders above the root that are links or junctions are
-  refused, and the hourly task names Windows PowerShell by its full path.
+  refused, and the hourly task names Windows PowerShell by its full path. The `C:\Kilnmark`
+  default is temporary: the guided install moves Windows to `C:\Program Files\Kilnmark` and
+  `C:\ProgramData\Kilnmark`, and these checks stay as a second line of defence.
 - **The admin token goes only to a listener of yours**: before any call to Kilnmark's API, the
   control scripts check who listens on its port (Linux: the account's or root's sockets only;
   Windows: your programs only) and send nothing otherwise. On Linux the engine and the units'

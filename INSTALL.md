@@ -84,7 +84,9 @@ A release is `kilnmark-<version>.tar.gz` (or `.zip`). It ships with
    Install:
    - checks the prerequisites and reports every problem at once, with its fix;
    - makes the install root (`/opt/kilnmark` or `C:\Kilnmark`; another with `--root` or `-Root`,
-     a folder without spaces);
+     a folder without spaces). The Windows default `C:\Kilnmark` is temporary: the guided install
+     replaces it with the program in `C:\Program Files\Kilnmark` and its data in
+     `C:\ProgramData\Kilnmark`, whose folders carry Windows' own guarantees of who may change them;
    - copies the release into it;
    - writes `config/.env` with a new database password and admin token, the deployment mode
      (`KILNMARK_MODE`, below) and, on a Starter Pack install, a password for the Starter Pack's
@@ -538,7 +540,10 @@ into it. When `up`, `install` or `upgrade` cannot set the install folder's permi
 there. On Linux the container engine and the units' folder, and the folders above them, must be
 yours or root's and writable by nobody else, at every `people expire` too. The control scripts send
 the admin token only to a listener of yours (or root's, on Linux) on Kilnmark's port: if another
-account's program listens there, the command says so and sends nothing.
+account's program listens there, the command says so and sends nothing. The checks of the Windows
+install folder are there because `C:\Kilnmark`, the default for now, sits where every signed-in user
+may make folders; the guided install's `C:\Program Files` and `C:\ProgramData` layout replaces it,
+and the same checks stay as a second line of defence.
 
 `status` and `check` say whether it is set up. While Keycloak is stopped nobody can sign in, so
 `people expire` does nothing then, and the next start expires them first. The password goes to `keycloak-setup` on its input only:

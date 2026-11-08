@@ -357,6 +357,12 @@ converted: Production or Starter Pack.
       must every folder above each (where `KILNMARK_ENGINE` is a link, the link's own folders
       too): when the timer is set up, and again at every `people expire`. The run's log is never
       written through a link, and `logs` is the account's alone (700).
+    - Windows, while the default install root is `C:\Kilnmark`: that default is temporary. The
+      guided install, the next change, moves Windows to `C:\Program Files\Kilnmark` (the program)
+      and `C:\ProgramData\Kilnmark` (its data), whose folders carry Windows' own guarantees of
+      who may change them (and Linux stays at `/opt/kilnmark`). The checks below were written for
+      `C:\Kilnmark`, under `C:\`, where every signed-in user may make folders; they stay, after
+      the move, as a second line of defence.
     - Windows: the install root is the user's alone (nothing inherited, full control for the user's
       SID and nobody else) from the moment `install` makes it: it is made with those permissions,
       never made and then locked, and must then hold nothing and pass the checks below. So is every
