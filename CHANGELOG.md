@@ -218,7 +218,9 @@ details.
     server while it set up the one-off's dependencies, as the Linux walk found. Every request with
     the admin token, the Starter Pack's turn-on included, goes through one function that checks the
     listener and connects to 127.0.0.1; the waits and Keycloak's probes use 127.0.0.1 too, and
-    `people expire` skips only when Keycloak refuses the connection. A realm `keycloak-setup`
+    `people expire` skips only when Keycloak refuses the connection, or the connection times out
+    with nothing listening on its port (WSL's mirrored network drops a closed port's connections
+    rather than refuse them). A realm `keycloak-setup`
     refuses stops the stack again. The Windows listener check fails closed when Windows does not
     answer. The OIDC group mappings and Keycloak's published address
     (`KILNMARK_KEYCLOAK_BIND`, `0.0.0.0` for a host other than `localhost`, which then needs

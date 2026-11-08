@@ -2005,6 +2005,20 @@ listener_problem() {
     done < <(tail -n +2 "$f")
   done
 }
+# Whether the kernel shows no socket listening on port $1, on the loopback or all addresses; false
+# where it cannot be told (no /proc/net/tcp).
+nothing_listens() {
+  local f hex addr st
+  [ -r /proc/net/tcp ] || return 1
+  hex="$(printf '%04X' "$1")"
+  for f in /proc/net/tcp /proc/net/tcp6; do
+    [ -r "$f" ] || continue
+    while read -r _ addr _ st _; do
+      [ "$st" = 0A ] && [ "${addr##*:}" = "$hex" ] && return 1
+    done < <(tail -n +2 "$f")
+  done
+  return 0
+}
 api_call() {
   local code url why
   # the admin token only to a listener of this account's or root's, at 127.0.0.1
@@ -2376,10 +2390,11 @@ cmd_people() {
       [ $# -eq 0 ] || die "people expire takes no options."
       # the tree it runs from was checked first (expire_guard)
       local kcp rc=0; kcp="$(setting KILNMARK_KEYCLOAK_PORT)"
-      # only a refused connection is "not running": anything else answering there goes on to setup,
-      # which checks the realm itself
+      # only a refused connection is "not running", or one that timed out with nothing listening
+      # on the port (WSL's mirrored network drops a closed port's connections rather than refuse
+      # them): anything else answering there goes on to setup, which checks the realm itself
       curl -s -o /dev/null --max-time 10 "http://127.0.0.1:${kcp:-8180}/realms/kilnmark" || rc=$?
-      if [ "$rc" -eq 7 ]; then
+      if [ "$rc" -eq 7 ] || { [ "$rc" -eq 28 ] && nothing_listens "${kcp:-8180}"; }; then
         echo "Keycloak does not answer, so nothing was expired now: each start of Kilnmark expires unused temporary passwords too."
         return 0
       fi

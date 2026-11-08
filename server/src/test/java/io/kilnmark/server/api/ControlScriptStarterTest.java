@@ -414,6 +414,18 @@ class ControlScriptStarterTest {
         return env;
     }
 
+    /**
+     * A port on 127.0.0.1 nothing listens on, so a connection to it is refused: the scripts take only
+     * a refused connection as Keycloak stopped. Port 9 is not that everywhere (a CI runner's answered).
+     */
+    static String closedPort() {
+        try (java.net.ServerSocket s = new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())) {
+            return Integer.toString(s.getLocalPort());
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
+
     static final Map<String, String> WITH_KEYCLOAK = Map.of("KILNMARK_MODE", "production", "COMPOSE_PROFILES", "auth");
     static final List<String> ADD = List.of("people", "add");
     static final String EXAMPLE_CSV = Path.of("../containers/keycloak/people.example.csv").toAbsolutePath().normalize()
@@ -483,9 +495,9 @@ class ControlScriptStarterTest {
             assertTrue(refused.out().contains(key + " is for one run of the control script only")
                 && !refused.out().contains("keycloak-setup:"), refused.out());
         }
-        // Kilnmark must answer first, so nobody is made without a record (port 9: nothing listens)
+        // Kilnmark must answer first, so nobody is made without a record (a closed port: nothing listens)
         for (List<String> args : List.of(ADD, List.of("people", "import", EXAMPLE_CSV), List.of("people", "activate", "rita@bank.example"))) {
-            Admin silent = a.run(Map.of("KILNMARK_MODE", "production", "COMPOSE_PROFILES", "auth", "KILNMARK_PORT", "9"), args,
+            Admin silent = a.run(Map.of("KILNMARK_MODE", "production", "COMPOSE_PROFILES", "auth", "KILNMARK_PORT", closedPort()), args,
                 typed, true);
             assertTrue(silent.out().contains("Kilnmark does not answer") && !silent.out().contains("keycloak-setup:"),
                 silent.out());
@@ -573,9 +585,9 @@ class ControlScriptStarterTest {
         assertTrue(unrecorded.out().contains("Kilnmark did not record this in its audit log")
             && unrecorded.out().contains("So they stay disabled"), unrecorded.out());
         assertEquals("", unrecorded.enabled(), unrecorded.out());
-        // nothing to do while Keycloak is stopped (port 9: nothing listens)
+        // nothing to do while Keycloak is stopped (a closed port: nothing listens)
         Map<String, String> stopped = new LinkedHashMap<>(WITH_KEYCLOAK);
-        stopped.put("KILNMARK_KEYCLOAK_PORT", "9");
+        stopped.put("KILNMARK_KEYCLOAK_PORT", closedPort());
         Admin idle = a.run(stopped, List.of("people", "expire"), "", true);
         assertTrue(idle.out().contains("nothing was expired now") && !idle.out().contains("keycloak-setup:"), idle.out());
     }
@@ -837,7 +849,7 @@ class ControlScriptStarterTest {
         String script = LAUNCH.resolve("kilnmark.sh").toAbsolutePath().toString();
         String works = fakeEngine(false, true).toString();
         Map<String, String> settings = new LinkedHashMap<>(WITH_KEYCLOAK);
-        settings.put("KILNMARK_KEYCLOAK_PORT", "9");
+        settings.put("KILNMARK_KEYCLOAK_PORT", closedPort());
         Path parent = Files.createTempDirectory("kilnmark-parent");
         Path root = installRoot(false, parent);
         writeEnv(root, settings);
