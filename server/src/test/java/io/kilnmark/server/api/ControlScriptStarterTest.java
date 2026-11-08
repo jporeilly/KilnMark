@@ -67,7 +67,10 @@ class ControlScriptStarterTest {
         assertEquals("header = \"Authorization: Bearer $(setting KILNMARK_ADMIN_TOKEN)\"", sh.get(header).strip());
         assertEquals("cat <<EOF", sh.get(header - 1).strip(), "by a here-document, not a command's arguments");
         String shText = String.join("\n", sh);
-        assertTrue(shText.contains("--config \"$starter_work/curl.conf\" -X POST"), "curl reads the token from that file");
+        assertTrue(shText.contains("--config \"$starter_work/curl.conf\" -X \"$1\""), "curl reads the token from that file");
+        // every request with the token goes through api_call: the listener check, and 127.0.0.1
+        assertEquals(1, shText.split("Authorization: Bearer", -1).length - 1, "one place sends the token");
+        assertTrue(shText.contains("api_call POST /api/v1/starter-pack \"\""), "the pack is turned on through api_call");
         assertTrue(shText.contains("trap '[ -z \"$starter_work\" ] || rm -rf \"$starter_work\"' EXIT")
             && shText.contains("trap 'exit 130' INT") && shText.contains("trap 'exit 143' TERM")
             && shText.contains("trap 'exit 129' HUP"), "the folder goes however the script ends");
@@ -75,7 +78,9 @@ class ControlScriptStarterTest {
 
         String ps = Files.readString(LAUNCH.resolve("kilnmark.ps1"));
         assertTrue(ps.contains("[IO.File]::WriteAllText($configFile, $config"), "the token goes into curl's settings file");
-        assertTrue(ps.contains("& curl.exe -k -s -K $configFile -X POST"), "curl.exe reads it from there");
+        assertTrue(ps.contains("& curl.exe -k -s -K $configFile -X $Method"), "curl.exe reads it from there");
+        assertEquals(1, ps.split("Authorization: Bearer", -1).length - 1, "one place sends the token");
+        assertTrue(ps.contains("Invoke-KilnmarkApi 'POST' '/api/v1/starter-pack' '' $answerFile"), "the pack is turned on through Invoke-KilnmarkApi");
         assertTrue(ps.contains("Protect-Folder $work") && ps.contains("Remove-Item $work -Recurse -Force"),
             "in a folder only this account opens, deleted at once");
         assertTrue(ps.contains("'-Starter' { $script:WithStarter = $true }"), "install -Starter");

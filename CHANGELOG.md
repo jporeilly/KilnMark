@@ -159,8 +159,9 @@ details.
   - Windows `install`, run from a prompt that is not elevated, asks for an administrator (UAC) for
     the one step that makes the folders, writes the settings and places the release, in a window
     of its own whose log goes to the data folder's `logs`; Podman's steps run as the operator.
-    Every day-to-day command refuses an elevated prompt, and anyone but the operator install named
-    (`-Operator`, by default whoever ran install). `upgrade` and `uninstall` work the same way.
+    The operator is whoever runs install (an answer `operator` naming anyone else is refused). Every
+    day-to-day command refuses an elevated prompt, and anyone but the operator. `upgrade` and
+    `uninstall` work the same way.
   - The questions and the answers file: `mode`, `identity` (`bundled` or `own`; a Starter Pack
     install always `bundled`; API tokens only is no longer an answer), `email_domain`, `host`,
     `tls` (`off`, `on` with `tls_cert` and `tls_key`, or `proxy`), `port`, `https_port`,

@@ -277,6 +277,11 @@ class ControlScriptInstallTest {
         String pack = run(e, release.resolve(script), dry.apply(answersFile(good.replace("mode=production\nidentity=bundled\n", "mode=starter-pack\n"))),
             none, engine, env, "");
         assertTrue(pack.contains("identity=bundled") && pack.contains("port " + ports.get(3) + " is free") && pack.contains("Nothing was changed"), pack);
+        // Windows: install runs as the operator, who runs Podman; naming someone else is refused
+        if (e.windows()) {
+            String other = run(e, release.resolve(script), dry.apply(answersFile(good + "operator=NT AUTHORITY\\SYSTEM\n")), none, engine, env, "");
+            assertTrue(other.contains("Install runs as the operator") && !other.contains("[2/2]"), other);
+        }
         // no terminal to ask at, and no answers: nothing asked, nothing done
         String asked = run(e, release.resolve(script), List.of("install", e.option("--dry-run")), none, engine, env, "");
         assertTrue(asked.contains(e.windows() ? "There is no console to ask the questions at" : "There is no terminal to ask the questions at"), asked);

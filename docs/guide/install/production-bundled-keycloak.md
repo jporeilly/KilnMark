@@ -61,13 +61,24 @@ ends after 2 hours unused or 8 hours at most. Signing out of Kilnmark ends the K
 
 ## From other machines
 
-On one machine, `http://localhost` works as it is: browsers treat localhost as secure, so
-Kilnmark's session cookie (sent over HTTPS only) still works there. Keycloak is published on this
-machine only. For other machines, put a proxy on this machine that ends TLS in front of both,
-answer `tls=proxy` and the host name the proxy serves (`configure host=... tls=proxy` changes an
-install), and have the proxy pass `https://<host>` to Kilnmark's port and
-`https://<host>:<keycloak_port>` to Keycloak's. `configure` restarts Kilnmark, which runs
-`keycloak-setup` again so the realm follows the new addresses ([HTTPS and TLS](https.md)).
+On one machine, `host=localhost` works as it is: browsers treat localhost as secure, so Kilnmark's
+session cookie (sent over HTTPS only) still works there, and Keycloak is published on this machine
+only (`127.0.0.1`).
+
+For people on other machines (a class on a Starter Pack install, say), give the host name they use
+and `tls=proxy`: the bundled Keycloak speaks plain HTTP and its realm asks for HTTPS from other
+machines, so a proxy that ends TLS must stand in front of both, and install refuses another host
+with the bundled Keycloak and no proxy. From the host name, install then:
+
+- sets `KILNMARK_URL` to `https://<host>` and `KILNMARK_KEYCLOAK_URL` to
+  `https://<host>:<keycloak_port>`, which `keycloak-setup` gives the client as its redirect;
+- publishes Keycloak on every address (`KILNMARK_KEYCLOAK_BIND=0.0.0.0`) for the proxy, rather than
+  on `127.0.0.1` only. Keep that port closed to everyone but the proxy (its realm refuses plain
+  HTTP from other machines anyway).
+
+Have the proxy pass `https://<host>` to Kilnmark's `port` and `https://<host>:<keycloak_port>` to
+Keycloak's. To change an install, `configure host=<host> tls=proxy`: it restarts Kilnmark, which
+runs `keycloak-setup` again so the realm follows the new addresses ([HTTPS and TLS](https.md)).
 
 ## Adding people to the bundled Keycloak
 

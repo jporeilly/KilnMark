@@ -14,14 +14,14 @@ no command, it starts Kilnmark. On Windows, options are written `-Offline`, `-Sk
 | Every other command | As the account that runs Kilnmark, never as root: `sudo -iu kilnmark /opt/kilnmark/kilnmark.sh <command>` | As the operator install named, from a prompt that is not elevated |
 
 Each day-to-day command refuses root (Linux), an elevated prompt (Windows), and on Windows anyone
-but the operator, saying how to run it instead. `check` runs as anyone, and says so. Podman runs as
+but the operator, saying how to run it instead. `check` runs as anyone, and says so. An account that is always elevated (Windows' built-in Administrator, or any administrator with UAC turned off) can never be the operator: run Kilnmark as an ordinary account, with UAC on. Podman runs as
 the operator: on Windows the Podman machine is theirs, on Linux the account's rootless Podman.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `install [--answers FILE] [--dry-run]` | The guided install ([INSTALL.md](../../../INSTALL.md#install)): the questions, or an answers file; `--dry-run` checks them and the prerequisites and changes nothing. Also `--starter`, `--offline FILE`, `--build`, `--skip-verify`, `--no-start`, `--program-dir`, `--data-dir`, `--user` (Windows `-Operator`) |
+| `install [--answers FILE] [--dry-run]` | The guided install ([INSTALL.md](../../../INSTALL.md#install)): the questions, or an answers file; `--dry-run` checks them and the prerequisites and changes nothing. Also `--starter`, `--offline FILE`, `--build`, `--skip-verify`, `--no-start`, `--program-dir`, `--data-dir`, `--user` |
 | `up` | Starts Kilnmark (and Keycloak with the bundled Keycloak), waits until it answers, and opens it in the browser. First it adds to `config/.env` any secret this version needs that it lacks |
 | `down` | Stops it. Every volume, so all data, is kept |
 | `restart [service]` | Restarts everything (a stop, then `up`, so `keycloak-setup` and `samples-db` run again), or one service |

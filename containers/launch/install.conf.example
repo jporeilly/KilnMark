@@ -75,6 +75,7 @@ project=kilnmark
 
 # Linux: the account that runs Kilnmark (made as a system account when it is not there). Never root.
 user=kilnmark
-# Windows: the account that runs Kilnmark day to day, as DOMAIN\name or name (default: whoever
-# runs install). Install gives it, SYSTEM and the Administrators the data folder, and nobody else.
+# Windows: the account that runs Kilnmark day to day, as DOMAIN\name or name: whoever runs install,
+# which refuses another (sign in as the operator to install). Install gives it, SYSTEM and the
+# Administrators the data folder, and nobody else.
 # operator=BANK\kilnmark-ops

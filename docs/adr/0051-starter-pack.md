@@ -452,7 +452,7 @@ converted: Production or Starter Pack.
       root (Linux: the script says why and runs itself again with `sudo`) or ask Windows for an
       administrator (UAC) for the one step that needs one, saying why, in a window of its own
       whose log goes to the data folder's `logs`. Every other command runs as the operator (Linux:
-      the account; Windows: the person install named, by default whoever ran it), never as root
+      the account; Windows: whoever ran install, which refuses to name another), never as root
       and never elevated: each refuses otherwise, and Windows refuses an operator other than the
       one install named. Podman runs as the operator, so its machine (Windows) or its rootless
       store (Linux) is theirs, and they can read and write the data folder. On Windows install

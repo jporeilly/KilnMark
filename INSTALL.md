@@ -60,8 +60,8 @@ Install writes to folders only root or an administrator may change, so it asks, 
 first: on Linux it runs itself again with `sudo`; on Windows it asks Windows for an administrator
 (UAC) for the one step that makes the folders, which runs in a window of its own. Everything else
 runs as the operator, the account that runs Kilnmark day to day: on Linux the service account
-`kilnmark` (install makes it), on Windows you (or the account `-Operator` names). Podman runs as
-the operator.
+`kilnmark` (install makes it), on Windows you: run install as the account that will run Kilnmark.
+Podman runs as the operator.
 
 ### The questions
 
@@ -74,7 +74,7 @@ on.
 | The deployment mode | `mode` | `production` | `production` or `starter-pack`; never changed later |
 | How people sign in | `identity` | `own` on production; always `bundled` on a Starter Pack install | `own` (your organisation's identity provider) or `bundled` (Kilnmark's own Keycloak) |
 | Your organisation's email domain | `email_domain` | none | A domain name in lower case, never kilnmark.com |
-| The host name people reach Kilnmark on | `host` | `localhost` | A host name, an IPv4 address or `localhost`; anything but `localhost` needs TLS |
+| The host name people reach Kilnmark on | `host` | `localhost` | A host name, an IPv4 address or `localhost`; anything but `localhost` needs TLS, and with the bundled Keycloak `tls=proxy` |
 | TLS | `tls` (`tls_cert`, `tls_key`) | `off` | `off`, `on` (with your certificate and key, PEM files) or `proxy` (a proxy in front ends it) |
 | Kilnmark's ports | `port`, `https_port` | `8780`, `8443` | Free, and no two answers on one port |
 | Its database's port, on this machine only | `db_port` | `5442` | The same |
@@ -84,7 +84,7 @@ on.
 
 `project` (the compose project's name, `kilnmark`), `program_dir`, `data_dir`, and `user` (Linux)
 or `operator` (Windows) are never asked: give them in an answers file, or as `--program-dir`,
-`--data-dir`, `--user` (`-ProgramDir`, `-DataDir`, `-Operator`).
+`--data-dir`, `--user` (`-ProgramDir`, `-DataDir`).
 
 ### An install with no questions
 

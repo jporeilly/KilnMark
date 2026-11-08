@@ -27,7 +27,9 @@ project="${KILNMARK_PROJECT:-}"
 # config/.env says, as this script reads them (ADR 0051), so a value exported here never counts.
 unset KILNMARK_MODE KILNMARK_STARTER KILNMARK_STARTER_PEOPLE_ACTION \
   KILNMARK_PEOPLE_ACTION KILNMARK_PERSON_EMAIL KILNMARK_PERSON_FIRST_NAME KILNMARK_PERSON_LAST_NAME \
-  KILNMARK_PERSON_GROUPS KILNMARK_INSTALL_ID KILNMARK_RUN_DIR KILNMARK_ENV_FILE
+  KILNMARK_PERSON_GROUPS KILNMARK_INSTALL_ID KILNMARK_RUN_DIR KILNMARK_ENV_FILE \
+  KILNMARK_OIDC_VIEWER_GROUPS KILNMARK_OIDC_STEWARD_GROUPS KILNMARK_OIDC_DESIGNER_GROUPS \
+  KILNMARK_OIDC_ADMIN_GROUPS KILNMARK_OIDC_UNMASK_GROUPS KILNMARK_KEYCLOAK_BIND
 
 # Rootless Podman needs the account's systemd session; sudo -iu and su do not set it up, but its
 # runtime folder exists once lingering is on (install turns it on).
@@ -171,7 +173,7 @@ pick_engine() {
   else die "Neither Podman nor Docker is installed. Install one first (INSTALL.md, \"What to install first\")."
   fi
   "$engine" compose version > /dev/null 2>&1 \
-    || die "'$engine compose' does not work. Install the compose plugin (Docker) or podman-compose (Podman)."
+    || die "'$engine compose' does not work: Podman needs podman-compose ($(pkg_install podman-compose)), Docker its compose plugin ($(pkg_install docker-compose-plugin)). Then run this again."
 }
 
 # A setting from config/.env as compose reads it (an export in front too); empty when it is not set.
@@ -508,7 +510,7 @@ images_present() {
 # secret), joined with spaces or as a Python list. Those lines are never shown or kept in logs/:
 # filtered here for every compose call this script shows, whether or not it logs.
 compose_command_line="podman.*[[:space:]'\",[](-e|--env)([[:space:]=,'\"]|\$)"
-hide_compose_commands() { grep --line-buffered -v -E "$compose_command_line" || true; }
+hide_compose_commands() { grep --line-buffered -v -E "$compose_command_line|^[0-9a-f]{12,64}$" || true; }
 
 start_log() {
   [ -n "$data" ] && [ -d "$data/logs" ] && [ ! -L "$data/logs" ] || return 0
@@ -521,8 +523,10 @@ start_log() {
   if [ -L "$log" ] || { [ -e "$log" ] && [ ! -f "$log" ]; }; then
     die "$log is not a plain file, so nothing was logged or done: remove it, then run this again."
   fi
+  log_path="$log"
   exec > >(hide_compose_commands | tee -a "$log") 2>&1
 }
+log_path=""
 
 # --- signatures --------------------------------------------------------------------------------
 
@@ -608,7 +612,12 @@ port() {
   [ -n "$v" ] || v="${!1:-}"
   printf '%s' "${v:-$2}"
 }
-port_busy() { (exec 3<> "/dev/tcp/127.0.0.1/$1") 2> /dev/null; }
+# Whether something answers on the port. A connection that neither opens nor is refused within two
+# seconds counts as nothing there: WSL's mirrored networking can leave one to a free port hanging.
+port_busy() {
+  if command -v timeout > /dev/null 2>&1; then timeout 2 bash -c 'exec 3<> "/dev/tcp/127.0.0.1/$0"' "$1" 2> /dev/null
+  else (exec 3<> "/dev/tcp/127.0.0.1/$1") 2> /dev/null; fi
+}
 # A free port near $1, for a fix to name.
 free_port() {
   local p=$(( $1 + 1 )) i
@@ -730,6 +739,7 @@ check_install() {
   local running="$1" mode user why last age want recorded kc
   mode="$(setting KILNMARK_MODE)"
   user="$(answer_of user)"; user="${user:-kilnmark}"
+  local group; group="$(id -gn "$user" 2> /dev/null || echo "$user")"
   case "$mode" in
     production|starter-pack) passed "a $mode install" ;;
     *) problem "KILNMARK_MODE in config/.env is not production or starter-pack: Kilnmark does not start." "set KILNMARK_MODE back to the mode it was installed with in $data/config/.env" ;;
@@ -745,12 +755,12 @@ check_install() {
   else problem "$why" "sudo chown -R root:root \"$root\" && sudo chmod -R go-w \"$root\""; fi
   why="$(folder_problem "$data" "$(id -u "$user" 2> /dev/null || echo x)" 700 config/.env)"
   if [ -z "$why" ]; then passed "the data folder is $user's alone"
-  else problem "$why" "sudo chown -R $user:$user \"$data\" && sudo chmod 700 \"$data\" \"$data/config\" \"$data/backups\" \"$data/logs\" && sudo chmod 600 \"$data/config/.env\""; fi
-  if auth_on; then
+  else problem "$why" "sudo chown -R $user:$group \"$data\" && sudo chmod 700 \"$data\" \"$data/config\" \"$data/backups\" \"$data/logs\" && sudo chmod 600 \"$data/config/.env\""; fi
+  if auth_on && [ "$(my_uid)" -ne 0 ]; then
     # the second line of defence: what the hourly run uses, as it checks it
     why="$(tree_problem)"
     if [ -z "$why" ]; then passed "nobody else may change what the hourly run uses"
-    else problem "$why." "sudo chown -R root:root \"$root\" && sudo chmod -R go-w \"$root\" && sudo chown -R $user:$user \"$data\" && sudo chmod -R go-w \"$data\""; fi
+    else problem "$why." "sudo chown -R root:root \"$root\" && sudo chmod -R go-w \"$root\" && sudo chown -R $user:$group \"$data\" && sudo chmod -R go-w \"$data\""; fi
   fi
   if [ "$mode" = starter-pack ]; then
     auth_on || problem "A Starter Pack install needs the bundled Keycloak (auth in COMPOSE_PROFILES): it does not start without." "put COMPOSE_PROFILES=auth back in $data/config/.env, then $root/kilnmark.sh up"
@@ -775,13 +785,13 @@ check_install() {
     fi
     if auth_on; then
       kc="$(setting KILNMARK_KEYCLOAK_PORT)"
-      if curl -s -f -o /dev/null --max-time 10 "http://localhost:${kc:-8180}/realms/kilnmark"; then passed "Keycloak answers"
+      if curl -s -f -o /dev/null --max-time 10 "http://127.0.0.1:${kc:-8180}/realms/kilnmark"; then passed "Keycloak answers"
       else problem "Keycloak does not answer." "$root/kilnmark.sh restart, then $root/kilnmark.sh logs keycloak"; fi
     fi
   else
     warning "Kilnmark is not running." "$root/kilnmark.sh up"
   fi
-  if auth_on; then
+  if auth_on && [ "$(my_uid)" -ne 0 ]; then
     want="$(expiry_timer_state)"
     echo "People expiry: $want"
     [ "$want" != "not set up" ] || warning "The hourly expiry of unused temporary passwords is not set up." "$root/kilnmark.sh up"
@@ -831,7 +841,7 @@ cmd_check() {
   local running=false keycloak=false
   [ $# -eq 0 ] || die "check takes no options."
   if [ -n "$data" ] && [ -f "$data/config/.env" ]; then
-    curl -k -s -f -o /dev/null --max-time 10 "$(local_url)/q/health/ready" && running=true
+    curl -k -s -f -o /dev/null --max-time 10 "$(local_url | sed 's/localhost/127.0.0.1/')/q/health/ready" && running=true
     ! auth_on || keycloak=true
     echo "Checking Kilnmark in $root (data in $data), a $(setting KILNMARK_MODE) install"
     check_prerequisites "$running" "$keycloak"
@@ -917,7 +927,7 @@ wait_for() {
   local what="$1" url="$2" tries="$3" i
   echo "Waiting for $what ..."
   for i in $(seq 1 "$tries"); do
-    if curl -k -L -s -f --max-time 10 -o /dev/null "$url"; then return 0; fi
+    if curl -k -L -s -f --max-time 10 -o /dev/null "${url/localhost/127.0.0.1}"; then return 0; fi
     sleep 2
   done
   return 1
@@ -987,7 +997,7 @@ hand_install_id() {
 after_one_offs() {
   if auth_on; then
     local kc id; kc="$(setting KILNMARK_KEYCLOAK_PORT)"
-    wait_for Keycloak "http://localhost:${kc:-8180}/realms/kilnmark" 150 \
+    wait_for Keycloak "http://127.0.0.1:${kc:-8180}/realms/kilnmark" 150 \
       || die "Keycloak did not answer within 5 minutes. See why with: ./kilnmark.sh logs keycloak"
     people_after_up
     if [ -z "${KILNMARK_INSTALL_ID:-}" ]; then
@@ -1045,6 +1055,8 @@ cmd_status() {
 # Each answer install asks for, or reads from an answers file (install.conf.example says each). An
 # answers file holds no secrets: secrets are generated, or typed (hidden) or piped in when asked.
 declare -A ans=() ans_line=()
+# answers configure leaves unchecked because the change is not to them (the certificate's files)
+skip_keys=" "
 answer_keys=(mode identity email_domain host port https_port db_port keycloak_port tls tls_cert tls_key
   oidc_issuer oidc_client_id oidc_provider_name oidc_viewer_groups oidc_steward_groups oidc_designer_groups
   oidc_admin_groups oidc_unmask_groups admin_email admin_first_name admin_last_name project program_dir data_dir user operator)
@@ -1146,6 +1158,8 @@ answers_problems() {
   done
   if ! local_host "$(answer_of host)" && [ "$(answer_of tls)" = off ]; then
     echo "tls: people sign in over HTTPS only, so from other machines Kilnmark needs tls on or proxy (or host localhost)"
+  elif ! local_host "$(answer_of host)" && [ "$(answer_of identity)" = bundled ] && [ "$(answer_of tls)" != proxy ]; then
+    echo "tls: from other machines the bundled Keycloak is reached through a proxy that ends TLS (its realm asks for HTTPS), so tls is proxy (or host localhost)"
   fi
   a="$(answer_of program_dir)"; b="$(answer_of data_dir)"
   if [ "${a%/}" = "${b%/}" ] || [[ "${b%/}/" == "${a%/}/"* ]] || [[ "${a%/}/" == "${b%/}/"* ]]; then
@@ -1157,6 +1171,7 @@ validate_answers() {
   local k why errs=() at
   for k in "${answer_keys[@]}"; do
     relevant "$k" || continue
+    [[ "$skip_keys" != *" $k "* ]] || continue
     why="$(answer_problem "$k" "$(answer_of "$k")")"
     [ -z "$why" ] || { at=""; [ -z "${ans_line[$k]:-}" ] || at=" (line ${ans_line[$k]})"; errs+=("$k$at: $why"); }
   done
@@ -1356,6 +1371,7 @@ write_env() {
     # Keycloak is published on this machine only: from other machines, a proxy that ends TLS
     if local_host "$host"; then kc="http://localhost:$(answer_of keycloak_port)"; else kc="https://$host:$(answer_of keycloak_port)"; fi
     set_line "$env" KILNMARK_KEYCLOAK_URL "$kc"
+    if local_host "$host"; then set_line "$env" KILNMARK_KEYCLOAK_BIND 127.0.0.1; else set_line "$env" KILNMARK_KEYCLOAK_BIND 0.0.0.0; fi
     set_line "$env" KILNMARK_OIDC_ISSUER "http://keycloak:8080/realms/kilnmark"
     set_line "$env" KILNMARK_OIDC_CLIENT_ID kilnmark
     set_line "$env" KILNMARK_OIDC_PROVIDER_NAME Keycloak
@@ -1501,7 +1517,7 @@ make_account() {
   for f in /etc/subuid /etc/subgid; do
     if ! grep -q "^$user:" "$f" 2> /dev/null; then
       start=$(awk -F: '{ if ($2 + $3 > m) m = $2 + $3 } END { print (m > 100000 ? m : 100000) }' "$f" 2> /dev/null || echo 100000)
-      echo "$user:$start:65536" >> "$f"
+      (umask 022; echo "$user:$start:65536" >> "$f")
     fi
   done
   loginctl enable-linger "$user" || die "Lingering could not be turned on for $user, which rootless Podman needs to run without them signed in."
@@ -1544,7 +1560,7 @@ cmd_install() {
     [ -z "$cli_user" ] || ans[user]="$cli_user"
   fi
   if [ "${with_starter:-false}" = true ]; then
-    [ -z "${ans[mode]+x}" ] || [ "${ans[mode]}" = starter-pack ] || die "--starter makes a Starter Pack install, and the answers say mode=${ans[mode]}: choose one. Nothing was changed."
+    [ -z "${ans[mode]+x}" ] || [ "${ans[mode]}" = starter-pack ] || die "--starter makes a Starter Pack install, and the answers say another mode: choose one. Nothing was changed."
     ans[mode]=starter-pack
   fi
   echo "Installing Kilnmark $v"
@@ -1558,7 +1574,7 @@ cmd_install() {
   fi
   # the steps: the answers, the prerequisites, the account, the program folder, the data folder and
   # the images; then the start, the first admin and the Starter Pack where they apply
-  t=6
+  t=7
   if $start; then
     t=$((t + 1))
     [ -z "$(answer_of admin_email)" ] || [ "$(answer_of identity)" != bundled ] || t=$((t + 1))
@@ -1597,7 +1613,7 @@ cmd_install() {
   make_account "$ins_user"
   step_ok
   step "Place Kilnmark $v in $root"
-  mkdir -p "$(dirname "$root")" && { [ -d "$root" ] || mkdir -m 755 "$root"; } && mkdir -m 755 "$root/versions" \
+  (umask 022; mkdir -p "$(dirname "$root")") && { [ -d "$root" ] || mkdir -m 755 "$root"; } && mkdir -m 755 "$root/versions" \
     || die "$root could not be made."
   chmod 755 "$root"
   place_version "$here" "$v"
@@ -1605,8 +1621,11 @@ cmd_install() {
   printf '%s\n' "$data" > "$root/data-folder.txt"
   chown -h root:root "$root" "$root/versions" "$root/current" "$root"/*.sh "$root/data-folder.txt" && chmod 644 "$root/data-folder.txt"
   step_ok
+  step "Check the account's Podman (rootless: its cgroups, its memory)"
+  account_step "$root/kilnmark.sh" check < /dev/null
+  step_ok
   step "Make the data folder $data, with new secrets"
-  mkdir -p "$(dirname "$data")" && mkdir -m 700 "$data" && mkdir -m 700 "$data/config" "$data/backups" "$data/logs" "$data/certs" \
+  (umask 022; mkdir -p "$(dirname "$data")") && mkdir -m 700 "$data" && mkdir -m 700 "$data/config" "$data/backups" "$data/logs" "$data/certs" \
     && mkdir -m 755 "$data/certs/https" || die "$data could not be made."
   cp "$root/current/.env.example" "$data/config/.env.example"
   write_env
@@ -1617,7 +1636,9 @@ cmd_install() {
   step_ok
   # what install says from here, in the data folder's logs (the account's, once install ends)
   start_log install
-  local log_file; log_file="$(ls -1t "$data/logs"/install-*.log 2> /dev/null | head -n 1)"
+  local log_file="$log_path"
+  [ -z "$log_file" ] || touch "$log_file"
+  [ -z "$log_file" ] || chown "$ins_user:$(id -gn "$ins_user")" "$log_file" 2> /dev/null || true
   step "Get the images"
   if [ -n "${offline:-}" ]; then
     verify_file "$offline"
@@ -1798,7 +1819,7 @@ cmd_stop_for_uninstall() {
 # --- configure: change an answer later (ADR 0051, decision 17) --------------------------------
 
 cmd_configure() {
-  local a k v changed=() restart=false person=false identity_was why running=false
+  local a k v changed=() restart=false person=false identity_was why running=false certs=false
   current_version > /dev/null
   load_installed_answers || die "$data/config/install.conf, the install's answers, is missing, so configure cannot tell what install chose. Nothing was changed."
   if [ $# -eq 0 ]; then
@@ -1808,6 +1829,8 @@ cmd_configure() {
     return 0
   fi
   identity_was="$(answer_of identity)"
+  # running is judged by the settings it runs with now, before they change
+  curl -k -s -f -o /dev/null --max-time 10 "$(local_url)/q/health/ready" && running=true
   steps 3
   step "Check the new answers"
   for a in "$@"; do
@@ -1832,6 +1855,10 @@ cmd_configure() {
       die "$k: port $(answer_of "$k") is in use (port $(free_port "$(answer_of "$k")") is free). Nothing was changed."
     fi
   done
+  # the certificate's files are checked, and copied, only when the change is to them: install read
+  # them as root, and the account need not be able to read them again
+  if [[ " ${changed[*]} " == *" tls "* || " ${changed[*]} " == *" tls_cert "* || " ${changed[*]} " == *" tls_key "* ]]; then certs=true; fi
+  $certs || skip_keys=" tls_cert tls_key "
   validate_answers || die "Some answers cannot be taken (above), so nothing was changed."
   # what a change needs before anything is written: a client secret for your own identity provider
   if [ "$(answer_of identity)" = own ] && { [ "$identity_was" != own ] || [[ " ${changed[*]} " == *" oidc_client_id "* ]]; }; then
@@ -1851,13 +1878,12 @@ cmd_configure() {
   fi
   step_ok
   step "Write the settings"
-  place_certs
+  ! $certs || place_certs
   if [ "$identity_was" != "$(answer_of identity)" ] && [ "$(answer_of identity)" = bundled ]; then write_env new-client; else write_env; fi
   write_answers "$data/config/install.conf"
   echo "Wrote $data/config/.env and $data/config/install.conf: ${changed[*]}."
   step_ok
   step "Run again what the change affects"
-  curl -k -s -f -o /dev/null --max-time 10 "$(local_url)/q/health/ready" && running=true
   if $restart; then
     if $running; then
       echo "Restarting Kilnmark, so every container takes the new settings ..."
@@ -1868,7 +1894,7 @@ cmd_configure() {
     fi
   fi
   if $person; then
-    $running || $restart || die "Kilnmark is not running, so the first admin was not added: start it ($root/kilnmark.sh up), then run configure again."
+    $running || die "Kilnmark is not running, so the first admin was not added: start it ($root/kilnmark.sh up), then run configure again."
     run_first_admin
   fi
   $restart || $person || echo "Nothing to run again: ${changed[*]} takes effect as it is."
@@ -1900,24 +1926,18 @@ one_off_done() {
 }
 
 # Turns the Starter Pack's example data on through Kilnmark's own API, as Settings > Starter Pack
-# does: Kilnmark does the work. The admin token goes to curl in a file in a new folder only this
-# account can open, never on a command line; the folder goes however the script ends.
+# does: Kilnmark does the work. Through api_call, as every request with the admin token: only to a
+# listener of this account's, at 127.0.0.1, the token in a file, never on a command line.
 starter_on() {
-  local answer code
+  local answer code answer_file
   set_compose
   one_off_done samples-db \
-    || echo "Warning: samples-db did not finish well, so the Starter Pack may not find its database. See: ./kilnmark.sh logs samples-db"
-  starter_work="$(mktemp -d)" || die "Could not make a private folder for the request."
-  {
-    cat <<EOF
-header = "Authorization: Bearer $(setting KILNMARK_ADMIN_TOKEN)"
-EOF
-  } > "$starter_work/curl.conf"
+    || echo "Warning: samples-db did not finish well, so the Starter Pack may not find its database. See: kilnmark.sh logs samples-db"
   echo "Turning the Starter Pack on ..."
-  code="$(curl -k -s --config "$starter_work/curl.conf" -X POST --max-time 600 -o "$starter_work/answer" \
-    -w '%{http_code}' "$(local_url)/api/v1/starter-pack")" || code=000
-  answer="$(cat "$starter_work/answer" 2> /dev/null || true)"
-  rm -rf "$starter_work"; starter_work=""
+  answer_file="$(mktemp)" || die "Could not make a private file for the answer."
+  code="$(KM_ANSWER_FILE="$answer_file" api_call POST /api/v1/starter-pack "")"
+  answer="$(cat "$answer_file" 2> /dev/null || true)"
+  rm -f "$answer_file"
   if [ "$code" != 200 ]; then
     echo "The Starter Pack was not turned on (HTTP $code): $(sed -n 's/^{"error":"\(.*\)"}$/\1/p' <<< "$answer")" >&2
     echo "Turn it on later under Settings > Starter Pack." >&2
@@ -1943,6 +1963,11 @@ people_after_up() {
   # Only its latest run: it says "started" first.
   out="$("$engine" logs "$id" 2>&1 | hide_compose_commands \
     | awk '/^keycloak-setup: started/ { buf = "" } { buf = buf $0 "\n" } END { printf "%s", buf }')"
+  if grep -q "^keycloak-setup: this Keycloak's realm .* is not this install's" <<< "$out"; then
+    sed -n "s/^keycloak-setup: \(this Keycloak's realm .*\)$/\1/p" <<< "$out" >&2
+    compose_quietly down || true
+    die "keycloak-setup refused this Keycloak's realm (above), so Kilnmark was stopped again: no sign-in goes to a realm that is not this install's."
+  fi
   record_own_people "$out" expire
   # anyone the pack's removal only took out of its group, not one of the example people
   sed -n 's/^keycloak-setup: \(took .*\)$/\1/p' <<< "$out"
@@ -2005,6 +2030,8 @@ EOF
   code="$(curl -k -s --config "$starter_work/curl.conf" -X "$1" --max-time 600 -o "$starter_work/answer" \
     --data-binary "@$starter_work/body" -w '%{http_code}' "${url/localhost/127.0.0.1}$2")" || code=000
   api_answer="$(cat "$starter_work/answer" 2> /dev/null || true)"
+  # the answer for a caller that needs it (this runs in a subshell): a file of its own
+  [ -z "${KM_ANSWER_FILE:-}" ] || cp "$starter_work/answer" "$KM_ANSWER_FILE" 2> /dev/null || true
   rm -rf "$starter_work"; starter_work=""
   printf '%s' "$code"
 }
@@ -2217,7 +2244,7 @@ record_own_people() {
   # Those given a temporary password just now wait, disabled, for this record: enabled only once
   # Kilnmark has it (fail closed), so a run cut short leaves nobody able to sign in unrecorded.
   local todo kept_out="$people_out" p left=""
-  todo="$(sed -n 's/^keycloak-setup: made \([a-z0-9._%+@-]*\) (.*): they choose their own password.*$/\1/p; s/^keycloak-setup: activated \([a-z0-9._%+@-]*\): .*$/\1/p' <<< "$1")"
+  todo="$(sed -n 's/^keycloak-setup: made \([a-z0-9._%+@-]*\) ([a-z;-]*): they choose their own password.*$/\1/p; s/^keycloak-setup: activated \([a-z0-9._%+@-]*\): they choose their own password.*$/\1/p' <<< "$1")"
   if [ "$code" != 204 ]; then
     echo "Warning: Kilnmark did not record this in its audit log (HTTP $code); Keycloak's admin events have it." >&2
     [ -z "$todo" ] || echo "So they stay disabled, until Kilnmark answers: then give each a temporary password with people activate EMAIL." >&2
@@ -2346,8 +2373,11 @@ cmd_people() {
       # nobody signs in then, and each start expires them first.
       [ $# -eq 0 ] || die "people expire takes no options."
       # the tree it runs from was checked first (expire_guard)
-      local kcp; kcp="$(setting KILNMARK_KEYCLOAK_PORT)"
-      if ! curl -s -f -o /dev/null --max-time 10 "http://localhost:${kcp:-8180}/realms/kilnmark"; then
+      local kcp rc=0; kcp="$(setting KILNMARK_KEYCLOAK_PORT)"
+      # only a refused connection is "not running": anything else answering there goes on to setup,
+      # which checks the realm itself
+      curl -s -o /dev/null --max-time 10 "http://127.0.0.1:${kcp:-8180}/realms/kilnmark" || rc=$?
+      if [ "$rc" -eq 7 ]; then
         echo "Keycloak does not answer, so nothing was expired now: each start of Kilnmark expires unused temporary passwords too."
         return 0
       fi

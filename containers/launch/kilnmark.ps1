@@ -26,7 +26,7 @@ $Project = ''; if ($env:KILNMARK_PROJECT) { $Project = $env:KILNMARK_PROJECT }
 # Compose fills ${NAME} from this process's environment before config\.env. These must mean what
 # config\.env says, as this script reads them (ADR 0051), so a value set outside never counts.
 $OneRun = @('KILNMARK_STARTER_PEOPLE_ACTION', 'KILNMARK_PEOPLE_ACTION', 'KILNMARK_PERSON_EMAIL', 'KILNMARK_PERSON_FIRST_NAME', 'KILNMARK_PERSON_LAST_NAME', 'KILNMARK_PERSON_GROUPS', 'KILNMARK_INSTALL_ID', 'KILNMARK_RUN_DIR')
-foreach ($n in (@('KILNMARK_MODE', 'KILNMARK_STARTER', 'KILNMARK_ENV_FILE', 'KILNMARK_CERTS_DIR') + $OneRun)) {
+foreach ($n in (@('KILNMARK_MODE', 'KILNMARK_STARTER', 'KILNMARK_ENV_FILE', 'KILNMARK_CERTS_DIR', 'KILNMARK_KEYCLOAK_BIND', 'KILNMARK_OIDC_VIEWER_GROUPS', 'KILNMARK_OIDC_STEWARD_GROUPS', 'KILNMARK_OIDC_DESIGNER_GROUPS', 'KILNMARK_OIDC_ADMIN_GROUPS', 'KILNMARK_OIDC_UNMASK_GROUPS') + $OneRun)) {
     Remove-Item ('Env:' + $n) -ErrorAction SilentlyContinue
 }
 $Launchers = @('kilnmark.ps1', 'kilnmark.cmd', 'start-kilnmark.cmd', 'stop-kilnmark.cmd', 'create-shortcut.ps1', 'kilnmark.ico')
@@ -219,7 +219,7 @@ function Select-Engine {
         }
     }
     & $script:Engine compose version *> $null
-    if ($LASTEXITCODE -ne 0) { Fail ("'" + $script:Engine + " compose' does not work. Install Docker Compose or podman-compose.") }
+    if ($LASTEXITCODE -ne 0) { Fail ("'" + $script:Engine + " compose' does not work: Podman needs a compose tool (winget install Docker.DockerCompose). Then run this again.") }
 }
 
 # A setting from config\.env as compose reads it (an export in front too); empty when it is not set.
@@ -528,12 +528,17 @@ function Get-ComposeArgs {
 # podman-compose 1.0.x prints each podman command it runs, with every setting of the container on
 # it (-e NAME=value: passwords, the client secret), joined with spaces or as a Python list. Those
 # lines are never shown or kept in logs\.
+function ConvertTo-Said($Item) {
+    if ($Item -is [Management.Automation.ErrorRecord]) { $s = '' + $Item.Exception.Message } else { $s = '' + $Item }
+    if (-not $s.Trim() -or $s -ceq 'System.Management.Automation.RemoteException' -or $s -cmatch '^[0-9a-f]{12,64}$') { return }
+    return $s
+}
 function Test-ComposeCommand([string]$Line) { return ($Line -match 'podman.*[\s''",\[](-e|--env)([\s=,''"]|$)') }
 
 # Runs compose with the given arguments; its output reaches the screen and the log.
 function Invoke-Compose {
     $base = Get-ComposeArgs
-    & $script:Engine @base @args 2>&1 | ForEach-Object { '' + $_ } | Where-Object { -not (Test-ComposeCommand $_) } | Out-Host
+    & $script:Engine @base @args 2>&1 | ForEach-Object { ConvertTo-Said $_ } | Where-Object { -not (Test-ComposeCommand $_) } | Out-Host
     return ($LASTEXITCODE -eq 0)
 }
 
@@ -541,7 +546,7 @@ function Invoke-Compose {
 # all of it is shown. For up and down, whose own lines say what happened.
 function Invoke-ComposeQuietly {
     $base = Get-ComposeArgs
-    $out = & $script:Engine @base @args 2>&1 | ForEach-Object { '' + $_ }
+    $out = & $script:Engine @base @args 2>&1 | ForEach-Object { ConvertTo-Said $_ }
     if ($LASTEXITCODE -eq 0) { return $true }
     $out | Where-Object { -not (Test-ComposeCommand $_) } | Out-Host
     return $false
@@ -858,7 +863,7 @@ function Test-Install([bool]$Running) {
         if ($recorded -and $recorded -cne $mode) { Add-Problem ('KILNMARK_MODE in config\.env (' + $mode + ') differs from the mode Kilnmark recorded at its first start (' + $recorded + ').') ('set KILNMARK_MODE=' + $recorded + ' in ' + $envFile) }
         if (Test-KeycloakOn) {
             $port = Get-Setting 'KILNMARK_KEYCLOAK_PORT'; if (-not $port) { $port = '8180' }
-            if (Test-Answers ('http://localhost:' + $port + '/realms/kilnmark')) { Add-Passed 'Keycloak answers' }
+            if (Test-Answers ('http://127.0.0.1:' + $port + '/realms/kilnmark')) { Add-Passed 'Keycloak answers' }
             else { Add-Problem 'Keycloak does not answer.' ($kc + ' restart, then ' + $kc + ' logs keycloak') }
         }
     } else {
@@ -1021,6 +1026,8 @@ function Update-Settings {
 # answers file holds no secrets: secrets are generated, or typed (not shown) or piped in when asked.
 $script:Answers = @{}
 $script:AnswerLines = @{}
+# answers configure leaves unchecked because the change is not to them (the certificate's files)
+$script:SkipKeys = @()
 $AnswerKeys = @('mode', 'identity', 'email_domain', 'host', 'port', 'https_port', 'db_port', 'keycloak_port', 'tls', 'tls_cert', 'tls_key',
     'oidc_issuer', 'oidc_client_id', 'oidc_provider_name', 'oidc_viewer_groups', 'oidc_steward_groups', 'oidc_designer_groups',
     'oidc_admin_groups', 'oidc_unmask_groups', 'admin_email', 'admin_first_name', 'admin_last_name', 'project', 'program_dir', 'data_dir', 'user', 'operator')
@@ -1141,12 +1148,14 @@ function Get-AnswersProblems([switch]$Ports) {
     }
     if (-not (Test-LocalHost (Get-Answer 'host')) -and (Get-Answer 'tls') -ceq 'off') {
         $out += 'tls: people sign in over HTTPS only, so from other machines Kilnmark needs tls on or proxy (or host localhost)'
+    } elseif (-not (Test-LocalHost (Get-Answer 'host')) -and (Get-Answer 'identity') -ceq 'bundled' -and (Get-Answer 'tls') -cne 'proxy') {
+        $out += 'tls: from other machines the bundled Keycloak is reached through a proxy that ends TLS (its realm asks for HTTPS), so tls is proxy (or host localhost)'
     }
     $a = (Get-Answer 'program_dir').TrimEnd('\'); $b = (Get-Answer 'data_dir').TrimEnd('\')
     if ($a -eq $b -or ($b + '\').StartsWith($a + '\', [StringComparison]::OrdinalIgnoreCase) -or ($a + '\').StartsWith($b + '\', [StringComparison]::OrdinalIgnoreCase)) {
         $out += 'program_dir and data_dir are two folders, neither inside the other'
     } elseif ($a.Length -ge 2 -and $b.Length -ge 2 -and $a.Substring(0, 2) -ne $b.Substring(0, 2)) {
-        $out += 'data_dir is on the same drive as program_dir: compose reaches it by a relative path'
+        $out += 'data_dir must be on the same drive as program_dir: compose reaches it by a relative path'
     }
     return $out
 }
@@ -1155,6 +1164,7 @@ function Test-AllAnswers([switch]$Ports) {
     $errs = @()
     foreach ($k in $AnswerKeys) {
         if (-not (Test-Relevant $k)) { continue }
+        if ($script:SkipKeys -ccontains $k) { continue }
         $why = Get-AnswerProblem $k (Get-Answer $k)
         if ($why) {
             $at = ''; if ($script:AnswerLines.ContainsKey($k)) { $at = ' (line ' + $script:AnswerLines[$k] + ')' }
@@ -1356,6 +1366,7 @@ function Write-Env([switch]$NewClient) {
         # Keycloak is published on this machine only: from other machines, a proxy that ends TLS
         if (Test-LocalHost $hostName) { $kc = 'http://localhost:' + (Get-Answer 'keycloak_port') } else { $kc = 'https://' + $hostName + ':' + (Get-Answer 'keycloak_port') }
         Set-Line $env 'KILNMARK_KEYCLOAK_URL' $kc
+        if (Test-LocalHost $hostName) { Set-Line $env 'KILNMARK_KEYCLOAK_BIND' '127.0.0.1' } else { Set-Line $env 'KILNMARK_KEYCLOAK_BIND' '0.0.0.0' }
         Set-Line $env 'KILNMARK_OIDC_ISSUER' 'http://keycloak:8080/realms/kilnmark'
         Set-Line $env 'KILNMARK_OIDC_CLIENT_ID' 'kilnmark'
         Set-Line $env 'KILNMARK_OIDC_PROVIDER_NAME' 'Keycloak'
@@ -1408,6 +1419,7 @@ function Test-Answers([string]$Url) {
 
 function Wait-For([string]$What, [string]$Url, [int]$Tries) {
     Write-Host ('Waiting for ' + $What + ' ...')
+    $Url = $Url -replace '://localhost:', '://127.0.0.1:'
     for ($i = 0; $i -lt $Tries; $i++) {
         if (Test-Answers $Url) { return $true }
         Start-Sleep -Seconds 2
@@ -1439,7 +1451,7 @@ function Invoke-Up([string[]]$Options) {
                     $env:KILNMARK_PEOPLE_ACTION = 'stamp'; $env:KILNMARK_INSTALL_ID = $id
                     try {
                         $base = Get-ComposeArgs
-                        $stamped = @(& $script:Engine @base run --rm -T keycloak-setup 2>&1 | ForEach-Object { '' + $_ } | Where-Object { -not (Test-ComposeCommand $_) })
+                        $stamped = @(& $script:Engine @base run --rm -T keycloak-setup 2>&1 | ForEach-Object { ConvertTo-Said $_ } | Where-Object { -not (Test-ComposeCommand $_) })
                         if ($LASTEXITCODE -ne 0) { Write-Host "Warning: Keycloak's realm was not told which install it belongs to; the next start tells it. See: kilnmark.cmd logs keycloak-setup" -ForegroundColor Yellow }
                         else { Send-OwnPeopleDone $stamped 'stamp' }
                     } finally { Remove-Item Env:KILNMARK_PEOPLE_ACTION -ErrorAction SilentlyContinue }
@@ -1538,11 +1550,20 @@ function Invoke-Elevated([string]$Script, [string[]]$Arguments) {
     $p.WaitForExit()
     return $p.ExitCode
 }
-# A new folder of your own for a moment's files (a step's answers and result), deleted after.
+# A new folder for a moment's files (a step's answers and result), deleted after: yours, and the
+# Administrators' and SYSTEM's, since the step UAC elevates may run as another administrator.
 function New-WorkFolder {
     $work = Join-Path ([IO.Path]::GetTempPath()) ('kilnmark-' + [Guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory $work | Out-Null
-    Protect-Folder $work
+    $sec = New-Object Security.AccessControl.DirectorySecurity
+    $sec.SetAccessRuleProtection($true, $false)
+    $inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    foreach ($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-32-544', 'S-1-5-18')) {
+        $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier($sid)), [Security.AccessControl.FileSystemRights]::FullControl, $inherit, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)))
+    }
+    try {
+        $di = New-Object IO.DirectoryInfo($work)
+        if ($PSVersionTable.PSVersion.Major -ge 6) { [IO.FileSystemAclExtensions]::Create($di, $sec) } else { $di.Create($sec) }
+    } catch { Fail ('Could not make a folder for this step in ' + [IO.Path]::GetTempPath() + '.') }
     return $work
 }
 # What an elevated part said: OK, or FAILED with one line saying why; it failed if nothing was said.
@@ -1634,6 +1655,9 @@ function Invoke-Install([string[]]$Options) {
     Start-Step 'Check the answers'
     if (-not (Test-AllAnswers -Ports)) { Fail 'Some answers cannot be taken (above), so nothing was changed.' }
     $operatorSid = Get-OperatorSid
+    if ($operatorSid -and $operatorSid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) {
+        Fail ('Install runs as the operator, who runs Podman and Kilnmark: sign in to Windows as ' + (Get-Answer 'operator') + ', then run install, not elevated. Nothing was changed.')
+    }
     if (-not $dry) { Read-InstallSecrets }
     Complete-Step
     Start-Step 'Check the prerequisites'
@@ -1937,6 +1961,8 @@ function Invoke-Configure([string[]]$Options) {
     }
     $identityWas = Get-Answer 'identity'
     $changed = @()
+    # running is judged by the settings it runs with now, before they change
+    $running = Test-Answers ((Get-LocalUrl) + '/q/health/ready')
     Set-Steps 3
     Start-Step 'Check the new answers'
     foreach ($a in $Options) {
@@ -1958,6 +1984,9 @@ function Invoke-Configure([string[]]$Options) {
         $n = 0
         if ($k.EndsWith('port') -and [int]::TryParse((Get-Answer $k), [ref]$n) -and (Test-PortBusy $n)) { Fail ($k + ': port ' + $n + ' is in use (port ' + (Get-FreePort $n) + ' is free). Nothing was changed.') }
     }
+    # the certificate's files are checked, and copied, only when the change is to them
+    $certs = ($changed -ccontains 'tls' -or $changed -ccontains 'tls_cert' -or $changed -ccontains 'tls_key')
+    if (-not $certs) { $script:SkipKeys = @('tls_cert', 'tls_key') }
     if (-not (Test-AllAnswers)) { Fail 'Some answers cannot be taken (above), so nothing was changed.' }
     if ((Get-Answer 'identity') -ceq 'own' -and ($identityWas -cne 'own' -or $changed -ccontains 'oidc_client_id')) {
         Read-SecretValue 'The client secret your identity provider gave Kilnmark'
@@ -1974,19 +2003,18 @@ function Invoke-Configure([string[]]$Options) {
     }
     Complete-Step
     Start-Step 'Write the settings'
-    Copy-Certs
+    if ($certs) { Copy-Certs }
     if ($identityWas -cne (Get-Answer 'identity') -and (Get-Answer 'identity') -ceq 'bundled') { Write-Env -NewClient } else { Write-Env }
     Write-Answers (Join-Path $script:Data 'config\install.conf')
     Write-Host ('Wrote config\.env and config\install.conf: ' + ($changed -join ' ') + '.')
     Complete-Step
     Start-Step 'Run again what the change affects'
-    $running = Test-Answers ((Get-LocalUrl) + '/q/health/ready')
     if ($restart) {
         if ($running) { Write-Host 'Restarting Kilnmark, so every container takes the new settings ...'; Invoke-Down; Invoke-Up @('-NoBrowser') }
         else { Write-Host ('Kilnmark is not running: the change takes effect at its next start (' + $kc + ' up).') }
     }
     if ($person) {
-        if (-not $running -and -not $restart) { Fail ('Kilnmark is not running, so the first admin was not added: start it (' + $kc + ' up), then run configure again.') }
+        if (-not $running) { Fail ('Kilnmark is not running, so the first admin was not added: start it (' + $kc + ' up), then run configure again.') }
         $p = @{ Email = (Get-Answer 'admin_email'); First = (Get-Answer 'admin_first_name'); Last = (Get-Answer 'admin_last_name'); Groups = 'kilnmark-admins'; Password = $script:AdminPassword }
         $script:AdminPassword = ''
         if (-not (New-Person $p)) { Fail 'The first admin was not added (above).' }
@@ -2012,26 +2040,19 @@ function Wait-OneOff([string]$Service) {
 }
 
 # Turns the Starter Pack's example data on through Kilnmark's own API, as Settings > Starter Pack
-# does: Kilnmark does the work. The admin token reaches curl in a settings file in a new folder only
-# this account can open, deleted at once, never on a command line (Windows PowerShell can add a
-# byte-order mark to what it pipes, which curl would not read).
+# does: Kilnmark does the work. Through Invoke-KilnmarkApi, as every request with the admin token:
+# only to a listener of yours, at 127.0.0.1, the token in a file, never on a command line.
 function Invoke-StarterOn {
     if (-not (Wait-OneOff 'samples-db')) { Write-Host 'Warning: samples-db did not finish well, so the Starter Pack may not find its database. See: kilnmark.cmd logs samples-db' -ForegroundColor Yellow }
     Write-Host 'Turning the Starter Pack on ...'
-    $work = Join-Path ([IO.Path]::GetTempPath()) ('kilnmark-' + [Guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory $work | Out-Null
-    Protect-Folder $work
-    $configFile = Join-Path $work 'curl.conf'
+    $work = New-WorkFolder
     $answerFile = Join-Path $work 'answer.json'
     $text = ''
     try {
-        $config = 'header = "Authorization: Bearer ' + (Get-Setting 'KILNMARK_ADMIN_TOKEN') + '"'
-        [IO.File]::WriteAllText($configFile, $config + "`n", (New-Object System.Text.ASCIIEncoding))
-        $config = $null
-        $code = (& curl.exe -k -s -K $configFile -X POST --max-time 600 -o $answerFile -w '%{http_code}' ((Get-LocalUrl) + '/api/v1/starter-pack') | Out-String).Trim()
-        if (Test-Path $answerFile) { $text = [IO.File]::ReadAllText($answerFile) }
+        $code = Invoke-KilnmarkApi 'POST' '/api/v1/starter-pack' '' $answerFile
+        if (Test-Path -LiteralPath $answerFile) { $text = [IO.File]::ReadAllText($answerFile) }
     } finally {
-        Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
     }
     $answer = $null
     try { $answer = ConvertFrom-Json $text } catch { }
@@ -2056,11 +2077,17 @@ function Invoke-PeopleAfterUp {
     $id = (& $script:Engine ps -a -q --filter ('label=com.docker.compose.project=' + $Project) --filter 'label=com.docker.compose.service=keycloak-setup' | Out-String).Trim()
     if (-not $id) { return }
     $id = ($id -split "`r?`n")[0].Trim()
-    $lines = @(& $script:Engine logs $id 2>&1 | ForEach-Object { '' + $_ } | Where-Object { -not (Test-ComposeCommand $_) })
+    $lines = @(& $script:Engine logs $id 2>&1 | ForEach-Object { ConvertTo-Said $_ } | Where-Object { -not (Test-ComposeCommand $_) })
     # Only its latest run: it says "started" first.
     $start = 0
     for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i].StartsWith('keycloak-setup: started')) { $start = $i } }
     $latest = @($lines[$start..($lines.Count - 1)])
+    $refusal = @($latest | Where-Object { $_ -cmatch "^keycloak-setup: this Keycloak's realm .* is not this install's" })
+    if ($refusal.Count -gt 0) {
+        Write-Host $refusal[0].Substring(16) -ForegroundColor Red
+        [void](Invoke-ComposeQuietly down)
+        Fail "keycloak-setup refused this Keycloak's realm (above), so Kilnmark was stopped again: no sign-in goes to a realm that is not this install's."
+    }
     Send-OwnPeopleDone $latest 'expire'
     # anyone the pack's removal only took out of its group, not one of the example people
     foreach ($line in $latest) { if ($line.StartsWith('keycloak-setup: took ')) { Write-Host $line.Substring(16) } }
@@ -2075,7 +2102,15 @@ function Invoke-PeopleAfterUp {
 # engine whose ports Windows does not show (WSL's mirrored networking) leaves nothing to check.
 function Get-ListenerProblem([int]$Port) {
     $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    foreach ($c in @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)) {
+    $found = @()
+    try { $found = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop) }
+    catch {
+        # none listening is ObjectNotFound; any other error leaves who listens untold
+        if ($_.CategoryInfo.Category -ne [Management.Automation.ErrorCategory]::ObjectNotFound) {
+            return ('who listens on port ' + $Port + ' cannot be told here (Windows did not answer)')
+        }
+    }
+    foreach ($c in $found) {
         if (@('127.0.0.1', '0.0.0.0', '::', '::1') -notcontains ('' + $c.LocalAddress)) { continue }
         $o = $null
         try {
@@ -2091,7 +2126,7 @@ function Get-ListenerProblem([int]$Port) {
 
 # A request to Kilnmark's own API as the admin. The admin token goes only to a listener of yours
 # (Get-ListenerProblem), at 127.0.0.1; else nothing is sent and the answer is 000.
-function Invoke-KilnmarkApi([string]$Method, [string]$Path, [string]$Body) {
+function Invoke-KilnmarkApi([string]$Method, [string]$Path, [string]$Body, [string]$AnswerFile = 'NUL') {
     $url = [uri](Get-LocalUrl)
     $why = Get-ListenerProblem $url.Port
     if ($why) {
@@ -2110,7 +2145,7 @@ function Invoke-KilnmarkApi([string]$Method, [string]$Path, [string]$Body) {
         [IO.File]::WriteAllText($bodyFile, $Body, (New-Object System.Text.ASCIIEncoding))
         # -k for Kilnmark's own certificate, whose name need not be localhost: the listener was checked above
         $at = $url.Scheme + '://127.0.0.1:' + $url.Port + $Path
-        return (& curl.exe -k -s -K $configFile -X $Method --max-time 600 -o NUL --data-binary ('@' + $bodyFile) -w '%{http_code}' $at | Out-String).Trim()
+        return (& curl.exe -k -s -K $configFile -X $Method --max-time 600 -o $AnswerFile --data-binary ('@' + $bodyFile) -w '%{http_code}' $at | Out-String).Trim()
     } finally {
         Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -2194,7 +2229,7 @@ function Invoke-Starter([string[]]$Options) {
     try {
         Write-RunSecrets
         # one line on its standard input (Windows PowerShell can put a byte-order mark first: setup drops it)
-        $out = @($password | & $script:Engine @base run --rm -T keycloak-setup 2>&1 | ForEach-Object { '' + $_ } |
+        $out = @($password | & $script:Engine @base run --rm -T keycloak-setup 2>&1 | ForEach-Object { ConvertTo-Said $_ } |
             Where-Object { -not (Test-ComposeCommand $_) })
         $ok = ($LASTEXITCODE -eq 0)
     } finally {
@@ -2312,7 +2347,7 @@ function Invoke-PeopleSetup([string]$Action, $Person, [string[]]$Lines) {
     try {
         Write-RunSecrets
         $OutputEncoding = New-Object System.Text.UTF8Encoding $false
-        $out = @($Lines | & $script:Engine @base run --rm -T keycloak-setup 2>&1 | ForEach-Object { '' + $_ } |
+        $out = @($Lines | & $script:Engine @base run --rm -T keycloak-setup 2>&1 | ForEach-Object { ConvertTo-Said $_ } |
             Where-Object { -not (Test-ComposeCommand $_) })
         $script:PeopleOk = ($LASTEXITCODE -eq 0)
     } finally {
@@ -2365,7 +2400,7 @@ function Send-OwnPeopleDone([string[]]$Lines, [string]$Via) {
     $todo = @()
     foreach ($line in $Lines) {
         if ($line -cmatch '^keycloak-setup: made ([a-z0-9._%+@-]+) \([a-z;-]+\): they choose their own password') { $todo += $Matches[1] }
-        elseif ($line -cmatch '^keycloak-setup: activated ([a-z0-9._%+@-]+): ') { $todo += $Matches[1] }
+        elseif ($line -cmatch '^keycloak-setup: activated ([a-z0-9._%+@-]+): they choose their own password') { $todo += $Matches[1] }
     }
     if ($todo.Count -eq 0) { return }
     if ($unrecorded) {
@@ -2491,7 +2526,10 @@ function Invoke-People([string[]]$Options) {
             # The tree it runs from was checked first (Assert-ExpireTree).
             # Nothing to do while Keycloak is stopped: nobody signs in then, and each start expires them first.
             $kc = Get-Setting 'KILNMARK_KEYCLOAK_PORT'; if (-not $kc) { $kc = '8180' }
-            if (-not (Test-Answers ('http://localhost:' + $kc + '/realms/kilnmark'))) {
+            # only a refused connection is "not running": anything else answering there goes on to
+            # setup, which checks the realm itself
+            & curl.exe -s -o NUL --max-time 10 ('http://127.0.0.1:' + $kc + '/realms/kilnmark') *> $null
+            if ($LASTEXITCODE -eq 7) {
                 Write-Host 'Keycloak does not answer, so nothing was expired now: each start of Kilnmark expires unused temporary passwords too.'
                 return
             }

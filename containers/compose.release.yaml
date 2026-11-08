@@ -241,10 +241,12 @@ services:
       start_period: 90s
       retries: 6
     ports:
-      # On this machine only: Keycloak's pages carry passwords and codes, so other machines reach
-      # it through a proxy here that ends TLS (INSTALL.md). Kilnmark reaches it inside this stack.
-      # If you change the port, change KILNMARK_KEYCLOAK_URL to match.
-      - "127.0.0.1:${KILNMARK_KEYCLOAK_PORT:-8180}:8080"
+      # On this machine only (127.0.0.1) unless KILNMARK_KEYCLOAK_BIND says otherwise: Keycloak's
+      # pages carry passwords and codes, so other machines reach it through a proxy that ends TLS
+      # (its realm asks for HTTPS from them). The guided install sets the address from its host
+      # name answer: 127.0.0.1 for localhost, else 0.0.0.0 for that proxy. Kilnmark reaches it
+      # inside this stack. If you change the port, change KILNMARK_KEYCLOAK_URL to match.
+      - "${KILNMARK_KEYCLOAK_BIND:-127.0.0.1}:${KILNMARK_KEYCLOAK_PORT:-8180}:8080"
 
   keycloak-setup:
     image: quay.io/keycloak/keycloak:26.8.1@sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332

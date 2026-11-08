@@ -28,8 +28,9 @@ admin_last_name=Trainer
 
 A Starter Pack install always signs in with the bundled Keycloak, where its example people are:
 install does not ask, and Kilnmark does not start otherwise. Everything else is asked as for any
-install ([INSTALL.md](../../../INSTALL.md#the-questions)): other machines need TLS (`tls=on` or
-`tls=proxy`), since sign-in works over HTTPS only. Install adds the first admin you name, and turns
+install ([INSTALL.md](../../../INSTALL.md#the-questions)): for a class on other machines, give
+the host name they use and `tls=proxy`, with a proxy that ends TLS in front of Kilnmark and
+Keycloak ([From other machines](production-bundled-keycloak.md#from-other-machines)). Install adds the first admin you name, and turns
 the Starter Pack on as its last step. Every page then shows "Starter Pack: training and development
 only".
 
