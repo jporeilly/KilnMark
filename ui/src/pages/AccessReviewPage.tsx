@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { accessReviewApi, formatTime, type AccessReview, type AccessReviewEntry } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
-import { Card, DataTable, EmptyState, PageHeader } from "../components/ui";
+import { Card, DataTable, EmptyState, PageHeader, StatusChip } from "../components/ui";
 
 /** Saves text as a file, through a link the browser follows at once. */
 function save(text: string, name: string, type: string) {
@@ -139,7 +139,17 @@ export function AccessReviewPage() {
             <tbody>
               {people.map((e, i) => (
                 <tr key={`p${i}`}>
-                  <td>{e.name}</td>
+                  <td>
+                    {e.name}
+                    {e.example && (
+                      <>
+                        {" "}
+                        <StatusChip tone="warn" kind="example" title="A kilnmark.com example account, such as the Starter Pack's people: not for an install with real data">
+                          Example account
+                        </StatusChip>
+                      </>
+                    )}
+                  </td>
                   <td>{access(e)}</td>
                   <td className="small">{lastSeen(e)}</td>
                 </tr>
@@ -151,6 +161,12 @@ export function AccessReviewPage() {
           Their role comes from their groups at your identity provider each time they sign in: to take it away, take
           them out of the group there.
         </p>
+        {people.some((e) => e.example) && (
+          <p className="warning" role="note">
+            Example accounts (kilnmark.com) have signed in here. They come with the Starter Pack, for trials and
+            training: turn the pack off under Settings, Starter Pack, before this install holds real data.
+          </p>
+        )}
       </Card>
     </>
   );

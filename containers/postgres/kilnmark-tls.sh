@@ -17,6 +17,10 @@ fi
 chown -R postgres:postgres "$dir" 2>/dev/null || true
 chmod 700 "$dir" 2>/dev/null || true
 chmod 600 "$dir/server.key" 2>/dev/null || true
+# The Starter Pack's login (ADR 0051) reaches its own database only, over TLS: PostgreSQL itself
+# refuses it everywhere else, before any grant is looked at. Kept at the top of pg_hba.conf at every
+# start (a new data folder gets it from kilnmark-hba.sh in docker-entrypoint-initdb.d).
+/usr/local/bin/kilnmark-hba.sh "${PGDATA:-}/pg_hba.conf"
 # TLS 1.2 or later, and for TLS 1.2 only forward-secret AEAD suites (no CBC or SHA-1), which a bank's
 # TLS scan otherwise marks weak.
 exec docker-entrypoint.sh "$@" -c ssl=on -c "ssl_cert_file=$dir/server.crt" -c "ssl_key_file=$dir/server.key" \

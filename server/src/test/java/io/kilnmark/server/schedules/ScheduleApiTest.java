@@ -743,13 +743,14 @@ class ScheduleApiTest {
         long id = revokedSchedule;
         as(d.token()).body(body("pipeline", "sc-copy", "cron", "@hourly", "runAs", "designer"))
             .put("/api/v1/schedules/" + id).then().statusCode(200).body("enabled", equalTo(true))
-            .body("updatedBy", equalTo("sc successor"));
+            .body("updatedBy", org.hamcrest.Matchers.matchesPattern("token [0-9]+ [(]sc successor[)]"));
         dueAgo(id, Duration.ofSeconds(5));
         assertEquals(1, scheduler.tick());
         JsonPath s = schedule(id);
         assertEquals(Scheduler.STARTED, s.getString("lastOutcome"), s.prettify());
         long run = s.getLong("lastPipelineRun");
-        assertEquals(List.of("schedule " + id + " (set by sc successor)", "designer"), requested("pipeline_run", run));
+        assertEquals(List.of("schedule " + id + " (set by " + s.getString("updatedBy") + ")", "designer"),
+            requested("pipeline_run", run));
         awaitPipelineRunDone(run);
         as(designer).delete("/api/v1/schedules/" + id).then().statusCode(204);
     }

@@ -64,7 +64,7 @@ $Sources = @(
     [pscustomobject]@{ Name = 'mail'; Services = @('lab-mailpit'); OneShot = @(); Volumes = @()
         Port = '8025'; Source = '-'; What = "Mailpit: catches the emails Kilnmark sends (SMTP 1025), read them at http://localhost:8025" }
     [pscustomobject]@{ Name = 'files'; Services = @(); OneShot = @(); Volumes = @()
-        Port = '-'; Source = 'lab-share'; What = 'File share lab/files/share, read from disk (mounted at /srv/files)' }
+        Port = '-'; Source = 'lab-share'; What = 'File share lab/files/share, read from disk (mounted at /srv/share)' }
 )
 
 function Fail([string]$Message, [int]$Code = 1) {

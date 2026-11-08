@@ -137,7 +137,19 @@ provider"). It works like any other provider above, with Kilnmark's own look:
 
 - **Groups give roles.** Keycloak has five groups ready: `kilnmark-viewers`, `kilnmark-stewards`,
   `kilnmark-designers`, `kilnmark-admins`, and `kilnmark-sensitive-data` for designers who see
-  sensitive values. Your administrator puts each person in one in Keycloak's console.
+  sensitive values.
+- **Adding people.** The person who runs Kilnmark adds people with the control script:
+  `kilnmark.sh people add` for one person, admins included (install offers to add Kilnmark's first
+  admin this way), `people import` for a class or a team from a CSV file (never admins), `people
+  activate` to give one waiting person a temporary password of their own, and `people list` to see
+  who has not yet signed in (INSTALL.md, "Adding people to the bundled Keycloak"). Or in Keycloak's
+  console. A class on a Starter Pack install shares one temporary password; a team imported on
+  production waits, disabled, until each person is activated. Everyone chooses their own password
+  at their first sign-in, and a temporary password the control script gave, unused for 72 hours,
+  disables its person (checked every hour) until activated again. Kilnmark itself cannot add people: it holds no Keycloak credential.
+- **Two admins, in two places.** Keycloak's own admin (`KILNMARK_KEYCLOAK_ADMIN`) signs in to
+  Keycloak's console, to manage people; it is not a Kilnmark account. Kilnmark's first admin is a
+  person in Keycloak's realm `kilnmark`, in `kilnmark-admins`, who signs in to Kilnmark.
 - **Every sign-in has two factors**: a password and a one-time code from an authenticator app on
   the person's phone (Microsoft Authenticator, Google Authenticator, FreeOTP and the like).
 - **The first time**, Keycloak asks the person to set up the code: scan the QR code with the app,
@@ -148,8 +160,13 @@ provider"). It works like any other provider above, with Kilnmark's own look:
 
 ![Keycloak's page for setting up the one-time code: install an authenticator app, scan the QR code (blurred here), type the code it shows and a name for the device](images/keycloak-one-time-code.png)
 
-**For a demonstration**, the administrator can add five example people, one per role, all at
-`kilnmark.com` addresses that receive no mail from here, sharing one demonstration password:
+**On a Starter Pack install**, for training and demonstrations, the person who runs Kilnmark can
+add five example people, one per role, all at `kilnmark.com` addresses that receive no mail from
+here, with the control script: `kilnmark.sh starter people` (Windows: `kilnmark.cmd starter
+people`; INSTALL.md, "Try Kilnmark with the Starter Pack"). Keycloak's own setup makes them; they
+share one password, which that person types (it is not shown) and nothing keeps. Kilnmark itself
+never makes them and never sees their password. A Starter Pack install always signs in with the
+bundled Keycloak, never an outside provider.
 
 | Person | Signs in as | Role |
 | --- | --- | --- |
@@ -160,7 +177,18 @@ provider"). It works like any other provider above, with Kilnmark's own look:
 | Alex Morgan | `alex.morgan@kilnmark.com` | Admin |
 
 Each sets up their own one-time code on first sign-in, as above. They are for showing Kilnmark only:
-never turn them on where real data is.
+never add them where real data is. The access review marks each of them as an **Example account**,
+and Settings, Starter Pack lists those that have signed in. `kilnmark.sh starter people --remove`
+deletes them again, as does removing `KILNMARK_STARTER=allowed`, at the next start: only the
+members of the pack's group, never people added with `people add` or `people import`. Every page of
+a Starter Pack install says what it is, and when its example data is on:
+
+![The marking every page of a Starter Pack install shows: Starter Pack: training and development only. Its example data and accounts are on.](images/starter-pack-banner.png)
+
+**A production install** never has the example people. Kilnmark refuses the sign-in of anyone in
+the group `kilnmark-starter-pack`, and of the five example addresses ("Your sign-in is one of the
+Starter Pack's example people, which are for training and development installs only"), and records
+each refusal in the audit log.
 
 ## Token lifetime and the access review
 

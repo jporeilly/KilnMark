@@ -159,7 +159,7 @@ public class OidcIdentityAugmentor implements SecurityIdentityAugmentor {
             return Uni.createFrom().item(identity);
         }
         JsonWebToken token = (JsonWebToken) identity.getPrincipal();
-        OidcAccess.Decision d = OidcAccess.decide(config.auth().oidc(), token::getClaim, Instant.now());
+        OidcAccess.Decision d = OidcAccess.decide(config, token, Instant.now());
         if (renewal(identity)) {
             // The same checks as a sign-in, on the provider's fresh ID token: auth_time is still when
             // the person signed in (OpenID Connect Core 12.2), so the longest session still ends it.

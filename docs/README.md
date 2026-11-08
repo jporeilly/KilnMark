@@ -12,6 +12,8 @@ outside this repository, with the owner's other business documents.
 
 ## User guides
 
+- [Choosing a deployment](../INSTALL.md#choosing-a-deployment): Production or Starter Pack, chosen once at install; how people sign in and are added in each; what a backup holds
+
 - [Asking Kilnmark](guide/assistant.md): the Ask panel, what it answers from, sources and links, and privacy
 - [Setting data quality rules](guide/quality-rules.md): one-click rules from the profile, writing rules, thresholds, previews, alerts and recipes
 - [Writing data from a pipeline](guide/writing-data.md): writing to tables (create, append, replace, upsert) and to CSV and Parquet files, the rights a write needs, and what replace keeps
@@ -47,6 +49,7 @@ outside this repository, with the owner's other business documents.
 - [Benchmarks](design/benchmarks.md) (planned): how volume and throughput are measured; the data, the workloads, what is measured and compared with, the machines, and the nightly check
 - [The assistant](design/assistant.md): a chat window that answers from knowledge domains, starting with the documentation
 - [Notifications](design/notifications.md): one event type, dedupe, masking per recipient, the email worker and the in-app feed's contract
+- [The Starter Pack](design/starter-pack.md): example data, samples and people for trials, in a database of its own; turning it on and off, the guard, and the tests
 - [Supply chain](design/supply-chain.md): the SBOMs every release carries, vulnerability scanning in CI, and how releases are signed
 - [Lessons from earlier work](design/prior-work.md): ideas taken from an earlier Trusted Data Operations example, and the release each lands in
 

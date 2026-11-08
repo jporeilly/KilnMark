@@ -178,8 +178,10 @@ public class CatalogResource {
         boolean planned = config.connectors().showPlanned();
         java.util.List<Views.ConnectorCategory> out = new java.util.ArrayList<>();
         for (String[] cat : PlannedConnectors.CATEGORIES) {
+            // on production the Starter Pack's example data has no connector (ConnectorsProducer)
             java.util.List<Views.Connector> built = connectors.all().stream()
-                .filter(c -> c.category().equals(cat[0])).map(c -> view(c, drivers)).toList();
+                .filter(c -> c.category().equals(cat[0]))
+                .map(c -> view(c, drivers)).toList();
             java.util.List<Views.PlannedConnector> later = planned
                 ? PlannedConnectors.ALL.stream().filter(p -> p.category().equals(cat[0])).toList() : java.util.List.of();
             if (cat[0].equals("other") && built.isEmpty()) {

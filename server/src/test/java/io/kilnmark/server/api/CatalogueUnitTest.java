@@ -25,6 +25,10 @@ class CatalogueUnitTest {
                 if (method.getName().equals("connectors")) {
                     return list;
                 }
+                // a Starter Pack install, which lists every kind (StarterPackProductionTest: production)
+                if (method.getName().equals("mode")) {
+                    return java.util.Optional.of("starter-pack");
+                }
                 throw new UnsupportedOperationException(method.getName());
             });
     }

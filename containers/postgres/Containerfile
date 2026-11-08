@@ -18,6 +18,13 @@ RUN sed -i "s/^#\?shared_preload_libraries = .*/shared_preload_libraries = 'age'
 # entrypoint with the TLS settings added. The command stays the image's, so tools that pass their
 # own still work.
 COPY kilnmark-tls.sh /usr/local/bin/kilnmark-tls.sh
-RUN chmod 755 /usr/local/bin/kilnmark-tls.sh
+# The Starter Pack's database (ADR 0051): the samples-db service of compose.yaml runs this one-off
+# at every start, to make or keep the empty database kilnmark_samples and its own login.
+COPY kilnmark-samples-db.sh /usr/local/bin/kilnmark-samples-db.sh
+# and its login reaches that database only (pg_hba.conf), from a new data folder's first start on.
+COPY kilnmark-hba.sh /usr/local/bin/kilnmark-hba.sh
+COPY kilnmark-hba-initdb.sh /docker-entrypoint-initdb.d/kilnmark-hba.sh
+RUN chmod 755 /usr/local/bin/kilnmark-tls.sh /usr/local/bin/kilnmark-samples-db.sh /usr/local/bin/kilnmark-hba.sh \
+      /docker-entrypoint-initdb.d/kilnmark-hba.sh
 ENTRYPOINT ["kilnmark-tls.sh"]
 CMD ["postgres"]

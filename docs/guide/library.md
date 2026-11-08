@@ -48,14 +48,35 @@ One sample, `sample-volume`, reads four million made-up sales, enough for a run 
 run it and open the run's page to see where each node spent its time, how many rows a second went
 through, and which node held the others up.
 
-An admin can stop offering the samples on a server that should hold its own pipelines only: under
-**Settings**, **Administration**, clear **Offer the samples**. The Samples tab then says so, and the
-samples' API refuses; samples already added stay. The templates are offered either way.
+The samples are on a Starter Pack install only (INSTALL.md, "Choosing a deployment"). A production
+install never has them, by any route: its Samples tab says so, and the samples' API, **Add
+samples** and the sample tables included, refuses. On a Starter Pack install an admin can stop
+offering them too: under **Settings**, **Administration**, clear **Offer the samples**; samples
+already added stay. The templates are offered on every install.
 
-### The starter pack
+### Samples ready to run: the Starter Pack
 
-The quickest way to try the samples, with nothing of your own to prepare but a database and a file
-source that allow writing:
+On a **Starter Pack install**, for training, demonstrations and development, an admin turns on the
+**Starter Pack** under **Settings** (INSTALL.md, "Try Kilnmark with the Starter Pack"; install turns
+it on itself). Kilnmark then creates the sample tables in a database of their own,
+`kilnmark_samples`, adds a database source and a files source that allow writing, and adds every
+sample here, reading those tables: nothing to prepare, and every sample can run. Turning the pack
+off takes all of it out again. A production install never has the pack: its page under
+**Settings** says so and offers nothing. The templates are here on every install.
+
+![Settings, Starter Pack, after turning it on: what the pack holds, the run creating the sample tables, the control script's commands for the example people, and each step of turning it on with how it went](images/starter-pack-settings.png)
+
+![The Library's Samples tab after the Starter Pack was turned on: every sample added, with the marking saying this is a Starter Pack install, for training and development only, with its example data and accounts on](images/library-starter-pack.png)
+
+The pack does not add the two samples that run SQL (`sample-read-query` and
+`sample-sql-before-and-after`): an admin may not see unmasked values. A designer who may adds them
+with **Add samples**, choosing the pack's database, `starter-samples-db`, which has **Allow SQL**
+on.
+
+### The starter pack in Add samples
+
+Without the Starter Pack, the quickest way to try the samples, with nothing of your own to prepare
+but a database and a file source that allow writing:
 
 1. In the **Library**, on the **Samples** tab, choose **Add samples** (designers and admins).
 2. Under **Starter pack**, choose the **Database for the tables**, a **Schema** in it (it must

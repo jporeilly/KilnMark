@@ -254,7 +254,8 @@ public class FlowResource {
         Integer version = body == null ? null : body.version();
         Map<String, Object> parameters = body == null || body.parameters() == null ? Map.of() : body.parameters();
         return runRequests.start("flow", name, version, parameters, wait, key, identity, headers, request,
-            () -> flows.checkRun(name, version, parameters, role), checked -> flows.queueChecked(checked, who(), role).id(),
+            () -> flows.checkRun(name, version, parameters, role), checked -> flows.queueChecked(checked,
+                io.kilnmark.server.audit.AuditLog.requester(identity), role).id(),
             id -> flows.run(id).map(FlowStore.Run::status).orElse(null), id -> {
                 FlowViews.RunSummary run = flows.runView(id, sights.data());
                 return new RunRequests.Shown(run, run.flow(), run.status(), run.error());

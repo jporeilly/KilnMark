@@ -119,4 +119,17 @@ class OidcAccessTest {
         jakarta.json.JsonArray amr = jakarta.json.Json.createArrayBuilder().add("pwd").add("hwk").build();
         assertEquals(AccessRole.STEWARD, decide(c, "amr", amr, "groups", groups).role());
     }
+
+    /**
+     * A kilnmark.com user name or email (the Starter Pack's example people) is found however the
+     * claim comes: a JSON string's own value, never its quoted text, and each of a list (ADR 0051).
+     */
+    @Test
+    void anExampleAddressIsFoundInAnyClaimShape() {
+        assertTrue(OidcAccess.example("vera.lane@kilnmark.com"));
+        assertTrue(OidcAccess.example(jakarta.json.Json.createValue("Vera.Lane@Kilnmark.com ")));
+        assertTrue(OidcAccess.example(jakarta.json.Json.createArrayBuilder().add("x@bank.example").add("sam@eu.kilnmark.com").build()));
+        assertFalse(OidcAccess.example(jakarta.json.Json.createValue("rita@bank.example")));
+        assertFalse(OidcAccess.example(null));
+    }
 }

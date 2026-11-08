@@ -160,7 +160,8 @@ public class ScheduleResource {
      * person signed in through the identity provider by an opaque key, else the API token used.
      */
     private ScheduleStore.Setter setter() {
-        return ScheduleService.setter(identity, who());
+        // a token as token <id> (<name>), as runs name it: its runs read "set by token <id> (...)" (ADR 0051)
+        return ScheduleService.setter(identity, io.kilnmark.server.audit.AuditLog.requester(identity));
     }
 
     private AccessRole role() {

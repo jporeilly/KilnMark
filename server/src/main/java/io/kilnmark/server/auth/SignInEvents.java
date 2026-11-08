@@ -43,7 +43,7 @@ public class SignInEvents {
         if (OidcIdentityAugmentor.renewal(event.getSecurityIdentity())) {
             return; // a renewal, handled by renewed(); recording it would add a sign-in every few minutes
         }
-        OidcAccess.Decision d = OidcAccess.decide(config.auth().oidc(), token::getClaim, Instant.now());
+        OidcAccess.Decision d = OidcAccess.decide(config, token, Instant.now());
         Map<String, Object> detail = new LinkedHashMap<>();
         if (d.allowed()) {
             detail.put("role", d.role().id());

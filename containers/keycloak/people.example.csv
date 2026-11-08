@@ -1,0 +1,6 @@
+email,first_name,last_name,groups
+# Admins, such as Alex Morgan, are added one at a time with people add, never from a file. example.com is reserved and receives no mail.
+vera.lane@example.com,Vera,Lane,kilnmark-viewers
+sam.okafor@example.com,Sam,Okafor,kilnmark-stewards
+dana.reyes@example.com,Dana,Reyes,kilnmark-designers
+priya.shah@example.com,Priya,Shah,kilnmark-designers;kilnmark-sensitive-data

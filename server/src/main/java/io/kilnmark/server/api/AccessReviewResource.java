@@ -33,9 +33,14 @@ import jakarta.ws.rs.core.Response;
 @RolesAllowed(AccessRole.ADMIN_ROLE)
 public class AccessReviewResource {
 
-    /** One line of the review: a token, or a person who signs in with the identity provider. */
+    /**
+     * One line of the review: a token, or a person who signs in with the identity provider.
+     * {@code example}: a kilnmark.com example account, such as the Starter Pack's people (ADR 0051),
+     * which should not be on an install holding real data.
+     */
     public record Entry(String kind, String name, String role, boolean unmask, String status, String createdBy,
-                        Instant createdAt, Instant expiresAt, Instant lastUsedAt, Long signIns, String unmaskApprovedBy) {
+                        Instant createdAt, Instant expiresAt, Instant lastUsedAt, Long signIns, String unmaskApprovedBy,
+                        boolean example) {
     }
 
     /** The review: when it was made, the longest token lifetime the server allows (days, or null), and every entry. */
@@ -55,7 +60,8 @@ public class AccessReviewResource {
     @Produces({MediaType.APPLICATION_JSON, "text/csv"})
     @Operation(summary = "The access review", description = "Every API token (role, unmask grant, status, who "
         + "created it, expiry, last use) and everyone who has signed in with the identity provider (the role and "
-        + "grant of their last sign-in, when, and how many times). format=csv for a spreadsheet. Role: admin; "
+        + "grant of their last sign-in, when, and how many times), each kilnmark.com example account marked example "
+        + "(the Starter Pack's people). format=csv for a spreadsheet. Role: admin; "
         + "each view and download is recorded in the audit log.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "The review"),
@@ -79,12 +85,13 @@ public class AccessReviewResource {
         List<Entry> out = new ArrayList<>();
         for (ApiTokens.Token t : tokens.list()) {
             out.add(new Entry("token", t.name(), t.role().id(), t.unmask(), t.status(now), t.createdBy(),
-                t.createdAt(), t.expiresAt(), t.lastUsedAt(), null, t.unmaskApprovedBy()));
+                t.createdAt(), t.expiresAt(), t.lastUsedAt(), null, t.unmaskApprovedBy(), false));
         }
         for (AuditLog.ProviderAccess p : audit.providerAccess()) {
             out.add(new Entry("provider", p.name(), p.role(), p.unmask(), p.refused() == null
                 ? "signs in with the identity provider" : p.role() == null ? "no group gives a role any more"
-                : "last sign-in refused: " + p.refused(), null, null, null, p.lastSignIn(), p.signIns(), null));
+                : "last sign-in refused: " + p.refused(), null, null, null, p.lastSignIn(), p.signIns(), null,
+                io.kilnmark.server.starter.ExampleAccounts.isExample(p.name())));
         }
         Long days = tokens.maxLifetime().map(d -> d.toDays()).orElse(null);
         return new Review(now, days, out);
@@ -93,11 +100,12 @@ public class AccessReviewResource {
     /** The review as CSV, one entry a row; cells that a spreadsheet would run as a formula are quoted safe. */
     static String csv(Review r) {
         StringBuilder b = new StringBuilder("kind,name,role,unmask,status,created_by,created_at,expires_at,"
-            + "last_used_at,sign_ins,unmask_approved_by\r\n");
+            + "last_used_at,sign_ins,unmask_approved_by,example\r\n");
         for (Entry e : r.entries()) {
             b.append(String.join(",", cell(e.kind()), cell(e.name()), cell(e.role()), cell(String.valueOf(e.unmask())),
                 cell(e.status()), cell(e.createdBy()), cell(e.createdAt()), cell(e.expiresAt()), cell(e.lastUsedAt()),
-                cell(e.signIns() == null ? null : e.signIns().toString()), cell(e.unmaskApprovedBy())))
+                cell(e.signIns() == null ? null : e.signIns().toString()), cell(e.unmaskApprovedBy()),
+                cell(String.valueOf(e.example()))))
                 .append("\r\n");
         }
         return b.toString();

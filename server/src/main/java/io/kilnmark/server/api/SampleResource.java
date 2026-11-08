@@ -37,19 +37,31 @@ public class SampleResource {
     @jakarta.inject.Inject
     io.kilnmark.server.ServerSettings settings;
 
-    /** {@code GET} and {@code PUT /api/v1/samples/offered}: whether this server offers the samples. */
-    public record Offered(Boolean offered) {
+    @jakarta.inject.Inject
+    io.kilnmark.server.KilnmarkConfig config;
+
+    /**
+     * {@code GET} and {@code PUT /api/v1/samples/offered}: whether this server offers the samples,
+     * and whether it may (a Starter Pack install; never production, ADR 0051).
+     */
+    public record Offered(Boolean offered, Boolean allowed) {
     }
+
+    /** Why the samples are never here: a production install (ADR 0051). */
+    static final String PRODUCTION = "This is a production install: the samples are only on a Starter Pack install, "
+        + "for training and development";
 
     @GET
     @Path("offered")
     @Operation(summary = "Whether the samples are offered", description = "Whether this server offers the samples "
-        + "(Add samples, the starter pack and the sample data). On unless an admin turned it off. Role: viewer.")
+        + "(Add samples, the starter pack and the sample data): on a Starter Pack install, unless an admin turned "
+        + "them off; never on a production install (allowed false). Role: viewer.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "Whether the samples are offered"),
         @APIResponse(responseCode = "401", description = "Not signed in")})
     public Offered offered() {
-        return new Offered(settings.samplesOffered());
+        boolean allowed = io.kilnmark.server.starter.ModeCheck.samplesAllowed(config);
+        return new Offered(allowed && settings.samplesOffered(), allowed);
     }
 
     @PUT
@@ -63,17 +75,27 @@ public class SampleResource {
         @APIResponse(responseCode = "200", description = "Whether the samples are offered now"),
         @APIResponse(responseCode = "400", description = "No offered value"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
-        @APIResponse(responseCode = "403", description = "Not an admin")})
+        @APIResponse(responseCode = "403", description = "Not an admin"),
+        @APIResponse(responseCode = "409", description = "A production install, which never has the samples")})
     public Offered setOffered(Offered body) {
         if (body == null || body.offered() == null) {
             throw new IllegalArgumentException("offered: send {\"offered\": true} or {\"offered\": false}");
         }
+        if (!io.kilnmark.server.starter.ModeCheck.samplesAllowed(config)) {
+            throw ApiError.of(Response.Status.CONFLICT, PRODUCTION);
+        }
         settings.put(io.kilnmark.server.ServerSettings.SAMPLES_OFFERED, body.offered().toString(), who());
-        return new Offered(body.offered());
+        return new Offered(body.offered(), true);
     }
 
-    /** Everything about the samples but the switch: refused while an admin has them turned off. */
+    /**
+     * Everything about the samples but the switch: refused on a production install, always, and
+     * while an admin has them turned off.
+     */
     private void requireOffered() {
+        if (!io.kilnmark.server.starter.ModeCheck.samplesAllowed(config)) {
+            throw ApiError.of(Response.Status.FORBIDDEN, PRODUCTION);
+        }
         if (!settings.samplesOffered()) {
             throw ApiError.of(Response.Status.FORBIDDEN, "The samples are not offered on this server: an admin turns "
                 + "them on under Settings, Administration");
@@ -118,7 +140,9 @@ public class SampleResource {
         @APIResponse(responseCode = "403", description = "Not a designer")})
     public Samples.AddResult add(Samples.AddRequest body) {
         requireOffered();
-        return samples.add(body, who(), AccessRole.highest(identity::hasRole), sights);
+        // what it saves names who asked for it as runs do: a token by its id (ADR 0051)
+        return samples.add(body, io.kilnmark.server.audit.AuditLog.requester(identity), AccessRole.highest(identity::hasRole),
+            sights);
     }
 
     @POST
@@ -140,7 +164,8 @@ public class SampleResource {
     public Samples.TablesResult tables(Samples.TablesRequest body) {
         requireOffered();
         AccessRole role = AccessRole.highest(identity::hasRole);
-        return samples.createTables(body, who(), role, sights);
+        // its run names who asked for it as runs do: a token by its id (ADR 0051)
+        return samples.createTables(body, io.kilnmark.server.audit.AuditLog.requester(identity), role, sights);
     }
 
     private String who() {

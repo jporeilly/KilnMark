@@ -48,6 +48,39 @@ group("the audit log page", () => {
     expect(describe(event("flow.sql", { source: "warehouse", statements: 2, version: 3 }))).toBe(
       "2 statements on warehouse, version 3",
     );
+    expect(describe(event("starter.added", { refused: "production" }))).toBe("Refused, nothing changed: production");
+    expect(describe(event("starter.people", { action: "remove", people: ["vera.lane@kilnmark.com", "sam.okafor@kilnmark.com"] }))).toBe(
+      "Removed: vera.lane@kilnmark.com, sam.okafor@kilnmark.com",
+    );
+    expect(describe(event("auth.person_activated", { person: "ada@bank.example" }))).toBe(
+      "Gave ada@bank.example a temporary password and enabled them",
+    );
+    expect(describe(event("auth.person_disabled", { person: "ben@bank.example" }))).toBe(
+      "Disabled ben@bank.example: their temporary password went unused",
+    );
+    expect(describe(event("server.start_refused", { reason: "This install predates deployment modes" }))).toBe(
+      "This install predates deployment modes",
+    );
+  });
+
+  test("says who the people command added, and what an import did, never with a password", () => {
+    expect(
+      describe(event("auth.person_added", { person: "rita@bank.example", groups: ["kilnmark-admins"], via: "add" })),
+    ).toBe("Added rita@bank.example (kilnmark-admins) one at a time, with a password they change at their first sign-in");
+    expect(
+      describe(
+        event("auth.person_added", {
+          person: "priya.shah@example.com",
+          groups: ["kilnmark-designers", "kilnmark-sensitive-data"],
+          via: "import",
+        }),
+      ),
+    ).toBe(
+      "Added priya.shah@example.com (kilnmark-designers, kilnmark-sensitive-data) from a file, with a password they change at their first sign-in",
+    );
+    expect(describe(event("auth.people_imported", { made: 4, alreadyThere: 1, refused: 0 }))).toBe(
+      "Made 4, already there 1, refused 0",
+    );
   });
 
   test("offers every action the server records", () => {
@@ -58,6 +91,14 @@ group("the audit log page", () => {
         "auth.sign_in",
         "auth.sign_in_refused",
         "auth.sign_out",
+        "auth.person_added",
+        "auth.people_imported",
+        "auth.person_activated",
+        "auth.person_disabled",
+        "server.start_refused",
+        "server.install_id_made",
+        "server.mode_recorded",
+        "auth.realm_stamped",
         "access.review",
         "unmask.requested",
         "unmask.approved",
@@ -66,6 +107,9 @@ group("the audit log page", () => {
         "schedule.set",
         "schedule.deleted",
         "schedule.paused",
+        "starter.added",
+        "starter.removed",
+        "starter.people",
         "flow.sql",
         "mark.cleared",
         "mark.set",

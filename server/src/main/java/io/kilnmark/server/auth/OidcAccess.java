@@ -47,7 +47,46 @@ public final class OidcAccess {
     /** Why a sign-in older than the longest session is refused. */
     public static final String TOO_OLD = "Your sign-in is older than Kilnmark allows. Sign in again.";
 
+    /** Why a member of the Starter Pack's group is refused on a production install (ADR 0051). */
+    public static final String STARTER_GROUP_ON_PRODUCTION = "Your sign-in is one of the Starter Pack's example "
+        + "people, which are for training and development installs only: a production install does not let them in. "
+        + "Sign in with your own account.";
+
+    /** The Starter Pack's group in the bundled Keycloak (containers/keycloak/setup.sh). */
+    public static final String STARTER_GROUP = "kilnmark-starter-pack";
+
     private OidcAccess() {
+    }
+
+    /**
+     * Decides from the provider's ID token, as {@link #decide(KilnmarkConfig.Oidc, Function, Instant)}
+     * does, and on a production install refuses anyone whose groups claim holds the Starter Pack's
+     * group (ADR 0051), by name or path: a defence in depth, as a production install never has the
+     * pack's people. Every sign-in, renewal and request with a session is decided here.
+     */
+    public static Decision decide(KilnmarkConfig config, org.eclipse.microprofile.jwt.JsonWebToken token, Instant now) {
+        if (!io.kilnmark.server.starter.ModeCheck.examplePeopleAllowed(config) && (strings(token.getClaim(
+            config.auth().oidc().groupsClaim())).stream().anyMatch(g -> STARTER_GROUP.equals(g)
+                || ("/" + STARTER_GROUP).equals(g)) || example(token.getClaim("preferred_username"))
+                || example(token.getClaim("email")))) {
+            return Decision.refused(STARTER_GROUP_ON_PRODUCTION);
+        }
+        return decide(config.auth().oidc(), token::getClaim, now);
+    }
+
+    /**
+     * Whether a user name or email is at kilnmark.com, where the Starter Pack's example people are: a
+     * production install lets none of them in, by group, name or address alike.
+     */
+    static boolean example(Object claim) {
+        // read as the groups are (a JSON string's own value, never its quoted text), each of a list too
+        for (String s : strings(claim)) {
+            String v = s.strip().toLowerCase(java.util.Locale.ROOT);
+            if (v.endsWith("@kilnmark.com") || v.endsWith(".kilnmark.com")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

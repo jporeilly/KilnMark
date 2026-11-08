@@ -1631,9 +1631,54 @@ export const samplesApi = {
       body: JSON.stringify({ source, schema }),
     }),
   /** Whether this server offers the samples; an admin turns them off or on. */
-  offered: () => call<{ offered: boolean }>("/api/v1/samples/offered"),
+  /** allowed: false on a production install, which never has the samples (ADR 0051). */
+  offered: () => call<{ offered: boolean; allowed?: boolean }>("/api/v1/samples/offered"),
   setOffered: (offered: boolean) =>
     call<{ offered: boolean }>("/api/v1/samples/offered", { method: "PUT", body: JSON.stringify({ offered }) }),
+};
+
+/** Whether the Starter Pack (ADR 0051) is on: everyone reads it, for the banner. */
+/** The install's deployment mode (ADR 0051), fixed at install. */
+export type DeploymentMode = "production" | "starter-pack";
+
+export type StarterPackState = { mode: DeploymentMode; on: boolean; since: string | null; by: string | null };
+
+/** One step of turning the Starter Pack on or off, and how it went. */
+export type StarterPackStep = { step: string; outcome: "done" | "skipped" | "failed"; detail: string | null };
+
+/** Settings › Starter Pack, for admins. */
+export type StarterPackDetails = {
+  on: boolean;
+  since: string | null;
+  by: string | null;
+  /** The install's mode: on a production install the pack is never turned on. */
+  mode: DeploymentMode;
+  /** Whether the pack can be turned on here; notReady says why not. */
+  ready: boolean;
+  notReady: string | null;
+  database: string;
+  files: string | null;
+  tablesRun: PipelineRun | null;
+  samples: number;
+  /**
+   * The example people, which the control script makes and removes (Kilnmark holds no Keycloak
+   * credential): its commands, and the kilnmark.com accounts that have signed in here.
+   */
+  people: { add: string; remove: string; signedIn: string[] };
+};
+
+export type StarterPackResult = {
+  on: boolean;
+  steps: StarterPackStep[];
+  tablesRun: PipelineRun | null;
+};
+
+export const starterPackApi = {
+  state: () => call<StarterPackState>("/api/v1/starter-pack"),
+  details: () => call<StarterPackDetails>("/api/v1/starter-pack/details"),
+  turnOn: () => call<StarterPackResult>("/api/v1/starter-pack", { method: "POST" }),
+  turnOff: (confirm: string) =>
+    call<StarterPackResult>("/api/v1/starter-pack", { method: "DELETE", body: JSON.stringify({ confirm }) }),
 };
 
 const pipe = (name: string) => `/api/v1/pipelines/${encodeURIComponent(name)}`;
@@ -2121,6 +2166,8 @@ export type AccessReviewEntry = {
   /** For a token, its last use; for a person, their last sign-in. */
   lastUsedAt: string | null;
   signIns: number | null;
+  /** A kilnmark.com example account, such as the Starter Pack's people (ADR 0051): not for real data. */
+  example?: boolean;
 };
 
 /** Settings › Access review: who can do what, for admins. */

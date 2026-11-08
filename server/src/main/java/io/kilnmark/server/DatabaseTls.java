@@ -64,7 +64,75 @@ public class DatabaseTls {
         FlywayDataSourceRuntimeConfig f = flywayConfig.datasources().get(DataSourceUtil.DEFAULT_DATASOURCE_NAME);
         boolean active = f == null || f.active().orElse(true);
         if (active && flyway.isResolvable()) {
-            flyway.get().migrate();
+            // A database with no migration history is new: marked so BEFORE migrating, durably, in
+            // a table of its own made first in a transaction of its own, so the first start's mode is
+            // recorded (ModeCheck) even when that start is stopped part way through the migrations
+            // (each commits on its own) and a later one gets there. The mark goes only when the mode
+            // is recorded. A database migrated before, with no mode, never gets it.
+            markThenMigrate(source::getConnection, () -> flyway.get().migrate());
+        }
+    }
+
+    /** A connection to Kilnmark's own database. */
+    @FunctionalInterface
+    public interface Connect {
+        Connection open() throws SQLException;
+    }
+
+    /**
+     * Marks the database new when it has no migration history yet (committed on its own), and only
+     * then migrates it: the order a first start that is stopped part way relies on.
+     */
+    public static void markThenMigrate(Connect connect, Runnable migrate) {
+        try (Connection c = connect.open()) {
+            if (isNew(c)) {
+                markNew(c, NEW_DATABASE);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Kilnmark's own database could not be read or marked before migrating ("
+                + e.getSQLState() + ")", e);
+        }
+        migrate.run();
+    }
+
+    /**
+     * Where a new database's mark is kept until its first start records a mode: a schema of its own,
+     * apart from Kilnmark's (which Flyway makes, and refuses to migrate once it holds anything).
+     */
+    public static final String MARKS = "kilnmark_first_start.mark";
+
+    /** The mark of a new database, in {@link #MARKS}, until its first start records a mode. */
+    public static final String NEW_DATABASE = "deployment_mode";
+
+    /** Whether the database has no migration history yet: a new one. */
+    public static boolean isNew(Connection c) throws SQLException {
+        try (Statement st = c.createStatement();
+             ResultSet rs = st.executeQuery("SELECT to_regclass('kilnmark.flyway_schema_history') IS NULL")) {
+            return rs.next() && rs.getBoolean(1);
+        }
+    }
+
+    /**
+     * Marks the database new under {@code key}, once, in {@link #MARKS} (made here if need be), in a
+     * transaction of its own, committed before anything else happens; it stays until a mode is recorded.
+     */
+    public static void markNew(Connection c, String key) throws SQLException {
+        boolean auto = c.getAutoCommit();
+        c.setAutoCommit(false);
+        try (Statement st = c.createStatement();
+             java.sql.PreparedStatement ps = c.prepareStatement("INSERT INTO " + MARKS
+                 + " (key) VALUES (?) ON CONFLICT (key) DO NOTHING")) {
+            st.execute("CREATE SCHEMA IF NOT EXISTS kilnmark_first_start");
+            st.execute("CREATE TABLE IF NOT EXISTS " + MARKS + " (key text PRIMARY KEY, marked_at timestamptz NOT NULL "
+                + "DEFAULT now())");
+            ps.setString(1, key);
+            ps.executeUpdate();
+            c.commit();
+        } catch (SQLException e) {
+            c.rollback();
+            throw e;
+        } finally {
+            c.setAutoCommit(auto);
         }
     }
 

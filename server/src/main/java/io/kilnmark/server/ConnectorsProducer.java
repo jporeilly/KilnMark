@@ -20,7 +20,11 @@ public class ConnectorsProducer {
     @Produces
     @ApplicationScoped
     Connectors connectors(KilnmarkConfig config, DriverFolder drivers) {
-        return Connectors.load(context(config, drivers));
+        // Never the Starter Pack's example data on production (ADR 0051): left out here, where every
+        // lookup of a connector starts, so no source, run, scan, rule, document or catalogue view
+        // reaches it, whatever a database left over from a Starter Pack install holds.
+        return Connectors.of(Connectors.load(context(config, drivers)).all().stream()
+            .filter(c -> io.kilnmark.server.starter.ModeCheck.kindAllowed(c.kind(), config)).toList());
     }
 
     /** The drivers folder ({@code kilnmark.drivers.dir}): connectors load customer-installed drivers from it. */

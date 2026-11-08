@@ -17,10 +17,15 @@ it (behind a proxy, as its forwarding settings say).
 | Event | What it is | Details |
 | --- | --- | --- |
 | Token created (`token.created`) | An API token was made | Its name, role, whether it sees unmasked values, when it expires |
-| Token revoked (`token.revoked`) | A token was revoked | Its name and role |
+| Token revoked (`token.revoked`) | A token was revoked | Its name and role, and the reason when the server revoked it |
 | Signed in (`auth.sign_in`) | Someone signed in with your organisation's identity provider | The role their groups gave them, whether they see unmasked values, those of their groups that your settings map to a role (never their other groups, whose names can be sensitive), and an opaque key for the person (`person`). The groups and key are what schedules they set are checked by |
-| Sign-in given no role (`auth.sign_in_refused`) | Someone signed in with the provider but was given no role | Why: no second factor, or none of their groups has a role |
+| Sign-in given no role (`auth.sign_in_refused`) | Someone signed in with the provider but was given no role | Why: no second factor, none of their groups has a role, or one of the Starter Pack's example people on a production install |
 | Signed out (`auth.sign_out`) | Someone signed out of a provider sign-in | |
+| Person added (`auth.person_added`) | The control script's `people add` or `people import` made a person of your own in the bundled Keycloak (INSTALL.md, "Adding people to the bundled Keycloak"); recorded as the admin token the script uses | The person, their groups, and how (one at a time, or from a file). Never a password |
+| People imported (`auth.people_imported`) | The control script's `people import` ran, whether or not it made anyone | How many were made, already there (left as they were) and refused (lines that were wrong: then nobody is made) |
+| Person activated (`auth.person_activated`) | The control script's `people activate` gave a waiting person a temporary password of their own and enabled them | The person. Never a password |
+| Person disabled (`auth.person_disabled`) | `keycloak-setup` disabled someone whose temporary password went unused for longer than `KILNMARK_PEOPLE_ACTIVATION_HOURS` (at a start, a `people` command, or the hourly `people expire`), as the control script reported it | The person, and why |
+| Start refused (`server.start_refused`) | The server refused to start: its deployment mode (INSTALL.md, "Choosing a deployment"), recorded before it stopped when the database answered | Why |
 | Access review (`access.review`) | An admin viewed or downloaded the access review (Settings, Access review) | Its format and how many entries it had |
 | Sensitive values asked for (`unmask.requested`) | A designer token was made to see sensitive values, which waits for a second admin | The token's name |
 | Sensitive values approved (`unmask.approved`) | A second admin let a designer token see sensitive values | The token's name |
@@ -29,6 +34,9 @@ it (behind a proxy, as its forwarding settings say).
 | Schedule set (`schedule.set`) | A designer or admin added or changed a schedule ([Running pipelines and flows on a schedule](schedules.md)); the event is on `schedule <id>` | The pipeline or flow, the cron expression, the zone, the role its runs act as, and whether it is on. Never the values its runs start with |
 | Schedule paused (`schedule.paused`) | A schedule stopped because whoever set it no longer has its role: their token was revoked or expired, or a sign-in gave them less of a role ([Running pipelines and flows on a schedule](schedules.md#when-the-person-who-set-it-loses-the-role)). By the admin who revoked the token, the person signing in, or the server at the schedule's time | As for Schedule set, with why |
 | Schedule deleted (`schedule.deleted`) | A schedule was deleted, by itself or with its pipeline or flow | As for Schedule set, and `via: pipeline deleted` or `via: flow deleted` when its pipeline or flow was deleted |
+| Starter Pack turned on (`starter.added`) | An admin turned the Starter Pack's example data on, or tried to (INSTALL.md, "Try Kilnmark with the Starter Pack") | How each step went, a failed one included; or `refused` and why, when nothing was done (`production`, which is always refused, `samples not offered`, `not ready`) |
+| Starter Pack people changed (`starter.people`) | The control script's `starter people`, or its `up`, told Kilnmark what Keycloak's setup did to the Starter Pack's example people | What was done (added, gave a new password to, removed, or brought into the pack people an earlier version made) and to whom. Keycloak records the same changes as its admin events |
+| Starter Pack turned off (`starter.removed`) | An admin turned the Starter Pack off, removing what it added | How each step went, and the flows, pipelines, sources and variables it deleted. Each schedule deleted with a sample is a Schedule deleted event of its own |
 | Column marked sensitive (`mark.set`) | A column was marked | The column |
 | Sensitive mark cleared (`mark.cleared`) | A mark was cleared: the column's values are no longer masked | The column |
 | Source deleted (`source.deleted`) | A source and what was recorded about it were deleted | Its assets and runs, and whether it had marks (deleting it cleared them) |

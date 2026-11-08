@@ -820,6 +820,66 @@ function svg(name, height, title, sub, body) {
   svg("component-families", y4 + 162, "The components a pipeline or flow is built from", "Connectors reach the data, nodes do the work, expressions and rules check it, flow nodes order it", b);
 }
 
+// ---- What the Starter Pack adds ----
+{
+  const W = 208, X = [40, 276, 512];
+  const y1 = 76, y2 = 216, y3 = 328;
+  const b =
+    lane(y1, 124, "Kilnmark's PostgreSQL server", C.navy) +
+    card(X[0], y1 + 30, W, { icon: "db", color: C.blue, strong: true, title: "kilnmark", sub: "Kilnmark's own; backed up" }) +
+    card(X[1], y1 + 30, W, { icon: "key", color: C.orange, title: "Login kilnmark_samples", sub: "its own password, in .env" }) +
+    card(X[2], y1 + 30, W, { icon: "db", color: C.orange, strong: true, title: "kilnmark_samples", sub: "the sample tables only" }) +
+    arrow([[X[1] + W, y1 + 58], [X[2] - 2, y1 + 58]], C.good) +
+    label((X[1] + W + X[2]) / 2, y1 + 100, "its own, over TLS", C.good) +
+    arrow([[X[1], y1 + 58], [X[0] + W + 2, y1 + 58]], C.bad, { dash: "4 3" }) +
+    label((X[0] + W + X[1]) / 2, y1 + 100, "reads and makes nothing", C.bad) +
+    lane(y2, 96, "The files folder", C.green) +
+    card(X[0], y2 + 30, W, { icon: "file", color: C.green, title: "/srv/files", sub: "Kilnmark's own volume" }) +
+    card(X[1], y2 + 30, W + 236, { icon: "file", color: C.green, strong: true, title: "starter-pack/", sub: "the samples write here, and only here" }) +
+    lane(y3, 96, "The bundled Keycloak", C.violet) +
+    card(X[0], y3 + 30, W, { icon: "terminal", color: C.violet, title: "starter people", sub: "keycloak-setup, as its admin" }) +
+    card(X[1], y3 + 30, W + 236, { icon: "person", color: C.violet, strong: true, title: "Five example people", sub: "kilnmark.com, one per role, in the pack's marked group" }) +
+    arrow([[X[0] + W, y3 + 58], [X[1] - 2, y3 + 58]], C.violet) +
+    foot(y3 + 112, "lock", "On a Starter Pack install only. Kilnmark holds no Keycloak credential; backups never hold the samples.");
+  svg("starter-pack", y3 + 162, "What the Starter Pack adds", "Example data in a database of its own, files in a folder of its own, and example people", b);
+}
+
+// ---- The two deployment modes ----
+{
+  const CW = 340, L = 24, R = 396, IW = 312;
+  const y0 = 76, y1 = 166, rows = [212, 280, 348], y2 = 428, y3 = 520;
+  const col = (x, y, h, name, color) =>
+    rect(x, y, CW, h, { rx: 12, fill: color, fillOpacity: 0.06 }) +
+    text(x + 16, y + 19, name.toUpperCase(), { size: 10.5, weight: 700, fill: color, spacing: "0.08em" });
+  const b =
+    card(L, y0, 712, { icon: "terminal", color: C.navy, strong: true, title: "install sets KILNMARK_MODE once; Kilnmark records it at its first start",
+      sub: "production by default, starter-pack with --starter; editing .env never changes it" }) +
+    arrow([[L + 170, y0 + 56], [L + 170, y1 - 2]], C.navy) +
+    arrow([[R + 170, y0 + 56], [R + 170, y1 - 2]], C.navy) +
+    col(L, y1, 248 + 92, "Production: for real work", C.blue) +
+    col(R, y1, 248 + 92, "Starter Pack: training and development", C.orange) +
+    label(L + 170, rows[0] - 10, "Sign-in, one of:", C.quiet) +
+    card(L + 14, rows[0], IW, { icon: "shield", color: C.blue, title: "Your organisation's own provider", sub: "recommended for regulated organisations", h: 52 }) +
+    card(L + 14, rows[1], IW, { icon: "person", color: C.blue, title: "Kilnmark's own Keycloak, or tokens only", sub: "people add and import with the Keycloak", h: 52 }) +
+    card(L + 14, rows[2], IW, { icon: "cross", color: C.bad, title: "No samples database, no example people", sub: "the pack refused; their sign-ins refused", h: 52 }) +
+    label(R + 170, rows[0] - 10, "Sign-in:", C.quiet) +
+    card(R + 14, rows[0], IW, { icon: "person", color: C.orange, title: "Kilnmark's own Keycloak, always", sub: "never an outside provider: it does not start", h: 52 }) +
+    card(R + 14, rows[1], IW, { icon: "db", color: C.orange, strong: true, title: "The samples database, kilnmark_samples", sub: "an admin turns the example data on and off", h: 52 }) +
+    card(R + 14, rows[2], IW, { icon: "person", color: C.orange, strong: true, title: "Five example people", sub: "made by starter people, at kilnmark.com", h: 52 }) +
+    label(L + 170, y2 - 12, "Templates on both", C.good) +
+    label(R + 170, y2 - 12, "Templates on both", C.good) +
+    arrow([[R + 4, y2 + 34], [L + CW + 2, y2 + 34]], C.bad, { dash: "4 3" }) +
+    rect(L + 14, y2 + 10, IW, 48, { fill: C.bad, fillOpacity: 0.08, stroke: C.bad }) +
+    icon("cross", L + 40, y2 + 34, C.bad) +
+    text(L + 62, y2 + 30, "Started as production: refused", { weight: 600 }) +
+    text(L + 62, y2 + 47, "never converted; install afresh for production", { size: 11.5, fill: C.quiet }) +
+    rect(R + 14, y2 + 10, IW, 48, { fill: C.orange, fillOpacity: 0.08, stroke: C.orange }) +
+    text(R + 30, y2 + 30, "A Starter Pack install, as recorded", { weight: 600 }) +
+    text(R + 30, y2 + 47, "only a new database records a mode", { size: 11.5, fill: C.quiet }) +
+    foot(y3, "lock", "Either way round, a start whose KILNMARK_MODE differs from the record is refused, saying what to do.");
+  svg("deployment-modes", y3 + 50, "The two deployment modes", "Chosen once at install: what each signs in with and what it holds", b);
+}
+
 // ---- How a sort carries on on disk ----
 {
   const W = 208, X = [40, 276, 512];

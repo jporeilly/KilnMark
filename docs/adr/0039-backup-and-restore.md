@@ -1,6 +1,6 @@
 # 0039 Backup and restore: a dump of the database, a copy of the keys, kept apart
 
-Status: Accepted (3 November 2026)
+Status: Accepted (3 November 2026; decision 8 added 7 November 2026)
 
 ## Context
 
@@ -57,6 +57,17 @@ statement it runs, works after a restore. A restored graph with labels of its ow
    recovery) for the database, and still back up the keys volume.
 7. **A restore drill**, in the runbook, for the customer's schedule: restore a recent backup to a
    spare machine, and check what the runbook lists.
+8. **With the bundled Keycloak, its database too** (ADR 0014). Its people, groups and one-time
+   code setups are in `keycloak-db`, not in Kilnmark's database: a restored install without them
+   would have nobody able to sign in. So while the `auth` profile is on, `backup.sh` dumps
+   `keycloak-db` the same way, in the same folder (`keycloak-db.dump`, read back in full and in
+   `SHA256SUMS`, `keycloak=yes` in `backup.txt`), inside its container as its own user, so no
+   password is needed or shown. `restore.sh` restores it beside Kilnmark's: into
+   `keycloak_restoring` while Keycloak runs, then, with Kilnmark stopped, stops Keycloak and renames
+   the old database to `keycloak_before_<time>` and the restored one to `keycloak`. A backup with
+   Keycloak's database is refused, changing nothing, where Keycloak is not on; a backup without it
+   restores Kilnmark alone and says that Keycloak's people stay as they are. People added or
+   removed in Keycloak since the backup are undone too, which the script says.
 
 ## Consequences
 
@@ -75,3 +86,7 @@ statement it runs, works after a restore. A restored graph with labels of its ow
   results), so backups are as sensitive as the database: the customer encrypts them and controls
   who reads them.
 - A full export in open formats, for exit (DORA Article 28(8)), is a separate item.
+- With the bundled Keycloak, a backup is also as sensitive as Keycloak's database: it holds the
+  realm's password hashes, one-time code secrets, signing keys and the client secret.
+- A backup carries its deployment mode (ADR 0051): `restore` restores it only into an install of the
+  same mode, and refuses one from before there were modes, before it stops anything.
