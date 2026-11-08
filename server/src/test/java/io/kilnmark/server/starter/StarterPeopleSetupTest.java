@@ -866,6 +866,16 @@ class StarterPeopleSetupTest {
         assertNull(user("hal@bank.example"), "removed again");
         assertEquals(204, call(admin(), "DELETE", "/admin/realms/kilnmark/default-groups/" + team, null).statusCode());
         assertEquals(204, call(admin(), "DELETE", "/admin/realms/kilnmark/groups/" + team, null).statusCode());
+        // nor a group of the same name elsewhere: a subgroup is another group, compared by its full path
+        String branch = makeGroup(null, "branch");
+        String sub = makeGroup(branch, "kilnmark-viewers");
+        assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark/default-groups/" + sub, null).statusCode());
+        r = addPerson(STARTER, "kim@bank.example", "Kim", "Ross", "kilnmark-viewers", RITAS_FIRST);
+        assertNotEquals(0, r.getExitCode());
+        assertTrue(r.getStderr().contains("was put in the group branch/kilnmark-viewers"), r.getStderr());
+        assertNull(user("kim@bank.example"), "removed again");
+        assertEquals(204, call(admin(), "DELETE", "/admin/realms/kilnmark/default-groups/" + sub, null).statusCode());
+        assertEquals(204, call(admin(), "DELETE", "/admin/realms/kilnmark/groups/" + branch, null).statusCode());
         // a group config/.env maps to admin, or to seeing sensitive values, counts as those in a file
         for (String[] mapped : new String[][] {{"KILNMARK_OIDC_ADMIN_GROUPS", "admins are added one at a time"},
             {"KILNMARK_OIDC_UNMASK_GROUPS", "people who see sensitive values are added one at a time"}}) {

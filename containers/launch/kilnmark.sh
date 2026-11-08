@@ -269,12 +269,13 @@ expiry_dir() {
 # The install root as the timer's unit names it: its canonical path, once, so the folders checked
 # are the ones the unit runs from; empty when it holds anything a unit file would read as more than a
 # path (a space, systemd's % specifiers, quotes, a backslash, a control character).
+# A path as this shell's own: on Git Bash, where the tests run this edition too, a Windows path as
+# its POSIX one, so a folder and where a link leads are named alike (no Linux has cygpath).
+posix_path() {
+  if [[ "$1" =~ ^[A-Za-z]:[\\/] ]] && command -v cygpath > /dev/null 2>&1; then cygpath -u "$1"; else printf '%s' "$1"; fi
+}
 root_real() {
-  local r="$root"
-  # Git Bash, where the tests run this edition too: a Windows path as its own POSIX one first, so
-  # the root and where current leads are named alike (no Linux has cygpath)
-  if [[ "$r" =~ ^[A-Za-z]:[\\/] ]] && command -v cygpath > /dev/null 2>&1; then r="$(cygpath -u "$r")"; fi
-  r="$(readlink -f "$r" 2> /dev/null || true)"
+  local r; r="$(readlink -f "$(posix_path "$root")" 2> /dev/null || true)"
   if [[ "$r" =~ ^/[A-Za-z0-9._/+@,=-]*$ ]]; then printf '%s' "$r"; fi
 }
 # Why $1 may be changed by someone other than $want (a uid), or nothing: it must be theirs (or
@@ -326,18 +327,51 @@ tree_problem() {
       case "$rest" in */*) rest="${rest#*/}" ;; *) rest="" ;; esac
     done
   done
-  child="$r" dir="$(dirname "$r")"
+  above_problem "$r"
+}
+# Why a folder above $1 may be changed by someone other than root or the account ($want, and
+# $as_root, the caller's), who could move $1 away and put another in its place, or nothing: each
+# up to / must be root's or the account's and writable by neither group nor others; one others may
+# write (/tmp) only where it is sticky and the next one down is root's or the account's, and never
+# as root (as sshd's StrictModes asks).
+above_problem() {
+  local child="$1" dir info o m
+  dir="$(dirname "$child")"
   while :; do
     info="$(stat -c '%u %a' "$dir" 2> /dev/null || echo "x 777")"
     o="${info%% *}" m=$((8#${info##* }))
     if { [ "$o" != 0 ] && [ "$o" != "$want" ]; } || { (( (m & 8#022) != 0 )) \
       && { [ "$as_root" = 1 ] || (( (m & 8#1000) == 0 )) || ! [[ " 0 $want " == *" $(stat -c '%u' "$child" 2> /dev/null || echo x) "* ]]; }; }; then
-      echo "$dir, a folder above $r, may be changed by someone other than root or the account that runs Kilnmark, who could move the install away and put another in its place"
+      echo "$dir, a folder above $1, may be changed by someone other than root or the account that runs Kilnmark, who could move what is in it away and put another in its place"
       return 0
     fi
-    [ "$dir" != / ] || return 0
+    case "$dir" in /|.) return 0 ;; esac
     child="$dir" dir="$(dirname "$dir")"
   done
+}
+# Why the engine a run uses, or the folder the timer's units are in, may be changed by someone other
+# than root or the account, or nothing (ADR 0051, decision 15): each must be root's or the
+# account's, writable by nobody else, and so must every folder above it (where KILNMARK_ENGINE is a
+# link, the link's own folders too). $1 "make": the units' folder is made first, as up needs it.
+tools_problem() {
+  local want as_root=0 e t d why
+  if [ "$(expiry_uid)" -eq 0 ]; then want=0; as_root=1; else want="$(id -u)"; fi
+  e="${KILNMARK_ENGINE:-}"
+  [ -n "$e" ] || e="$(command -v podman 2> /dev/null || command -v docker 2> /dev/null || true)"
+  [ -z "$e" ] || [[ "$e" == */* ]] || [[ "$e" =~ ^[A-Za-z]: ]] || e="$(command -v "$e" 2> /dev/null || true)"
+  if [ -n "$e" ]; then
+    e="$(posix_path "$e")"
+    if [ -L "$e" ]; then why="$(above_problem "$e")"; [ -z "$why" ] || { echo "$why"; return 0; }; fi
+    t="$(readlink -f "$e" 2> /dev/null || true)"
+    why="$(owned_problem "${t:-$e}" or-root)"; [ -z "$why" ] || { echo "$why"; return 0; }
+    why="$(above_problem "${t:-$e}")"; [ -z "$why" ] || { echo "$why"; return 0; }
+  fi
+  d="$(posix_path "$(expiry_dir)")"
+  [ "${1:-}" != make ] || mkdir -p "$d" 2> /dev/null || true
+  if [ -e "$d" ] || [ -L "$d" ]; then
+    why="$(owned_problem "$d" or-root)"; [ -z "$why" ] || { echo "$why"; return 0; }
+    why="$(above_problem "$d")"; [ -z "$why" ] || { echo "$why"; return 0; }
+  fi
 }
 # Why KILNMARK_ENGINE may not go into the timer's unit, or nothing: only the full path of podman or
 # docker, with nothing a unit file or a shell would read as more.
@@ -358,12 +392,8 @@ expiry_timer_set() {
   why="$(tree_problem)"
   [ -n "$why" ] || why="$(engine_problem)"
   # the engine the unit names, and the folder its units are in, as what the run uses
-  [ -n "$why" ] || [ -z "${KILNMARK_ENGINE:-}" ] || why="$(owned_problem "$(readlink -f "$KILNMARK_ENGINE")" or-root)"
+  [ -n "$why" ] || why="$(tools_problem make)"
   dir="$(expiry_dir)"
-  if [ -z "$why" ]; then
-    mkdir -p "$dir" 2> /dev/null || true
-    why="$(owned_problem "$dir" or-root)"
-  fi
   if [ -n "$why" ]; then
     expiry_timer_remove
     echo "Warning: the hourly expiry of unused temporary passwords was not set up: $why. Make it so, or run Kilnmark as its own account (sudo ./kilnmark.sh prepare), then run up again. Each start expires them too." >&2
@@ -1186,8 +1216,40 @@ people_after_up() {
 # only this account can open, never on a command line; the folder goes however the script ends.
 # $1 method, $2 path, $3 JSON body or empty; prints the HTTP code, the answer in $api_answer.
 api_answer=""
+# Why something other than this account's (or root's) may be answering on Kilnmark's port $1, or
+# nothing (ADR 0051): every socket listening on it, on the loopback or all addresses, must be this
+# account's or root's (rootless Podman's port forwarder is the account's, Docker's and rootful
+# Podman's root's). The kernel lists every socket's owner to everyone (/proc/net/tcp); where it
+# does not (Git Bash, where the tests run this edition too), nothing can be checked.
+listener_problem() {
+  local f hex addr st uid me
+  me="$(id -u)" hex="$(printf '%04X' "$1")"
+  if [ ! -r /proc/net/tcp ]; then
+    test_hooks && return 0
+    echo "who listens on port $1 cannot be told here"; return 0
+  fi
+  for f in /proc/net/tcp /proc/net/tcp6; do
+    [ -r "$f" ] || continue
+    while read -r _ addr _ st _ _ _ uid _; do
+      [ "$st" = 0A ] && [ "${addr##*:}" = "$hex" ] || continue
+      case "${addr%:*}" in
+        0100007F|00000000|00000000000000000000000000000000|00000000000000000000000001000000|0000000000000000FFFF00000100007F) ;;
+        *) continue ;;
+      esac
+      [ "$uid" = "$me" ] || [ "$uid" = 0 ] || { echo "a program of another account listens on port $1, where Kilnmark should"; return 0; }
+    done < <(tail -n +2 "$f")
+  done
+}
 api_call() {
-  local code
+  local code url why
+  # the admin token only to a listener of this account's or root's, at 127.0.0.1
+  url="$(local_url)"
+  why="$(listener_problem "${url##*:}")"
+  if [ -n "$why" ]; then
+    echo "Warning: $why: the admin token was not sent." >&2
+    printf '000'
+    return 0
+  fi
   # run in a subshell ($(api_call ...)), which has traps of its own: only its own folder goes there
   trap '[ -z "$starter_work" ] || rm -rf "$starter_work"' EXIT
   trap 'exit 129' HUP
@@ -1201,8 +1263,9 @@ header = "Content-Type: application/json"
 EOF
   } > "$starter_work/curl.conf"
   printf '%s' "${3:-}" > "$starter_work/body"
+  # -k for Kilnmark's own certificate, whose name need not be localhost: the listener was checked above
   code="$(curl -k -s --config "$starter_work/curl.conf" -X "$1" --max-time 600 -o "$starter_work/answer" \
-    --data-binary "@$starter_work/body" -w '%{http_code}' "$(local_url)$2")" || code=000
+    --data-binary "@$starter_work/body" -w '%{http_code}' "${url/localhost/127.0.0.1}$2")" || code=000
   api_answer="$(cat "$starter_work/answer" 2> /dev/null || true)"
   rm -rf "$starter_work"; starter_work=""
   printf '%s' "$code"
@@ -1594,11 +1657,21 @@ cmd_restore() {
 # reads nothing more (never config/.env, nor the admin token in it), and goes to the system's
 # journal (a timer's run goes there anyway) and to standard error.
 expire_guard() {
-  local why
+  local why r log want as_root=0
   [ -n "$root" ] || die "Kilnmark is not installed here. Run: ./kilnmark.sh install"
   why="$(tree_problem)"
+  [ -n "$why" ] || why="$(tools_problem)"
   [ -n "$why" ] || return 0
   logger -t "kilnmark-people-expire" -p user.warning "people expire was refused: $why" > /dev/null 2>&1 || true
+  # and a line in the day's log, where logs/ passes the same check and that log is a plain file
+  if [ "$(expiry_uid)" -eq 0 ]; then want=0; as_root=1; else want="$(id -u)"; fi
+  r="$(root_real)"
+  if [ -n "$r" ] && [ -d "$r/logs" ] && [ -z "$(owned_problem "$r/logs")" ]; then
+    log="$r/logs/people-expire-$(date -u +%Y%m%d).log"
+    if [ ! -L "$log" ] && { [ ! -e "$log" ] || [ -f "$log" ]; }; then
+      printf '%s people expire was refused: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$why" >> "$log" 2> /dev/null || true
+    fi
+  fi
   die "people expire was refused: $why. Make it so, then run it again."
 }
 

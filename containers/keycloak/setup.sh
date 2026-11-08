@@ -434,14 +434,14 @@ realm_problem() {
     fi
   fi
   [ "$mode" = production ] || return 0
-  # Keycloak answers a group it does not have with "not found": anything else is not knowing
-  if out="$(kc get "group-by-path/kilnmark-starter-pack" -r "$REALM" --fields id --format csv --noquotes 2>&1)"; then
-    gid="$(one <<< "$out")"
-  elif grep -qi 'not found' <<< "$out"; then
-    gid=""
-  else
-    echo "its groups could not be read"; return 0
-  fi
+  # an exact search, which answers a group not there with an empty list: a lookup that fails is
+  # not knowing, never "not there"
+  out="$(kc get groups -r "$REALM" -q search=kilnmark-starter-pack -q exact=true --fields id,name --format csv --noquotes)" \
+    || { echo "its groups could not be read"; return 0; }
+  gid=""
+  while IFS=, read -r g_id g_name; do
+    [ "$g_name" != kilnmark-starter-pack ] || gid="$g_id"
+  done <<< "$out"
   if [ -n "$gid" ]; then
     out="$(kc get "groups/$gid" -r "$REALM")" || { echo "its groups could not be read"; return 0; }
     if tr -d ' \n\r\t' <<< "$out" | grep -F "\"$PACK_MARK\":[\"true\"]" > /dev/null; then
@@ -620,8 +620,25 @@ in_group() { kc get "users/$1/groups" -r "$REALM" --fields id --format csv --noq
 # Whether person $1 (an id) is someone else's: from a directory (a federation link) or signing in
 # through another identity provider (a federated identity). The people commands never change them.
 federated() {
-  [ -n "$(kc get "users/$1" -r "$REALM" --fields federationLink --format csv --noquotes | tr -d ' \r\n')" ] && return 0
-  [ -n "$(kc get "users/$1/federated-identity" -r "$REALM" --fields identityProvider --format csv --noquotes | tr -d ' \r\n')" ]
+  # what Keycloak does not answer counts as from elsewhere (fail closed): the people commands then
+  # leave the person as they are
+  local out
+  out="$(kc get "users/$1" -r "$REALM" --fields federationLink --format csv --noquotes)" || return 0
+  [ -z "$(tr -d ' \r\n' <<< "$out")" ] || return 0
+  out="$(kc get "users/$1/federated-identity" -r "$REALM" --fields identityProvider --format csv --noquotes)" || return 0
+  [ -n "$(tr -d ' \r\n' <<< "$out")" ]
+}
+# Whether person $1 (an id) is enabled, by what Keycloak says: true, false, or (it did not answer)
+# nothing, which every caller takes for "not safe to go on".
+enabled_state() {
+  local out; out="$(kc get "users/$1" -r "$REALM" --fields enabled --format csv --noquotes)" || return 0
+  case "$(tr -d ' \r\n' <<< "$out")" in true) printf true ;; false) printf false ;; esac
+}
+# Whether person $1 (an id) is in the Starter Pack's group: 0 yes, 1 no, 2 Keycloak did not answer.
+in_pack_group() {
+  local out; out="$(kc get "users/$1/groups" -r "$REALM" --fields name --format csv --noquotes)" || return 2
+  grep -qx "$STARTER_GROUP" <<< "$out" && return 0
+  return 1
 }
 set_password() {
   printf '{"type":"password","temporary":false,"value":%s}' "$(json "$PEOPLE_PASSWORD")" \
@@ -761,7 +778,11 @@ person_id() {
 # own (a temporary one not yet used).
 has_password() { kc get "users/$1/credentials" -r "$REALM" --fields type --format csv --noquotes | grep -x password > /dev/null; }
 must_choose() { kc get "users/$1" -r "$REALM" --fields requiredActions --format csv --noquotes | grep UPDATE_PASSWORD > /dev/null; }
-no_credentials() { [ -z "$(kc get "users/$1/credentials" -r "$REALM" --fields type --format csv --noquotes | tr -d ' \r\n')" ]; }
+# Whether person $1 (an id) has no credential at all; false too when Keycloak did not answer.
+no_credentials() {
+  local out; out="$(kc get "users/$1/credentials" -r "$REALM" --fields type --format csv --noquotes)" || return 1
+  [ -z "$(tr -d ' \r\n' <<< "$out")" ]
+}
 temporary_password() { printf '{"type":"password","temporary":true,"value":%s}' "$(json "$PERSON_PASSWORD")"; }
 # Marks person $1's (an id) password as the temporary one the people commands set (TEMPORARY_LABEL),
 # and checks it took; false when it did not.
@@ -789,9 +810,10 @@ if [ "$PERSON_ACTION" = enable ]; then
   for email in "${PERSON_ROWS[@]}"; do
     uid="$(person_id "$email")"
     set_at=""
-    if [ -n "$uid" ] && ! federated "$uid" \
-      && ! kc get "users/$uid" -r "$REALM" --fields enabled --format csv --noquotes | grep -x true > /dev/null \
-      && [ -z "$(kc get "users/$uid/groups" -r "$REALM" --fields name --format csv --noquotes | grep -x "$STARTER_GROUP" || true)" ] \
+    # each lookup Keycloak does not answer leaves them as they are (fail closed)
+    pack=0
+    [ -z "$uid" ] || in_pack_group "$uid" || pack=$?
+    if [ -n "$uid" ] && ! federated "$uid" && [ "$(enabled_state "$uid")" = false ] && [ "$pack" = 1 ] \
       && only_temporary "$uid" && must_choose "$uid" && set_at="$(temporary_set_at "$uid")" \
       && [ $(( now_ms - set_at )) -le "$limit_ms" ]; then
       kc update "users/$uid" -r "$REALM" -s enabled=true
@@ -822,9 +844,9 @@ if [ "$PERSON_ACTION" = add ] || [ "$PERSON_ACTION" = import ]; then
       kept=$((kept + 1))
       continue
     fi
-    paths=""
+    paths="" paths_named=""
     IFS=';' read -r -a list <<< "$groups"
-    for g in "${list[@]}"; do paths="${paths:+$paths,}$(json "/$g")"; done
+    for g in "${list[@]}"; do paths="${paths:+$paths,}$(json "/$g")"; paths_named="${paths_named:+$paths_named;}/$g"; done
     # made disabled, whoever they are: enabled only once their groups are checked (below) and
     # Kilnmark has recorded them (people enable)
     if $waiting; then
@@ -844,11 +866,18 @@ if [ "$PERSON_ACTION" = add ] || [ "$PERSON_ACTION" = import ]; then
     # Only in the groups the row named, never another that gives a role (Kilnmark's, or any
     # config/.env maps to one) nor the Starter Pack's, as a default group of the realm would put them:
     # the pack's removal deletes members there, and production refuses their sign-in.
+    # By full path: a group of the same name elsewhere (a subgroup) is another group, though its name,
+    # all the ID token carries, gives the same role; a lookup that fails stops here too.
     extra=""
     if $ok; then
-      while IFS= read -r g; do
-        if [[ " $KNOWN_GROUPS $STARTER_GROUP $MAPPED_GROUPS " == *" $g "* ]] && [[ ";$groups;" != *";$g;"* ]]; then extra="$g"; fi
-      done < <(kc get "users/$uid/groups" -r "$REALM" --fields name --format csv --noquotes)
+      if member_paths="$(kc get "users/$uid/groups" -r "$REALM" --fields path --format csv --noquotes)"; then
+        while IFS= read -r gp; do
+          gp="$(trim "${gp%$'\r'}")"; [ -n "$gp" ] || continue
+          if [[ " $KNOWN_GROUPS $STARTER_GROUP $MAPPED_GROUPS " == *" ${gp##*/} "* ]] && [[ ";$paths_named;" != *";$gp;"* ]]; then extra="${gp#/}"; fi
+        done <<< "$member_paths"
+      else
+        ok=false
+      fi
     fi
     if [ -n "$extra" ]; then
       kc delete "users/$uid" -r "$REALM"
@@ -883,7 +912,12 @@ if [ "$PERSON_ACTION" = activate ]; then
     echo "keycloak-setup: nobody here has that address. Nothing was changed" >&2
     exit 1
   fi
-  if kc get "users/$uid" -r "$REALM" --fields enabled --format csv --noquotes | grep -x true > /dev/null; then
+  state="$(enabled_state "$uid")"
+  if [ -z "$state" ]; then
+    echo "keycloak-setup: Keycloak did not say whether $email is enabled. Nothing was changed" >&2
+    exit 1
+  fi
+  if [ "$state" = true ]; then
     echo "keycloak-setup: $email is active already: nothing was changed (reset a password in Keycloak's console)" >&2
     exit 1
   fi
@@ -899,7 +933,12 @@ if [ "$PERSON_ACTION" = activate ]; then
     echo "keycloak-setup: $email has signed in (a password of their own, or a one-time code): they were disabled on purpose, so they are left as they are (enable them in Keycloak's console)" >&2
     exit 1
   fi
-  if [ -n "$(kc get "users/$uid/groups" -r "$REALM" --fields name --format csv --noquotes | grep -x "$STARTER_GROUP" || true)" ]; then
+  pack=0; in_pack_group "$uid" || pack=$?
+  if [ "$pack" = 2 ]; then
+    echo "keycloak-setup: Keycloak did not say which groups $email is in. Nothing was changed" >&2
+    exit 1
+  fi
+  if [ "$pack" = 0 ]; then
     echo "keycloak-setup: that is one of the Starter Pack's example people: use starter people. Nothing was changed" >&2
     exit 1
   fi

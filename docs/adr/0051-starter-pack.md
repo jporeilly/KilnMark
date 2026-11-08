@@ -351,25 +351,50 @@ converted: Production or Starter Pack.
       neither group nor others; one others may write (`/tmp`) passes only where it is sticky and
       the next folder down is root's or the account's, and never as root (as sshd's StrictModes
       asks). The unit names the root by its canonical path, which must hold nothing a unit file
-      reads as more than a path (a space, `%`, a quote, a backslash, a control character); the
-      engine the unit names, and the folder the units are in, must be root's or the account's and
-      writable by nobody else. The run's log is never written through a link, and `logs` is the
-      account's alone (700).
-    - Windows: the install root is the user's alone (no inherited permissions, the user only) from
-      the moment `install` makes it, before anything is copied in, before `upgrade` unpacks into
-      it, and at every `up` whatever the profile: `C:\` lets every signed-in user change what is
-      made in a new folder there. `up` judges the tree as it was before it cleaned it: a tree
+      reads as more than a path (a space, `%`, a quote, a backslash, a control character). The
+      engine a run uses (`KILNMARK_ENGINE`, else podman or docker as `PATH` finds it) and the
+      folder the units are in must be root's or the account's and writable by nobody else, and so
+      must every folder above each (where `KILNMARK_ENGINE` is a link, the link's own folders
+      too): when the timer is set up, and again at every `people expire`. The run's log is never
+      written through a link, and `logs` is the account's alone (700).
+    - Windows: the install root is the user's alone (nothing inherited, full control for the user's
+      SID and nobody else) from the moment `install` makes it: it is made with those permissions,
+      never made and then locked, and must then hold nothing and pass the checks below. So is every
+      folder `install` makes in it; one there already (a reinstall) that is not the user's, or is
+      a link or a junction, stops the install before anything is written into it, as does a
+      release folder or `config\.env` that fails the same check. `C:\` lets every signed-in user
+      change what is made in a new folder there, so a folder made first and locked after could be
+      taken in between. An existing root (the user's: `install` refuses anyone else's) has its
+      permissions written afresh, any other entry dropped, before `upgrade` unpacks into it and at
+      every `up` whatever the profile; when they cannot be written, `install`, `upgrade` and `up`
+      stop there. `up` judges the tree as it was before it cleaned it: a tree
       someone else could change until then is not trusted for being cleaned (what they changed
       cannot be seen), so the task is not set up that time, and the operator checks it (or
       installs the release again) and starts again. Each must then be there, no link or junction,
       owned by the user, SYSTEM or the Administrators, and nobody else may write it (a conditional
       entry for anyone else counts, whatever it grants; an app container's or capability's SID
       never does, since it only narrows what a process of someone who holds the right may do).
-      Every folder above the root must be owned by the user, SYSTEM, the Administrators or
-      TrustedInstaller, with nobody else able to delete what is in it, delete it, or change its
-      permissions or owner. `install` refuses an existing root owned by anyone else, rather than
-      taking it over (`icacls /setowner`), since its owner could rewrite its permissions whenever
-      they like. The task's command quotes the script's path.
+      Every folder above the root must be no link or junction (it would lead wherever someone made
+      it lead), owned by the user, SYSTEM, the Administrators or TrustedInstaller, with nobody else
+      able to delete what is in it, delete it, or change its permissions or owner. `install`
+      refuses an existing root owned by anyone else, rather than taking it over
+      (`icacls /setowner`), since its owner could rewrite its permissions whenever they like. The
+      task names Windows PowerShell by its full path, never whichever one its `PATH` finds, and
+      quotes the script's path.
+    - The admin token goes only to a listener of the account's own. Before any call to Kilnmark's
+      API (`people` commands, the hourly run's records), the control script checks who listens on
+      Kilnmark's port, on the loopback or all addresses, and connects to `127.0.0.1`: on Linux
+      every such socket must be the account's or root's (the kernel shows every socket's owner to
+      everyone; rootless Podman's port forwarder is the account's, Docker's root's); on Windows
+      every listener Windows shows must be a program of the user's (one whose owner Windows will
+      not name, another account's or a service's, counts against it). Otherwise nothing is sent
+      and the command says why. What remains: with WSL's mirrored networking Windows shows no
+      listener for a container's port, so there is nothing to check (and nothing else to find
+      either, unless someone else binds the port on Windows, which is seen); a listener could
+      change in the moment between the check and the connection; and with HTTPS on, the control
+      script still takes Kilnmark's own certificate without checking its name (`-k`), as that name
+      need not be localhost: the listener is what is checked. Pinning the certificate would need
+      a certificate on every install, which the default plain-HTTP install behind a proxy has not.
     - A known limit: the release's signed `SHA256SUMS` covers the archives, not each file of an
       install, so the files a run uses are not checked against a signature before each run; once
       nobody else may write them, nobody else can change them.
@@ -382,13 +407,22 @@ converted: Production or Starter Pack.
     `keycloak-setup` refuses a realm stamped for another install or mode, and on production one
     holding the pack's marked group or any of the five example user names (a Keycloak volume kept
     from a Starter Pack install, say). It fails closed: a realm, group or user lookup Keycloak does
-    not answer counts against the realm (only "not found" means a group is not there), and a stamp
-    is read whole and compared exactly, so half of one, or one not of Kilnmark's shape, is refused.
+    not answer counts against the realm (the pack's group is looked for by an exact search, whose
+    empty answer is the only "not there"), and a stamp is read whole and compared exactly, so half
+    of one, or one not of Kilnmark's shape, is refused. So do the people commands' own lookups:
+    whether someone is from a directory, enabled, in the pack's group or holds a credential, when
+    Keycloak does not answer, leaves them as they are (`enable`) or stops (`activate`). A person
+    made is checked against their groups by full path: a subgroup with a role's name is another
+    group, though the ID token, which carries names, would give that role.
     Restore Kilnmark and its Keycloak together, from the same install's backup. On production the
     sample-data kind of source has no connector at all: it is left out where the server loads its
     connectors, the one place every source, run, scan, rule, document and catalogue view gets its
     connector from, so nothing reaches it, whatever a database kept from a Starter Pack install
-    holds.
+    holds. The only code that adds a source of that kind is the samples' own (their sample data,
+    for the sample that reads it), and both ways to it refuse on production first: the samples
+    API (`/api/v1/samples`, refused on a production install) and the Starter Pack's own setting
+    up, which runs only on a Starter Pack install. Adding a source of that kind by hand or in a bulk
+    import is refused on production with its own reason.
 
 ## Consequences
 

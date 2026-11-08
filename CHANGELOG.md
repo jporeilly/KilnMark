@@ -306,6 +306,18 @@ details.
   canonical path in the timer's unit (refusing a path a unit would misread), checks the engine and
   the units' folder, keeps `logs` private and never writes a log through a link; the Windows task
   quotes the script's path. The audit event `auth.expire_refused` is gone with the call that sent it.
+- **The Windows install folder is yours alone from its first moment**: made with permissions of
+  yours alone (never made, then locked), and so is each folder in it; a folder there already that
+  is not yours, or is a link or a junction, stops the install before anything is written into it.
+  A start writes the root's permissions afresh by your SID (others' entries go too), and `install`,
+  `upgrade` and `up` stop when they cannot. Folders above the root that are links or junctions are
+  refused, and the hourly task names Windows PowerShell by its full path.
+- **The admin token goes only to a listener of yours**: before any call to Kilnmark's API, the
+  control scripts check who listens on its port (Linux: the account's or root's sockets only;
+  Windows: your programs only) and send nothing otherwise. On Linux the engine and the units'
+  folder, and the folders above them, are checked at every `people expire` too, and a refused run
+  leaves its line in the day's log. keycloak-setup's lookups fail closed in `enable` and `activate`,
+  the pack's group is looked for by an exact search, and a person's groups are compared by path.
 - **Recorded first, then enabled**: whoever `people add`, `import` or `activate` gives a temporary
   password stays disabled until Kilnmark's audit log has them, and only then is enabled; a group
   `config/.env` maps to the admin role or to sensitive values counts as those in an import file.

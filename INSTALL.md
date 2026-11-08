@@ -531,7 +531,14 @@ system's journal (Linux) or Task Scheduler's history (Windows), and to `logs`. O
 `install` refuses an existing folder someone else owns, makes a new install folder yours alone
 before it copies anything in, and every `up` does so again; an `up` that found it open to others
 does not set the task up that time, since what was changed meanwhile cannot be told: check it (or
-install the release again), then run `up` again.
+install the release again), then run `up` again. A new install folder is made yours alone from its
+first moment, and so is each folder in it; installing into a folder of yours whose `config` (or
+another folder it makes) is not yours, or is a link or a junction, stops before anything is written
+into it. When `up`, `install` or `upgrade` cannot set the install folder's permissions, it stops
+there. On Linux the container engine and the units' folder, and the folders above them, must be
+yours or root's and writable by nobody else, at every `people expire` too. The control scripts send
+the admin token only to a listener of yours (or root's, on Linux) on Kilnmark's port: if another
+account's program listens there, the command says so and sends nothing.
 
 `status` and `check` say whether it is set up. While Keycloak is stopped nobody can sign in, so
 `people expire` does nothing then, and the next start expires them first. The password goes to `keycloak-setup` on its input only:

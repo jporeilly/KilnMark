@@ -335,7 +335,10 @@ function Get-TreeProblem {
     $dir = Split-Path $top -Parent
     while ($dir) {
         $why = ''
-        if (-not (Test-OwnerOk $dir -Above)) { $why = 'is owned by someone other than you, SYSTEM, the Administrators or TrustedInstaller' }
+        $item = Get-Item -LiteralPath $dir -Force -ErrorAction SilentlyContinue
+        if (-not $item) { $why = 'could not be read' }
+        elseif (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { $why = 'is a link or a junction, which leads wherever someone made it lead' }
+        elseif (-not (Test-OwnerOk $dir -Above)) { $why = 'is owned by someone other than you, SYSTEM, the Administrators or TrustedInstaller' }
         else {
             $others = @(Get-OthersWriting $dir $AboveWrites)
             if ($others.Count -gt 0) { $why = 'lets ' + (($others | Select-Object -Unique) -join ', ') + ' delete what is in it or change who may' }
@@ -385,7 +388,9 @@ function Set-ExpiryTask {
     # before 7.3) hands a native program a quote inside an argument as it is, which would end it there
     $q = '"'
     if ($PSVersionTable.PSVersion.Major -lt 7 -or -not (Get-Variable PSNativeCommandArgumentPassing -ErrorAction SilentlyContinue) -or $PSNativeCommandArgumentPassing -eq 'Legacy') { $q = '\"' }
-    $run = 'powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ' + $q + (Join-Path $script:Root 'kilnmark.ps1') + $q + ' people expire -Project ' + $Project
+    # Windows PowerShell by its full path, never whichever powershell.exe the task's PATH finds first
+    $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $run = $q + $shell + $q + ' -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ' + $q + (Join-Path $script:Root 'kilnmark.ps1') + $q + ' people expire -Project ' + $Project
     if (Invoke-Schtasks /Create /SC HOURLY /TN (Get-ExpiryTaskName) /TR $run /F) {
         if (-not $had) { Write-Host ('Set up the hourly expiry of unused temporary passwords: the scheduled task "' + (Get-ExpiryTaskName) + '" (it runs while you are signed in to Windows).') }
     } else {
@@ -657,16 +662,57 @@ function Set-Line([string]$File, [string]$Key, [string]$Value) {
     Write-UnixText $File $out
 }
 
-# Only the current user may read the folder and what is in it.
+# Permissions of yours alone, by your SID: nothing inherited, full control for you, for what is in
+# the folder too, and nobody else (ADR 0051, decision 15).
+function New-OwnSecurity {
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $sec = New-Object Security.AccessControl.DirectorySecurity
+    $sec.SetAccessRuleProtection($true, $false)
+    $inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($me, [Security.AccessControl.FileSystemRights]::FullControl,
+        $inherit, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)))
+    return $sec
+}
+
+# Only the current user may read the folder and what is in it: its permissions written afresh (any
+# other entry, inherited or not, goes). Nothing goes on when that fails.
 function Protect-Folder([string]$Dir) {
-    $who = $env:USERNAME; if ($env:USERDOMAIN) { $who = $env:USERDOMAIN + '\' + $env:USERNAME }
-    & icacls.exe $Dir /inheritance:r /grant:r ($who + ':(OI)(CI)F') *> $null
-    if ($LASTEXITCODE -ne 0) { [void]$script:Warnings.Add('Could not limit ' + $Dir + ' to your account; check its permissions.') }
+    try {
+        # only what changed (who may do what), never the audit settings, which need a privilege
+        $di = New-Object IO.DirectoryInfo($Dir)
+        if (-not $di.Exists) { throw (New-Object IO.DirectoryNotFoundException) }
+        if ($PSVersionTable.PSVersion.Major -ge 6) { [IO.FileSystemAclExtensions]::SetAccessControl($di, (New-OwnSecurity)) } else { $di.SetAccessControl((New-OwnSecurity)) }
+    }
+    catch { Fail ('Could not make ' + $Dir + ' yours alone (its permissions could not be set), so nothing more was done. Check who owns it, and that you may change its permissions.') }
+}
+
+# A folder of yours alone: made with those permissions from its first moment (never made, then
+# locked), or, already there, checked as an hourly run checks what it uses (yours, no link or
+# junction, nobody else able to change it). With -Empty, a folder made now must hold nothing.
+function New-OwnFolder([string]$Dir, [switch]$Empty) {
+    $made = $false
+    if (-not (Test-Path -LiteralPath $Dir)) {
+        try {
+            # Windows PowerShell's .NET makes it with them; PowerShell 7's through FileSystemAclExtensions
+            $di = New-Object IO.DirectoryInfo($Dir)
+            if ($PSVersionTable.PSVersion.Major -ge 6) { [IO.FileSystemAclExtensions]::Create($di, (New-OwnSecurity)) } else { $di.Create((New-OwnSecurity)) }
+            $made = $true
+        }
+        catch { Fail ('Cannot create ' + $Dir + '. Choose another folder with -Root.') }
+    }
+    $why = Get-ItemProblem $Dir
+    if ($why) { Fail ($why + ', so nothing was put in it. Remove it, or choose another folder with -Root.') }
+    if ($made -and $Empty -and @(Get-ChildItem -LiteralPath $Dir -Force).Count -gt 0) {
+        Fail ($Dir + ' held something the moment it was made: someone else may be at work there. Nothing was put in it.')
+    }
 }
 
 function New-Settings([string]$Example) {
     $config = Join-Path $script:Root 'config'
     $env = Join-Path $config '.env'
+    # never written into a folder, or over a file, someone else may change or that leads elsewhere
+    New-OwnFolder $config
+    if (Test-Path -LiteralPath $env) { $why = Get-ItemProblem $env; if ($why) { Fail ($why + ', so no settings were written.') } }
     Copy-Item $Example (Join-Path $config '.env.example') -Force
     if (Test-Path $env) { Write-Host ('Keeping the settings in ' + $env + '.'); return }
     Copy-Item $Example $env
@@ -881,21 +927,19 @@ function Show-Status {
 # --- install, upgrade, uninstall ---------------------------------------------------------------
 
 function New-Folders {
-    # the root first, yours alone before anything is put in it: what is made or copied in after takes
-    # its permissions (C:\ lets every signed-in user change what is made in a new folder there)
-    if (-not (Test-Path -LiteralPath $script:Root)) {
-        try { New-Item -ItemType Directory -Path $script:Root -Force -ErrorAction Stop | Out-Null }
-        catch { Fail ('Cannot create ' + $script:Root + '. Choose another folder with -Root.') }
+    # The root first, yours alone from the moment it is made: C:\ lets every signed-in user change
+    # what is made in a new folder there, and what is put in it after takes its permissions. One
+    # there already (yours: install checked) is made yours alone, then checked.
+    if (Test-Path -LiteralPath $script:Root) {
+        Protect-Folder $script:Root
+        $why = Get-ItemProblem $script:Root
+        if ($why) { Fail ($why + ', so nothing was put in it.') }
+    } else {
+        New-OwnFolder $script:Root -Empty
     }
-    Protect-Folder $script:Root
-    foreach ($d in @('versions', 'config', 'certs\https', 'backups', 'logs')) {
-        $p = Join-Path $script:Root $d
-        if (-not (Test-Path $p)) {
-            try { New-Item -ItemType Directory -Path $p -Force -ErrorAction Stop | Out-Null }
-            catch { Fail ('Cannot create ' + $p + '. Choose another folder with -Root.') }
-        }
-    }
-    foreach ($d in @('config', 'certs', 'backups', 'logs')) { Protect-Folder (Join-Path $script:Root $d) }
+    # Each folder in it the same way: one there already that is not yours, or is a link or a
+    # junction, stops the install before anything is written into it.
+    foreach ($d in @('versions', 'config', 'certs', 'certs\https', 'backups', 'logs')) { New-OwnFolder (Join-Path $script:Root $d) }
 }
 
 function Copy-Launchers([string]$V) {
@@ -909,7 +953,12 @@ function Copy-Launchers([string]$V) {
 
 function Install-Release([string]$Source, [string]$V) {
     $dest = Join-Path (Join-Path $script:Root 'versions') $V
-    if (Test-Path $dest) { Write-Host ('Kilnmark ' + $V + ' is already in ' + $dest + '.') }
+    New-OwnFolder (Join-Path $script:Root 'versions')
+    if (Test-Path -LiteralPath $dest) {
+        $why = Get-ItemProblem $dest
+        if ($why) { Fail ($why + ', so the release was not used. Remove it, then install again.') }
+        Write-Host ('Kilnmark ' + $V + ' is already in ' + $dest + '.')
+    }
     else {
         Copy-Item $Source ($dest + '.part') -Recurse
         Rename-Item ($dest + '.part') $V
@@ -1172,7 +1221,35 @@ function Invoke-PeopleAfterUp {
 
 # A request to Kilnmark's own API as the admin: the token reaches curl in a settings file in a new
 # folder only this account can open, deleted at once, never on a command line. The HTTP code.
+# Why something other than yours may be answering on Kilnmark's port, or nothing (ADR 0051): every
+# listener Windows shows on it (loopback or all addresses) must be a program of yours. One Windows
+# will not name the owner of (another account's, or a service's) counts against it. A container
+# engine whose ports Windows does not show (WSL's mirrored networking) leaves nothing to check.
+function Get-ListenerProblem([int]$Port) {
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    foreach ($c in @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)) {
+        if (@('127.0.0.1', '0.0.0.0', '::', '::1') -notcontains ('' + $c.LocalAddress)) { continue }
+        $o = $null
+        try {
+            $proc = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $c.OwningProcess)
+            if ($proc) { $o = Invoke-CimMethod -InputObject $proc -MethodName GetOwner }
+        } catch { $o = $null }
+        if (-not $o -or $o.ReturnValue -ne 0 -or (($o.Domain + '\' + $o.User) -ne $me)) {
+            return ('a program that is not yours (or whose owner Windows will not name) listens on port ' + $Port + ', where Kilnmark should')
+        }
+    }
+    return ''
+}
+
+# A request to Kilnmark's own API as the admin. The admin token goes only to a listener of yours
+# (Get-ListenerProblem), at 127.0.0.1; else nothing is sent and the answer is 000.
 function Invoke-KilnmarkApi([string]$Method, [string]$Path, [string]$Body) {
+    $url = [uri](Get-LocalUrl)
+    $why = Get-ListenerProblem $url.Port
+    if ($why) {
+        Write-Host ('Warning: ' + $why + ': the admin token was not sent.') -ForegroundColor Yellow
+        return '000'
+    }
     $work = Join-Path ([IO.Path]::GetTempPath()) ('kilnmark-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory $work | Out-Null
     Protect-Folder $work
@@ -1183,7 +1260,9 @@ function Invoke-KilnmarkApi([string]$Method, [string]$Path, [string]$Body) {
         [IO.File]::WriteAllText($configFile, $config + "`n", (New-Object System.Text.ASCIIEncoding))
         $config = $null
         [IO.File]::WriteAllText($bodyFile, $Body, (New-Object System.Text.ASCIIEncoding))
-        return (& curl.exe -k -s -K $configFile -X $Method --max-time 600 -o NUL --data-binary ('@' + $bodyFile) -w '%{http_code}' ((Get-LocalUrl) + $Path) | Out-String).Trim()
+        # -k for Kilnmark's own certificate, whose name need not be localhost: the listener was checked above
+        $at = $url.Scheme + '://127.0.0.1:' + $url.Port + $Path
+        return (& curl.exe -k -s -K $configFile -X $Method --max-time 600 -o NUL --data-binary ('@' + $bodyFile) -w '%{http_code}' $at | Out-String).Trim()
     } finally {
         Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
     }

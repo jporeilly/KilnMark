@@ -661,7 +661,12 @@ class ControlScriptStarterTest {
             + "REALM=x\nkc() { seq 1 300000; }\n"
             + "seq 1 300000 | one > /dev/null || exit 3\n"
             + "[ \"$(printf 'a\\nb\\n' | one)\" = a ] || exit 4\n"
-            + "in_group someone 1 || exit 5\n! in_group someone x || exit 6\n");
+            + "in_group someone 1 || exit 5\n! in_group someone x || exit 6\n"
+            // what Keycloak does not answer is never taken for the safe answer
+            + "for fn in federated no_credentials enabled_state in_pack_group; do eval \"$(sed -n \"/^$fn() {/,/^}/p\" \"$f\")\"; done\n"
+            + "STARTER_GROUP=kilnmark-starter-pack\nkc() { return 1; }\n"
+            + "federated someone || exit 7\n! no_credentials someone || exit 8\n[ -z \"$(enabled_state someone)\" ] || exit 9\n"
+            + "rc=0; in_pack_group someone || rc=$?; [ \"$rc\" = 2 ] || exit 10\n");
         Process p = new ProcessBuilder(shell, script.toString().replace('\\', '/')).redirectErrorStream(true).start();
         String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         assertTrue(p.waitFor(60, TimeUnit.SECONDS));
@@ -811,7 +816,47 @@ class ControlScriptStarterTest {
             assertTrue(moved.contains("people expire was refused") && moved.contains(", a folder above "), moved);
             // and no admin token went anywhere: the refusal reads no settings
             assertTrue(api.posted().isEmpty(), "nothing was sent: " + api.posted());
+            // a folder above the root that is a junction: it leads wherever someone made it lead
+            Path real = Files.createTempDirectory("kilnmark-real");
+            Path junction = Files.createTempDirectory("kilnmark-junction-parent").resolve("j");
+            link(junction, real);
+            Path through = installRoot(true, junction);
+            writeEnv(through, withApi(WITH_KEYCLOAK, api));
+            String linked = run(expire, through, works.toString(), recordedAsEnv(WITH_KEYCLOAK, Map.of()));
+            assertTrue(linked.contains("people expire was refused") && linked.contains("is a link or a junction"), linked);
+            // a start writes the root's permissions afresh: an entry of someone else's on it goes too
+            Path entry = installRoot(true);
+            writeEnv(entry, withApi(plain, api));
+            icacls(entry, "/grant", "*S-1-1-0:(W)");
+            String cleaned = run(up, entry, works.toString(), recordedAsEnv(plain, Map.of()));
+            assertFalse(everyoneWrites(entry), cleaned);
+            // and when they cannot be set, nothing goes on
+            Path stuck = installRoot(true);
+            writeEnv(stuck, withApi(plain, api));
+            String me = System.getenv("USERDOMAIN") + "\\" + System.getProperty("user.name");
+            icacls(stuck, "/inheritance:r", "/grant", "*S-1-3-4:(OI)(CI)(RX)", "/grant", me + ":(OI)(CI)(M)");
+            String refusedUp = run(up, stuck, works.toString(), recordedAsEnv(plain, Map.of()));
+            assertTrue(refusedUp.contains("yours alone (its permissions could not be set)") && !refusedUp.contains("is ready at"), refusedUp);
+            // the admin token goes only to a listener of yours (port 135: Windows' own RPC service)
+            Path elsewhereRoot = installRoot(true);
+            Map<String, String> rpc = new LinkedHashMap<>(withApi(WITH_KEYCLOAK, api));
+            rpc.put("KILNMARK_PORT", "135");
+            writeEnv(elsewhereRoot, rpc);
+            List<String> add = new ArrayList<>(ps);
+            add.addAll(List.of("people", "add"));
+            String notSent = run(add, elsewhereRoot, works.toString(), recordedAsEnv(WITH_KEYCLOAK, Map.of()));
+            assertTrue(notSent.contains("listens on port 135") && notSent.contains("the admin token was not sent"), notSent);
         }
+        // install into a folder of yours that holds a junction where its settings go: refused, and
+        // nothing is written through it
+        Path mine = Files.createTempDirectory("kilnmark-mine");
+        Path target = Files.createTempDirectory("kilnmark-target");
+        link(mine.resolve("config"), target);
+        String planted = run(List.of(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+            release.resolve("kilnmark.ps1").toString(), "install", "-Root", mine.toString(), "-NoStart", "-Offline",
+            images.toString(), "-SkipVerify"), mine, works.toString(), freePorts());
+        assertTrue(planted.contains("is a link or a junction"), planted);
+        assertFalse(Files.exists(target.resolve(".env")), "nothing written through the junction: " + planted);
     }
 
     /**
@@ -836,11 +881,21 @@ class ControlScriptStarterTest {
         chmod(parent, "775");
         String moved = run(expire, root, works);
         assertTrue(moved.contains("people expire was refused") && moved.contains(", a folder above "), moved);
+        String day = java.time.LocalDate.now(java.time.ZoneOffset.UTC).format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE);
+        String logged = Files.readString(root.resolve("logs/people-expire-" + day + ".log"));
+        assertTrue(logged.contains("people expire was refused: ") && logged.contains(", a folder above "), logged);
         // sticky, as /tmp is, with the root the account's own: nobody else can move it
         chmod(parent, "1777");
         String sticky = run(expire, root, works);
         assertFalse(sticky.contains("was refused"), sticky);
         chmod(parent, "700");
+        // the engine in a folder its group may change
+        Path tools = Files.createTempDirectory("kilnmark-tools");
+        Path engine = Files.copy(Path.of(works), tools.resolve("engine-ok.sh"));
+        chmod(tools, "775");
+        String engineOpen = run(expire, root, engine.toString());
+        assertTrue(engineOpen.contains("people expire was refused") && engineOpen.contains(", a folder above "), engineOpen);
+        chmod(tools, "700");
         // logs its group may write (up makes it the account's alone again; the hourly run is checked
         // before it opens its log)
         chmod(root.resolve("logs"), "g+w");
@@ -985,7 +1040,8 @@ class ControlScriptStarterTest {
                 && first.units().contains("Environment=KILNMARK_PROJECT=kilnmark"), first.units());
         } else {
             assertTrue(first.schtasks().contains("/Create /SC HOURLY /TN \"Kilnmark kilnmark people expire\"")
-                && first.schtasks().contains("\\kilnmark.ps1\\\" people expire -Project kilnmark"), first.schtasks());
+                && first.schtasks().contains("\\kilnmark.ps1\\\" people expire -Project kilnmark")
+                && first.schtasks().contains("\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\\\" -NoProfile"), first.schtasks());
         }
         // the install's id, as the server recorded it, handed to keycloak-setup at the start
         assertTrue(Files.readString(t.root().resolve("up.log")).contains("install id [0e38a49e-ee00-4b1e-98f9-fe3c44e6fa09]"),
