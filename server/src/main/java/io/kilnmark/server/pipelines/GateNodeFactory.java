@@ -22,7 +22,7 @@ import io.kilnmark.kiln.graph.Edge;
 import io.kilnmark.server.quality.Rule;
 
 /**
- * The {@code gate} node (docs/design/data-quality.md section 7, docs/guide/pipelines.md "Quality
+ * The {@code gate} node (docs/design/data-quality.md section 7, docs/guide/quality-gates.md "Quality
  * gates"): checks the rows passing through against quality rules in the same pass, and stops the
  * run, sets failing rows aside on {@code quarantine}, or lets them through with a warning. The
  * rules are the enabled rules of the asset read upstream ({@code asset_rules}, on by default), and

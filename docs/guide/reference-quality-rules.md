@@ -138,9 +138,11 @@ Fails values that appear more than once.
 | `fields` | `fields` | list of columns | no | | A key of several columns together, in place of `field`. |
 
 **What to know.** On an asset, every row of a repeated key fails. On a gate, the first row with a
-key passes and each repeat fails; a gate remembers up to 1,048,576 different keys, then stops
-checking for repeats and says so. Use the asset's rule, which runs in the database, for larger
-tables.
+key passes and each repeat fails. To find repeats, a gate keeps each key it has seen as a short
+fingerprint, about 96 bytes whatever the key's length, up to 1,048,576 different keys (about
+96 MB). Past that it stops checking for repeats: the rule shows **Could not run**, says how many
+repeats it had found and set aside before then, and the rows after it are not checked for repeats.
+Use the asset's rule, which runs in the database, for larger tables.
 
 ```json
 {
@@ -194,7 +196,7 @@ Fails any value that does not match a regular expression.
 | `regex` | `regex` | text | yes | | A regular expression of 1 to 1,000 characters; use `^` and `$` to match the whole value. |
 
 **What to know.** Patterns that could take practically for ever on unlucky text are refused, as in
-[expressions](pipeline-nodes.md#regular-expressions-are-kept-safe). In JSON, a backslash is
+[expressions](expressions.md#regular-expressions-are-kept-safe). In JSON, a backslash is
 doubled: `\s` is written `\\s`.
 
 ```json

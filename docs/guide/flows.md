@@ -74,22 +74,54 @@ connections:
 ```
 
 - **Nodes** do the work: `run-pipeline` runs a saved pipeline, `for-each` runs one once for each
-  item of a list, `notify` sends a notice, `wait` waits a while, `stop` ends the flow, and `sql`
-  runs statements on a PostgreSQL source.
+  item of a list, `sql` runs statements on a PostgreSQL source, `check-source` checks a source
+  holds what the work needs, `wait-for` waits for a file or a query, `wait` waits a while, `notify`
+  sends a notice, and `stop` ends the flow.
 - **Connections** say what runs after what, and when: `success` (the default), `failure`,
   `always`, or a condition on what an earlier node reported, such as its `score`,
-  `quarantined_share`, `rows_written` or `status`.
+  `quarantined_share`, `rows_written` or `status` ([Conditions](#conditions), below).
 - **Parameters** are values each run can change. One with no default must be given when the flow
   runs.
 
 Every node type, with each setting it takes, its type and default, and an example, is in
 [Reference: flow nodes](reference-flow-nodes.md).
 
-Nodes with no connection between them run at the same time. The full format, the condition
-language and how a run decides what starts next are in the design notes (`docs/design/flows.md`). The sample flows that ship with Kilnmark, in `samples/08-flows`,
-show one idea each, and each says in the Library what it shows, what to look for and what it needs:
+Nodes with no connection between them run at the same time. The sample flows that ship with
+Kilnmark, in `samples/08-flows`, show one idea each, and each says in the Library what it shows, what to look for and what it needs:
 `sample-retries` tries a run and a node again only where it is safe, and `sample-checks-and-waits`
 checks a source and waits for a file before the work, with a priority on each pipeline.
+
+## Conditions
+
+A connection with a condition is taken when the node it leaves succeeded and the condition is
+true. A condition is a small language over what earlier nodes reported and the flow's parameters;
+it never runs code:
+
+```text
+clean.quarantined_share < 0.02 and clean.score >= good
+clean.status = 'failed' or (clean.rows_written = 0 and region != 'APAC')
+```
+
+- **Values.** `<node>.status` is `succeeded`, `failed` or `cancelled` for every node. The other
+  values each node reports, such as a `run-pipeline` node's `score` (the lowest measured quality
+  of what it wrote, 0 to 1) or a `for-each` node's `failed`, are listed in its entry in
+  [Reference: flow nodes](reference-flow-nodes.md). A parameter is read by its name.
+- **Quality words** are the lowest score of a band, as the app shows them: `good` is 0.95, `fair`
+  0.8 and `poor` 0.
+- **Writing it.** Numbers (`0.02`, `-1`), text in single quotes, `true` and `false`; `=`, `!=`,
+  `<`, `<=`, `>` and `>=`; `and`, `or` and `not`; brackets. Comparisons do not chain, and both
+  sides of one are the same kind (number, text or true or false), checked when the flow is saved;
+  true and false compare only with `=` and `!=`. Any other operator, such as `==` or `<>`, is
+  refused rather than guessed at. A condition is at most 1,000 characters, with at most 32 levels
+  of brackets and `not`.
+- **Unknown is not false.** A score nothing measured is unknown, and so is a comparison with it,
+  with SQL's rules for `and`, `or` and `not`. A connection is taken only when its condition is
+  true, so an unknown answer takes neither it nor its opposite: a flow with `< 0.02` on one
+  connection and `>= 0.02` on the other skips both when nothing was measured. Add a `failure` or
+  `always` connection, or write the condition so that it covers the case.
+- **Only nodes that must have ended.** A condition may name the node the connection leaves and
+  the nodes before it. Naming any other node is a problem when the flow is saved ("Unknown value
+  'c.score'"), rather than a value that is sometimes missing.
 
 ## Running one pipeline for each item
 
@@ -329,25 +361,11 @@ from the failure** (stewards and above, never someone whose role is below the ru
 
 ## Owners
 
-Each flow has **owners**: the people, or team addresses, who answer for it. They are told when
-its run fails after its last try, when it runs again successfully after a failure that was told,
-and when a run takes longer than its `run: warn_after`.
-
-- The flow's page shows them under **Owners**. Designers and admins choose **Change owners** and give up
-  to 10 sign-in names (as Kilnmark shows who did something) or team addresses, one a line. A team
-  address must be one an admin added under **Settings**, **Email**. Others see a team address as
-  "A team address".
-- **By default the owner is whoever first saved it.** Owners are kept apart from the YAML, so
-  changing them makes no new version. Each change is in the [audit log](audit-log.md).
-- **Owners are always told**, in Kilnmark and by email when they have email on with a confirmed
-  address, even if their own choices leave that kind out. Each sees what their role may see, as
-  anyone does. Everyone else is told as their own choices say.
-- **Owning gives no rights.** An owner who is a viewer still cannot run or change the flow, and a
-  run never acts as its owner: it acts as whoever, or whichever schedule, started it.
-- **With no owner**, the page says so, and admins are told in their place. The same holds when no
-  owner can be told (a person whose token no longer works, or who has not used Kilnmark lately).
-  People who sign in through your identity provider get no notifications yet, so name a team
-  address too.
+Each flow has **owners**: the people, or team addresses, who answer for it. They are told when its
+run fails after its last try, when it runs again successfully after a failure that was told, and
+when a run takes longer than its `run: warn_after`. The flow's page shows them under **Owners**, and
+designers and admins choose **Change owners**. Who can be an owner, and how they are told, is in
+[Owners of pipelines and flows](notifications.md#owners-of-pipelines-and-flows).
 
 ## Choosing which runs start first
 
@@ -713,7 +731,3 @@ Library then shows it as not added, and **Add samples** adds it again.
 
 Through the API: `DELETE /api/v1/flows/<name>` (designers and admins) answers 204 when the flow is
 deleted, 404 when there is no such flow, and 409 while a run is queued or running.
-
-## What is not here yet
-
-- Changing a node's settings on the diagram: for now, change them in the YAML.

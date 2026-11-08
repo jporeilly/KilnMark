@@ -1,5 +1,5 @@
 /**
- * Words for a run's measured quality (docs/guide/pipelines.md, "Quality gates" and "Quality of
+ * Words for a run's measured quality (docs/guide/quality-gates.md, "Quality gates" and "Quality of
  * what a run writes"): scores as a percentage and a word, never by colour alone, and what a gate
  * did with the rows. Pure functions, unit tested.
  */

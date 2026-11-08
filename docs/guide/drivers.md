@@ -1,8 +1,30 @@
-# Installing database drivers
+# Database drivers
 
 Kilnmark connects to most databases with drivers it ships. A few databases' drivers have licences
-that do not allow that, so you install them yourself, once, for the whole server. Today that is
-**Oracle**: its driver is Oracle's own, under the Oracle Free Use Terms and Conditions.
+that do not allow that, so an admin installs them, once, for the whole server. Today that is
+**Oracle**: its driver is Oracle's own, under the Oracle Free Use Terms and Conditions. For a
+database with no connector of its own, an admin registers the vendor's driver for **Generic JDBC**.
+Each connector's entry in [Reference: connectors](reference-connectors.md) says which driver it
+uses.
+
+## Drivers Kilnmark ships
+
+These come with Kilnmark, in the server's folder, and need nothing installed:
+
+| Driver | Version | Licence | Used by |
+| --- | --- | --- | --- |
+| [PostgreSQL JDBC driver](https://jdbc.postgresql.org/) | `42.7.14` | BSD 2-Clause | `postgresql` |
+| [Microsoft JDBC Driver for SQL Server](https://learn.microsoft.com/sql/connect/jdbc/microsoft-jdbc-driver-for-sql-server) | `13.6.2.jre11` | MIT | `sqlserver` |
+| [MariaDB Connector/J](https://mariadb.com/kb/en/about-mariadb-connector-j/) | `3.5.10` | LGPL 2.1 or later, used unmodified | `mariadb`, `mysql` |
+
+MySQL sources use MariaDB Connector/J too: MySQL's own driver is under the GPL, so Kilnmark never
+uses it. The files, S3 and sample data connectors need no driver.
+
+## Drivers an admin installs
+
+| Driver | Version | Licence | Used by |
+| --- | --- | --- | --- |
+| [Oracle JDBC driver](https://www.oracle.com/database/technologies/appdev/jdbc.html) (`ojdbc11`) | `23.26.3.0.0` | Oracle Free Use Terms and Conditions | `oracle` |
 
 Until its driver is installed, such a connector shows **Needs its driver** when you add a
 connection, and a connection test says that the driver is missing.
