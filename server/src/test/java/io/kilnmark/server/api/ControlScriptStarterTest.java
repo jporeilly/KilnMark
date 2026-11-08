@@ -1059,7 +1059,7 @@ class ControlScriptStarterTest {
         // the timer as it was (where chmod means it, the planted files above took it away)
         Timer again2 = t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"));
         boolean posixHere = !System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win");
-        assertTrue(again2.out().contains("is ready at") && (t.windows() || posixHere ? again2.out().contains("Set up the hourly expiry")
+        assertTrue(again2.out().contains("is ready at") && ((t.windows() || posixHere) ? again2.out().contains("Set up the hourly expiry")
             : again2.units().contains("people expire")), again2.out());
         // a project name the timer could not take is refused at once
         String bad = t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"), Map.of("KILNMARK_PROJECT", "My Kilnmark"), "").out();
