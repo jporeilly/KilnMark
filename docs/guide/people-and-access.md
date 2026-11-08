@@ -124,7 +124,7 @@ unless set, and must be between 1 and 3650 days, so a typing mistake cannot quie
 - everyone who has signed in through your organisation: the role their last sign-in gave them (or
   none, if it was refused), when, and how often.
 
-![Settings › Access review: every API token with what it can do, its status, expiry, when it was last used and who made it, and everyone who signs in with your identity provider](images/access-review.png)
+![Settings › Access review: every API token with what it can do, its status, expiry, when it was last used and who made it; everyone who signs in with your identity provider, with the role their last sign-in gave them and when, the Starter Pack's example accounts marked as such; and a warning that example accounts have signed in](images/access-review.png)
 
 **Download CSV** gives your auditors a copy to keep. Each view and download is recorded in the audit
 log.

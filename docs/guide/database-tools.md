@@ -7,7 +7,7 @@ the first rows of a table, and **generate SQL** for a table to copy or save. Mor
 
 ## Explore a database
 
-![Explore on a source's page: the schemas, the tables and views of one, and a table's columns with the database's estimate of its rows and Count exactly](images/source-explore.png)
+![Explore on the Starter Pack database's page: its schema public, the tables in it, and the columns of public.shop_orders with the database's estimate of its rows and Count exactly](images/source-explore.png)
 
 Open **Sources**, choose a database source (PostgreSQL, SQL Server, MySQL, MariaDB, Oracle or
 Generic JDBC) and scroll to **Explore**. Stewards, designers and admins see it; viewers do not.
@@ -72,7 +72,7 @@ exploring one source at the same moment wait their turn rather than load the dat
 
 ## Generate SQL for a table
 
-![The SQL tab: a CREATE TABLE for sales.orders in PostgreSQL, with Copy, Save as .sql, and what was left out](images/source-generate-sql.png)
+![The SQL tab: a CREATE TABLE for public.shop_orders in PostgreSQL, with Copy, Save as .sql, and what was left out](images/source-generate-sql.png)
 
 On Explore's **SQL** tab, Kilnmark writes the SQL for the table you chose, for you to copy or save
 as a `.sql` file. **Nothing is run**: take the text to your database's own tools, or to a change

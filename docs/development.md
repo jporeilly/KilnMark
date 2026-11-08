@@ -1239,8 +1239,13 @@ they stay sharp at GitHub's width.
   scripts, Kilnmark, a grant), green for what succeeds, red and dashed for what fails or is
   refused. Change the script and run it again; never edit an SVG by hand. Keep a diagram 760
   wide and let it grow down: the guide's column shows it at about nine tenths.
-- **Screenshots** come from a running Kilnmark with the sample data only: no lab source names,
-  no real people or tokens, the header cropped off, the light theme, 1200 pixels wide.
+- **Screenshots** come from a running Kilnmark with the sample data only, best a Starter Pack
+  install signed in as the example person whose role the text describes: no lab source names,
+  no real people or tokens, the light theme, a 1440 by 900 window with the sidebar and the header
+  cropped off, so 1200 pixels wide (keep the header only where the picture is about it, such as
+  the Starter Pack marking). A close-up of a panel or a dialog is cropped to it. Never show a
+  token, a password, a one-time-code key or a QR code: hide the QR code before taking Keycloak's
+  setup page.
 - Give every picture a description that says what it shows, for people who cannot see it.
 
 ## Rules
