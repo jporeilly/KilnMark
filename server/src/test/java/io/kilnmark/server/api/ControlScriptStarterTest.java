@@ -841,6 +841,12 @@ class ControlScriptStarterTest {
         String sticky = run(expire, root, works);
         assertFalse(sticky.contains("was refused"), sticky);
         chmod(parent, "700");
+        // logs its group may write (up makes it the account's alone again; the hourly run is checked
+        // before it opens its log)
+        chmod(root.resolve("logs"), "g+w");
+        String logs = run(expire, root, works);
+        assertTrue(logs.contains("people expire was refused") && logs.contains("/logs may be changed"), logs);
+        chmod(root.resolve("logs"), "700");
         // current leading out of versions/
         Path elsewhere = Files.createTempDirectory("kilnmark-elsewhere");
         Files.delete(root.resolve("current"));
@@ -1019,7 +1025,7 @@ class ControlScriptStarterTest {
             // (where chmod means it: Git Bash on Windows keeps NTFS's permissions as they are)
             boolean posix = !System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win");
             for (String file : posix ? List.of("config/.env", "versions/9.9.9/containers/keycloak/setup.sh",
-                "versions/9.9.9/containers", "logs") : List.<String>of()) {
+                "versions/9.9.9/containers") : List.<String>of()) {
                 Path planted = t.root().resolve(file);
                 chmod(planted, "g+w");
                 Timer open = t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"));
