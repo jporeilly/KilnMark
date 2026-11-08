@@ -206,6 +206,16 @@ details.
     deploy, [The control script](docs/guide/install/control-script.md), [Upgrading](docs/guide/install/upgrade.md),
     [Uninstalling](docs/guide/install/uninstall.md) and the rest under `docs/guide/install`. Building
     from source moved to [Development](docs/development.md).
+  - The people commands and the realm's stamp run `keycloak-setup` with `run --rm --no-deps`:
+    podman-compose 1.5 (Ubuntu 26.04's) otherwise stopped Kilnmark's database and removed its
+    server while it set up the one-off's dependencies, as the Linux walk found. Every request with
+    the admin token, the Starter Pack's turn-on included, goes through one function that checks the
+    listener and connects to 127.0.0.1; the waits and Keycloak's probes use 127.0.0.1 too, and
+    `people expire` skips only when Keycloak refuses the connection. A realm `keycloak-setup`
+    refuses stops the stack again. The Windows listener check fails closed when Windows does not
+    answer. The OIDC group mappings and Keycloak's published address
+    (`KILNMARK_KEYCLOAK_BIND`, `0.0.0.0` for a host other than `localhost`, which then needs
+    `tls=proxy` with the bundled Keycloak) come from `config/.env` only.
 - **The documentation's groups and moves** (`ui/src/docs/groups.ts`): the groups the Documentation
   page shows, and where each page or section that moved went, which the viewer follows for an old
   link and for a link inside a guide. `groups.test.ts` fails when a guide is in no group, when a

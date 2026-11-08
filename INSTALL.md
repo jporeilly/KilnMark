@@ -10,7 +10,7 @@ the [development guide](docs/development.md).
 
 | | Linux | Windows |
 | --- | --- | --- |
-| Container engine | Podman 5 or later with podman-compose (Ubuntu 25.04 and later, Debian 13, RHEL 9.5 and later have it), or Docker with its compose plugin | Podman Desktop (Podman 5 or later) with a WSL 2 machine, or Docker Desktop |
+| Container engine | Podman 5 or later **and podman-compose**, a package of its own, which `podman compose` needs (`sudo apt-get install -y podman podman-compose`; Ubuntu 25.04 and later, Debian 13, RHEL 9.5 and later have Podman 5), or Docker with its compose plugin | Podman Desktop (Podman 5 or later) with a WSL 2 machine, or Docker Desktop |
 | WSL | In a WSL distribution, systemd on (`systemd=true` under `[boot]` in `/etc/wsl.conf`) | WSL **2.7.11**: WSL 3.0.x breaks crun's pids controller, and no Podman container starts. Do not run `wsl --update` |
 | cgroups | v2, with the pids controller handed to the account that runs Kilnmark (systemd does this) | The Podman machine's, as WSL 2.7.11 gives them |
 | cosign | 3.0 or later, to check the download and the images | `winget install Sigstore.Cosign` |

@@ -216,7 +216,7 @@ recorded_mode() { recorded_setting deployment_mode; }
 recorded_setting() {
   set_compose
   "${compose[@]}" exec -T postgres psql -U kilnmark -d kilnmark -X -q -At \
-    -c "SELECT value FROM kilnmark.server_setting WHERE key = '$1'" 2> /dev/null | tr -d '[:space:]' || true
+    -c "SELECT value FROM kilnmark.server_setting WHERE key = '$1'" < /dev/null 2> /dev/null | tr -d '[:space:]' || true
 }
 
 # The people commands act only where Kilnmark's own record says the same mode as config/.env:
@@ -981,7 +981,7 @@ hand_install_id() {
   auth_on || return 0
   compose_quietly up -d postgres || die "Kilnmark's database could not start. See why with: ./kilnmark.sh logs postgres"
   for i in $(seq 1 60); do
-    "${compose[@]}" exec -T postgres pg_isready -h 127.0.0.1 -U kilnmark -d kilnmark > /dev/null 2>&1 && break
+    "${compose[@]}" exec -T postgres pg_isready -h 127.0.0.1 -U kilnmark -d kilnmark < /dev/null > /dev/null 2>&1 && break
     sleep 2
   done
   recorded="$(recorded_mode)"
@@ -1005,7 +1005,7 @@ after_one_offs() {
       if [ -n "$id" ]; then
         local stamped
         if stamped="$(KILNMARK_PEOPLE_ACTION=stamp KILNMARK_INSTALL_ID="$id" \
-          "${compose[@]}" run --rm -T keycloak-setup < /dev/null 2>&1 | hide_compose_commands)"; then
+          "${compose[@]}" run --rm --no-deps -T keycloak-setup < /dev/null 2>&1 | hide_compose_commands)"; then
           record_own_people "$stamped" stamp
         else
           echo "Warning: Keycloak's realm was not told which install it belongs to; the next start tells it. See: ./kilnmark.sh logs keycloak-setup" >&2
@@ -1859,6 +1859,8 @@ cmd_configure() {
   # them as root, and the account need not be able to read them again
   if [[ " ${changed[*]} " == *" tls "* || " ${changed[*]} " == *" tls_cert "* || " ${changed[*]} " == *" tls_key "* ]]; then certs=true; fi
   $certs || skip_keys=" tls_cert tls_key "
+  # the first admin, made at install, is checked again only when the change is to them
+  [[ " ${changed[*]} " == *" admin_"* ]] || skip_keys="$skip_keys admin_email admin_first_name admin_last_name "
   validate_answers || die "Some answers cannot be taken (above), so nothing was changed."
   # what a change needs before anything is written: a client secret for your own identity provider
   if [ "$(answer_of identity)" = own ] && { [ "$identity_was" != own ] || [[ " ${changed[*]} " == *" oidc_client_id "* ]]; }; then
@@ -2106,7 +2108,7 @@ cmd_starter() {
   id="$(recorded_setting install_id)"
   write_run_secrets
   out="$(printf '%s\n' "$people_password" | KILNMARK_STARTER_PEOPLE_ACTION="$action" KILNMARK_MODE=starter-pack \
-    KILNMARK_INSTALL_ID="$id" "${compose[@]}" run --rm -T keycloak-setup 2>&1 | hide_compose_commands)" || ok=false
+    KILNMARK_INSTALL_ID="$id" "${compose[@]}" run --rm --no-deps -T keycloak-setup 2>&1 | hide_compose_commands)" || ok=false
   drop_run_secrets
   if ! $ok; then
     people_password=""
@@ -2285,7 +2287,7 @@ run_people_setup() {
   people_out="$(KILNMARK_PEOPLE_ACTION="$1" KILNMARK_PERSON_EMAIL="$person_email" \
     KILNMARK_PERSON_FIRST_NAME="$person_first" KILNMARK_PERSON_LAST_NAME="$person_last" \
     KILNMARK_PERSON_GROUPS="$person_groups" KILNMARK_MODE="$people_mode" KILNMARK_INSTALL_ID="$id" \
-    "${compose[@]}" run --rm -T keycloak-setup 2>&1 | hide_compose_commands)" || rc=$?
+    "${compose[@]}" run --rm --no-deps -T keycloak-setup 2>&1 | hide_compose_commands)" || rc=$?
   drop_run_secrets
   return "$rc"
 }

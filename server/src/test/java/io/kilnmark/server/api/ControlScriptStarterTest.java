@@ -188,12 +188,12 @@ class ControlScriptStarterTest {
     void thePeoplesPasswordIsTypedOrPipedInAndNeverShown() throws IOException {
         String sh = Files.readString(LAUNCH.resolve("kilnmark.sh"));
         assertTrue(sh.contains("  out=\"$(printf '%s\\n' \"$people_password\" | KILNMARK_STARTER_PEOPLE_ACTION=\"$action\" "
-            + "KILNMARK_MODE=starter-pack \\\n    KILNMARK_INSTALL_ID=\"$id\" \"${compose[@]}\" run --rm -T keycloak-setup 2>&1 "
+            + "KILNMARK_MODE=starter-pack \\\n    KILNMARK_INSTALL_ID=\"$id\" \"${compose[@]}\" run --rm --no-deps -T keycloak-setup 2>&1 "
             + "| hide_compose_commands)\" || ok=false"),
             "on keycloak-setup's standard input, from printf (a builtin: no command line)");
         assertTrue(sh.contains("read -r -s -p \"A password for the example people"), "typed with the echo off");
         String ps = Files.readString(LAUNCH.resolve("kilnmark.ps1")).replace("\r\n", "\n");
-        assertTrue(ps.contains("$out = @($password | & $script:Engine @base run --rm -T keycloak-setup 2>&1 |"),
+        assertTrue(ps.contains("$out = @($password | & $script:Engine @base run --rm --no-deps -T keycloak-setup 2>&1 |"),
             "on keycloak-setup's standard input");
         assertTrue(ps.contains("Read-Host -AsSecureString 'A password for the example people"), "typed, not shown");
         // a person's password the same way, beside the email, names and groups compose hands setup
@@ -202,7 +202,7 @@ class ControlScriptStarterTest {
             "on keycloak-setup's standard input, from printf (a builtin) and the file");
         assertTrue(sh.contains("read -r -s -p \"A temporary password for them")
             && sh.contains("read -r -s -p \"A temporary password for $1"), "typed with the echo off");
-        assertTrue(ps.contains("$out = @($Lines | & $script:Engine @base run --rm -T keycloak-setup 2>&1 |"),
+        assertTrue(ps.contains("$out = @($Lines | & $script:Engine @base run --rm --no-deps -T keycloak-setup 2>&1 |"),
             "on keycloak-setup's standard input");
         assertTrue(ps.contains("$a = Read-Host -AsSecureString $Prompt"), "typed, not shown");
         for (String text : List.of(sh, ps)) {

@@ -262,7 +262,8 @@ function Get-RecordedMode { return (Get-RecordedSetting 'deployment_mode') }
 # id, made at its first start); empty when there is none, or the database does not answer.
 function Get-RecordedSetting([string]$Key) {
     $base = Get-ComposeArgs
-    $out = (& $script:Engine @base exec -T postgres psql -U kilnmark -d kilnmark -X -q -At -c ("SELECT value FROM kilnmark.server_setting WHERE key = '" + $Key + "'") 2> $null | Out-String).Trim()
+    # never this script's standard input, which a person's lines may be waiting on
+    $out = ($null | & $script:Engine @base exec -T postgres psql -U kilnmark -d kilnmark -X -q -At -c ("SELECT value FROM kilnmark.server_setting WHERE key = '" + $Key + "'") 2> $null | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { return '' }
     return $out
 }
@@ -1451,7 +1452,7 @@ function Invoke-Up([string[]]$Options) {
                     $env:KILNMARK_PEOPLE_ACTION = 'stamp'; $env:KILNMARK_INSTALL_ID = $id
                     try {
                         $base = Get-ComposeArgs
-                        $stamped = @(& $script:Engine @base run --rm -T keycloak-setup 2>&1 | ForEach-Object { ConvertTo-Said $_ } | Where-Object { -not (Test-ComposeCommand $_) })
+                        $stamped = @(& $script:Engine @base run --rm --no-deps -T keycloak-setup 2>&1 | ForEach-Object { ConvertTo-Said $_ } | Where-Object { -not (Test-ComposeCommand $_) })
                         if ($LASTEXITCODE -ne 0) { Write-Host "Warning: Keycloak's realm was not told which install it belongs to; the next start tells it. See: kilnmark.cmd logs keycloak-setup" -ForegroundColor Yellow }
                         else { Send-OwnPeopleDone $stamped 'stamp' }
                     } finally { Remove-Item Env:KILNMARK_PEOPLE_ACTION -ErrorAction SilentlyContinue }
@@ -1987,6 +1988,8 @@ function Invoke-Configure([string[]]$Options) {
     # the certificate's files are checked, and copied, only when the change is to them
     $certs = ($changed -ccontains 'tls' -or $changed -ccontains 'tls_cert' -or $changed -ccontains 'tls_key')
     if (-not $certs) { $script:SkipKeys = @('tls_cert', 'tls_key') }
+    # the first admin, made at install, is checked again only when the change is to them
+    if (@($changed | Where-Object { $_.StartsWith('admin_') }).Count -eq 0) { $script:SkipKeys += @('admin_email', 'admin_first_name', 'admin_last_name') }
     if (-not (Test-AllAnswers)) { Fail 'Some answers cannot be taken (above), so nothing was changed.' }
     if ((Get-Answer 'identity') -ceq 'own' -and ($identityWas -cne 'own' -or $changed -ccontains 'oidc_client_id')) {
         Read-SecretValue 'The client secret your identity provider gave Kilnmark'
@@ -2229,7 +2232,7 @@ function Invoke-Starter([string[]]$Options) {
     try {
         Write-RunSecrets
         # one line on its standard input (Windows PowerShell can put a byte-order mark first: setup drops it)
-        $out = @($password | & $script:Engine @base run --rm -T keycloak-setup 2>&1 | ForEach-Object { ConvertTo-Said $_ } |
+        $out = @($password | & $script:Engine @base run --rm --no-deps -T keycloak-setup 2>&1 | ForEach-Object { ConvertTo-Said $_ } |
             Where-Object { -not (Test-ComposeCommand $_) })
         $ok = ($LASTEXITCODE -eq 0)
     } finally {
@@ -2347,7 +2350,7 @@ function Invoke-PeopleSetup([string]$Action, $Person, [string[]]$Lines) {
     try {
         Write-RunSecrets
         $OutputEncoding = New-Object System.Text.UTF8Encoding $false
-        $out = @($Lines | & $script:Engine @base run --rm -T keycloak-setup 2>&1 | ForEach-Object { ConvertTo-Said $_ } |
+        $out = @($Lines | & $script:Engine @base run --rm --no-deps -T keycloak-setup 2>&1 | ForEach-Object { ConvertTo-Said $_ } |
             Where-Object { -not (Test-ComposeCommand $_) })
         $script:PeopleOk = ($LASTEXITCODE -eq 0)
     } finally {
