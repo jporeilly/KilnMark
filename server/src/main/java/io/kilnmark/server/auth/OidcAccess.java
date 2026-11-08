@@ -79,8 +79,14 @@ public final class OidcAccess {
      * production install lets none of them in, by group, name or address alike.
      */
     static boolean example(Object claim) {
-        String v = claim == null ? "" : claim.toString().strip().toLowerCase(java.util.Locale.ROOT);
-        return v.endsWith("@kilnmark.com") || v.endsWith(".kilnmark.com");
+        // read as the groups are (a JSON string's own value, never its quoted text), each of a list too
+        for (String s : strings(claim)) {
+            String v = s.strip().toLowerCase(java.util.Locale.ROOT);
+            if (v.endsWith("@kilnmark.com") || v.endsWith(".kilnmark.com")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

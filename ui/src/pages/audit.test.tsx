@@ -99,7 +99,6 @@ group("the audit log page", () => {
         "server.install_id_made",
         "server.mode_recorded",
         "auth.realm_stamped",
-        "auth.expire_refused",
         "access.review",
         "unmask.requested",
         "unmask.approved",

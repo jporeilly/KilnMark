@@ -16,6 +16,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
@@ -339,6 +341,33 @@ class StarterPeopleSetupTest {
     /** people add: these in setup's environment, the password on its input. */
     private static ExecResult addPerson(String mode, String email, String first, String last, String groups,
         String password) throws Exception {
+        return enabled(mode, addPersonOnly(mode, email, first, last, groups, password));
+    }
+
+    /**
+     * As the control script does once Kilnmark's audit log has recorded them: enables those given a
+     * temporary password just now, made or activated ({@code r}, setup's run). {@code r} itself.
+     */
+    private static ExecResult enabled(String mode, ExecResult r) throws Exception {
+        Matcher m = Pattern.compile("keycloak-setup: (?:made (\\S+) \\([^)]*\\): they choose their own password"
+            + "|activated (\\S+): they choose)").matcher(r.getStdout());
+        List<String> todo = new java.util.ArrayList<>();
+        while (m.find()) {
+            todo.add(m.group(1) != null ? m.group(1) : m.group(2));
+        }
+        if (!todo.isEmpty()) {
+            ExecResult on = run(mode, "KILNMARK_PEOPLE_ACTION=enable", String.join(NL, todo));
+            ok(on);
+            for (String person : todo) {
+                assertTrue(on.getStdout().contains("enabled " + person), on.getStdout());
+            }
+        }
+        return r;
+    }
+
+    /** people add as keycloak-setup does it alone: the person made, and left disabled. */
+    private static ExecResult addPersonOnly(String mode, String email, String first, String last, String groups,
+        String password) throws Exception {
         return KC.execInContainer("bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "") + " KILNMARK_PEOPLE_ACTION=add KILNMARK_PERSON_EMAIL='"
             + email + "' KILNMARK_PERSON_FIRST_NAME='" + first + "' KILNMARK_PERSON_LAST_NAME='" + last
             + "' KILNMARK_PERSON_GROUPS='" + groups + "'; printf '%s\\r\\n' '" + password + "' | bash /opt/kilnmark/setup.sh");
@@ -349,17 +378,22 @@ class StarterPeopleSetupTest {
      * as the control script sends them; on production the file alone (password null).
      */
     private static ExecResult importPeople(String mode, String password, String csv) throws Exception {
+        return importPeople(mode, password, csv, "");
+    }
+
+    /** As {@link #importPeople(String, String, String)}, with these settings beside the usual ones. */
+    private static ExecResult importPeople(String mode, String password, String csv, String extra) throws Exception {
         KC.copyFileToContainer(org.testcontainers.images.builder.Transferable.of(
             (password == null ? "" : password + "\r\n") + csv), "/tmp/people-in");
-        return KC.execInContainer("bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "") + " KILNMARK_PEOPLE_ACTION=import;"
-            + " bash /opt/kilnmark/setup.sh < /tmp/people-in; rc=$?; rm -f /tmp/people-in; exit $rc");
+        return enabled(mode, KC.execInContainer("bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "") + " " + extra
+            + " KILNMARK_PEOPLE_ACTION=import; bash /opt/kilnmark/setup.sh < /tmp/people-in; rc=$?; rm -f /tmp/people-in; exit $rc"));
     }
 
     /** people activate: the email in setup's environment, the password on its input. */
     private static ExecResult activate(String mode, String email, String password) throws Exception {
-        return KC.execInContainer("bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "")
+        return enabled(mode, KC.execInContainer("bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "")
             + " KILNMARK_PEOPLE_ACTION=activate KILNMARK_PERSON_EMAIL='" + email + "'; printf '%s\\n' '" + password
-            + "' | bash /opt/kilnmark/setup.sh");
+            + "' | bash /opt/kilnmark/setup.sh"));
     }
 
     /** An ordinary run, as if at {@code hoursLater} hours from now (KILNMARK_SETUP_NOW_MS, for tests only). */
@@ -439,6 +473,20 @@ class StarterPeopleSetupTest {
             RITAS_FIRST));
         assertEquals(java.util.Set.of("/kilnmark-designers", "/kilnmark-sensitive-data"),
             java.util.Set.copyOf(groups(user("omar@bank.example"))));
+        // made disabled: enabled only once the control script has recorded them, and asks (people enable)
+        ok(addPersonOnly(PRODUCTION, "nia@bank.example", "Nia", "Obi", "kilnmark-viewers", RITAS_FIRST));
+        assertFalse(user("nia@bank.example").path("enabled").asBoolean(), "disabled until Kilnmark has recorded them");
+        assertFalse(grant("nia@bank.example", RITAS_FIRST).contains("not fully set up"), "no sign-in yet");
+        r = run(PRODUCTION, "KILNMARK_PEOPLE_ACTION=enable", "nia@bank.example");
+        ok(r);
+        assertTrue(r.getStdout().contains("enabled nia@bank.example"), r.getStdout());
+        assertTrue(grant("nia@bank.example", RITAS_FIRST).contains("not fully set up"));
+        // never someone enabled already, nor anyone not waiting for their first sign-in
+        r = run(PRODUCTION, "KILNMARK_PEOPLE_ACTION=enable", "nia@bank.example" + NL + "lee@bank.example");
+        ok(r);
+        assertTrue(r.getStdout().contains("left nia@bank.example as they are")
+            && r.getStdout().contains("left lee@bank.example as they are"), r.getStdout());
+        assertEquals(204, call(admin(), "DELETE", "/admin/realms/kilnmark/users/" + id("nia@bank.example"), null).statusCode());
     }
 
     @Test
@@ -635,6 +683,13 @@ class StarterPeopleSetupTest {
         assertNotEquals(0, r.getExitCode());
         assertTrue(r.getStderr().contains("has signed in (a password of their own, or a one-time code)"), r.getStderr());
         assertFalse(user("cy@bank.example").path("enabled").asBoolean());
+        // enable leaves them as they are, and anyone imported still waiting
+        r = run(PRODUCTION, "KILNMARK_PEOPLE_ACTION=enable", "cy@bank.example" + NL + "ben@bank.example");
+        ok(r);
+        assertTrue(r.getStdout().contains("left cy@bank.example as they are")
+            && r.getStdout().contains("left ben@bank.example as they are"), r.getStdout());
+        assertFalse(user("cy@bank.example").path("enabled").asBoolean());
+        assertFalse(user("ben@bank.example").path("enabled").asBoolean());
     }
 
     @Test
@@ -811,6 +866,15 @@ class StarterPeopleSetupTest {
         assertNull(user("hal@bank.example"), "removed again");
         assertEquals(204, call(admin(), "DELETE", "/admin/realms/kilnmark/default-groups/" + team, null).statusCode());
         assertEquals(204, call(admin(), "DELETE", "/admin/realms/kilnmark/groups/" + team, null).statusCode());
+        // a group config/.env maps to admin, or to seeing sensitive values, counts as those in a file
+        for (String[] mapped : new String[][] {{"KILNMARK_OIDC_ADMIN_GROUPS", "admins are added one at a time"},
+            {"KILNMARK_OIDC_UNMASK_GROUPS", "people who see sensitive values are added one at a time"}}) {
+            r = importPeople(PRODUCTION, null, "email,first_name,last_name,groups" + NL + "ivy@bank.example,Ivy,Ross,kilnmark-stewards" + NL,
+                mapped[0] + "='kilnmark-stewards, team-x'");
+            assertNotEquals(0, r.getExitCode(), mapped[0]);
+            assertTrue(r.getStderr().contains(mapped[1]), mapped[0] + ": " + r.getStderr());
+            assertNull(user("ivy@bank.example"), "nobody made");
+        }
 
         // someone put in the pack's group by hand, not at kilnmark.com: only taken out of it
         assertEquals(201, call(admin(), "POST", "/admin/realms/kilnmark/users", Map.of("username", "pat@bank.example",
@@ -878,12 +942,18 @@ class StarterPeopleSetupTest {
         assertNotEquals(0, mode.getExitCode());
         assertTrue(mode.getStderr().contains("stamped for a production install, and this one is starter-pack"), mode.getStderr());
         assertEquals(id, realm().path("attributes").path("kilnmark_install_id").asText());
-        // people disable: those the control script could not record, disabled again (fail closed)
-        ok(addPerson(PRODUCTION, "gil@bank.example", "Gil", "Lee", "kilnmark-viewers", RITAS_FIRST));
-        assertTrue(user("gil@bank.example").path("enabled").asBoolean(), "made enabled, once its groups were checked");
-        ExecResult off = run(PRODUCTION, "KILNMARK_PEOPLE_ACTION=disable", "gil@bank.example");
-        ok(off);
-        assertTrue(off.getStdout().contains("disabled gil@bank.example again"), off.getStdout());
-        assertFalse(user("gil@bank.example").path("enabled").asBoolean());
+        // a stamp Kilnmark did not write is refused, never taken for none: a mode not one of its own,
+        // an id not of its shape (each matched in part by a pattern that skips what it cannot read)
+        JsonNode stamped = realm();
+        for (String[] odd : new String[][] {{"kilnmark_mode", "PRODUCTION"}, {"kilnmark_install_id", id + "x"}}) {
+            com.fasterxml.jackson.databind.node.ObjectNode changed = stamped.deepCopy();
+            ((com.fasterxml.jackson.databind.node.ObjectNode) changed.path("attributes")).put(odd[0], odd[1]);
+            assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark", changed).statusCode());
+            ExecResult refused = run(PRODUCTION, "KILNMARK_PEOPLE_ACTION=stamp KILNMARK_INSTALL_ID=" + id, "");
+            assertNotEquals(0, refused.getExitCode(), odd[0]);
+            assertTrue(refused.getStderr().contains("holds a stamp Kilnmark did not write"), odd[0] + ": " + refused.getStderr());
+        }
+        assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark", stamped).statusCode());
+        ok(run(PRODUCTION, "KILNMARK_PEOPLE_ACTION=stamp KILNMARK_INSTALL_ID=" + id, ""));
     }
 }

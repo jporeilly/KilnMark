@@ -295,6 +295,24 @@ details.
   `keycloak-setup` run refuses a realm of another install or mode, or, on production, one holding
   the Starter Pack's group or example people. The stamp and the first start's record of the mode
   are audit events (`auth.realm_stamped`, `server.mode_recorded`).
+- **The hourly expiry's checks reach the whole way**: every folder from the install root down to
+  what a run uses, `logs` too, and every folder above the root (so the root cannot be moved away
+  and another put in its place), for a user's timer and the Windows task as for root; `current`
+  must lead into `versions/`. The check comes before anything is read: a refused `people expire`
+  reads no settings and sends no admin token anywhere, and goes to the journal or Task
+  Scheduler's history and the log. On Windows the install root is yours alone from the moment
+  install makes it, before anything is copied in, and at every `up` whatever the profile; an `up`
+  that found it open to others does not set the task up that time. Linux names the root by its
+  canonical path in the timer's unit (refusing a path a unit would misread), checks the engine and
+  the units' folder, keeps `logs` private and never writes a log through a link; the Windows task
+  quotes the script's path. The audit event `auth.expire_refused` is gone with the call that sent it.
+- **Recorded first, then enabled**: whoever `people add`, `import` or `activate` gives a temporary
+  password stays disabled until Kilnmark's audit log has them, and only then is enabled; a group
+  `config/.env` maps to the admin role or to sensitive values counts as those in an import file.
+  The realm's stamp fails closed (a lookup Keycloak does not answer, half a stamp, or one of
+  another shape is refused). On production the sample-data connector is left out where the server
+  loads its connectors, so no lookup reaches it, and a sign-in's user name and email are read as
+  its groups are.
 - **People are made disabled, checked, then enabled**, and never left in a group `config/.env` maps
   to a role that they were not given; a person Kilnmark's audit log could not record is disabled
   again. On production a sign-in at kilnmark.com, by user name or email, is refused like the pack's

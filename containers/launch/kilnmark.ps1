@@ -248,67 +248,144 @@ function Invoke-Schtasks {
     return ($LASTEXITCODE -eq 0)
 }
 function Test-ExpiryTask { return (Invoke-Schtasks /Query /TN (Get-ExpiryTaskName)) }
-# Who other than you, SYSTEM and the Administrators may change $Path (or, for a folder, what is in
-# it): their names, or nothing.
-function Get-OthersWriting([string]$Path) {
+# Rights that change a file or folder, or what is in a folder: writing, appending, attributes,
+# adding or deleting what is in it, deleting, permissions, ownership, and the generic write and all.
+$TreeWrites = [long](0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x40000000 -bor 0x10000000)
+# Above the install root, what lets someone move a folder (or what is in it) away, or change who
+# may: deleting what is in it, deleting it, permissions, ownership, and all.
+$AboveWrites = [long](0x40 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x10000000)
+$TrustedInstaller = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
+# Who other than you, SYSTEM and the Administrators holds any of $Mask's rights on $Path: their
+# names, or nothing. An app container's or a capability's SID (S-1-15-2-, S-1-15-3-) never counts:
+# it only narrows what a process of someone who holds the right anyway may do. A conditional entry
+# for anyone else counts, whatever it grants: what it grants hangs on more than who they are.
+function Get-OthersWriting([string]$Path, [long]$Mask = $TreeWrites) {
     $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $ok = @($me, 'S-1-5-18', 'S-1-5-32-544', 'S-1-3-0')
-    # writing, appending, attributes, adding or deleting what is in a folder, deleting, permissions,
-    # ownership, and the generic write and all
-    $mask = [long](0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x40000000 -bor 0x10000000)
     $out = @()
-    foreach ($ace in (Get-Acl $Path).Access) {
+    $acl = Get-Acl -LiteralPath $Path
+    foreach ($ace in $acl.Access) {
         if ($ace.AccessControlType -ne 'Allow') { continue }
         if (($ace.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
-        if (([long]$ace.FileSystemRights -band $mask) -eq 0) { continue }
+        if (([long]$ace.FileSystemRights -band $Mask) -eq 0) { continue }
         $sid = $null
         try { $sid = $ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch { $sid = '' + $ace.IdentityReference }
+        if ($sid -like 'S-1-15-2-*' -or $sid -like 'S-1-15-3-*') { continue }
         if ($ok -notcontains $sid) { $out += ('' + $ace.IdentityReference) }
+    }
+    $alias = @{ 'SY' = 'S-1-5-18'; 'BA' = 'S-1-5-32-544'; 'CO' = 'S-1-3-0' }
+    foreach ($m in [regex]::Matches($acl.Sddl, '\((XA|ZA);[^;]*;[^;]*;[^;]*;[^;]*;([^;\)]*)')) {
+        $sid = $m.Groups[2].Value
+        if ($alias.ContainsKey($sid)) { $sid = $alias[$sid] }
+        if ($ok -notcontains $sid) { $out += ('a conditional entry for ' + $sid) }
     }
     # unrolled here, gathered again with @() by the caller
     return $out
 }
 
-# Whether $Path's owner is you, SYSTEM or the Administrators: an owner may rewrite its permissions
-# whenever they like.
-function Test-OwnerOk([string]$Path) {
+# Whether $Path's owner is you, SYSTEM or the Administrators (above the root, TrustedInstaller too,
+# which owns C:\): an owner may rewrite its permissions whenever they like.
+function Test-OwnerOk([string]$Path, [switch]$Above) {
     $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $sid = ''
-    try { $sid = (New-Object Security.Principal.NTAccount((Get-Acl $Path).Owner)).Translate([Security.Principal.SecurityIdentifier]).Value } catch { $sid = '' }
-    return (@($me, 'S-1-5-18', 'S-1-5-32-544') -contains $sid)
+    try { $sid = (Get-Acl -LiteralPath $Path).GetOwner([Security.Principal.SecurityIdentifier]).Value } catch { $sid = '' }
+    $ok = @($me, 'S-1-5-18', 'S-1-5-32-544'); if ($Above) { $ok += $TrustedInstaller }
+    return ($ok -contains $sid)
 }
 
-# Why someone other than you may change what an hourly run uses, or nothing (ADR 0051): the task
-# runs kilnmark.ps1 from the install root as you, and that run reads the current version's
-# compose.yaml and keycloak-setup's script, config\.env and current.txt. Each, and the folders that
-# hold them, must be owned by you (or SYSTEM, or the Administrators) and writable by nobody else.
+# Why someone other than you may change $Path, or nothing: it must be there, no link or junction,
+# owned by you (or SYSTEM, or the Administrators), and writable by nobody else.
+function Get-ItemProblem([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { return ($Path + ' is not there') }
+    $item = Get-Item -LiteralPath $Path -Force
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return ($Path + ' is a link or a junction, which an hourly run would follow') }
+    if (-not (Test-OwnerOk $Path)) { return ($Path + ' is owned by someone other than you, who may change it whenever they like') }
+    $others = @(Get-OthersWriting $Path)
+    if ($others.Count -gt 0) { return ($Path + ' may be changed by ' + (($others | Select-Object -Unique) -join ', ')) }
+    return ''
+}
+
+# Why someone other than you may change what an hourly run uses, or nothing (ADR 0051, decision 15):
+# the task runs kilnmark.ps1 from the install root as you, and that run reads current.txt, the
+# current version's compose.yaml and keycloak-setup's script, and config\.env, and writes to logs\.
+# Each, and every folder from the root down to it, must pass Get-ItemProblem, and current.txt must
+# name a folder directly in versions\. Above the root, so nobody can move it away and put another in
+# its place, every folder up to the drive's must be owned by you, SYSTEM, the Administrators or
+# TrustedInstaller, with nobody else able to delete what is in it, delete it, or change who may.
 function Get-TreeProblem {
-    $dir = Get-CurrentDir
-    foreach ($p in @($script:Root, (Join-Path $script:Root 'kilnmark.ps1'), (Join-Path $script:Root 'current.txt'),
-            (Join-Path $script:Root 'versions'), $dir, (Join-Path $dir 'compose.yaml'),
-            (Join-Path $dir 'containers\keycloak\setup.sh'), (Join-Path $script:Root 'config'),
-            (Join-Path $script:Root 'config\.env'))) {
-        if (-not (Test-Path -LiteralPath $p)) { return ($p + ' is not there') }
-        if (-not (Test-OwnerOk $p)) { return ($p + ' is owned by someone other than you, who may change it whenever they like') }
-        $others = @(Get-OthersWriting $p)
-        if ($others.Count -gt 0) { return ($p + ' may be changed by ' + (($others | Select-Object -Unique) -join ', ')) }
+    $top = [IO.Path]::GetFullPath($script:Root).TrimEnd('\')
+    $marker = Join-Path $top 'current.txt'
+    $v = ''
+    if (Test-Path -LiteralPath $marker -PathType Leaf) { $v = ([IO.File]::ReadAllText($marker)).Trim() }
+    if ($v -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$') { return ($marker + ' does not name a version in ' + (Join-Path $top 'versions')) }
+    $rels = @('kilnmark.ps1', 'current.txt', ('versions\' + $v + '\compose.yaml'), ('versions\' + $v + '\containers\keycloak\setup.sh'), 'config\.env')
+    if (Test-Path -LiteralPath (Join-Path $top 'logs')) { $rels += 'logs' }
+    $seen = @{}
+    foreach ($rel in $rels) {
+        $p = $top
+        $parts = @($rel -split '\\')
+        for ($i = -1; $i -lt $parts.Count; $i++) {
+            if ($i -ge 0) { $p = Join-Path $p $parts[$i] }
+            if ($seen.ContainsKey($p)) { continue }
+            $seen[$p] = $true
+            $why = Get-ItemProblem $p
+            if ($why) { return $why }
+        }
+    }
+    $dir = Split-Path $top -Parent
+    while ($dir) {
+        $why = ''
+        if (-not (Test-OwnerOk $dir -Above)) { $why = 'is owned by someone other than you, SYSTEM, the Administrators or TrustedInstaller' }
+        else {
+            $others = @(Get-OthersWriting $dir $AboveWrites)
+            if ($others.Count -gt 0) { $why = 'lets ' + (($others | Select-Object -Unique) -join ', ') + ' delete what is in it or change who may' }
+        }
+        if ($why) { return ($dir + ', a folder above ' + $top + ', ' + $why + ', so they could move the install away and put another in its place') }
+        $parent = Split-Path $dir -Parent
+        if (-not $parent -or $parent -eq $dir) { break }
+        $dir = $parent
     }
     return ''
+}
+
+# people expire runs as you every hour: never what someone else may have changed (ADR 0051, decision
+# 15). Checked before anything of the install is read or written, its log too; a refusal reads
+# nothing more (never config\.env, nor the admin token in it). Task Scheduler's history (an event
+# log) keeps the failed run, and a line goes to logs\ where that folder passes the same check.
+function Assert-ExpireTree {
+    if (-not $script:Root) { Fail 'Kilnmark is not installed here. Run: kilnmark.cmd install' }
+    $why = Get-TreeProblem
+    if (-not $why) { return }
+    $msg = 'people expire was refused: ' + $why + '. Make it yours alone, then run it again.'
+    $logs = Join-Path $script:Root 'logs'
+    if ((Test-Path -LiteralPath $logs) -and -not (Get-ItemProblem $logs)) {
+        $file = Join-Path $logs ('people-expire-' + (Get-Date).ToUniversalTime().ToString('yyyyMMdd') + '.log')
+        if (-not (Test-Path -LiteralPath $file) -or -not (Get-ItemProblem $file)) {
+            try { [IO.File]::AppendAllText($file, ((Get-Date).ToUniversalTime().ToString('s') + 'Z ' + $msg + "`r`n")) } catch { }
+        }
+    }
+    Fail $msg
 }
 
 # The task runs kilnmark.ps1 from the install root as you, every hour: the root (with versions\ and
 # the launchers in it) is made yours alone first, and the task is not set up while anyone else owns
 # or may still change what a run uses, since they would run what they wrote as you.
 function Set-ExpiryTask {
-    Protect-Folder $script:Root
-    $why = Get-TreeProblem
+    # judged as it was before this start made the root yours alone (Invoke-Up), never once cleaned
+    $why = $script:TreeBefore
+    if ($why) { $why = $why + ' until this start (it is yours alone now, but what was changed meanwhile cannot be told: check it, or install the release again)' }
+    else { $why = Get-TreeProblem }
     if ($why) {
         Remove-ExpiryTask
         Write-Host ('Warning: the hourly expiry of unused temporary passwords was not set up: ' + $why + ', and the task would run it as you. Make it yours alone (or install where only you and the administrators can write), then run up again. Each start expires them too.') -ForegroundColor Yellow
         return
     }
     $had = Test-ExpiryTask
-    $run = 'powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ' + (Join-Path $script:Root 'kilnmark.ps1') + ' people expire -Project ' + $Project
+    # the script's path quoted, for a root with a space in it; Windows PowerShell (and PowerShell
+    # before 7.3) hands a native program a quote inside an argument as it is, which would end it there
+    $q = '"'
+    if ($PSVersionTable.PSVersion.Major -lt 7 -or -not (Get-Variable PSNativeCommandArgumentPassing -ErrorAction SilentlyContinue) -or $PSNativeCommandArgumentPassing -eq 'Legacy') { $q = '\"' }
+    $run = 'powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ' + $q + (Join-Path $script:Root 'kilnmark.ps1') + $q + ' people expire -Project ' + $Project
     if (Invoke-Schtasks /Create /SC HOURLY /TN (Get-ExpiryTaskName) /TR $run /F) {
         if (-not $had) { Write-Host ('Set up the hourly expiry of unused temporary passwords: the scheduled task "' + (Get-ExpiryTaskName) + '" (it runs while you are signed in to Windows).') }
     } else {
@@ -708,6 +785,11 @@ function Invoke-Up([string[]]$Options) {
     $browser = $true
     foreach ($o in $Options) { if ($o -eq '-NoBrowser') { $browser = $false } else { Fail ('Unknown option ' + $o + '.') } }
     $v = Get-CurrentVersion
+    # The root yours alone at every start, whatever the profile (ADR 0051, decision 15). What an
+    # hourly run uses is judged first, as it was: what others could change until now is not trusted
+    # for being cleaned now (Set-ExpiryTask).
+    $script:TreeBefore = Get-TreeProblem
+    Protect-Folder $script:Root
     Update-Settings
     if (-not (Test-ImagesPresent $v)) { Fail ('The images of Kilnmark ' + $v + ' are not here. Get them with one of: kilnmark.cmd pull, kilnmark.cmd load-images FILE, kilnmark.cmd build') }
     Write-Host ('Starting Kilnmark ' + $v + ' ...')
@@ -799,6 +881,13 @@ function Show-Status {
 # --- install, upgrade, uninstall ---------------------------------------------------------------
 
 function New-Folders {
+    # the root first, yours alone before anything is put in it: what is made or copied in after takes
+    # its permissions (C:\ lets every signed-in user change what is made in a new folder there)
+    if (-not (Test-Path -LiteralPath $script:Root)) {
+        try { New-Item -ItemType Directory -Path $script:Root -Force -ErrorAction Stop | Out-Null }
+        catch { Fail ('Cannot create ' + $script:Root + '. Choose another folder with -Root.') }
+    }
+    Protect-Folder $script:Root
     foreach ($d in @('versions', 'config', 'certs\https', 'backups', 'logs')) {
         $p = Join-Path $script:Root $d
         if (-not (Test-Path $p)) {
@@ -937,6 +1026,8 @@ function Invoke-Upgrade([string[]]$Options) {
     Test-FileSignature $archive
     $versions = Join-Path $script:Root 'versions'
     $tmp = Join-Path $versions ('.unpack-' + [Guid]::NewGuid().ToString('N'))
+    # yours alone before the new release is unpacked into it (ADR 0051, decision 15)
+    Protect-Folder $script:Root
     New-Item -ItemType Directory $tmp | Out-Null
     & tar.exe -xf $archive -C $tmp
     if ($LASTEXITCODE -ne 0) { Remove-Item $tmp -Recurse -Force; Fail ((Split-Path $archive -Leaf) + ' could not be unpacked.') }
@@ -1334,27 +1425,29 @@ function Send-OwnPeopleDone([string[]]$Lines, [string]$Via) {
         $bodies += ('{"via":"' + $Via + '","made":[' + ($made -join ',') + '],"kept":[' + ($kept -join ',') + '],"refused":' + $refused + '}')
     }
     if (@($Lines | Where-Object { $_.StartsWith('keycloak-setup: stamped the realm') }).Count -gt 0) { $bodies += '{"via":"stamp"}' }
-    $undo = @()
+    $unrecorded = $false
     foreach ($b in $bodies) {
         $code = Invoke-KilnmarkApi 'POST' '/api/v1/auth/people' $b
         if ($code -ne '204') {
             Write-Host ("Warning: Kilnmark did not record this in its audit log (HTTP " + $code + "); Keycloak's admin events have it.") -ForegroundColor Yellow
-            if ($b.StartsWith('{"via":"add"') -or $b.StartsWith('{"via":"import"') -or $b.StartsWith('{"via":"activate"')) {
-                foreach ($line in $Lines) {
-                    if ($line -cmatch '^keycloak-setup: (made|activated) ([a-z0-9._%+@-]+)[ :]') { $undo += $Matches[2] }
-                }
-            }
+            if ($b.StartsWith('{"via":"add"') -or $b.StartsWith('{"via":"import"') -or $b.StartsWith('{"via":"activate"')) { $unrecorded = $true }
         }
     }
-    # Nobody stays able to sign in without that record (fail closed): disabled again.
-    if ($undo.Count -gt 0) {
-        $out = Invoke-PeopleSetup 'disable' $null $undo
-        if ($script:PeopleOk -and @($out | Where-Object { $_ -match '^keycloak-setup: disabled .* again' }).Count -gt 0) {
-            Write-Host 'So they were disabled again, until Kilnmark answers: then give each a temporary password with people activate EMAIL.' -ForegroundColor Yellow
-        } else {
-            Write-Host "Warning: they could not be disabled again either: disable them in Keycloak's console." -ForegroundColor Yellow
-        }
+    # Those given a temporary password just now wait, disabled, for that record: enabled only once
+    # Kilnmark has it (fail closed), so a run cut short leaves nobody able to sign in unrecorded.
+    $todo = @()
+    foreach ($line in $Lines) {
+        if ($line -cmatch '^keycloak-setup: made ([a-z0-9._%+@-]+) \([a-z;-]+\): they choose their own password') { $todo += $Matches[1] }
+        elseif ($line -cmatch '^keycloak-setup: activated ([a-z0-9._%+@-]+): ') { $todo += $Matches[1] }
     }
+    if ($todo.Count -eq 0) { return }
+    if ($unrecorded) {
+        Write-Host 'So they stay disabled, until Kilnmark answers: then give each a temporary password with people activate EMAIL.' -ForegroundColor Yellow
+        return
+    }
+    $out = Invoke-PeopleSetup 'enable' $null $todo
+    $left = @($todo | Where-Object { $out -cnotcontains ('keycloak-setup: enabled ' + $_) })
+    if ($left.Count -gt 0) { Write-Host ('Warning: recorded, but not enabled: ' + ($left -join ' ') + '. Give each a temporary password with people activate EMAIL.') -ForegroundColor Yellow }
 }
 
 # A temporary password, typed twice, not shown, at a console; else one line on standard input: $Whose
@@ -1468,12 +1561,7 @@ function Invoke-People([string[]]$Options) {
         }
         'expire' {
             # Every hour, from the scheduled task up sets up (which names the project); by hand too.
-            # Never what someone else may have changed (ADR 0051): refused, and recorded.
-            $why = Get-TreeProblem
-            if ($why) {
-                [void](Invoke-KilnmarkApi 'POST' '/api/v1/auth/people' '{"via":"expire-refused"}')
-                Fail ('people expire was refused: ' + $why + '. Make it yours alone, then run it again.')
-            }
+            # The tree it runs from was checked first (Assert-ExpireTree).
             # Nothing to do while Keycloak is stopped: nobody signs in then, and each start expires them first.
             $kc = Get-Setting 'KILNMARK_KEYCLOAK_PORT'; if (-not $kc) { $kc = '8180' }
             if (-not (Test-Answers ('http://localhost:' + $kc + '/realms/kilnmark'))) {
@@ -1803,7 +1891,7 @@ switch ($Command) {
     'build' { Build-Images (Get-CurrentVersion) }
     'backup' { Start-Log 'backup'; Invoke-Backup $Rest; Stop-Log }
     'starter' { Start-Log 'starter'; Invoke-Starter $Rest; Stop-Log }
-    'people' { if ($Rest.Count -gt 0 -and $Rest[0] -eq 'expire') { Start-Log 'people-expire' -Daily } else { Start-Log 'people' }; Invoke-People $Rest; Stop-Log }
+    'people' { if ($Rest.Count -gt 0 -and $Rest[0] -eq 'expire') { Assert-ExpireTree; Start-Log 'people-expire' -Daily } else { Start-Log 'people' }; Invoke-People $Rest; Stop-Log }
     'restore' { Start-Log 'restore'; Invoke-Restore $Rest; Stop-Log }
     'upgrade' { Invoke-Upgrade $Rest }
     'uninstall' { Invoke-Uninstall $Rest }

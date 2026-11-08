@@ -246,7 +246,10 @@ converted: Production or Starter Pack.
       install expires nobody until its next start, which expires them first;
     - `kilnmark-admins` only through `people add`, one person at a time, never from a file, to keep
       the two-person rules (ADR 0038, ADR 0045) from being got round in bulk; on production so is
-      `kilnmark-sensitive-data` (on a Starter Pack install the data is made up, so a class may have it);
+      `kilnmark-sensitive-data` (on a Starter Pack install the data is made up, so a class may have it).
+      A group `config/.env` maps to the admin role (`KILNMARK_OIDC_ADMIN_GROUPS`) counts as
+      `kilnmark-admins` here, and one it maps to seeing sensitive values (`KILNMARK_OIDC_UNMASK_GROUPS`)
+      as `kilnmark-sensitive-data`, whatever its name;
     - an import checks the whole file before changing anything (a well-formed address, a known
       group, no address twice, no character Keycloak refuses in a name), names each bad line by its
       number, never its values, and then makes nobody; it ends with how many were made, already
@@ -262,9 +265,14 @@ converted: Production or Starter Pack.
     - the commands act only where the mode Kilnmark recorded in its own database equals
       `config/.env`'s, and refuse when the database does not answer; `keycloak-setup` is handed the
       recorded mode, never `.env`'s alone, and refuses one other than the realm's stamp (decision 16);
-    - a person is made disabled, their groups checked (none that gives a role but those named:
-      Kilnmark's, the pack's, or any `config/.env` maps to a role), then enabled; and a person made
-      or activated whom Kilnmark's audit log could not record is disabled again (fail closed);
+    - a person is made disabled and their groups checked (none that gives a role but those named:
+      Kilnmark's, the pack's, or any `config/.env` maps to a role); whoever add, import or activate
+      gives a temporary password stays disabled until Kilnmark's audit log has recorded them, and
+      only then does the control script ask `keycloak-setup` to enable them (`enable`: only someone
+      disabled, waiting for a first sign-in with a marked temporary password set within the window,
+      never from a directory nor the pack's). A run cut short, or a record refused, leaves them
+      disabled, never able to sign in unrecorded (fail closed); `people activate` then gives them
+      a new temporary password;
     - on production a sign-in is refused, and recorded, when its groups hold the pack's group or its
       user name or email is at kilnmark.com;
     - the commands check that Kilnmark answers before changing anything, and each person made
@@ -299,7 +307,9 @@ converted: Production or Starter Pack.
     container on the machine uses it. A known limit: a backup carries checksums, not a signature or
     a MAC, so a restore trusts whoever can write the backup's files; keep backups where only the
     operators can write. The first start's record of the mode (`server.mode_recorded`) and the
-    realm's stamp (`auth.realm_stamped`) are audit events.
+    realm's stamp (`auth.realm_stamped`) are audit events. On production a sign-in's user name and
+    email are read as its groups are (each string of the claim), so a JSON string's quotes never
+    hide a kilnmark.com address.
 
 13. **Secrets stay off command lines, and the samples' login is held by PostgreSQL itself.**
     podman-compose puts every environment setting of a container on podman's command line, which
@@ -325,27 +335,60 @@ converted: Production or Starter Pack.
     clock is compared.
 
 15. **The hourly run runs only what nobody else may change.** Before the task or timer is set up,
-    and again at the start of every `people expire` (refused and audited, `auth.expire_refused`,
-    when it fails), the control script checks everything a run uses: the install root, the
-    launcher, the current version (its folder, `compose.yaml` and `keycloak-setup`'s script), the
-    `current` link or `current.txt`, and `config/.env`. On Linux each must be the running
-    account's own and writable by neither its group nor others; as root, root's own, and so must
-    every folder from the root up to `/` (as sshd's StrictModes asks; a sticky `/tmp` counts as
-    unsafe). On Windows `up` makes the root the user's alone first; each must then be owned by the
-    user, SYSTEM or the Administrators, with nobody else able to write it. `install` refuses an
-    existing root owned by anyone else, rather than taking it over (`icacls /setowner`), since its
-    owner could rewrite its permissions whenever they like. `KILNMARK_ENGINE` goes into a unit only
-    as the full path of podman or docker. The tests' hooks (`KILNMARK_TEST_UID`,
-    `KILNMARK_SYSTEMCTL`, `KILNMARK_SYSTEMD_DIR`, `KILNMARK_SCHTASKS`) count only with a marker no
-    release sets.
+    and again at the start of every `people expire`, before anything of the install is read or
+    written (its log too), the control script checks everything a run uses: the launcher, the
+    current version's `compose.yaml` and `keycloak-setup`'s script, `config/.env` and `logs`, and
+    every folder from the install root down to each (the root, `versions`, the version's folder,
+    `containers`, `containers/keycloak`, `config`). The `current` link (Linux) must be the account's
+    own and lead to a folder directly in `versions/`; `current.txt` (Windows) must name one. A
+    refusal reads nothing more: never `config/.env`, nor the admin token in it, so nothing is sent
+    to Kilnmark's API (whatever answers on its port). It goes to standard error, the system's
+    journal (Linux; a timer's run goes there anyway) or Task Scheduler's history (Windows), and a
+    line in `logs` where that folder passes the same check.
+    - Linux: each must be the running account's own (root's, as root), no link but `current`, and
+      writable by neither its group nor others. So nobody can move the root away and put another
+      in its place, every folder above it up to `/` must be root's or the account's and writable by
+      neither group nor others; one others may write (`/tmp`) passes only where it is sticky and
+      the next folder down is root's or the account's, and never as root (as sshd's StrictModes
+      asks). The unit names the root by its canonical path, which must hold nothing a unit file
+      reads as more than a path (a space, `%`, a quote, a backslash, a control character); the
+      engine the unit names, and the folder the units are in, must be root's or the account's and
+      writable by nobody else. The run's log is never written through a link, and `logs` is the
+      account's alone (700).
+    - Windows: the install root is the user's alone (no inherited permissions, the user only) from
+      the moment `install` makes it, before anything is copied in, before `upgrade` unpacks into
+      it, and at every `up` whatever the profile: `C:\` lets every signed-in user change what is
+      made in a new folder there. `up` judges the tree as it was before it cleaned it: a tree
+      someone else could change until then is not trusted for being cleaned (what they changed
+      cannot be seen), so the task is not set up that time, and the operator checks it (or
+      installs the release again) and starts again. Each must then be there, no link or junction,
+      owned by the user, SYSTEM or the Administrators, and nobody else may write it (a conditional
+      entry for anyone else counts, whatever it grants; an app container's or capability's SID
+      never does, since it only narrows what a process of someone who holds the right may do).
+      Every folder above the root must be owned by the user, SYSTEM, the Administrators or
+      TrustedInstaller, with nobody else able to delete what is in it, delete it, or change its
+      permissions or owner. `install` refuses an existing root owned by anyone else, rather than
+      taking it over (`icacls /setowner`), since its owner could rewrite its permissions whenever
+      they like. The task's command quotes the script's path.
+    - A known limit: the release's signed `SHA256SUMS` covers the archives, not each file of an
+      install, so the files a run uses are not checked against a signature before each run; once
+      nobody else may write them, nobody else can change them.
+    - `KILNMARK_ENGINE` goes into a unit only as the full path of podman or docker. The tests' hooks
+      (`KILNMARK_TEST_UID`, `KILNMARK_SYSTEMCTL`, `KILNMARK_SYSTEMD_DIR`, `KILNMARK_SCHTASKS`) count
+      only with a marker no release sets.
 
 16. **A realm is one install's, once.** The realm is stamped with the install's id and mode the
     first time the control script hands them over, and never written over: every run of
     `keycloak-setup` refuses a realm stamped for another install or mode, and on production one
     holding the pack's marked group or any of the five example user names (a Keycloak volume kept
-    from a Starter Pack install, say). Restore Kilnmark and its Keycloak together, from the same
-    install's backup. On production the sample-data kind of source is refused at run time too, not
-    only when a source is added.
+    from a Starter Pack install, say). It fails closed: a realm, group or user lookup Keycloak does
+    not answer counts against the realm (only "not found" means a group is not there), and a stamp
+    is read whole and compared exactly, so half of one, or one not of Kilnmark's shape, is refused.
+    Restore Kilnmark and its Keycloak together, from the same install's backup. On production the
+    sample-data kind of source has no connector at all: it is left out where the server loads its
+    connectors, the one place every source, run, scan, rule, document and catalogue view gets its
+    connector from, so nothing reaches it, whatever a database kept from a Starter Pack install
+    holds.
 
 ## Consequences
 

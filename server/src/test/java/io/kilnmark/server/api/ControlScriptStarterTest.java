@@ -380,8 +380,11 @@ class ControlScriptStarterTest {
     /** A person's temporary password as the tests type it. */
     static final String PERSON_PASSWORD = "typed-person-password-0123";
 
-    /** What a people command printed, what logs/ kept, and what it sent Kilnmark's API, by edition. */
-    record Admin(String out, String logs, List<String> posted) {
+    /**
+     * What a people command printed, what logs/ kept, what it sent Kilnmark's API, and whom it asked
+     * keycloak-setup to enable (a line each), by edition.
+     */
+    record Admin(String out, String logs, List<String> posted, String enabled) {
     }
 
     interface AdminRun {
@@ -430,12 +433,16 @@ class ControlScriptStarterTest {
             assertFalse(made.logs().isEmpty(), "logs/ has the run");
             assertEquals(List.of("{\"via\":\"add\",\"made\":[{\"person\":\"rita@bank.example\",\"groups\":\"kilnmark-admins\"}],"
                 + "\"kept\":[],\"refused\":0}"), made.posted(), mode);
+            // made disabled, and enabled once Kilnmark recorded them
+            assertEquals("rita@bank.example", made.enabled(), made.out());
+            assertFalse(made.out().contains("not enabled"), made.out());
         }
         // someone with that email already: left as they are, and recorded so
         Admin kept = a.run(WITH_KEYCLOAK, ADD, "here.rita@bank.example\nRita\nOkoro\nkilnmark-viewers\n" + PERSON_PASSWORD, true);
         assertTrue(kept.out().contains("left as they are: nothing was changed"), kept.out());
         assertEquals(List.of("{\"via\":\"add\",\"made\":[],\"kept\":[\"here.rita@bank.example\"],\"refused\":0}"),
             kept.posted());
+        assertEquals("", kept.enabled(), "someone there already is never enabled");
         // no email: nobody is made, and nothing reaches the engine
         Admin none = a.run(WITH_KEYCLOAK, ADD, "", true);
         assertTrue(none.out().contains("Nobody was made") && !none.out().contains("keycloak-setup:"), none.out());
@@ -512,6 +519,7 @@ class ControlScriptStarterTest {
         assertFalse(activated.out().contains(PERSON_PASSWORD) || activated.logs().contains(PERSON_PASSWORD),
             "the password was shown");
         assertEquals(List.of("{\"via\":\"activate\",\"activated\":[\"rita@bank.example\"]}"), activated.posted());
+        assertEquals("rita@bank.example", activated.enabled(), "enabled once recorded");
         Admin notActivated = a.run(WITH_KEYCLOAK, List.of("people", "activate", "rita@bank.example"), PERSON_PASSWORD, false);
         assertTrue(notActivated.out().contains("Nobody was activated") && notActivated.posted().isEmpty(), notActivated.out());
         for (String[] bad : new String[][] {{"rita", PERSON_PASSWORD, "not an email address"},
@@ -555,10 +563,11 @@ class ControlScriptStarterTest {
             assertTrue(body.startsWith("{\"via\":\"expire\",\"disabled\":[\"p" + (i * 500 + 1) + "@bank.example\""), body);
             assertEquals(i < 2 ? 500 : 200, body.split("@bank.example", -1).length - 1, body);
         }
-        // a person Kilnmark cannot record is disabled again (fail closed), and that is said
+        // a person Kilnmark cannot record is never enabled (fail closed), and that is said
         Admin unrecorded = a.run(WITH_KEYCLOAK, ADD, "fail-me@bank.example\nFay\nIl\nkilnmark-viewers\n" + PERSON_PASSWORD, true);
         assertTrue(unrecorded.out().contains("Kilnmark did not record this in its audit log")
-            && unrecorded.out().contains("So they were disabled again"), unrecorded.out());
+            && unrecorded.out().contains("So they stay disabled"), unrecorded.out());
+        assertEquals("", unrecorded.enabled(), unrecorded.out());
         // nothing to do while Keycloak is stopped (port 9: nothing listens)
         Map<String, String> stopped = new LinkedHashMap<>(WITH_KEYCLOAK);
         stopped.put("KILNMARK_KEYCLOAK_PORT", "9");
@@ -615,6 +624,12 @@ class ControlScriptStarterTest {
         all.putIfAbsent("KILNMARK_KEYCLOAK_PORT", String.valueOf(api.port()));
         writeEnv(root, all);
         return root;
+    }
+
+    /** Whom the fake keycloak-setup was asked to enable, a line each. */
+    private static String enabledOf(Path root) throws IOException {
+        Path f = root.resolve("enabled.log");
+        return Files.exists(f) ? String.join("\n", Files.readAllLines(f).stream().map(String::strip).toList()).strip() : "";
     }
 
     private static String logsOf(Path root) throws IOException {
@@ -700,7 +715,7 @@ class ControlScriptStarterTest {
                 String out = withInput(input, () -> run(c, root, (ok ? works : engine).toString().replace('\\', '/'),
                     recordedAsEnv(settings, outside)));
                 noRunSecretsLeft(root);
-                return new Admin(out, logsOf(root), List.copyOf(api.posted()));
+                return new Admin(out, logsOf(root), List.copyOf(api.posted()), enabledOf(root));
             });
             timerRules(new TimerRun() {
                 @Override
@@ -727,6 +742,122 @@ class ControlScriptStarterTest {
                 }
             });
         }
+    }
+
+    /**
+     * Windows (ADR 0051, decision 15): install makes the root yours alone before anything is copied
+     * into it, every start does whatever the profile, and what an hourly run uses is judged as it was
+     * before a start cleaned it; every folder on the way to it, and above the root, counts too.
+     */
+    @Test
+    void theWindowsEditionKeepsTheHourlyRunsTreeItsOwn() throws Exception {
+        String powershell = System.getenv("KILNMARK_TEST_POWERSHELL");
+        Assumptions.assumeTrue(powershell != null && !powershell.isBlank(),
+            "set KILNMARK_TEST_POWERSHELL to powershell.exe to run this");
+        Path works = fakeEngine(true, true);
+        // a folder that lets everyone change what is made in it, as C:\ does every signed-in user
+        Path open = Files.createTempDirectory("kilnmark-open");
+        icacls(open, "/grant", "*S-1-1-0:(OI)(CI)(W)");
+        // install, not started: the root, and all that was copied into it, yours alone
+        Path release = Files.createTempDirectory("kilnmark-release");
+        Files.copy(LAUNCH.resolve("kilnmark.ps1"), release.resolve("kilnmark.ps1"));
+        Files.writeString(release.resolve("compose.yaml"), "services:\n  kilnmark:\n    image: ghcr.io/jporeilly/kilnmark-server:9.9.9\n");
+        Files.copy(Path.of("../containers/release.env.example"), release.resolve(".env.example"));
+        Files.createDirectories(release.resolve("containers/keycloak"));
+        Files.writeString(release.resolve("containers/keycloak/setup.sh"), "# setup\n");
+        Path images = Files.createTempFile("kilnmark-images", ".tar.gz");
+        Path installed = open.resolve("installed");
+        String out = run(List.of(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+            release.resolve("kilnmark.ps1").toString(), "install", "-Root", installed.toString(), "-NoStart", "-Offline",
+            images.toString(), "-SkipVerify"), installed, works.toString(), freePorts());
+        assertTrue(out.contains("is installed in"), out);
+        for (String f : List.of("kilnmark.ps1", "current.txt", "versions\\9.9.9\\compose.yaml",
+            "versions\\9.9.9\\containers\\keycloak\\setup.sh", "config\\.env")) {
+            assertFalse(everyoneWrites(installed.resolve(f)), f + " may be changed by everyone: " + out);
+        }
+        List<String> ps = List.of(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+            LAUNCH.resolve("kilnmark.ps1").toAbsolutePath().toString());
+        List<String> up = new ArrayList<>(ps);
+        up.addAll(List.of("up", "-NoBrowser"));
+        List<String> expire = new ArrayList<>(ps);
+        expire.addAll(List.of("people", "expire"));
+        try (Api api = Api.start()) {
+            // a root everyone could change until now (an install from before, say): the start makes it
+            // yours alone, but does not set the hourly expiry up on its word
+            Path old = installRoot(true, open);
+            writeEnv(old, withApi(WITH_KEYCLOAK, api));
+            String first = run(up, old, works.toString(), recordedAsEnv(WITH_KEYCLOAK, Map.of()));
+            assertTrue(first.contains("was not set up") && first.contains("until this start"), first);
+            assertFalse(everyoneWrites(old.resolve("kilnmark.ps1")), "made yours alone: " + first);
+            String second = run(up, old, works.toString(), recordedAsEnv(WITH_KEYCLOAK, Map.of()));
+            assertTrue(second.contains("Set up the hourly expiry"), second);
+            // without the bundled Keycloak, a start makes the root yours alone too
+            Map<String, String> plain = Map.of("KILNMARK_MODE", "production");
+            Path without = installRoot(true, open);
+            writeEnv(without, withApi(plain, api));
+            String started = run(up, without, works.toString(), recordedAsEnv(plain, Map.of()));
+            assertFalse(everyoneWrites(without.resolve("kilnmark.ps1")), started);
+            // current.txt naming a folder outside versions\
+            Files.writeString(old.resolve("current.txt"), "..\\..\\elsewhere\n");
+            String outside = run(expire, old, works.toString(), recordedAsEnv(WITH_KEYCLOAK, Map.of()));
+            assertTrue(outside.contains("people expire was refused") && outside.contains("does not name a version"), outside);
+            Files.writeString(old.resolve("current.txt"), "9.9.9\n");
+            // a folder above the root that lets everyone delete what is in it: the root could be swapped
+            Path above = Files.createTempDirectory("kilnmark-above");
+            Path under = installRoot(true, above);
+            writeEnv(under, withApi(WITH_KEYCLOAK, api));
+            icacls(above, "/grant", "*S-1-1-0:(DC)");
+            String moved = run(expire, under, works.toString(), recordedAsEnv(WITH_KEYCLOAK, Map.of()));
+            assertTrue(moved.contains("people expire was refused") && moved.contains(", a folder above "), moved);
+            // and no admin token went anywhere: the refusal reads no settings
+            assertTrue(api.posted().isEmpty(), "nothing was sent: " + api.posted());
+        }
+    }
+
+    /**
+     * Linux (ADR 0051, decision 15): every folder on the way to what an hourly run uses, and above the
+     * root, counts; current leads into versions/; the run's log is never written through a link.
+     */
+    @Test
+    void theLinuxEditionChecksTheHourlyRunsTreeAllTheWay() throws Exception {
+        boolean windows = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win");
+        Assumptions.assumeFalse(windows, "Git Bash keeps NTFS's permissions as they are, and links need a privilege");
+        String script = LAUNCH.resolve("kilnmark.sh").toAbsolutePath().toString();
+        String works = fakeEngine(false, true).toString();
+        Map<String, String> settings = new LinkedHashMap<>(WITH_KEYCLOAK);
+        settings.put("KILNMARK_KEYCLOAK_PORT", "9");
+        Path parent = Files.createTempDirectory("kilnmark-parent");
+        Path root = installRoot(false, parent);
+        writeEnv(root, settings);
+        List<String> expire = List.of("bash", script, "people", "expire");
+        String fine = run(expire, root, works);
+        assertTrue(fine.contains("nothing was expired now") && !fine.contains("was refused"), fine);
+        // a folder above the root its group may write: the root could be moved away and another put there
+        chmod(parent, "775");
+        String moved = run(expire, root, works);
+        assertTrue(moved.contains("people expire was refused") && moved.contains(", a folder above "), moved);
+        // sticky, as /tmp is, with the root the account's own: nobody else can move it
+        chmod(parent, "1777");
+        String sticky = run(expire, root, works);
+        assertFalse(sticky.contains("was refused"), sticky);
+        chmod(parent, "700");
+        // current leading out of versions/
+        Path elsewhere = Files.createTempDirectory("kilnmark-elsewhere");
+        Files.delete(root.resolve("current"));
+        link(root.resolve("current"), elsewhere);
+        String out = run(expire, root, works);
+        assertTrue(out.contains("people expire was refused") && out.contains("does not lead to a version"), out);
+        Files.delete(root.resolve("current"));
+        link(root.resolve("current"), root.resolve("versions/9.9.9"));
+        // the day's log a link: never written through
+        Path target = Files.createTempFile("kilnmark-log-target", ".txt");
+        Path log = root.resolve("logs/people-expire-" + java.time.LocalDate.now(java.time.ZoneOffset.UTC)
+            .format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE) + ".log");
+        Files.deleteIfExists(log);
+        Files.createSymbolicLink(log, target);
+        String linked = run(expire, root, works);
+        assertTrue(linked.contains("is not a plain file"), linked);
+        assertEquals(0, Files.size(target), "nothing written through the link");
     }
 
     @Test
@@ -781,7 +912,7 @@ class ControlScriptStarterTest {
                 c.addAll(args);
                 String out = withInput(input, () -> run(c, root, (ok ? works : engine).toString(), recordedAsEnv(settings, outside)));
                 noRunSecretsLeft(root);
-                return new Admin(out, logsOf(root), List.copyOf(api.posted()));
+                return new Admin(out, logsOf(root), List.copyOf(api.posted()), enabledOf(root));
             });
             timerRules(new TimerRun() {
                 @Override
@@ -848,7 +979,7 @@ class ControlScriptStarterTest {
                 && first.units().contains("Environment=KILNMARK_PROJECT=kilnmark"), first.units());
         } else {
             assertTrue(first.schtasks().contains("/Create /SC HOURLY /TN \"Kilnmark kilnmark people expire\"")
-                && first.schtasks().contains("kilnmark.ps1 people expire -Project kilnmark"), first.schtasks());
+                && first.schtasks().contains("\\kilnmark.ps1\\\" people expire -Project kilnmark"), first.schtasks());
         }
         // the install's id, as the server recorded it, handed to keycloak-setup at the start
         assertTrue(Files.readString(t.root().resolve("up.log")).contains("install id [0e38a49e-ee00-4b1e-98f9-fe3c44e6fa09]"),
@@ -865,7 +996,7 @@ class ControlScriptStarterTest {
         // never a task or timer that runs a script others may change, as the user (Windows) or root (Linux)
         if (t.windows()) {
             // the launcher, then a file a run reads (config\.env), each writable by everyone
-            for (String file : List.of("kilnmark.ps1", "config\\.env")) {
+            for (String file : List.of("kilnmark.ps1", "config\\.env", "versions\\9.9.9\\containers")) {
                 Path planted = t.root().resolve(file);
                 icacls(planted, "/grant", "*S-1-1-0:(W)");
                 Timer open = t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"));
@@ -887,7 +1018,8 @@ class ControlScriptStarterTest {
             // a file a run reads (config/.env), or the version's setup script, writable by its group
             // (where chmod means it: Git Bash on Windows keeps NTFS's permissions as they are)
             boolean posix = !System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win");
-            for (String file : posix ? List.of("config/.env", "current/containers/keycloak/setup.sh") : List.<String>of()) {
+            for (String file : posix ? List.of("config/.env", "versions/9.9.9/containers/keycloak/setup.sh",
+                "versions/9.9.9/containers", "logs") : List.<String>of()) {
                 Path planted = t.root().resolve(file);
                 chmod(planted, "g+w");
                 Timer open = t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"));
@@ -1032,7 +1164,7 @@ class ControlScriptStarterTest {
                 + (ok ? "if \"%KILNMARK_PEOPLE_ACTION%\"==\"list\" (echo keycloak-setup: disabled old@bank.example: their temporary password was not used within 72 hours& echo keycloak-setup: person rita@bank.example groups=kilnmark-admins status=active must-choose-password=yes& echo keycloak-setup: people: 1)\r\n"
                     + "if \"%KILNMARK_PEOPLE_ACTION%\"==\"expire\" (for /L %%i in (1,1,1200) do @echo keycloak-setup: disabled p%%i@bank.example: their temporary password was not used within 72 hours)\r\n"
                     + "if \"%KILNMARK_PEOPLE_ACTION%\"==\"expire\" (echo keycloak-setup: people expire: done& exit /b 0)\r\n"
-                    + "if \"%KILNMARK_PEOPLE_ACTION%\"==\"disable\" (echo keycloak-setup: disabled %pw% again: Kilnmark could not record them in its audit log& exit /b 0)\r\n"
+                    + "if \"%KILNMARK_PEOPLE_ACTION%\"==\"enable\" (echo keycloak-setup: enabled %pw%& echo %pw%>> \"%KILNMARK_ROOT%\\enabled.log\"& exit /b 0)\r\n"
                     + "if \"%KILNMARK_PEOPLE_ACTION%\"==\"activate\" (echo keycloak-setup: activated %KILNMARK_PERSON_EMAIL%: they choose their own password at their first sign-in& exit /b 0)\r\n"
                     + "if \"%KILNMARK_PEOPLE_ACTION%\"==\"import\" (echo keycloak-setup: made priya.shah@example.com ^(kilnmark-designers;kilnmark-sensitive-data^): they choose their own password at their first sign-in& echo keycloak-setup: people import: made 1, already there 0, refused 0)\r\n"
                     + "if not \"%KILNMARK_PEOPLE_ACTION%\"==\"add\" exit /b 0\r\n"
@@ -1065,7 +1197,7 @@ class ControlScriptStarterTest {
                 + "    list) echo \"keycloak-setup: disabled old@bank.example: their temporary password was not used within 72 hours\"\n"
                 + "      echo \"keycloak-setup: person rita@bank.example groups=kilnmark-admins status=active must-choose-password=yes\"; echo \"keycloak-setup: people: 1\" ;;\n"
                 + "    activate) echo \"keycloak-setup: activated $KILNMARK_PERSON_EMAIL: they choose their own password at their first sign-in\" ;;\n"
-                + "    disable) echo \"keycloak-setup: disabled $pw again: Kilnmark could not record them in its audit log\" ;;\n"
+                + "    enable) echo \"keycloak-setup: enabled $pw\"; echo \"$pw\" >> \"${KILNMARK_ROOT-}/enabled.log\" ;;\n"
                 + "    expire) for i in $(seq 1 1200); do echo \"keycloak-setup: disabled p$i@bank.example: their temporary password was not used within 72 hours\"; done\n"
                 + "      echo 'keycloak-setup: people expire: done' ;;\n"
                 + "    import) echo \"keycloak-setup: lines [$(cat | wc -l | tr -d ' ')]\"\n"
@@ -1125,7 +1257,13 @@ class ControlScriptStarterTest {
 
     /** An install root with one version in it, as install leaves it; Windows marks it in current.txt. */
     private static Path installRoot(boolean windows) throws IOException {
-        Path root = Files.createTempDirectory("kilnmark-starter-test");
+        return installRoot(windows, null);
+    }
+
+    /** As {@link #installRoot(boolean)}, in {@code parent} (null: the temporary folder). */
+    private static Path installRoot(boolean windows, Path parent) throws IOException {
+        Path root = parent == null ? Files.createTempDirectory("kilnmark-starter-test")
+            : Files.createTempDirectory(parent, "kilnmark-starter-test");
         Path v = Files.createDirectories(root.resolve("versions/9.9.9"));
         Files.writeString(v.resolve("compose.yaml"), "services:\n  kilnmark:\n    image: ghcr.io/jporeilly/kilnmark-server:9.9.9\n");
         Files.createDirectories(root.resolve("config"));
@@ -1138,12 +1276,55 @@ class ControlScriptStarterTest {
             Files.writeString(root.resolve("current.txt"), "9.9.9\n");
             Files.writeString(root.resolve("kilnmark.ps1"), "# the launcher\r\n");
         } else {
-            Files.createDirectories(root.resolve("current/containers/keycloak"));
-            Files.writeString(root.resolve("current/compose.yaml"), Files.readString(v.resolve("compose.yaml")));
-            Files.writeString(root.resolve("current/containers/keycloak/setup.sh"), "# setup\n");
+            link(root.resolve("current"), v);
             Files.writeString(root.resolve("kilnmark.sh"), "# the launcher\n");
         }
         return root;
+    }
+
+    /**
+     * {@code link} leads to the folder {@code to}: a symbolic link, or on Windows, where one needs a
+     * privilege, a junction, which Git Bash takes for one.
+     */
+    private static void link(Path link, Path to) throws IOException {
+        try {
+            Files.createSymbolicLink(link, to);
+        } catch (IOException | UnsupportedOperationException e) {
+            try {
+                Process p = new ProcessBuilder("cmd.exe", "/c", "mklink", "/J", link.toString(), to.toAbsolutePath().toString())
+                    .redirectErrorStream(true).start();
+                p.getInputStream().readAllBytes();
+                assertEquals(0, p.waitFor(), "mklink /J " + link);
+            } catch (InterruptedException i) {
+                Thread.currentThread().interrupt();
+                throw new IOException(i);
+            }
+        }
+    }
+
+    /** Whether everyone may write {@code p} (Windows: an entry that applies to it, not only to what is in it). */
+    private static boolean everyoneWrites(Path p) throws IOException {
+        var view = Files.getFileAttributeView(p, java.nio.file.attribute.AclFileAttributeView.class);
+        for (var e : view.getAcl()) {
+            if (e.type() == java.nio.file.attribute.AclEntryType.ALLOW && e.principal().getName().contains("Everyone")
+                && !e.flags().contains(java.nio.file.attribute.AclEntryFlag.INHERIT_ONLY)
+                && (e.permissions().contains(java.nio.file.attribute.AclEntryPermission.WRITE_DATA)
+                    || e.permissions().contains(java.nio.file.attribute.AclEntryPermission.APPEND_DATA))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Ports nothing listens on, for install's checks. */
+    private static Map<String, String> freePorts() throws IOException {
+        Map<String, String> m = new LinkedHashMap<>();
+        for (String k : List.of("KILNMARK_PORT", "KILNMARK_HTTPS_PORT", "KILNMARK_DB_PORT")) {
+            try (var socket = new java.net.ServerSocket(0)) {
+                m.put(k, String.valueOf(socket.getLocalPort()));
+            }
+        }
+        return m;
     }
 
     /** An earlier version beside the current one, its compose.yaml with these volume lines. */

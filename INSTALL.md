@@ -517,12 +517,21 @@ but no new password, still expires, and the code is taken away again.
 
 The expiry holds only while the timer and Kilnmark's database run: on Windows the task runs only while
 you are signed in, and a stopped install expires nobody until its next start, which expires them
-first. Before it sets the task or timer up, and at the start of every `people expire`, the script
-checks that nobody else may change what a run uses (the root, the launcher, the current version's
-`compose.yaml` and `keycloak-setup` script, `config/.env`): each must be yours (on Linux as root,
-root's, with every folder above the root root's too) and writable by nobody else. If not, it says
-which, and `people expire` refuses and Kilnmark's audit log records it. On Windows, `install`
-refuses an existing folder someone else owns.
+first. Before it sets the task or timer up, and at the start of every `people expire` (before it
+reads anything else), the script checks that nobody else may change what a run uses: the launcher,
+the current version's `compose.yaml` and `keycloak-setup` script, `config/.env`, `logs`, and every
+folder from the install root down to them. Each must be yours (on Linux as root, root's) and
+writable by nobody else. So nobody can move the install away and put another in its place, the
+folders above the root count too: on Linux they must be root's or yours, writable by nobody else
+(a sticky one such as `/tmp` only when the next one down is yours or root's, and never as root);
+on Windows nobody but you, SYSTEM, the Administrators and TrustedInstaller may delete what is in
+them or change who may. If anything fails, it says which: `up` does not set the task or timer up,
+and `people expire` refuses, reads no settings and sends nothing, and the refusal goes to the
+system's journal (Linux) or Task Scheduler's history (Windows), and to `logs`. On Windows,
+`install` refuses an existing folder someone else owns, makes a new install folder yours alone
+before it copies anything in, and every `up` does so again; an `up` that found it open to others
+does not set the task up that time, since what was changed meanwhile cannot be told: check it (or
+install the release again), then run `up` again.
 
 `status` and `check` say whether it is set up. While Keycloak is stopped nobody can sign in, so
 `people expire` does nothing then, and the next start expires them first. The password goes to `keycloak-setup` on its input only:
@@ -533,9 +542,12 @@ refused, so a real person is never taken for an example one; people added this w
 the Kilnmark groups they were given, and never in the pack's group, so removing the example people
 never removes them: should someone made land in another group of Kilnmark's (the realm has it as a
 default group, say), they are deleted again and the command stops: as are groups `config/.env`
-maps to a role. People cannot change their own email, names or user name in the bundled Keycloak:
-an admin does, in its console. If Kilnmark's audit log cannot record someone made or activated,
-they are disabled again. Keycloak's realm is stamped once with this install's id and mode:
+maps to a role. A group `config/.env` maps to the admin role, or to seeing sensitive values,
+counts as `kilnmark-admins` or `kilnmark-sensitive-data` in an import file, and is refused there
+alike. People cannot change their own email, names or user name in the bundled Keycloak: an admin
+does, in its console. Someone given a temporary password stays disabled until Kilnmark's audit log
+has recorded them, and is enabled only then: if Kilnmark cannot record them, they stay disabled
+until you run `people activate EMAIL` once it answers. Keycloak's realm is stamped once with this install's id and mode:
 `keycloak-setup` then refuses a Keycloak of another install, of the other mode, or, on production,
 one that still has the Starter Pack's people or group. The
 commands act only where the mode Kilnmark recorded in its database is the one `.env` says, and stop

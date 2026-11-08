@@ -169,8 +169,8 @@ public class AuthResource {
     // and Keycloak's own admin events hold what was really done (ADR 0051).
     public Response people(PeopleDone body) {
         String via = body == null ? null : body.via();
-        if (!java.util.Set.of("add", "import", "activate", "expire", "stamp", "expire-refused").contains(via)) {
-            throw new IllegalArgumentException("via: add, import, activate, expire, stamp or expire-refused");
+        if (!java.util.Set.of("add", "import", "activate", "expire", "stamp").contains(via)) {
+            throw new IllegalArgumentException("via: add, import, activate, expire or stamp");
         }
         List<PersonMade> made = body.made() == null ? List.of() : body.made();
         List<String> kept = body.kept() == null ? List.of() : body.kept();
@@ -182,7 +182,7 @@ public class AuthResource {
             || ("activate".equals(via) && (activated.size() != 1 || !made.isEmpty() || !kept.isEmpty()))
             || (!"activate".equals(via) && !activated.isEmpty())
             || ("expire".equals(via) && (!made.isEmpty() || !kept.isEmpty() || refused != 0))
-            || (java.util.Set.of("stamp", "expire-refused").contains(via) && (!made.isEmpty() || !kept.isEmpty()
+            || ("stamp".equals(via) && (!made.isEmpty() || !kept.isEmpty()
                 || !disabled.isEmpty() || refused != 0))) {
             throw new IllegalArgumentException("people: one person for add or activate, at most " + MAX_PEOPLE
                 + " for import");
@@ -224,10 +224,6 @@ public class AuthResource {
         }
         if ("stamp".equals(via)) {
             audit.record(actor, AuditLog.REALM_STAMPED, "realm kilnmark", Map.of());
-        }
-        if ("expire-refused".equals(via)) {
-            audit.record(actor, AuditLog.EXPIRE_REFUSED, "people expire", Map.of("reason",
-                "someone other than the account that runs Kilnmark may change the files a run uses"));
         }
         return Response.noContent().build();
     }

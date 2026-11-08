@@ -166,11 +166,6 @@ public class AuditLog {
      */
     public static final String REALM_STAMPED = "auth.realm_stamped";
     /**
-     * people expire was refused because someone else may change the files a run uses (ADR 0051);
-     * detail: the reason, a fixed text.
-     */
-    public static final String EXPIRE_REFUSED = "auth.expire_refused";
-    /**
      * A pipeline's owners were set (ADR 0053); detail: before and after, the sign-in names and team
      * addresses. Target: the pipeline's name.
      */
@@ -188,7 +183,7 @@ public class AuditLog {
         SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, MAX_RUNS_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
         SIGN_OUT, PERSON_ADDED, PEOPLE_IMPORTED, PERSON_ACTIVATED, PERSON_DISABLED, START_REFUSED, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED, SCHEDULE_SET,
         SCHEDULE_DELETED, SCHEDULE_PAUSED, STARTER_PACK_ADDED, STARTER_PACK_REMOVED, STARTER_PEOPLE, INSTALL_ID_MADE, MODE_RECORDED, REALM_STAMPED,
-        EXPIRE_REFUSED, PIPELINE_OWNERS_SET,
+        PIPELINE_OWNERS_SET,
         FLOW_OWNERS_SET, FLOW_RUN_AGAIN);
 
     /** The most events one request returns. */

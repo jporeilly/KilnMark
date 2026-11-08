@@ -56,10 +56,6 @@ public class PipelineCompilers {
 
             @Override
             public Optional<Connector> connector(String kind) {
-                // never the Starter Pack's example data on production, whatever reaches a run (ADR 0051)
-                if (!io.kilnmark.server.starter.ModeCheck.kindAllowed(kind, config)) {
-                    return Optional.empty();
-                }
                 return connectors.get(kind);
             }
 

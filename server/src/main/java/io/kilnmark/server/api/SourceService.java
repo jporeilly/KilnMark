@@ -52,7 +52,6 @@ public class SourceService {
     private final SourceChecks checks;
 
     private final HostPolicy hosts;
-    private final KilnmarkConfig config;
 
     public SourceService(GraphStore store, SecretBox secrets, Connectors connectors, SourceChecks checks,
                          KilnmarkConfig config) {
@@ -61,7 +60,6 @@ public class SourceService {
         this.connectors = connectors;
         this.checks = checks;
         this.hosts = HostPolicy.of(config);
-        this.config = config;
     }
 
     /**
@@ -78,16 +76,16 @@ public class SourceService {
     }
 
     /**
-     * The connector for a kind a source may have here: on production never the Starter Pack's example
-     * data (ADR 0051), for a source added by hand or in a bulk import alike.
+     * The connector for a kind a source may have here. On production the Starter Pack's example data
+     * has none (ConnectorsProducer, ADR 0051): a source of it is refused, by hand or in a bulk import,
+     * and said why.
      */
     Connector connector(String kind) {
-        if (!io.kilnmark.server.starter.ModeCheck.kindAllowed(kind, config)) {
-            throw new IllegalArgumentException(io.kilnmark.server.starter.ModeCheck.SAMPLE_DATA_REFUSED);
-        }
-        return connectors.get(kind).orElseThrow(() -> new IllegalArgumentException("kind: unknown kind '" + kind
-            + "'; this server supports " + String.join(", ", connectors.all().stream().map(Connector::kind)
-                .filter(k -> io.kilnmark.server.starter.ModeCheck.kindAllowed(k, config)).toList())));
+        return connectors.get(kind).orElseThrow(() -> new IllegalArgumentException(
+            io.kilnmark.server.starter.ModeCheck.SAMPLE_DATA_KIND.equals(kind)
+                ? io.kilnmark.server.starter.ModeCheck.SAMPLE_DATA_REFUSED
+                : "kind: unknown kind '" + kind + "'; this server supports "
+                    + String.join(", ", connectors.all().stream().map(Connector::kind).toList())));
     }
 
     /** A saved source as its connector sees it, with its secret decrypted. */
