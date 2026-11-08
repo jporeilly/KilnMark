@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { accessReviewApi, formatTime, type AccessReview, type AccessReviewEntry } from "../api";
+import { accessReviewApi, formatTime, type AccessReview, type AccessReviewEntry, plural } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { Card, DataTable, EmptyState, PageHeader, StatusChip } from "../components/ui";
+import { Who } from "../components/Who";
 
 /** Saves text as a file, through a link the browser follows at once. */
 function save(text: string, name: string, type: string) {
@@ -22,11 +23,20 @@ export function access(e: AccessReviewEntry): string {
   return e.unmask ? `${role}, sees unmasked values` : role;
 }
 
+/**
+ * What the review says when example accounts have signed in. They come only with a Starter Pack
+ * install, which never becomes a production one (ADR 0051): turning the pack off would leave the
+ * example people at the identity provider, so for real data the install is made afresh.
+ */
+export const EXAMPLE_ACCOUNTS =
+  "Example accounts (kilnmark.com) have signed in here. They come with the Starter Pack: a Starter Pack install is " +
+  "for training and development only. For real data, install Kilnmark afresh in production mode.";
+
 /** When an entry was last used, or last signed in, in words. */
 export function lastSeen(e: AccessReviewEntry): string {
   if (!e.lastUsedAt) return "Never";
   const when = formatTime(e.lastUsedAt);
-  return e.kind === "provider" && e.signIns != null ? `${when} (${e.signIns} sign-ins)` : when;
+  return e.kind === "provider" && e.signIns != null ? `${when} (${plural(e.signIns, "sign-in")})` : when;
 }
 
 /**
@@ -114,7 +124,9 @@ export function AccessReviewPage() {
                   <td>{e.status}</td>
                   <td className="small">{e.expiresAt ? formatTime(e.expiresAt) : "Never"}</td>
                   <td className="small">{lastSeen(e)}</td>
-                  <td className="small">{e.createdBy}</td>
+                  <td className="small">
+                    <Who name={e.createdBy} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -163,8 +175,7 @@ export function AccessReviewPage() {
         </p>
         {people.some((e) => e.example) && (
           <p className="warning" role="note">
-            Example accounts (kilnmark.com) have signed in here. They come with the Starter Pack, for trials and
-            training: turn the pack off under Settings, Starter Pack, before this install holds real data.
+            {EXAMPLE_ACCOUNTS}
           </p>
         )}
       </Card>

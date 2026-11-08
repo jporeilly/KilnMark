@@ -8,6 +8,7 @@ import {
 } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
+import { Who } from "../components/Who";
 import { Card, DataTable, PageHeader, StatusChip, type Tone } from "../components/ui";
 import { STARTER_PACK_CHANGED, StarterPackNotice } from "../shell/StarterPackBanner";
 
@@ -172,7 +173,12 @@ export function StarterPackPage() {
                   On
                 </StatusChip>{" "}
                 since {d.since ? formatTime(d.since) : "a while"}
-                {d.by ? `, turned on by ${d.by}` : ""}. Everyone sees this marking on every page:
+                {d.by && (
+                  <>
+                    , turned on by <Who name={d.by} />
+                  </>
+                )}
+                . Everyone sees this marking on every page:
               </>
             ) : (
               <>

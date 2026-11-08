@@ -114,9 +114,11 @@ you chose):
 - **Remove a connection** with **Disconnect** beside it in the settings of the node it feeds, or
   click it and press Delete.
 - **Move** a node by dragging it. **Auto-layout** lays the nodes out again from left to right.
-  **Fit** shows the whole pipeline, however small that makes it; **Readable size** shows it at a
-  size you can read, from its first nodes if it is too wide for that. The overview in the corner
-  shows where you are: drag in it to move around.
+  **Fit** shows the whole pipeline, however small that makes it, beside the overview in the corner,
+  never under it; **Readable size** shows it at a size you can read, from its first nodes if it is
+  too wide for that. The overview shows where you are: drag in it to move around. Auto-layout
+  stacks the nodes that feed one node in the order of its inputs, so a join's `left` input sits
+  above its `right` one and their connections do not cross.
 - **Duplicate** copies a node with its settings and inputs; **Delete node** removes it and its
   connections. **Undo** and **Redo** step back and forward through your changes, including a burst
   of typing in the YAML tab and loading the latest version; they are off while the canvas cannot

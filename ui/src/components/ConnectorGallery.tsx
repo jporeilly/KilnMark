@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Capability, Connector, ConnectorCatalogue, PlannedConnector } from "../api";
+import { plural } from "../api";
 import { ConnectorTile, plannedTileProps, tileProps } from "./ConnectorTile";
 import { href } from "../router";
 import { Icon } from "./icons";
@@ -74,7 +75,7 @@ export function ConnectorGallery({
         (c.built && c.connector.formats.some((f) => f.includes(q)))),
   );
   const built = shown.filter((c) => c.built).length;
-  const countText = `${shown.length} ${shown.length === 1 ? "connector" : "connectors"}${
+  const countText = `${plural(shown.length, "connector")}${
     q ? ` match "${query.trim()}"` : ""
   }, ${built} available now.`;
   // Announced once typing pauses, not at every key.

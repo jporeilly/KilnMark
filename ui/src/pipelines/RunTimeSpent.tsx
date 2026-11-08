@@ -1,5 +1,5 @@
 import { IconClockHour4, IconHourglass, IconStack2, IconTargetArrow } from "@tabler/icons-react";
-import { formatNumber, type PipelineRunDetail } from "../api";
+import { type PipelineRunDetail, plural } from "../api";
 import { StatTile, StatusChip } from "../components/ui";
 import { qualityMark } from "./RunTimeline";
 import { shares, timeSpent, type SpentRow } from "./timeSpent";
@@ -19,10 +19,10 @@ function result(detail: PipelineRunDetail, node: string): string | null {
   const mark = qualityMark((detail.quality ?? []).find((q) => q.node === node));
   if (mark) return mark.text;
   const s = detail.nodes.find((x) => x.node === node);
-  if (s?.rowsOut != null) return `${formatNumber(s.rowsOut)} rows out`;
-  if (s?.rowsIn != null) return `${formatNumber(s.rowsIn)} rows in`;
+  if (s?.rowsOut != null) return `${plural(s.rowsOut, "row")} out`;
+  if (s?.rowsIn != null) return `${plural(s.rowsIn, "row")} in`;
   const p = detail.progress?.nodes.find((x) => x.node === node);
-  if (p) return p.rowsOut > 0 ? `${formatNumber(p.rowsOut)} rows out so far` : `${formatNumber(p.rowsIn)} rows in so far`;
+  if (p) return p.rowsOut > 0 ? `${plural(p.rowsOut, "row")} out so far` : `${plural(p.rowsIn, "row")} in so far`;
   return null;
 }
 

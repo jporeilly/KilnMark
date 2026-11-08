@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card, IconTile, PageHeader, type Tint } from "../components/ui";
-import { allows, samplesApi, type AccessRole } from "../api";
+import { allows, samplesApi, type AccessRole, plural } from "../api";
 import { useProductName } from "../components/Brand";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
@@ -285,7 +285,7 @@ function Appearance() {
             <div>
               <dt className="muted small">Connector logos and colours</dt>
               <dd>
-                {Object.keys(branding.connectors).length} connectors, {logos} with a logo
+                {plural(Object.keys(branding.connectors).length, "connector")}, {logos} with a logo
               </dd>
             </div>
           </dl>

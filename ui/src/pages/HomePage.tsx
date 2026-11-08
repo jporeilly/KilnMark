@@ -14,6 +14,7 @@ import {
   type PipelineRun,
   type PipelineSummary,
   type Source,
+  plural,
 } from "../api";
 import { href } from "../router";
 import { formatAgo, greeting } from "../format";
@@ -36,6 +37,7 @@ import {
 import { NotificationList } from "../notifications/NotificationList";
 import { markNotificationsRead, useNotifications } from "../notifications/store";
 import { NOTIFICATION_SETTINGS, OPEN_NOTIFICATIONS, SENT_EMAILS } from "../notifications/NotificationBell";
+import { Who } from "../components/Who";
 
 type SourceScore = { source: string; scores: Record<string, number>; assets: { urn: string; score: number }[] };
 
@@ -163,7 +165,7 @@ export function HomePage({ me }: { me: Me }) {
         ? "No sources yet"
         : failing.length
           ? `${failing.length} of ${sourceList.length} ${sourceList.length === 1 ? "source needs" : "sources need"} attention`
-          : `${sourceList.length} ${sourceList.length === 1 ? "source" : "sources"} healthy`,
+          : `${plural(sourceList.length, "source")} healthy`,
     lastRun ? `last pipeline run ${RUN_WORD[lastRun.status]} ${formatAgo(lastRun.finishedAt ?? lastRun.requestedAt)}` : null,
     openList == null
       ? null
@@ -234,7 +236,7 @@ export function HomePage({ me }: { me: Me }) {
               ? "Loading…"
               : sources.state === "error"
                 ? "Could not load"
-                : `Across ${sourceList!.length} ${sourceList!.length === 1 ? "source" : "sources"}`
+                : `Across ${plural(sourceList!.length, "source")}`
           }
           href={href.browse()}
         />
@@ -369,7 +371,7 @@ function RecentRuns({ runs }: { runs: PipelineRun[] }) {
                     {r.pipeline}
                   </a>
                   <div className="small muted">
-                    version {r.version} · by {r.requestedBy}
+                    version {r.version} · by <Who name={r.requestedBy} />
                   </div>
                 </th>
                 <td>
@@ -427,7 +429,7 @@ function SourcesCard({
       title="Sources"
       titleId="src-h"
       className="km-card--fill"
-      actions={<a href={href.sources()}>{total > shown.length ? `All ${formatNumber(total)} sources` : "Manage sources"}</a>}
+      actions={<a href={href.sources()}>{total > shown.length ? `All ${plural(total, "source")}` : "Manage sources"}</a>}
     >
       {sources.state === "loading" && <p className="muted">Loading sources…</p>}
       {sources.state === "error" && <LoadError what="sources" message={sources.message} onRetry={onRetry} />}

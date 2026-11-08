@@ -1,36 +1,27 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { formatNumber, pipelinesApi, type FlowRunDetail, type FlowTry, type PipelineRunDetail } from "../api";
+import { formatClock, formatNumber, pipelinesApi, type FlowRunDetail, type FlowTry, type PipelineRunDetail } from "../api";
 import { Icon } from "../components/icons";
 import { href } from "../router";
 import { formatDuration } from "../pipelines/RunStatus";
 import { offsetWords, pct, ticks } from "../pipelines/timeline";
 import { FlowStatus, flowStatusWords } from "./RunFlow";
+import { FlowNodeIcon } from "./nodeIcons";
 import { openAtFirst, runTree, runsWanted, treeRowWords, type TreeRow } from "./runTree";
 import "../pipelines/pipelines.css";
 import "./flows.css";
 
 const took = (ms: number) => formatDuration(Math.round(ms));
-const clock = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleTimeString() : "–");
+/** A time in the run, 24-hour with seconds, as the app tells the time (formatClock). */
+const clock = (iso: string | null | undefined) => formatClock(iso, true);
 
-/** The icon a row shows: the flow, a node by its type, an item, or a pipeline's node. */
-function rowIcon(r: TreeRow): string | null {
-  if (r.kind === "flow") return "flows";
-  if (r.kind === "step" || r.kind === "item") return null;
-  switch (r.type) {
-    case "run-pipeline":
-    case "for-each":
-      return "pipelines";
-    case "sql":
-    case "check-source":
-      return "database";
-    case "wait":
-    case "wait-for":
-      return "clock";
-    case "notify":
-      return "bell";
-    default:
-      return "check";
-  }
+/**
+ * The icon a row shows: the flow's, or a flow node's by its type, as the diagram draws it
+ * (nodeIcons); a pipeline's nodes and a for-each node's items have a dot.
+ */
+export function RowIcon({ row }: { row: TreeRow }) {
+  if (row.kind === "flow") return <Icon name="flows" size={14} className="ft-icon ft-icon--flow" />;
+  if (row.kind === "node") return <FlowNodeIcon type={row.type} size={14} className="icon ft-icon ft-icon--node" />;
+  return <span className={`ft-dot ft-dot--${row.kind}`} aria-hidden="true" />;
 }
 
 /** The run in one sentence: what started when, how long it took and how it ended. */
@@ -143,7 +134,6 @@ export function FlowRunTimeline({ detail, now }: { detail: FlowRunDetail; now: n
         <ul className="ft-rows" aria-label="The run, node by node">
           {rows.map((r) => {
             const words = treeRowWords(r, took);
-            const icon = rowIcon(r);
             const isOpen = open.has(r.id);
             // What an open row with no rows under it says, on a line of its own under it.
             const runFailed = r.loading && r.pipelineRunId != null && failed.has(r.pipelineRunId);
@@ -175,11 +165,7 @@ export function FlowRunTimeline({ detail, now }: { detail: FlowRunDetail; now: n
                   ) : (
                     <span className="ft-toggle-space" aria-hidden="true" />
                   )}
-                  {icon ? (
-                    <Icon name={icon} size={14} className={`ft-icon ft-icon--${r.kind}`} />
-                  ) : (
-                    <span className={`ft-dot ft-dot--${r.kind}`} aria-hidden="true" />
-                  )}
+                  <RowIcon row={r} />
                   <button
                     type="button"
                     className="ft-name mono"

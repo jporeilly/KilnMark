@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { allows, formatNumber, formatTime, pipelinesApi, type AccessRole, type PipelineSummary } from "../api";
+import { allows, formatTime, pipelinesApi, type AccessRole, type PipelineSummary, plural } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { docHref } from "../docs/links";
 import { RunStatus } from "./RunStatus";
 import "./pipelines.css";
+import { Who } from "../components/Who";
+import { lastRunStatus, noticeText, type Notice } from "../components/runNotice";
 
 /**
  * A team's own pipelines: what each does, its latest version, its last run; Run now for stewards,
@@ -18,7 +20,7 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
   const pipelines = all?.filter((p) => !p.library) ?? null;
   const samples = all?.filter((p) => p.library).length ?? 0;
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<Notice>("");
   const [starting, setStarting] = useState<string | null>(null);
 
   const load = useCallback(() => {
@@ -46,7 +48,7 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
     setError(null);
     try {
       const run = await pipelinesApi.run(p.name);
-      setNotice(`Run ${run.id} of ${p.displayName} is queued.`);
+      setNotice({ run: run.id, of: p.displayName });
       load();
     } catch (e) {
       setError((e as Error).message);
@@ -75,7 +77,7 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
         Each is saved as YAML with every version. <a href={docHref("pipelines")}>How to build and run one</a>.
       </p>
       <p role="status" className="notice">
-        {notice}
+        {noticeText(notice, typeof notice === "string" ? null : lastRunStatus(all, notice.run))}
       </p>
       {error && (
         <p role="alert" className="error">
@@ -130,7 +132,7 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
                       Version {p.latestVersion}
                       {!p.valid && <div className="small pl-bad">Has problems: cannot run</div>}
                       <div className="small muted">
-                        Saved {formatTime(p.updatedAt)} by {p.updatedBy}
+                        Saved {formatTime(p.updatedAt)} by <Who name={p.updatedBy} />
                       </div>
                     </td>
                     <td>
@@ -139,7 +141,7 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
                         <div className="small muted">
                           <a href={href.pipelineRun(p.lastRun.id)}>Run {p.lastRun.id}</a>,{" "}
                           {formatTime(p.lastRun.finishedAt ?? p.lastRun.startedAt ?? p.lastRun.requestedAt)}
-                          {p.lastRun.rowsWritten != null && <>, {formatNumber(p.lastRun.rowsWritten)} rows written</>}
+                          {p.lastRun.rowsWritten != null && <>, {plural(p.lastRun.rowsWritten, "row")} written</>}
                         </div>
                       )}
                     </td>

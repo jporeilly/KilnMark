@@ -18,6 +18,7 @@ import {
   type FlowSpentRow,
 } from "./runFacts";
 import "./flows.css";
+import { Who } from "../components/Who";
 
 /** How long something took, or has taken so far; a dash before it starts. */
 export function took(start: string | null, end: string | null, now: number = Date.now()): string {
@@ -47,7 +48,7 @@ export function FlowRunFacts({ detail, now }: { detail: FlowRunDetail; now?: num
         </dd>
         <dt>Started by</dt>
         <dd>
-          {r.requestedBy}
+          <Who name={r.requestedBy} />
           {r.requestedRole ? ` (${r.requestedRole})` : ""}
         </dd>
         <dt>Asked for</dt>

@@ -76,7 +76,8 @@ export function autoLayout(graph: Graph, catalogue: Catalogue, sizes?: LayoutSiz
  * orders a column by the nodes before it, not by which of their outputs a connection leaves from,
  * so a route's large, bulk and out (top to bottom on the node) can reach their targets the other
  * way up. A node is placed by where its inputs leave their nodes, on average; one fed by nothing
- * keeps its place. Columns go left to right, so a column moved is what the next one follows. A
+ * by where it enters the nodes it feeds (a join's left input above its right), else it keeps its
+ * place. Columns go left to right, so a column moved is what the next one follows. A
  * column already in that order is left as dagre drew it.
  */
 export function inPortOrder(
@@ -94,6 +95,12 @@ export function inPortOrder(
     const i = s ? Math.max(0, portsOf(s, catalogue).outputs.indexOf(port)) : 0;
     return out[from].y + HEAD + PORT * (i + 0.5);
   };
+  // Where a connection enters its node: the middle of its input port.
+  const enters = (to: string, port: string) => {
+    const s = nodes.get(to);
+    const i = s ? Math.max(0, portsOf(s, catalogue).inputs.indexOf(port)) : 0;
+    return out[to].y + HEAD + PORT * (i + 0.5);
+  };
   const columns = new Map<number, string[]>();
   for (const id of Object.keys(out)) columns.set(out[id].x, [...(columns.get(out[id].x) ?? []), id]);
   for (const x of [...columns.keys()].sort((a, b) => a - b)) {
@@ -102,7 +109,11 @@ export function inPortOrder(
     const byY = [...column].sort((a, b) => out[a].y - out[b].y);
     const key = (id: string) => {
       const feeds = graph.edges.filter((e) => e.to === id && out[e.from] && out[e.from].x < x);
-      return feeds.length ? feeds.reduce((sum, e) => sum + leaves(e.from, e.fromPort), 0) / feeds.length
+      if (feeds.length) return feeds.reduce((sum, e) => sum + leaves(e.from, e.fromPort), 0) / feeds.length;
+      // Fed by nothing (a read): by where it enters the nodes it feeds, so a join's left input sits
+      // above its right one and their connections do not cross.
+      const feeding = graph.edges.filter((e) => e.from === id && out[e.to] && out[e.to].x > x);
+      return feeding.length ? feeding.reduce((sum, e) => sum + enters(e.to, e.toPort), 0) / feeding.length
         : out[id].y + height(id) / 2;
     };
     const keys = new Map(byY.map((id) => [id, key(id)]));

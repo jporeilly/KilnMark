@@ -37,8 +37,17 @@ const NO_CONDITION: Change = { error: "Write the condition, for example clean.sc
 const blank = (choice: WhenChoice, condition: string) => choice === "condition" && condition.trim() === "";
 
 /**
- * The names of the saved pipelines, for the forms that ask which one a node runs; null while
- * loading, and never read unless `wanted`.
+ * Pipelines Kilnmark keeps for itself, never offered for a flow to run: sample-tables copies the
+ * sample data into a database for the Library's samples (Samples.SETUP on the server).
+ */
+export const INTERNAL_PIPELINES: ReadonlySet<string> = new Set(["sample-tables"]);
+
+/** The pipelines a flow's node may be set to run, by name: every saved one but Kilnmark's own. */
+export const offeredPipelines = (names: string[]) => names.filter((n) => !INTERNAL_PIPELINES.has(n));
+
+/**
+ * The names of the saved pipelines, for the forms that ask which one a node runs (Kilnmark's own
+ * left out); null while loading, and never read unless `wanted`.
  */
 export function usePipelineNames(wanted: boolean): string[] | null {
   const [names, setNames] = useState<string[] | null>(null);
@@ -47,7 +56,7 @@ export function usePipelineNames(wanted: boolean): string[] | null {
     let live = true;
     pipelinesApi
       .list()
-      .then((ps) => live && setNames(ps.map((p) => p.name)))
+      .then((ps) => live && setNames(offeredPipelines(ps.map((p) => p.name))))
       .catch(() => live && setNames([]));
     return () => {
       live = false;
@@ -168,7 +177,7 @@ export function FlowAddTools({
           </select>
         </div>
         {runsPipeline(type) && (
-          <div className="field">
+          <div className="field fd-field-long">
             <label htmlFor={`${id}-pipeline`}>Pipeline</label>
             {pipelines && pipelines.length > 0 ? (
               <select id={`${id}-pipeline`} value={pipelineName} onChange={(e) => setPipeline(e.target.value)}>
@@ -255,7 +264,8 @@ type Field = {
   most?: number;
 };
 
-const PIPELINE: Field = { key: "pipeline", label: "Pipeline", kind: "text", pipeline: true };
+// Pipeline names run long (sample-sql-before-and-after): given the room a message has.
+const PIPELINE: Field = { key: "pipeline", label: "Pipeline", kind: "text", pipeline: true, long: true };
 const VERSION: Field = { key: "version", label: "Version", kind: "number", hint: "Blank runs the latest saved version." };
 const MESSAGE: Field = { key: "message", label: "Message", kind: "text", long: true, most: 2000 };
 const TIMEOUT: Field = {

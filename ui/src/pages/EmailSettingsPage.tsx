@@ -7,12 +7,14 @@ import {
   type MailSecurity,
   type MailSettingsView,
   type TeamAddress,
+  plural,
 } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { Button, Card, DataTable, PageHeader, StatusChip, Switch } from "../components/ui";
 import { EmailChoiceFields, Locked, severityPhrase, type EmailChoices } from "../components/NotificationChoices";
 import { useFocusOn } from "./NotificationsPage";
+import { Who } from "../components/Who";
 
 const SECURITY: { value: MailSecurity; label: string }[] = [
   { value: "starttls", label: "STARTTLS (usually port 587)" },
@@ -189,7 +191,7 @@ function MailServer() {
       apply(v);
       setNotice(
         v.pausedAddresses.length > 0
-          ? `Mail settings saved. ${v.pausedAddresses.length} addresses are outside the allowed domains and are paused.`
+          ? `Mail settings saved. ${plural(v.pausedAddresses.length, "address", "addresses")} ${v.pausedAddresses.length === 1 ? "is" : "are"} outside the allowed domains and paused.`
           : "Mail settings saved.",
       );
     } catch (x) {
@@ -229,7 +231,7 @@ function MailServer() {
       )}
       {view.saved && view.updatedAt && (
         <p className="hint">
-          Last saved {formatTime(view.updatedAt)} by {view.updatedBy}.
+          Last saved {formatTime(view.updatedAt)} by <Who name={view.updatedBy} />.
         </p>
       )}
       <p role="status" className="notice">
@@ -669,9 +671,9 @@ function Teams({
                   <td className="small">
                     {!t.enabled
                       ? "Nothing (off)"
-                      : `${t.kinds.length} kinds, ${severityPhrase(t.minSeverity)}, ${
+                      : `${plural(t.kinds.length, "kind")}, ${severityPhrase(t.minSeverity)}, ${
                           t.mode === "digest" ? `daily at ${String(t.digestHour).padStart(2, "0")}:00` : "as they happen"
-                        }${t.sources ? `, ${t.sources.length} sources` : ", every source"}`}
+                        }${t.sources ? `, ${plural(t.sources.length, "source")}` : ", every source"}`}
                   </td>
                 </tr>
               ))}

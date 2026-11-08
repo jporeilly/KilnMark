@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { formatTime, notifyApi, type MailLogEntry } from "../api";
+import { formatTime, notifyApi, type MailLogEntry, plural } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { Card, DataTable, EmptyState, PageHeader, StatusChip, type Tone } from "../components/ui";
@@ -82,7 +82,7 @@ export function SentEmailsPage() {
                       {e.subject ?? e.kind}
                       <div className="muted">
                         {e.kind}
-                        {e.eventIds.length > 1 ? `, ${e.eventIds.length} events` : ""}
+                        {e.eventIds.length > 1 ? `, ${plural(e.eventIds.length, "event")}` : ""}
                       </div>
                     </td>
                     <td>

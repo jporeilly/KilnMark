@@ -31,7 +31,8 @@ const catalogue: SampleCatalogue = {
         title: "Read with a query",
         shows: "Runs one SELECT.",
         why: "Banks often count in the database.",
-        lookFor: "The run's reads.",
+        // as the samples' comments write it, lower-case after "Look for:"
+        lookFor: "the run's reads.",
         needs: "A PostgreSQL crm-db with Allow SQL on.\nPOST /api/v1/samples",
       },
     },
@@ -84,7 +85,7 @@ vi.mock("../api", async (original) => {
   };
 });
 
-const { LibraryPage, groupOf, groupSamples } = await import("./LibraryPage");
+const { LibraryPage, groupOf, groupSamples, sentenceStart } = await import("./LibraryPage");
 const { PipelinesPage } = await import("../pipelines/PipelinesPage");
 
 const host = document.createElement("div");
@@ -155,6 +156,13 @@ describe("the library", () => {
     ]);
     // a part the comment leaves out is not shown
     expect(parts(about[1]!)).toEqual([["What it shows", "Passes values on."]]);
+  });
+
+  test("each part starts as a sentence, unless it starts with something to type", () => {
+    expect(sentenceStart("the note under the read node.")).toBe("The note under the read node.");
+    expect(sentenceStart("each route's name is an output.")).toBe("Each route's name is an output.");
+    for (const typed of ["inputs: left and right.", "lpad, split_part and left.", "group_by and totals.", "shop-db (the shop schema).", "${vars.sample_region} as the file name."])
+      expect(sentenceStart(typed)).toBe(typed);
   });
 
   test("a template's card says what it is for, what to look for and what it needs", async () => {

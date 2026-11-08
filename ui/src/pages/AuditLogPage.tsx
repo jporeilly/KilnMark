@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { auditApi, formatTime, type AuditEvent } from "../api";
+import { auditApi, formatTime, type AuditEvent, plural } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { Card, DataTable, EmptyState, PageHeader, StatusChip, type Tone } from "../components/ui";
@@ -55,7 +55,7 @@ export function describe(e: AuditEvent): string {
   }
   if (e.action === "flow.sql") {
     const n = Number(d.statements ?? 0);
-    return `${n} ${n === 1 ? "statement" : "statements"} on ${String(d.source ?? "")}, version ${String(d.version ?? "")}`;
+    return `${plural(n, "statement")} on ${String(d.source ?? "")}, version ${String(d.version ?? "")}`;
   }
   if (e.action === "token.created") {
     const parts = [String(d.role ?? "")];

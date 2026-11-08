@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Card, EmptyState, PageHeader, StatusChip } from "../components/ui";
 import { Icon } from "../components/icons";
-import { aiApi, formatNumber, type AskResult, type HybridHit, type QueryPlan, type SearchHitWithSnippet } from "../api";
+import { aiApi, type AskResult, type HybridHit, type QueryPlan, type SearchHitWithSnippet, plural } from "../api";
 import { go, href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { KindIcon } from "../components/KindIcon";
@@ -74,7 +74,7 @@ export function SearchPage({ q, ask }: { q: string; ask: boolean }) {
       )}
       {answer && <Interpreted answer={answer} />}
       <div role="status" className="result-count">
-        {error ? "" : q && hits === null ? (ask ? "Working out your question…" : "Searching…") : hits ? `${hits.length} ${hits.length === 1 ? "result" : "results"}` : ""}
+        {error ? "" : q && hits === null ? (ask ? "Working out your question…" : "Searching…") : hits ? `${plural(hits.length, "result")}` : ""}
       </div>
       {note && <p className="meta">{note}</p>}
       {error && <p role="alert" className="error">{error}</p>}
@@ -101,7 +101,7 @@ export function SearchPage({ q, ask }: { q: string; ask: boolean }) {
                   {h.kind}
                 </StatusChip>{" "}
                 in <strong>{h.source}</strong>
-                {h.rowCount != null && <> · {formatNumber(h.rowCount)} rows</>}
+                {h.rowCount != null && <> · {plural(h.rowCount, "row")}</>}
                 {h.matchedBy?.length > 0 && <> · Matched by {h.matchedBy.map((m) => MATCHED[m] ?? m).join(" and ")}</>}
               </p>
               {h.description && <p>{h.description}</p>}

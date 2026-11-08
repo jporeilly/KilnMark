@@ -1,4 +1,5 @@
 import type { FlowItemRun, FlowNodeRun, FlowNodeStatus, FlowRunDetail } from "../api";
+import { plural } from "../api";
 import { offsetWords } from "../pipelines/timeline";
 
 /** One node of a flow run on the chart: when it started and ended, in ms from the run's start. */
@@ -66,7 +67,7 @@ export function itemsProgress(items: FlowItemRun[]): string {
   const cancelled = items.filter((i) => i.status === "cancelled").length;
   const notRun = items.filter((i) => i.status === "skipped").length;
   return [
-    `${done.length} of ${items.length} ${items.length === 1 ? "item" : "items"} done`,
+    `${done.length} of ${plural(items.length, "item")} done`,
     ...(failed ? [`${failed} failed`] : []),
     ...(cancelled ? [`${cancelled} cancelled`] : []),
     ...(notRun ? [`${notRun} not run`] : []),

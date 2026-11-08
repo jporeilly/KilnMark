@@ -1,5 +1,5 @@
 import { Fragment, useState } from "react";
-import { formatNumber, formatTime, type Asset, type Field, type HistogramBin, type Profile } from "../api";
+import { formatNumber, formatTime, type Asset, type Field, type HistogramBin, type Profile, plural } from "../api";
 
 const percent = new Intl.NumberFormat("en-GB", { style: "percent", maximumFractionDigits: 1 });
 
@@ -27,8 +27,8 @@ function rangeText(p: Profile | null) {
   if (!p) return "–";
   if (p.min_length != null && p.max_length != null) {
     return p.min_length === p.max_length
-      ? `${p.min_length} characters`
-      : `${p.min_length} to ${p.max_length} characters`;
+      ? plural(p.min_length, "character")
+      : `${formatNumber(p.min_length)} to ${plural(p.max_length, "character")}`;
   }
   if (p.true != null) return `${formatNumber(p.true)} true`;
   if (p.min != null && p.max != null) return `${value(p.min)} to ${value(p.max)}`;
@@ -97,8 +97,8 @@ function ColumnDetail({ field, primaryKey }: { field: Field; primaryKey: string[
   if (p.p75 != null) facts.push(["Upper quartile", value(p.p75)]);
   if (p.max != null) facts.push(["Largest", value(p.max)]);
   if (p.mean != null) facts.push(["Mean", p.mean]);
-  if (p.min_length != null) facts.push(["Shortest", `${formatNumber(p.min_length)} characters`]);
-  if (p.max_length != null) facts.push(["Longest", `${formatNumber(p.max_length)} characters`]);
+  if (p.min_length != null) facts.push(["Shortest", plural(p.min_length, "character")]);
+  if (p.max_length != null) facts.push(["Longest", plural(p.max_length, "character")]);
   if (p.true != null && values > 0) facts.push(["True", `${formatNumber(p.true)} (${percent.format(p.true / values)})`]);
   return (
     <div className="col-detail">

@@ -15,6 +15,7 @@ import {
   type PipelineValidation,
   type PipelineVersion,
   type PipelineVersionSummary,
+  plural,
 } from "../api";
 import { go, href } from "../router";
 import { useTitle } from "../components/useTitle";
@@ -33,6 +34,8 @@ import type { Graph } from "./canvas/model";
 import { SchedulesSection } from "../schedules/SchedulesSection";
 import { ScheduledNext, useSchedules } from "../schedules/SchedulesTable";
 import "./pipelines.css";
+import { Who } from "../components/Who";
+import { noticeText, statusIn, type Notice } from "../components/runNotice";
 
 // The graph library is large, so the graph and the canvas load when the page first shows one.
 const PipelineDiagram = lazy(() => import("./PipelineDiagram"));
@@ -95,7 +98,7 @@ export function PipelinePage({
   const [checkError, setCheckError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<Notice>("");
   const [saving, setSaving] = useState(false);
   const [versions, setVersions] = useState<PipelineVersionSummary[] | null>(null);
   const [runs, setRuns] = useState<PipelineRun[] | null>(null);
@@ -438,7 +441,7 @@ export function PipelinePage({
     setError(null);
     try {
       const run = await pipelinesApi.run(name);
-      setNotice(`Run ${run.id} of version ${run.version} is queued.`);
+      setNotice({ run: run.id, of: `version ${run.version}` });
       // Its progress is shown under the canvas, live.
       setStartedRun(run.id);
       dock.show("run");
@@ -511,8 +514,8 @@ export function PipelinePage({
       : check == null
         ? ""
         : problems.length === 0
-          ? `No problems. ${check.nodes.length} ${check.nodes.length === 1 ? "node" : "nodes"}.`
-          : `${problems.length} ${problems.length === 1 ? "problem" : "problems"}.`;
+          ? `No problems. ${plural(check.nodes.length, "node")}.`
+          : `${plural(problems.length, "problem")}.`;
 
   return (
     <>
@@ -608,7 +611,7 @@ export function PipelinePage({
       )}
       {viewing && shown && (
         <p className="small muted">
-          Saved {formatTime(shown.createdAt)} by {shown.author}
+          Saved {formatTime(shown.createdAt)} by <Who name={shown.author} />
           {shown.message && <>: “{shown.message}”</>}. Read-only.{" "}
           {name && <a href={href.pipeline(name)}>Back to the latest version</a>}
         </p>
@@ -616,7 +619,7 @@ export function PipelinePage({
       {fromTemplate && <p className="hint">{fromTemplate}</p>}
       {name && detail && !viewing && <OwnersSection kind="pipeline" name={name} role={role} />}
       <p role="status" className="notice">
-        {notice}
+        {noticeText(notice, typeof notice === "string" ? null : statusIn(runs, notice.run))}
       </p>
       {error && (
         <p role="alert" className="error" tabIndex={-1} ref={errorRef}>
@@ -860,7 +863,7 @@ export function PipelinePage({
                               ) : (
                                 <details>
                                   <summary>
-                                    {outs} {outs === 1 ? "column" : "columns"}
+                                    {plural(outs, "column")}
                                   </summary>
                                   {columnsText(s)}
                                 </details>
@@ -934,7 +937,7 @@ export function PipelinePage({
                           </td>
                           <td>{r.version}</td>
                           <td className="small">
-                            {formatTime(r.requestedAt)} by {r.requestedBy}
+                            {formatTime(r.requestedAt)} by <Who name={r.requestedBy} />
                           </td>
                           <td>{runTime(r)}</td>
                           <td>{formatNumber(r.rowsWritten)}</td>
@@ -964,11 +967,11 @@ export function PipelinePage({
                       {!v.valid && (
                         <span className="pl-bad">
                           {" "}
-                          · {v.problems} {v.problems === 1 ? "problem" : "problems"}
+                          · {plural(v.problems, "problem")}
                         </span>
                       )}
                       <div className="small muted">
-                        {formatTime(v.createdAt)} by {v.author}
+                        {formatTime(v.createdAt)} by <Who name={v.author} />
                         {v.message && <>: {v.message}</>}
                       </div>
                     </li>
@@ -1010,7 +1013,7 @@ export function PipelinePage({
           {check && check.notes.length > 0 && (
             <details className="small">
               <summary>
-                {check.notes.length} {check.notes.length === 1 ? "note" : "notes"} (do not stop a run)
+                {plural(check.notes.length, "note")} (do not stop a run)
               </summary>
               <ul>
                 {check.notes.map((n, i) => (

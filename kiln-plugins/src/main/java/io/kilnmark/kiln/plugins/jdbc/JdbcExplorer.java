@@ -62,7 +62,7 @@ final class JdbcExplorer {
                     continue; // a driver that ignores the escape matched a look-alike
                 }
                 boolean decimal = type == java.sql.Types.DECIMAL || type == java.sql.Types.NUMERIC;
-                out.add(new TableDetail.Column(column, position, typeName, sized(type) ? size : null,
+                out.add(new TableDetail.Column(column, position, typeName, ownSize(type, size),
                     decimal ? digits : null, nullable, hasDefault, generated, null));
             }
         }
@@ -189,6 +189,19 @@ final class JdbcExplorer {
     private static String qualified(String catalog, String schema, String table) {
         String container = schema != null ? schema : catalog;
         return container == null ? table : container + "." + table;
+    }
+
+    /** The largest size a column is taken to have set; a driver gives more (PostgreSQL's text: 2147483647) for none. */
+    static final int MOST_SIZE = 999_999;
+
+    /**
+     * A column's size, where its type has one of its own and it is a size someone set: null for a type
+     * without one, and for 0 or a size over {@value #MOST_SIZE}, which drivers give for no limit
+     * (PostgreSQL's text and unconstrained varchar). So Explore shows {@code text}, not
+     * {@code text(2147483647)}, as the SQL the generator writes does.
+     */
+    static Integer ownSize(int type, Integer size) {
+        return sized(type) && size != null && size > 0 && size <= MOST_SIZE ? size : null;
     }
 
     private static boolean sized(int type) {

@@ -4,6 +4,7 @@ import { allows, formatNumber } from "../api";
 import { useRole } from "../components/role";
 import { href } from "../router";
 import { browseApi, type Relationship, type RelationshipEnd } from "./browseApi";
+import { Who } from "../components/Who";
 
 const percent = new Intl.NumberFormat("en-GB", { style: "percent", maximumFractionDigits: 0 });
 
@@ -154,7 +155,7 @@ export function RelationshipTable({
                     </span>
                     {r.decidedBy && (
                       <span className="muted small">
-                        {r.decidedBy === AUTO_ACCEPTED_BY ? "Automatically, at 95% or more" : `by ${r.decidedBy}`}
+                        {r.decidedBy === AUTO_ACCEPTED_BY ? "Automatically, at 95% or more" : <>by <Who name={r.decidedBy} /></>}
                       </span>
                     )}
                   </div>

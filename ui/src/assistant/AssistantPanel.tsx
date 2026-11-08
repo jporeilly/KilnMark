@@ -5,6 +5,7 @@ import type { AssistantAnswer, AssistantCitation } from "./api";
 import { pageHint, suggestions } from "./context";
 import type { AssistantState, Exchange } from "./useAssistant";
 import "./assistant.css";
+import { plural } from "../api";
 
 const MAX = 2000;
 
@@ -258,7 +259,7 @@ export function AssistantPanel({
         <div className="assistant-form-row">
           <span id="assistant-q-hint" className="hint">
             Enter to ask, Shift+Enter for a new line.
-            {text.length > MAX - 200 && ` ${MAX - text.length} characters left.`}
+            {text.length > MAX - 200 && ` ${plural(MAX - text.length, "character")} left.`}
           </span>
           <button type="submit" className="primary" aria-disabled={!text.trim() ? "true" : undefined}>
             Ask

@@ -32,7 +32,6 @@ import {
 import {
   allows,
   api,
-  formatNumber,
   pipelinesApi,
   type PipelineRunProgress,
   type PipelineNodeQuality,
@@ -40,6 +39,7 @@ import {
   type PipelineValidation,
   type Source,
   type NodeType,
+  plural,
 } from "../../api";
 import { useColourScheme } from "../../theme/appearance";
 import { columnsText } from "../outline";
@@ -48,6 +48,7 @@ import { predictedWords, predictionApi, predictionsByNode, type Prediction, type
 import { liveEdgeRows, liveNodes } from "../live";
 import { kindWord, problemsByNode, nodeLabel, nodeSummary } from "./insight";
 import { autoLayout, makeRoom, nodeHeight, placed, spotAfter, type EdgeLabel, type LayoutSizes } from "./layout";
+import { FIT_PAD, fitBesideMap, fitZoom, type Box } from "./fit";
 import {
   addNode,
   catalogueOf,
@@ -312,7 +313,7 @@ function Canvas(props: CanvasProps) {
         ? (live.get(`${e.from}.${e.fromPort}>${e.to}.${e.toPort}`) ?? null)
         : (rows.get(e.from)?.ports?.out?.[e.fromPort] ?? (e.fromPort === "out" ? rows.get(e.from)?.rowsOut : null));
       const parts = [plain ? "" : e.toPort === "in" || e.toPort === "main" ? e.fromPort : `${e.fromPort} → ${e.toPort}`];
-      if (run && counted != null) parts.push(`${formatNumber(counted)} rows`);
+      if (run && counted != null) parts.push(plural(counted, "row"));
       out.set(edgeId(e), parts.filter(Boolean).join(" · "));
     }
     return out;
@@ -331,6 +332,14 @@ function Canvas(props: CanvasProps) {
     // Cleared first, so the same words twice are read out twice.
     setAnnounce("");
     window.setTimeout(() => setAnnounce(words), 30);
+  }, []);
+
+  /** Where the overview map is, in canvas pixels; null while it is not shown (narrow screens). */
+  const minimapBox = useCallback((): Box | null => {
+    const box = flowBox.current?.getBoundingClientRect();
+    const map = flowBox.current?.querySelector<HTMLElement>(".react-flow__minimap")?.getBoundingClientRect();
+    if (!box || !map || map.width === 0 || map.height === 0) return null;
+    return { x: map.left - box.left, y: map.top - box.top, width: map.width, height: map.height };
   }, []);
 
   /** The part of the canvas not under the node list, in canvas pixels. */
@@ -600,12 +609,12 @@ function Canvas(props: CanvasProps) {
           `Node ${s.id}, ${kindWord(t?.kind)}: ${nodeLabel(s, t?.label ?? s.type ?? "no type")}`,
           summary,
           s.inputs.length ? `reads from ${s.inputs.map((l) => refText(l.from, l.fromPort)).join(" and ")}` : "",
-          n ? `${n} ${n === 1 ? "problem" : "problems"}` : "",
+          n ? `${plural(n, "problem")}` : "",
           runInfo ? `${runInfo.live ? "running now" : "last run"}: ${runWords(runInfo)}` : "",
           qualityText ?? "",
           predictedWords(estimate) ?? "",
           estimate?.unknown.length
-            ? `${estimate.unknown.length} ${estimate.unknown.length === 1 ? "thing" : "things"} the estimate could not tell, listed in its settings`
+            ? `${plural(estimate.unknown.length, "thing")} the estimate could not tell, listed in its settings`
             : "",
         ]
           .filter(Boolean)
@@ -669,15 +678,13 @@ function Canvas(props: CanvasProps) {
       const all = flow.getNodes();
       if (!area || all.length === 0) return;
       const b = getNodesBounds(all);
-      const pad = 28;
-      const fits = Math.min(1, (area.width - 2 * pad) / Math.max(b.width, 1), (area.height - 2 * pad) / Math.max(b.height, 1));
+      const pad = FIT_PAD;
+      // The overview map covers the bottom-right corner: the nodes are fitted beside it, never under it.
+      const map = minimapBox();
+      const fits = fitZoom(b, area, map);
       const opts = { duration: animate ? duration : 0 };
       if (fitInside || fits >= MIN_READABLE) {
-        const z = Math.max(0.1, fits);
-        void flow.setViewport(
-          { x: area.left + (area.width - b.width * z) / 2 - b.x * z, y: area.top + (area.height - b.height * z) / 2 - b.y * z, zoom: z },
-          opts,
-        );
+        void flow.setViewport(fitBesideMap(b, area, map), opts);
         return;
       }
       // Too big to read whole: its first nodes at the smallest readable size, centred on them.
@@ -687,7 +694,7 @@ function Canvas(props: CanvasProps) {
       const y = fb.height * z < area.height - 2 * pad ? (area.height - fb.height * z) / 2 - fb.y * z : pad - fb.y * z;
       void flow.setViewport({ x: area.left + pad - b.x * z, y, zoom: z }, opts);
     },
-    [flow, duration, visibleArea],
+    [flow, duration, visibleArea, minimapBox],
   );
   /** Fits the whole pipeline into the visible part of the canvas, however small that makes it. */
   const fitAll = useCallback((animate = true) => frame(true, animate), [frame]);
@@ -1236,7 +1243,7 @@ function Canvas(props: CanvasProps) {
             if (id && id !== selected) selectNode(id);
           }}
           role="region"
-          aria-label={`Canvas of ${props.title}: ${graph?.nodes.length ?? 0} nodes. Press question mark for keyboard shortcuts.`}
+          aria-label={`Canvas of ${props.title}: ${plural(graph?.nodes.length ?? 0, "node")}. Press question mark for keyboard shortcuts.`}
         >
           <ReactFlow<NodeCardType, Edge>
             nodes={flowNodes}
@@ -1272,7 +1279,7 @@ function Canvas(props: CanvasProps) {
               flush();
               const next = { ...positions };
               for (const n of moved) next[n.id] = n.position;
-              apply(setPositions(yamlRef.current, next), moved.length === 1 ? `Moved ${moved[0].id}.` : `Moved ${moved.length} nodes.`);
+              apply(setPositions(yamlRef.current, next), moved.length === 1 ? `Moved ${moved[0].id}.` : `Moved ${plural(moved.length, "node")}.`);
             }}
             onConnect={onConnect}
             onConnectEnd={onConnectEnd}

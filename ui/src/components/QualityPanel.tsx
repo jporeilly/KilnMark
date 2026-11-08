@@ -17,6 +17,7 @@ import {
   type RuleResult,
   type RuleView,
   type SampleRows,
+  plural,
 } from "../api";
 import { href } from "../router";
 import { docHref } from "../docs/links";
@@ -263,10 +264,10 @@ function Scores({ quality, rules }: { quality: AssetQuality; rules: RuleView[] }
         <div>
           <h3 className="km-score-card-title">Overall quality{overall ? `: ${rating(overall.score).word}` : ""}</h3>
           <p className="km-score-card-text">
-            {ran.length > 0 ? `${passing} of ${ran.length} rules pass` : "No rule results yet"}
+            {ran.length > 0 ? `${passing} of ${plural(ran.length, "rule")} ${passing === 1 ? "passes" : "pass"}` : "No rule results yet"}
             <br />
             Profiled {formatAgo(v.observedAt)}
-            {v.estimate && ` · estimated from ${formatNumber(v.sampledRows)} rows (${v.samplePercent}%)`}
+            {v.estimate && ` · estimated from ${plural(v.sampledRows, "row")} (${v.samplePercent}%)`}
             {v.origin !== "kilnmark" && ` · imported from ${v.origin}`}
           </p>
         </div>
@@ -303,7 +304,7 @@ function resultText(view: RuleView): { tone: Tone; text: string; detail: string 
     view.rule.type === "freshness" || view.rule.type === "row_count" || view.rule.type === "row_count_change"
       ? null
       : view.rule.thresholdUnit === "count" && l.failing != null
-        ? `${formatNumber(l.failing)} rows`
+        ? plural(l.failing, "row")
         : share != null
           ? formatShare(share)
           : null;
@@ -327,7 +328,7 @@ function History({ results, name }: { results: RuleResult[] | undefined; name: s
     count("fail") && `${count("fail")} failed`,
     count("error") && `${count("error")} could not run`,
   ].filter(Boolean);
-  const label = `${name}: last ${results.length} ${results.length === 1 ? "result" : "results"}, ${parts.join(", ")}; latest ${STATUS[results[0].status].toLowerCase()}`;
+  const label = `${name}: last ${plural(results.length, "result")}, ${parts.join(", ")}; latest ${STATUS[results[0].status].toLowerCase()}`;
   return (
     <span className="km-history" role="img" aria-label={label}>
       {oldestFirst.map((r) => (
@@ -577,7 +578,7 @@ function Recommendations({
           <div className={`km-callout ${summary.failed.length ? (summary.ok.length ? "" : "km-callout--bad") : "km-callout--good"}`}>
             {summary.ok.length > 0 && (
               <p>
-                Added {summary.ok.length} {summary.ok.length === 1 ? "rule" : "rules"}: {summary.ok.join(", ")}.
+                Added {plural(summary.ok.length, "rule")}: {summary.ok.join(", ")}.
                 {summary.failed.length === 0 && " They run after the next scan, or press Run rules now."}
               </p>
             )}
@@ -605,7 +606,7 @@ function Recommendations({
       ) : (
         <>
           <p className="km-card-sub">
-            {list.length} {list.length === 1 ? "suggestion" : "suggestions"}. Tick the ones you want and add them together.
+            {plural(list.length, "suggestion")}. Tick the ones you want and add them together.
           </p>
           <FilterChips
             scroll
@@ -747,7 +748,7 @@ function Patterns({
       </div>
       <DataTable
         label={`Value shapes of ${column.field} (scrolls sideways)`}
-        caption={`Value shapes of ${column.field}, most frequent first, with their share of ${formatNumber(column.values)} values`}
+        caption={`Value shapes of ${column.field}, most frequent first, with their share of ${plural(column.values, "value")}`}
         className="patterns"
       >
         <thead>
@@ -950,7 +951,7 @@ function Samples({
             showCaption
             caption={
               <>
-                {formatNumber(sample.rows.length)} of {formatNumber(sample.seen)} rows,{" "}
+                {formatNumber(sample.rows.length)} of {plural(sample.seen, "row")},{" "}
                 {sample.method === "key"
                   ? `chosen by the hash of ${sample.keyFields?.join(", ")}`
                   : sample.method === "row"

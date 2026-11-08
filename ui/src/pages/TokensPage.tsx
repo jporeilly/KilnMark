@@ -3,6 +3,7 @@ import { PageHeader, Switch } from "../components/ui";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { accessReviewApi, aiApi, api, formatTime, type AccessRole, type ApiToken, type CreatedToken, type Me } from "../api";
 import { useTitle } from "../components/useTitle";
+import { Who } from "../components/Who";
 
 // The box shows the name; what the chosen role may do is said under it, so no option is cut short.
 const ROLES: { value: AccessRole; label: string; help: string }[] = [
@@ -172,7 +173,7 @@ export function TokensPage({ me }: { me: Me }) {
                       {t.unmask ? <strong>Unmasked</strong> : "Masked"}
                       {t.unmaskRequestedBy && (
                         <div className="small">
-                          <span className="muted">Asked by {t.unmaskRequestedBy}; another person, signed in with your identity provider, must approve</span>
+                          <span className="muted">Asked by <Who name={t.unmaskRequestedBy} />; another person, signed in with your identity provider, must approve</span>
                           <div className="copy-row">
                             <button type="button" onClick={() => decide(t, true)} aria-label={`Approve ${t.name} seeing sensitive values`}>
                               Approve
@@ -190,7 +191,9 @@ export function TokensPage({ me }: { me: Me }) {
                     </td>
                     <td className="small">
                       {formatTime(t.createdAt)}
-                      <div className="muted">by {t.createdBy}</div>
+                      <div className="muted">
+                        by <Who name={t.createdBy} />
+                      </div>
                     </td>
                     <td className="small">{t.expiresAt ? formatTime(t.expiresAt) : "Never"}</td>
                     <td className="small">{t.lastUsedAt ? formatTime(t.lastUsedAt) : "Not yet"}</td>

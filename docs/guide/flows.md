@@ -557,7 +557,8 @@ The panel under the diagram has the same tabs as a pipeline's:
 ![A flow's page: the diagram, with the node copy, which runs a pipeline, joined from its out connector to a notice and to a second pipeline by two amber connections labelled with their conditions, and to a closing notice by a red dashed connection on failure that runs round the nodes between; the second pipeline joins the closing notice on success. Under it the Nodes tab, a table giving each node, what it does, what it runs after, and its status, start, time and result in the latest run](images/flow-diagram-edit.png)
 
 - **Add a node.** In the **Nodes** tab, choose its type (and, for one that runs a pipeline, the
-  pipeline), then **Add node**. It gets an id from its type or pipeline, and the settings it starts
+  pipeline: every saved pipeline but `sample-tables`, which Kilnmark keeps to copy the sample data),
+  then **Add node**. It gets an id from its type or pipeline, and the settings it starts
   with, and its settings open; the problems under the flow say what else it needs, such as a `sql`
   node's source.
 - **Connect two nodes.** Drag from a node's `out` connector to another node: that connection is taken
@@ -666,7 +667,8 @@ A run page is laid out as a pipeline run's, in this order:
   kept current while the run goes;
 - the **run timeline**: the whole run on one time line from its start, nested as it ran. One
   sentence says when it started, how long it took and how it ended. Under the flow's own row is a
-  row for each node, with an icon for its type, the pipeline it runs beside its name, and how long
+  row for each node, with the icon its type has on the diagram (a raised hand for a `stop`), the
+  pipeline it runs beside its name, and how long
   it took at the end of its bar. A node that ran a pipeline opens (▾) into that pipeline run's
   nodes, placed from when the run started; a `for-each` node opens into a row per item, its value
   beside it, and each item into its pipeline's nodes. Bars are soft violet for the flow, teal for

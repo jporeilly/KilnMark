@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { IconPlayerPlay, IconPlayerStop } from "@tabler/icons-react";
-import { ApiError, allows, formatNumber, pipelinesApi, type AccessRole, type NodePreview } from "../../api";
+import { ApiError, allows, formatNumber, pipelinesApi, type AccessRole, type NodePreview, plural } from "../../api";
 import { PreviewTable } from "../../components/PreviewTable";
 
 /** The last preview shown in the Preview tab, kept by the canvas while another tab is shown. */
@@ -20,7 +20,7 @@ export function secondsWords(ms: number): string {
 
 /** What the preview found, in one sentence. */
 export function previewSummary(v: NodePreview): string {
-  const rows = `${formatNumber(v.rowCount)} ${v.rowCount === 1 ? "row" : "rows"}`;
+  const rows = `${plural(v.rowCount, "row")}`;
   const where = `${v.node}${v.port === "out" ? "" : ` (${v.port})`}`;
   if (v.rowCount === 0) return `No rows left ${where}. It took ${secondsWords(v.millis)}.`;
   if (v.complete) return `All ${rows} leaving ${where}, in ${secondsWords(v.millis)}.`;

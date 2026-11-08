@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { PageHeader } from "../components/ui";
-import { allows, formatNumber } from "../api";
+import { allows, formatNumber, plural } from "../api";
 import { useRole } from "../components/role";
 import { useTitle } from "../components/useTitle";
 import { go, href } from "../router";
@@ -99,7 +99,7 @@ export function RelationshipsPage({ status }: { status: string }) {
       {page && (
         <section className="panel" aria-labelledby="rel-h">
           <h2 id="rel-h">
-            {formatNumber(page.total)} {page.total === 1 ? "relationship" : "relationships"}
+            {plural(page.total, "relationship")}
           </h2>
           <RelationshipTable
             relationships={page.items}

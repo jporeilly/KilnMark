@@ -3,7 +3,7 @@
  * what a run writes"): scores as a percentage and a word, never by colour alone, and what a gate
  * did with the rows. Pure functions, unit tested.
  */
-import { formatNumber, formatScore, rating, type GateOutcome, type PipelineNodeQuality } from "../api";
+import { formatNumber, formatScore, rating, type GateOutcome, type PipelineNodeQuality, plural } from "../api";
 
 export const DIMENSION_WORDS: Record<string, string> = {
   completeness: "Completeness",
@@ -24,7 +24,6 @@ export const percent = (score: number) => formatScore(score);
 /** "Quality 98% (Good)". */
 export const scoreWords = (score: number) => `Quality ${percent(score)} (${rating(score).word})`;
 
-const plural = (n: number, one: string, many = `${one}s`) => `${formatNumber(n)} ${n === 1 ? one : many}`;
 
 /** What a gate did with the rows: "900 passed · 100 quarantined". */
 export function gateWords(g: GateOutcome): string {

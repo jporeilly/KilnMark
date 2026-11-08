@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { formatNumber, formatTime, type Asset } from "../api";
+import { formatNumber, formatTime, type Asset, plural } from "../api";
 import { href } from "../router";
 import { browseApi, type Relationship } from "../browse/browseApi";
 import { RelationshipTable } from "../browse/RelationshipTable";
@@ -113,7 +113,7 @@ export function TableDetails({ asset, part }: { asset: Asset; part: "overview" |
           <>
             {relationships.length > 0 && (
               <p className="muted">
-                Refers to {outgoing} {outgoing === 1 ? "asset" : "assets"}; referred to by {incoming}
+                Refers to {plural(outgoing, "asset")}; referred to by {incoming}
                 {relationships.length < total ? ` (of the first ${formatNumber(relationships.length)} shown)` : ""}.
               </p>
             )}

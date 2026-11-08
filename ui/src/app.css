@@ -95,6 +95,11 @@ a:hover {
   font-family: var(--km-mono);
 }
 
+/* Who did something (Who.tsx): a long sign-in name wraps rather than widening its table. */
+.km-who {
+  overflow-wrap: anywhere;
+}
+
 .num,
 .km-table td,
 .facts dd {

@@ -14,6 +14,7 @@ import {
   type AiSettings,
   type AiStatus,
   type AiTestResult,
+  plural,
 } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
@@ -392,7 +393,7 @@ function FindModels({
       ? ""
       : found.length === 0
         ? "No model server answered. The reasons are listed below."
-        : `Found ${found.length} model ${found.length === 1 ? "server" : "servers"} with ${models} ${models === 1 ? "model" : "models"}.`;
+        : `Found ${found.length} model ${found.length === 1 ? "server" : "servers"} with ${plural(models, "model")}.`;
   return (
     <section aria-labelledby="find-h" className="panel">
       <h2 id="find-h">Find local models</h2>

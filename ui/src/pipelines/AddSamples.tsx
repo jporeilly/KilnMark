@@ -8,6 +8,7 @@ import {
   type SampleOutcome,
   type SamplePlaceholder,
   type Source,
+  plural,
 } from "../api";
 import { href } from "../router";
 import { RunStatus } from "./RunStatus";
@@ -314,7 +315,7 @@ export function AddSamples({ onAdded }: { onAdded: () => void }) {
                       <label htmlFor={`sample-src-${p.name}`}>
                         <span className="mono">{p.name}</span>{" "}
                         <span className="muted small">
-                          ({all ? "every sample writes here" : `${using} ${using === 1 ? "sample" : "samples"}`})
+                          ({all ? "every sample writes here" : `${plural(using, "sample")}`})
                         </span>
                       </label>
                       <select
@@ -367,7 +368,7 @@ export function AddSamples({ onAdded }: { onAdded: () => void }) {
                       ? "Adding…"
                       : toAdd.length === 0
                         ? "Add samples"
-                        : `Add ${toAdd.length} ${toAdd.length === 1 ? "sample" : "samples"}`}
+                        : `Add ${plural(toAdd.length, "sample")}`}
                   </button>
                 </div>
               </fieldset>
@@ -385,7 +386,7 @@ export function AddSamples({ onAdded }: { onAdded: () => void }) {
             <p role="status">
               {added.length === 0
                 ? "No samples were added."
-                : `Added ${added.length} ${added.length === 1 ? "sample" : "samples"}.`}
+                : `Added ${plural(added.length, "sample")}.`}
               {created && (
                 <>
                   {" "}
