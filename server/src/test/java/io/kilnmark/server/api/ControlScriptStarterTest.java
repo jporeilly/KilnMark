@@ -1144,6 +1144,8 @@ class ControlScriptStarterTest {
         pb.environment().put("KILNMARK_SYSTEMCTL", fakeTimerTool(false).toString().replace('\\', '/'));
         pb.environment().put("KILNMARK_SYSTEMD_DIR", root.resolve("systemd").toString().replace('\\', '/'));
         pb.environment().put("KILNMARK_SCHTASKS", fakeTimerTool(true).toString());
+        // an account of its own, as Kilnmark runs as, even where the tests run as root (CI's containers)
+        pb.environment().put("KILNMARK_TEST_UID", "1000");
         pb.environment().put("FAKE_TIMER_LOG", root.resolve(System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT)
             .contains("win") ? "schtasks.log" : "systemctl.log").toString());
         pb.environment().put("FAKE_RMI_LOG", root.resolve("rmi.log").toString());
