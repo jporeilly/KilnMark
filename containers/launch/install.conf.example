@@ -1,0 +1,81 @@
+# Kilnmark's install answers, for an install with no questions:
+#   Linux:   sudo ./kilnmark.sh install --answers install.conf
+#   Windows: kilnmark.cmd install -Answers install.conf
+# Copy this file, set the answers you need, and leave out (or comment out) the rest: each has the
+# default shown. Install checks every answer before it changes anything, and names each problem by
+# its key and line. Check a file without installing: install --answers FILE --dry-run (-DryRun).
+#
+# This file holds NO secrets, and install refuses one in it. Every password and secret is
+# generated, or typed (not shown) when install asks, or piped in on standard input for an install
+# with no terminal: the identity provider's client secret (identity=own), or the first admin's
+# temporary password (identity=bundled with admin_email). Install keeps your answers, without
+# secrets, in config/install.conf in the data folder; configure changes them later.
+# One KEY=VALUE a line; a line starting with # is a comment.
+
+# The deployment mode, fixed at install and never changed (ADR 0051): production, for real work,
+# or starter-pack, for training, demonstrations and development only (example data and people).
+mode=production
+
+# How people sign in: own (your organisation's identity provider over OpenID Connect, recommended
+# for banks and other regulated organisations) or bundled (Kilnmark's own Keycloak). A Starter
+# Pack install always has bundled. Default: own on production, bundled on a Starter Pack install.
+identity=bundled
+
+# Your organisation's email domain. With the bundled Keycloak, the first admin's address must be at
+# it (or a subdomain). Empty: none. Never kilnmark.com, the Starter Pack's example people's.
+email_domain=bank.example
+
+# The host name people reach Kilnmark on: localhost (this machine only), a host name in lower case
+# or an IPv4 address. Anything but localhost needs tls=on or tls=proxy: sign-in works over HTTPS only.
+host=localhost
+
+# TLS: off (plain HTTP), on (Kilnmark ends TLS itself with your certificate) or proxy (a proxy or
+# load balancer in front ends TLS, and Kilnmark is reached as https://host).
+tls=off
+# With tls=on: the full paths of your certificate (PEM, with its chain) and its private key (PEM).
+# Install copies them into certs/https in the data folder.
+# tls_cert=/etc/ssl/kilnmark/server.crt
+# tls_key=/etc/ssl/kilnmark/server.key
+
+# The ports, each one free on this machine: Kilnmark's (plain HTTP), its HTTPS port (tls=on only),
+# its own database's (published on this machine only) and the bundled Keycloak's (this machine only).
+port=8780
+# https_port=8443
+db_port=5442
+keycloak_port=8180
+
+# With identity=bundled: Kilnmark's first admin, a person of your own in the bundled Keycloak, in
+# kilnmark-admins. Leave admin_email empty to add people later (people add). Their temporary
+# password is typed when install asks (or piped in); they choose their own at their first sign-in.
+admin_email=ada.lovelace@bank.example
+admin_first_name=Ada
+admin_last_name=Lovelace
+
+# With identity=own: your identity provider. Its client secret is typed when install asks (or piped
+# in). Register Kilnmark there with the redirect URI https://<host>/api/v1/auth/login.
+# oidc_issuer=https://login.bank.example/realms/staff
+# oidc_client_id=kilnmark
+# oidc_provider_name=Bank SSO
+# Its groups that give each role, comma-separated, exactly as the provider names them:
+# oidc_admin_groups=kilnmark-admins
+# oidc_designer_groups=kilnmark-designers
+# oidc_steward_groups=kilnmark-stewards
+# oidc_viewer_groups=kilnmark-viewers
+# oidc_unmask_groups=kilnmark-sensitive-data
+
+# The compose project's name: lower-case letters, digits, - and _. Another only for a second
+# install on one machine (with its own folders and ports). Fixed at install.
+project=kilnmark
+
+# The folders, fixed at install. A space in a path is fine.
+#   Linux:   program_dir=/opt/kilnmark (root's)   data_dir=/var/opt/kilnmark (the account's)
+#   Windows: program_dir=C:\Program Files\Kilnmark   data_dir=C:\ProgramData\Kilnmark (on the same drive)
+# program_dir=/opt/kilnmark
+# data_dir=/var/opt/kilnmark
+
+# Linux: the account that runs Kilnmark (made as a system account when it is not there). Never root.
+user=kilnmark
+# Windows: the account that runs Kilnmark day to day, as DOMAIN\name or name: whoever runs install,
+# which refuses another (sign in as the operator to install). Install gives it, SYSTEM and the
+# Administrators the data folder, and nobody else.
+# operator=BANK\kilnmark-ops

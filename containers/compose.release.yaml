@@ -13,7 +13,8 @@
 #   KILNMARK_ADMIN_TOKEN   required: Kilnmark's admin API token
 #   KILNMARK_PORT          optional: the port Kilnmark is published on (8780)
 #   KILNMARK_DB_PORT       optional: the port its database is published on, on this machine only (5442)
-#   KILNMARK_CERTS_DIR     optional: the folder holding server.crt and server.key for HTTPS (./tls)
+#   KILNMARK_CERTS_DIR     the folder holding server.crt and server.key for HTTPS: the control scripts
+#                          set it to certs/https in the data folder (./tls when run by hand)
 #   KILNMARK_SAMPLES_DB_PASSWORD   password of the Starter Pack's database login (the control script
 #                          makes one); unset, that database is not made and the pack cannot be turned on
 #   KILNMARK_FILES_DIR     optional: your own folder, read-only at /srv/share
@@ -62,7 +63,8 @@ services:
       PGSSLMODE: require
     # Its two passwords, the database's and the samples login's (KILNMARK_DB_PASSWORD and
     # KILNMARK_SAMPLES_DB_PASSWORD), are read from a file holding only them, which the control
-    # script writes for each run in a folder of its own (KILNMARK_RUN_DIR, under config/run) and
+    # script writes for each run in a folder of its own (KILNMARK_RUN_DIR, under config/run in the
+    # data folder) and
     # removes once the run is over: never config/.env whole, never its environment, which
     # podman-compose puts on podman's command line. No default: unset, nothing is made.
     volumes:
@@ -154,7 +156,7 @@ services:
       # (Documentation, "Branding and appearance"). Kilnmark reads /etc/kilnmark/branding; without
       # it, Kilnmark's own name and letter tiles are shown.
       # - ./branding:/etc/kilnmark/branding:ro,Z
-      # Certificate and key for HTTPS (INSTALL.md, "HTTPS"), read-only. Empty, Kilnmark serves plain
+      # Certificate and key for HTTPS (docs/guide/install/https.md), read-only. Empty, Kilnmark serves plain
       # HTTP; it reads them only when KILNMARK_TLS_CERT_FILE and KILNMARK_TLS_KEY_FILE are set.
       - ${KILNMARK_CERTS_DIR:-./tls}:/etc/kilnmark/tls:ro,Z
     depends_on:
@@ -239,10 +241,12 @@ services:
       start_period: 90s
       retries: 6
     ports:
-      # On this machine only: Keycloak's pages carry passwords and codes, so other machines reach
-      # it through a proxy here that ends TLS (INSTALL.md). Kilnmark reaches it inside this stack.
-      # If you change the port, change KILNMARK_KEYCLOAK_URL to match.
-      - "127.0.0.1:${KILNMARK_KEYCLOAK_PORT:-8180}:8080"
+      # On this machine only (127.0.0.1) unless KILNMARK_KEYCLOAK_BIND says otherwise: Keycloak's
+      # pages carry passwords and codes, so other machines reach it through a proxy that ends TLS
+      # (its realm asks for HTTPS from them). The guided install sets the address from its host
+      # name answer: 127.0.0.1 for localhost, else 0.0.0.0 for that proxy. Kilnmark reaches it
+      # inside this stack. If you change the port, change KILNMARK_KEYCLOAK_URL to match.
+      - "${KILNMARK_KEYCLOAK_BIND:-127.0.0.1}:${KILNMARK_KEYCLOAK_PORT:-8180}:8080"
 
   keycloak-setup:
     image: quay.io/keycloak/keycloak:26.8.1@sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332
@@ -289,7 +293,7 @@ services:
       - ./containers/keycloak/setup.sh:/opt/kilnmark/setup.sh:ro,Z
       # Keycloak's admin password and the client secret, in a file holding only them, which the
       # control script writes for each run in a folder of its own (KILNMARK_RUN_DIR, under
-      # config/run) and removes once the run is over: never config/.env whole, never its environment,
+      # config/run in the data folder) and removes once the run is over: never config/.env whole, never its environment,
       # which podman-compose puts on podman's command line, where other users of the machine can
       # read it.
       - ${KILNMARK_RUN_DIR:-../../config/run}/keycloak-setup.env:/run/kilnmark/env:ro,z

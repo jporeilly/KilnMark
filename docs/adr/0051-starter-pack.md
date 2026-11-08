@@ -4,10 +4,12 @@ Status: Accepted (6 November 2026; decision 5 amended the same day after a secur
 decisions 5 to 8 after a second; amended 7 November 2026 by the owner: two deployment modes, fixed
 at install (decisions 6 to 13), in place of a production setting and the start-up sweep; the
 people commands and Keycloak's backup the same day; then no upgrade from before modes, activation
-on production, and expiring temporary passwords; amended 8 November 2026 after a security review
-of 0.1.2: expiry reads credentials as JSON and fails closed, decision 10; groups compared whole and
-names without formatting characters, decision 10; the marked group found at any level and the realm
-checked before anything changes, decision 16)
+on production, and expiring temporary passwords; amended 8 November 2026 by the owner: the
+install layout and the guided install, decision 17, in place of the temporary Windows root of
+decision 15; amended 8 November 2026 after a security review of 0.1.2: expiry reads credentials
+as JSON and fails closed, decision 10; groups compared whole and names without formatting
+characters, decision 10; the marked group found at any level and the realm checked before
+anything changes, decision 16)
 
 ## Context
 
@@ -379,36 +381,27 @@ converted: Production or Starter Pack.
       must every folder above each (where `KILNMARK_ENGINE` is a link, the link's own folders
       too): when the timer is set up, and again at every `people expire`. The run's log is never
       written through a link, and `logs` is the account's alone (700).
-    - Windows, while the default install root is `C:\Kilnmark`: that default is temporary. The
-      guided install, the next change, moves Windows to `C:\Program Files\Kilnmark` (the program)
-      and `C:\ProgramData\Kilnmark` (its data), whose folders carry Windows' own guarantees of
-      who may change them (and Linux stays at `/opt/kilnmark`). The checks below were written for
-      `C:\Kilnmark`, under `C:\`, where every signed-in user may make folders; they stay, after
-      the move, as a second line of defence.
-    - Windows: the install root is the user's alone (nothing inherited, full control for the user's
-      SID and nobody else) from the moment `install` makes it: it is made with those permissions,
-      never made and then locked, and must then hold nothing and pass the checks below. So is every
-      folder `install` makes in it; one there already (a reinstall) that is not the user's, or is
-      a link or a junction, stops the install before anything is written into it, as does a
-      release folder or `config\.env` that fails the same check. `C:\` lets every signed-in user
-      change what is made in a new folder there, so a folder made first and locked after could be
-      taken in between. An existing root (the user's: `install` refuses anyone else's) has its
-      permissions written afresh, any other entry dropped, before `upgrade` unpacks into it and at
-      every `up` whatever the profile; when they cannot be written, `install`, `upgrade` and `up`
-      stop there. `up` judges the tree as it was before it cleaned it: a tree
-      someone else could change until then is not trusted for being cleaned (what they changed
-      cannot be seen), so the task is not set up that time, and the operator checks it (or
-      installs the release again) and starts again. Each must then be there, no link or junction,
-      owned by the user, SYSTEM or the Administrators, and nobody else may write it (a conditional
-      entry for anyone else counts, whatever it grants; an app container's or capability's SID
-      never does, since it only narrows what a process of someone who holds the right may do).
-      Every folder above the root must be no link or junction (it would lead wherever someone made
-      it lead), owned by the user, SYSTEM, the Administrators or TrustedInstaller, with nobody else
-      able to delete what is in it, delete it, or change its permissions or owner. `install`
-      refuses an existing root owned by anyone else, rather than taking it over
-      (`icacls /setowner`), since its owner could rewrite its permissions whenever they like. The
-      task names Windows PowerShell by its full path, never whichever one its `PATH` finds, and
-      quotes the script's path.
+    - Since decision 17 the program and its data are in two folders whose permissions install
+      sets once, as root or an administrator (`/opt/kilnmark` and `/var/opt/kilnmark`;
+      `C:\Program Files\Kilnmark` and `C:\ProgramData\Kilnmark`). The checks below stay as a
+      second line of defence, over both folders: what a run uses in the program folder (the
+      launcher, `data-folder.txt`, `current` or `current.txt`, the current version's
+      `compose.yaml` and `keycloak-setup`'s script) and in the data folder (`config/.env`,
+      `logs`), and every folder from each root down to it. A folder owned by root (Linux) or
+      the Administrators (Windows) and writable by nobody else passes, so the program folder
+      does.
+    - Windows: each must be there, no link or junction, owned by the operator, SYSTEM or the
+      Administrators, and nobody else may write it (a conditional entry for anyone else counts,
+      whatever it grants; an app container's or capability's SID never does, since it only
+      narrows what a process of someone who holds the right may do). Every folder above each root
+      must be no link or junction (it would lead wherever someone made it lead), owned by the
+      operator, SYSTEM, the Administrators or TrustedInstaller (which holds `C:\` and
+      `C:\Program Files`), with nobody else able to delete what is in it, delete it, or change
+      its permissions or owner; TrustedInstaller's rights on `C:\Program Files` count as the
+      Administrators' do. `up` no longer writes the folders' permissions: install set them, and a
+      folder that fails the checks stops the task being set up, and the hourly run, saying which.
+      The task names Windows PowerShell by its full path, never whichever one its `PATH` finds,
+      and quotes the script's path, which has a space in it (`C:\Program Files`).
     - The admin token goes only to a listener of the account's own. Before any call to Kilnmark's
       API (`people` commands, the hourly run's records), the control script checks who listens on
       Kilnmark's port, on the loopback or all addresses, and connects to `127.0.0.1`: on Linux
@@ -455,10 +448,81 @@ converted: Production or Starter Pack.
     up, which runs only on a Starter Pack install. Adding a source of that kind by hand or in a bulk
     import is refused on production with its own reason.
 
+17. **The install layout and the guided install** (owner, 8 November 2026). Foundation exists
+    to install and test the real thing, so release 0.1.2 installs where an operating system
+    keeps a program and its data, with folders whose permissions are set once by root or an
+    administrator, and asks its questions itself. There is no upgrade to it from 0.1.1 or from
+    the temporary Windows root of #135: 0.1.2 is a fresh install.
+    - **Two folders.** The program folder holds the releases (`versions/<version>/`, never
+      edited), `current` (Linux, a link) or `current.txt` (Windows), the launchers and
+      `data-folder.txt`, which names the data folder. The data folder holds `config/.env`,
+      `config/install.conf` (the answers), `config/run`, `certs/https`, `backups` and `logs`.
+      Volumes stay as they were.
+      - Linux: `/opt/kilnmark`, root's, read-only to everyone else; `/var/opt/kilnmark`, where the
+        Filesystem Hierarchy Standard puts the variable data of a package in `/opt`, the
+        account's (`700`; `config/.env` `600`). The account is `kilnmark` unless install is told
+        another: a system account made by install when it is not there, with rootless Podman's
+        id ranges and lingering (or the `docker` group).
+      - Windows: `C:\Program Files\Kilnmark`, the Administrators' (full control for them and
+        SYSTEM, read and run for Users, nothing inherited); `C:\ProgramData\Kilnmark`, the
+        operator's (modify), SYSTEM's and the Administrators' (full control), nobody else's,
+        nothing inherited. Each is made with those permissions from its first moment. The data
+        folder is on the program folder's drive: compose reaches the run's secrets and the
+        certificate by a path relative to `compose.yaml`, as some compose tools split a Windows
+        path at its drive letter's colon.
+      - Paths with spaces work everywhere: the task's `/TR` and the timer's `ExecStart` quote the
+        script; compose gets each path as one word; `backup.sh` and `restore.sh` take the compose
+        command a word a line (`KILNMARK_COMPOSE_LINES`).
+    - **Who runs what.** `install`, `upgrade` and `uninstall` change those folders, so they run as
+      root (Linux: the script says why and runs itself again with `sudo`) or ask Windows for an
+      administrator (UAC) for the one step that needs one, saying why, in a window of its own
+      whose log goes to the data folder's `logs`. Every other command runs as the operator (Linux:
+      the account; Windows: whoever ran install, which refuses to name another), never as root
+      and never elevated: each refuses otherwise, and Windows refuses an operator other than the
+      one install named. Podman runs as the operator, so its machine (Windows) or its rootless
+      store (Linux) is theirs, and they can read and write the data folder. On Windows install
+      itself runs from a prompt that is not elevated: only the folders' step is.
+    - **The guided install.** Install asks, each with its default and checked as it is answered:
+      the deployment mode (Starter Pack or Production; a Starter Pack install always has the
+      bundled Keycloak), the bundled Keycloak or the organisation's own OpenID Connect provider
+      (its issuer, client id and groups), the email domain (the first admin's address must be at
+      it), the host name, the ports (free, and two answers never one port), TLS (off, on with a
+      certificate, or a proxy that ends it; anything but `localhost` needs one of the last two,
+      as sign-in works over HTTPS only), and the first admin. API tokens only is no longer an
+      answer: a production install signs in with one of the two. Then it shows the answers and
+      asks to go on, and every step prints `[n/N]`, then OK or FAILED with the time it took and
+      one line saying why.
+    - **An answers file**, `--answers install.conf` (`-Answers`), holds the same answers for an
+      install with no questions, `install.conf.example` saying every key. It holds no secrets:
+      install refuses a key naming a password, secret or token, an unknown key or one given
+      twice, naming each by its line, never its value. The secrets are generated, or typed hidden
+      when install asks, or piped in on standard input (the identity provider's client secret,
+      or the first admin's temporary password). `--dry-run` checks the answers and the
+      prerequisites and changes nothing.
+    - **`configure KEY=VALUE`** changes an answer later, checks it as install does, writes
+      `config/.env` and `config/install.conf`, and runs again only what the answer affects: a
+      restart (a stop, then `up`) when Kilnmark is running for a setting of its containers, `people
+      add` for the first admin, nothing for the email domain. It refuses the mode (a mode change
+      is a new install, decision 6), the project and the folders.
+    - **`check`** knows the mode, and covers the machine and the install: Podman's version, its
+      compose, its machine, cgroups v2 and the pids controller, WSL's version (Podman needs WSL
+      2.7.11 on this kind of machine: 3.0.x breaks crun's pids controller), memory (5 GB with the
+      bundled Keycloak), disk, free ports, elevation or root, the folders' owners and who may
+      write them, the hourly run's checks, and what is running. Each problem prints the command
+      that fixes it.
+    - Carried over from #135, and true of the new layout: the admin token goes only to a listener
+      of the operator's (decision 15), the task names Windows PowerShell by its full path,
+      `keycloak-setup`'s lookups fail closed, and a person's groups are checked by full path
+      (decision 16).
+
 ## Consequences
 
-- A trial install is one command (`install --starter`), with the bundled Keycloak, and every sample
-  can run on day one. A production install never gets example data or example people, by any
+- A trial install is one command (`install --starter`, then the questions), with the bundled
+  Keycloak, and every sample can run on day one.
+- An install is two folders the operating system already protects; the second line of defence
+  over them stays. Installs from 0.1.1, and from the temporary Windows root of #135, are installed
+  afresh.
+- Install, upgrade and uninstall need root or an administrator once each; nothing else does. A production install never gets example data or example people, by any
   setting or API call.
 - Only a Starter Pack install carries the `kilnmark_samples` database and its login. It costs a few
   megabytes and holds nothing until the pack is turned on.

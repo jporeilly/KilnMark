@@ -175,8 +175,9 @@ secrets, and refuses to start, naming the missing one, while either is unset or 
 
 The key that encrypts stored source passwords is not a setting: the server generates it on first
 start in the `keys` volume. `.env.example` lists every variable, with the required ones empty and a
-comment on how to make each. The control script's `install` writes `.env` with new values for both
-(INSTALL.md, "A. Install a release"; ADR 0044); by hand, from a release folder:
+comment on how to make each. The control script's guided `install` writes `.env` with new values
+for both, from its answers (INSTALL.md; ADR 0044, ADR 0051 decision 17); by hand, from a release
+folder:
 
 ```
 cp .env.example .env && chmod 600 .env    # then fill in .env
@@ -198,8 +199,8 @@ server variable `<name>` as text when the server starts, unless it is set alread
 `/srv/files` is the writable `files` volume, and `/srv/share` the customer's own folder, read-only,
 when `KILNMARK_FILES_DIR` names it (else an empty volume). The AI profiles work as described in [AI models](#ai-models).
 
-**The deployment mode and the Starter Pack** (ADR 0051; INSTALL.md, "Choosing a deployment" and "Try
-Kilnmark with the Starter Pack"). Every install is production or a Starter Pack install, chosen at
+**The deployment mode and the Starter Pack** (ADR 0051; [Choosing a deployment](guide/install/choosing-a-deployment.md)
+and [A Starter Pack install](guide/install/starter-pack.md)). Every install is production or a Starter Pack install, chosen at
 install and recorded in Kilnmark's database at the first start (`ModeCheck`, `deployment_mode` in
 `kilnmark.server_setting`). On a Starter Pack install the release's compose also runs `samples-db`
 at every start (the compose profile `starter-pack`, which the control scripts add): a one-off in the
@@ -221,10 +222,14 @@ install only. `quarkusDev` and the tests are Starter Pack installs (`%dev` and `
 | `KILNMARK_FILES_DIR` (compose only) | none | The full path of the customer's own folder, mounted read-only at `/srv/share`; the control scripts refuse a path that is not absolute. Kilnmark's own folder, `/srv/files`, is the `files` volume, where the pack writes in `/srv/files/starter-pack` only |
 | `KILNMARK_STARTER` (`keycloak-setup` only) | `allowed` on a Starter Pack install | `allowed`: `kilnmark.sh starter people` may have `keycloak-setup` make the five example people; unset, `keycloak-setup` deletes the members of the group `kilnmark-starter-pack` at every start. Never on a production install |
 | `KILNMARK_PEOPLE_ACTIVATION_HOURS` (`keycloak-setup` only) | `72` | 1 to 720: a temporary password from the `people` commands unused for longer disables its person, at every run of `keycloak-setup` and hourly through `people expire` (only the temporary passwords those commands set, marked `kilnmark-temporary`); the control scripts refuse anything else |
-| `KILNMARK_RUN_DIR` (compose only) | `../../config/run` | The folder of this run's secrets files, `keycloak-setup.env` and `samples-db.env`, which the control script writes for each run (in `config/run`, its own folder each time) and removes afterwards; each one-off reads its own, read-only, instead of its environment. The control scripts ignore a value set outside them |
+| `KILNMARK_RUN_DIR` (compose only) | `../../config/run` (never used: the control scripts always set it) | The folder of this run's secrets files, `keycloak-setup.env` and `samples-db.env`, which the control script writes for each run (in `config/run` in the data folder, its own folder each time) and removes afterwards; each one-off reads its own, read-only, instead of its environment. Linux names it by its full path, Windows relative to the version's `compose.yaml` (the data folder is on the program folder's drive). The control scripts ignore a value set outside them |
+| `KILNMARK_CERTS_DIR` (compose only) | `./tls` | The folder of HTTPS's `server.crt` and `server.key`, mounted read-only: the control scripts set it to `certs/https` in the data folder, the same way as `KILNMARK_RUN_DIR`, and ignore a value set outside them (Windows) or in `.env` |
+| `KILNMARK_PROJECT` (control scripts) | `kilnmark` | The compose project. Install writes the answer `project` into `.env`; the environment's wins, as the hourly task and timer pass it |
+| `KILNMARK_EMAIL_DOMAIN` (control scripts) | none | The answer `email_domain`, kept for `configure`; install checks the first admin's address against it |
+| `KILNMARK_COMPOSE_LINES` (`backup.sh`, `restore.sh`) | none | The compose command a word a line, as the control script gives it, so a folder with a space in its path stays one word; else `KILNMARK_COMPOSE`, split on spaces, else `podman compose` or `docker compose` |
 | `KILNMARK_INSTALL_ID` (`keycloak-setup` only) | none | The install's own id, from Kilnmark's record, which the people commands hand `keycloak-setup` to keep on the realm; never in `.env` |
 | `KILNMARK_SETUP_PAGE`, `KILNMARK_SETUP_NOW_MS` (`keycloak-setup`, tests only) | `500`, now | A smaller page of people, and a later now for the expiry: compose never passes them |
-| `KILNMARK_SYSTEMCTL`, `KILNMARK_SYSTEMD_DIR`, `KILNMARK_SCHTASKS`, `KILNMARK_TEST_UID` (control scripts, tests only) | `systemctl`, the account's, `schtasks.exe`, the account's | The tools and folder the hourly `people expire` is set up with, and who the Linux script takes itself to be. They count only with `KILNMARK_TEST_HOOKS=only-in-kilnmark-tests`, a marker no release sets. The tests of the hourly run's folders that need chmod and links (`theLinuxEditionChecksTheHourlyRunsTreeAllTheWay`) run only off Windows, where Git Bash keeps NTFS's permissions as they are. Under the marker, the Linux script skips the check of who listens on Kilnmark's port where the kernel does not list sockets (Git Bash has no `/proc/net/tcp`); a release always checks |
+| `KILNMARK_SYSTEMCTL`, `KILNMARK_SYSTEMD_DIR`, `KILNMARK_SCHTASKS`, `KILNMARK_TEST_UID`, `KILNMARK_TEST_ELEVATED`, `KILNMARK_WSL`, `KILNMARK_TEST_WSL` (control scripts, tests only) | `systemctl`, the account's, `schtasks.exe`, the account's, as Windows says, `wsl.exe`, as `/proc` says | The tools and folder the hourly `people expire` is set up with, who the Linux script takes itself to be (`0`: root, which every day-to-day command refuses), whether the Windows script takes itself to be elevated (`yes`), and the `wsl.exe` that `check` asks for WSL's version, and whether the Linux script takes itself to run in WSL. They count only with `KILNMARK_TEST_HOOKS=only-in-kilnmark-tests`, a marker no release sets. Under it, the Windows script runs the parts of install, upgrade and uninstall that need an administrator as it is, never asking for UAC, keeps its own ownership of the folders it makes and adds itself with full control (it plays the administrator), so `ControlScriptInstallTest` installs and uninstalls for real into folders with spaces in their paths. The tests of the hourly run's folders that need chmod and links (`theLinuxEditionChecksTheHourlyRunsTreeAllTheWay`) run only off Windows, where Git Bash keeps NTFS's permissions as they are. Under the marker, the Linux script skips the check of who listens on Kilnmark's port where the kernel does not list sockets (Git Bash has no `/proc/net/tcp`); a release always checks |
 | `KILNMARK_STARTER_PEOPLE_ACTION`, `KILNMARK_PEOPLE_ACTION`, `KILNMARK_PERSON_EMAIL`, `KILNMARK_PERSON_FIRST_NAME`, `KILNMARK_PERSON_LAST_NAME`, `KILNMARK_PERSON_GROUPS` (`keycloak-setup` only) | none | Set by `starter people` and `people add`, `import` or `list` in compose's own environment for that one run, which `compose.yaml` passes to `keycloak-setup`; the control scripts refuse them in `config/.env`. Passwords, and an import's file, go on `keycloak-setup`'s standard input, never here |
 
 The isolation is tested against the real image (`SamplesDatabaseIsolationTest`, which runs this tree's
@@ -232,8 +237,25 @@ script in it, so a `kilnmark-postgres:dev` other work has tagged meanwhile canno
 compose pins, with `setup.sh` (`StarterPeopleSetupTest`); both use Testcontainers.
 
 On a developer machine, the source checkout's `compose.yaml` already uses the project name
-`kilnmark`: try a release there with `KILNMARK_PROJECT=kmtry` and other ports (INSTALL.md, "The
-control script"), so its volumes stay apart.
+`kilnmark`: try a release there with another project, folders and ports in its answers
+([A second install on one machine](guide/install/control-script.md#a-second-install-on-one-machine)),
+so its volumes stay apart.
+
+**The guided install's tests.** `ControlScriptInstallTest` runs both editions for real, with the
+fake engine of `ControlScriptStarterTest` (which also answers Podman's version, cgroups and memory,
+as `check` asks): the answers file (no secrets, every key known, each answer named by its key and
+line, never its value) through `install --dry-run`, `configure`, `check`'s fixes, and on Windows an
+install and uninstall into folders with spaces. Bash runs where `KILNMARK_TEST_BASH` names it (or
+off Windows), Windows PowerShell where `KILNMARK_TEST_POWERSHELL` does:
+
+```
+KILNMARK_TEST_BASH='C:\Program Files\Git\usr\bin\bash.exe' KILNMARK_TEST_POWERSHELL=powershell.exe \
+  ./gradlew :server:test --tests '*ControlScriptInstallTest' --tests '*ControlScriptStarterTest' --tests '*BackupModeAndInstallTest'
+```
+
+What the unit tests cannot do, a walk does: the Linux edition was walked in a throwaway WSL
+distribution ([walk-linux.md](development/walk-linux.md)), and the Windows edition's elevated steps
+are walked on a clean Windows machine with [walk-windows.md](development/walk-windows.md).
 
 `release` also runs `checkProductOnly`, which fails the build if the release folder, Kilnmark's own
 jars, the UI bundle or the bundled guides name the lab (any `lab-<name>`, `labadmin`, a path into
@@ -477,7 +499,8 @@ subject; tokens and the asker get 403. `.../refuse` clears the request.
 
 **Sign-in with the identity provider** (ADR 0036). With Quarkus's OIDC client set up
 (`QUARKUS_OIDC_TENANT_ENABLED=true`, `QUARKUS_OIDC_AUTH_SERVER_URL`, `QUARKUS_OIDC_CLIENT_ID`,
-`QUARKUS_OIDC_CREDENTIALS_SECRET`; INSTALL.md says how), the sign-in page offers **Sign in with**
+`QUARKUS_OIDC_CREDENTIALS_SECRET`; [Production with your own identity provider](guide/install/production-own-identity-provider.md)
+says how), the sign-in page offers **Sign in with**
 the provider, through `/api/v1/auth/login`. Roles come from `kilnmark.auth.oidc.<role>-groups`,
 the unmask grant from `unmask-groups` (designers only); MFA is required (`require-mfa`, from the
 ID token's `amr` or `acr`), and a sign-in lasts at most `max-session` (8 hours). Requests that
@@ -515,7 +538,7 @@ Flow runs are jobs of kind `flow` (docs/design/flows.md), also tried once; a flo
 pipeline runs next, so its job holds **no** worker slot: the pipeline runs it queues need the slots, and
 a flow holding one could fill every slot while waiting for runs that never start. "Job" is this queue;
 what orchestrates pipelines is called a flow. How to size the slots and flows against the database's
-connections is in [INSTALL.md](../INSTALL.md#sizing-the-workers).
+connections is in [Running Kilnmark](guide/install/running-kilnmark.md#sizing-the-workers).
 
 **Waiting for runs** (ADR 0047, docs/guide/external-schedulers.md). Requests that start or read a
 run with `?wait=` wait on the api role, on virtual threads, until the run ends or the wait is up:
@@ -686,6 +709,38 @@ CREATE ROLE kilnmark_reader LOGIN PASSWORD '...';
 GRANT USAGE ON SCHEMA sales TO kilnmark_reader;
 GRANT SELECT ON ALL TABLES IN SCHEMA sales TO kilnmark_reader;
 ```
+
+## From source, with the reference lab and the samples
+
+To develop Kilnmark, to build a release, or to try it with the reference lab and the
+[samples](../samples/README.md). Beside Podman or Docker, this needs Git, Java 17 or later on the
+`PATH` (it starts the Gradle wrapper, which downloads the JDK 25 the build needs), Node.js 22.12 or
+later (the web UI) and, on macOS or Linux, Python 3 (`lab/lab.sh samples` and `pipelines`).
+
+1. `git clone https://github.com/jporeilly/KilnMark.git` and `cd KilnMark`.
+2. Build and start Kilnmark:
+   - **Windows:** in PowerShell, `.\build.ps1 -Lab`. It checks Node.js, builds, starts PostgreSQL
+     and the server, starts every demo source of the reference lab, and waits until Kilnmark answers.
+   - **macOS or Linux:** `./gradlew :server:quarkusBuild`, then `podman compose up --build`, then
+     `./lab/lab.sh start all`.
+   - For live reload while developing, run PostgreSQL in its container and the server with
+     `./gradlew :server:quarkusDev` instead.
+3. Sign in at http://localhost:8780. The first admin token lasts 24 hours; read it with
+   `podman compose exec kilnmark cat /var/lib/kilnmark/admin-token` (with `quarkusDev`, it is in
+   `~/.kilnmark/admin-token`). Make a permanent one under **API tokens**, and keep it in
+   `KILNMARK_ADMIN_TOKEN` (PowerShell: `$env:KILNMARK_ADMIN_TOKEN = "km_..."`).
+4. Register the lab: **Sources > Import sources from a file**, choose `lab/sources.csv`, tick
+   **Rewrite host names for this server**, **Test each connection** and **Queue a scan**, and press
+   **Import**. Wait until the scans of `lab-db`, `lab-bucket` and `lab-mariadb` have finished.
+5. Add the examples: `./lab/lab.sh samples` (Windows: `.\lab\lab.ps1 samples`) adds the samples,
+   sorted by what they show, with their placeholders mapped to the lab's sources, and
+   `./lab/lab.sh pipelines` the lab's demo pipelines. Open **Pipelines**, pick one, and choose
+   **Run now**.
+6. To make a release: `./gradlew release` (Windows: `gradlew.bat release`). The release holds the
+   product only, never the lab; the samples ship, naming their sources by placeholders.
+
+`GET http://localhost:8780/q/health/ready` answers 200 once the server and its database are up, and
+`./gradlew build` compiles and runs every test (the server's tests need Podman or Docker running).
 
 ## Try it on the reference lab
 

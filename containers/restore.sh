@@ -34,10 +34,27 @@ if [ ! -f compose.yaml ]; then
   echo "Run restore.sh from Kilnmark's release folder, beside compose.yaml." >&2
   exit 2
 fi
-compose=${KILNMARK_COMPOSE:-}
-if [ -z "$compose" ]; then
-  if command -v podman >/dev/null 2>&1; then compose="podman compose"; else compose="docker compose"; fi
+# The compose command: KILNMARK_COMPOSE_LINES, a word a line (the control scripts give it so, for
+# folders with a space in their path), else KILNMARK_COMPOSE split on spaces, else podman compose if
+# Podman is installed, else docker compose.
+nl='
+'
+compose_words=${KILNMARK_COMPOSE_LINES:-}
+if [ -z "$compose_words" ]; then
+  compose_words=${KILNMARK_COMPOSE:-}
+  if [ -z "$compose_words" ]; then
+    if command -v podman >/dev/null 2>&1; then compose_words="podman compose"; else compose_words="docker compose"; fi
+  fi
+  # shellcheck disable=SC2086
+  compose_words=$(printf '%s\n' $compose_words)
 fi
+compose_text=$(printf '%s' "$compose_words" | tr '\n' ' ')
+compose() (
+  IFS=$nl
+  set -f
+  # shellcheck disable=SC2086
+  exec $compose_words "$@"
+)
 if command -v sha256sum >/dev/null 2>&1; then sums="sha256sum"; else sums="shasum -a 256"; fi
 keycloak=${KILNMARK_KEYCLOAK:-}
 if [ -z "$keycloak" ]; then
@@ -113,28 +130,28 @@ wait_for() {
   until eval "$2" > /dev/null 2>&1; do
     tries=$((tries + 1))
     if [ "$tries" -ge "$3" ]; then
-      echo "$1 did not become ready. See: $compose logs" >&2
+      echo "$1 did not become ready. See: $compose_text logs" >&2
       exit 1
     fi
     sleep 2
   done
 }
 sql() {
-  $compose exec -T postgres psql -U kilnmark -d postgres -q -v ON_ERROR_STOP=1 -Atc "$1"
+  compose exec -T postgres psql -U kilnmark -d postgres -q -v ON_ERROR_STOP=1 -Atc "$1"
 }
 kc_sql() {
-  $compose exec -T keycloak-db psql -U keycloak -d postgres -q -v ON_ERROR_STOP=1 -Atc "$1"
+  compose exec -T keycloak-db psql -U keycloak -d postgres -q -v ON_ERROR_STOP=1 -Atc "$1"
 }
 
-$compose up -d postgres
+compose up -d postgres
 # Over TCP: the database's first start answers on its socket before it is ready.
-wait_for "The database" "$compose exec -T postgres pg_isready -h 127.0.0.1 -U kilnmark -d postgres" 60
+wait_for "The database" "compose exec -T postgres pg_isready -h 127.0.0.1 -U kilnmark -d postgres" 60
 
 stage="restoring the backup into kilnmark_restoring"
 echo "Restoring the backup into a database of its own (Kilnmark keeps running)"
-$compose exec -T postgres dropdb -U kilnmark --if-exists kilnmark_restoring
-$compose exec -T postgres createdb -U kilnmark kilnmark_restoring
-$compose exec -T postgres pg_restore -U kilnmark -d kilnmark_restoring --exit-on-error --single-transaction \
+compose exec -T postgres dropdb -U kilnmark --if-exists kilnmark_restoring
+compose exec -T postgres createdb -U kilnmark kilnmark_restoring
+compose exec -T postgres pg_restore -U kilnmark -d kilnmark_restoring --exit-on-error --single-transaction \
   < "$src/kilnmark-db.dump"
 
 # The backup's deployment mode (ADR 0051) must be this install's: a backup from before there were
@@ -142,7 +159,7 @@ $compose exec -T postgres pg_restore -U kilnmark -d kilnmark_restoring --exit-on
 # restored copy, before anything is stopped or replaced.
 stage="checking the backup's deployment mode"
 mode_of() {
-  $compose exec -T postgres psql -U kilnmark -d "$1" -X -q -At \
+  compose exec -T postgres psql -U kilnmark -d "$1" -X -q -At \
     -c "SELECT value FROM kilnmark.server_setting WHERE key = 'deployment_mode'" 2>/dev/null | tr -d '\r' || true
 }
 backup_mode=$(mode_of kilnmark_restoring)
@@ -158,7 +175,7 @@ if [ -z "$backup_mode" ]; then
 fi
 # backup.txt names the mode and the install's id, as the dump recorded them: both must agree, so a
 # dump of another install, or a backup.txt changed since, is refused.
-backup_id=$($compose exec -T postgres psql -U kilnmark -d kilnmark_restoring -X -q -At -v ON_ERROR_STOP=1 \
+backup_id=$(compose exec -T postgres psql -U kilnmark -d kilnmark_restoring -X -q -At -v ON_ERROR_STOP=1 \
   -c "SELECT value FROM kilnmark.server_setting WHERE key = 'install_id'" | tr -d '\r')
 file_mode=$(sed -n 's/^deployment_mode=//p' "$src/backup.txt" | tr -d '\r')
 file_id=$(sed -n 's/^install_id=//p' "$src/backup.txt" | tr -d '\r')
@@ -178,11 +195,11 @@ fi
 if $restore_keycloak; then
   stage="restoring Keycloak's database into keycloak_restoring"
   echo "Restoring Keycloak's database into a database of its own (Keycloak keeps running)"
-  $compose up -d keycloak-db
-  wait_for "Keycloak's database" "$compose exec -T keycloak-db pg_isready -h 127.0.0.1 -U keycloak -d postgres" 60
-  $compose exec -T keycloak-db dropdb -U keycloak --if-exists keycloak_restoring
-  $compose exec -T keycloak-db createdb -U keycloak keycloak_restoring
-  $compose exec -T keycloak-db pg_restore -U keycloak -d keycloak_restoring --exit-on-error --single-transaction \
+  compose up -d keycloak-db
+  wait_for "Keycloak's database" "compose exec -T keycloak-db pg_isready -h 127.0.0.1 -U keycloak -d postgres" 60
+  compose exec -T keycloak-db dropdb -U keycloak --if-exists keycloak_restoring
+  compose exec -T keycloak-db createdb -U keycloak keycloak_restoring
+  compose exec -T keycloak-db pg_restore -U keycloak -d keycloak_restoring --exit-on-error --single-transaction \
     < "$src/keycloak-db.dump"
 
   # Keycloak's database must be this backup's install's: the id and mode its realm carries (the
@@ -191,7 +208,7 @@ if $restore_keycloak; then
   # nobody can change). Checked before anything is stopped or replaced.
   stage="checking Keycloak's database in the backup"
   kc_restoring() {
-    $compose exec -T keycloak-db psql -U keycloak -d keycloak_restoring -X -q -At -v ON_ERROR_STOP=1 -c "$1" | tr -d '\r'
+    compose exec -T keycloak-db psql -U keycloak -d keycloak_restoring -X -q -At -v ON_ERROR_STOP=1 -c "$1" | tr -d '\r'
   }
   realm_attribute() {
     kc_restoring "SELECT ra.value FROM realm_attribute ra JOIN realm r ON r.id = ra.realm_id WHERE r.name = 'kilnmark' AND ra.name = '$1'"
@@ -218,8 +235,8 @@ fi
 
 stage="stopping Kilnmark"
 echo "Stopping Kilnmark"
-$compose stop kilnmark
-if $compose exec -T kilnmark true > /dev/null 2>&1; then
+compose stop kilnmark
+if compose exec -T kilnmark true > /dev/null 2>&1; then
   echo "Kilnmark is still running after the stop: nothing was replaced. Stop it, then run restore.sh again." >&2
   exit 1
 fi
@@ -240,7 +257,7 @@ keys=$keys"
 if $keys; then
   echo "Restoring the keys volume; the previous keys are kept in before-restore-$stamp"
   # shellcheck disable=SC2016
-  $compose run --rm --no-deps -T --entrypoint sh kilnmark -c '
+  compose run --rm --no-deps -T --entrypoint sh kilnmark -c '
     set -e; cd /var/lib/kilnmark
     rm -rf .restoring && mkdir .restoring && tar -C .restoring -xf -
     mkdir "before-restore-$1"
@@ -251,14 +268,14 @@ if $keys; then
     rmdir .restoring
     printf "%s\n" "$2" > restored.properties' sh "$stamp" "$record" < "$src/kilnmark-keys.tar"
 else
-  $compose run --rm --no-deps -T --entrypoint sh kilnmark -c \
+  compose run --rm --no-deps -T --entrypoint sh kilnmark -c \
     'printf "%s\n" "$1" > /var/lib/kilnmark/restored.properties' sh "$record" < /dev/null
 fi
 
 if $restore_keycloak; then
   stage="stopping Keycloak"
   echo "Stopping Keycloak"
-  $compose stop keycloak
+  compose stop keycloak
   stage="putting the restored Keycloak database in place"
   echo "Putting Keycloak's restored database in place; the previous one is kept as $kc_before"
   kc_sql "ALTER DATABASE keycloak RENAME TO $kc_before"
@@ -267,8 +284,8 @@ fi
 
 stage="starting Kilnmark"
 echo "Starting Kilnmark"
-$compose up -d
-wait_for "Kilnmark" "$compose exec -T kilnmark bash -c \"exec 3<>/dev/tcp/127.0.0.1/8780 && printf 'GET /q/health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200 '\"" 90
+compose up -d
+wait_for "Kilnmark" "compose exec -T kilnmark bash -c \"exec 3<>/dev/tcp/127.0.0.1/8780 && printf 'GET /q/health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200 '\"" 90
 
 echo "Restored Kilnmark to the backup taken at $taken. Now:"
 echo "  - revoke again any token revoked after that time (your SIEM's token.revoked events), and"

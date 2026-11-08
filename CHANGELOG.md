@@ -7,6 +7,20 @@ details.
 
 ### What's new
 
+- **A guided install, into the folders the operating system keeps for a program and its data**:
+  `sudo ./kilnmark.sh install` (Linux) or `kilnmark.cmd install` (Windows) asks the questions (the
+  mode, how people sign in, the email domain, the host name, the ports, TLS, the first admin), each
+  with its default and checked as you answer, or reads them from an answers file
+  (`--answers install.conf`, which holds no secrets; `install.conf.example` explains every key).
+  Each step says `[n/N]`, OK or FAILED, with the time it took and why it failed. Kilnmark goes into
+  `/opt/kilnmark` (root's) and `/var/opt/kilnmark` (the account's), or
+  `C:\Program Files\Kilnmark` (the Administrators') and `C:\ProgramData\Kilnmark` (yours,
+  SYSTEM's and the Administrators'). Install, upgrade and uninstall ask for root or an
+  administrator, and say why; everything else runs as the operator, never elevated.
+  `configure KEY=VALUE` changes an answer later, and `check` checks the machine and the install,
+  printing the command that fixes each problem. Release 0.1.2 is a fresh install: there is no
+  upgrade to it from 0.1.1. The install guide is now
+  [INSTALL.md](INSTALL.md) and the pages under [docs/guide/install](docs/guide/install/README.md).
 - **Security fixes to the bundled Keycloak's setup and the server**, from a review of 0.1.2: a
   one-time code's name can no longer stop an unused temporary password from expiring, and anyone
   whose sign-in details setup cannot read cleanly is disabled and named rather than left alone;
@@ -16,8 +30,8 @@ details.
   the audit log.
 - **Two ways to deploy, chosen once at install**: **Production**, for real work, or a **Starter
   Pack** install, for training, demonstrations and development. The mode is recorded at the first
-  start, and an install never changes mode: for production, install afresh. INSTALL.md starts with
-  a table of what each has ([Choosing a deployment](INSTALL.md#choosing-a-deployment)).
+  start, and an install never changes mode: for production, install afresh.
+  [Choosing a deployment](docs/guide/install/choosing-a-deployment.md) compares them.
 - **The Starter Pack**, on a Starter Pack install: an admin turns it on under **Settings**,
   **Starter Pack** (install does it at once), and Kilnmark adds example data in a database of its
   own, every sample ready to run in the Library. Every page says it is a Starter Pack install.
@@ -149,6 +163,68 @@ details.
 
 ### Details
 
+- **The guided install and the 0.1.2 layout** (ADR 0051, decision 17):
+  - Two folders. The program folder holds `versions/<version>/`, `current` or `current.txt`, the
+    launchers and `data-folder.txt`, naming the data folder, which holds `config/.env`,
+    `config/install.conf` (the answers), `config/run`, `certs/https`, `backups` and `logs`. Linux:
+    `/opt/kilnmark`, root's and read-only to others, and `/var/opt/kilnmark`, the account's alone.
+    Windows: `C:\Program Files\Kilnmark` (full control for the Administrators and SYSTEM, read and
+    run for Users, nothing inherited) and `C:\ProgramData\Kilnmark` (modify for the operator, full
+    control for SYSTEM and the Administrators, nobody else, nothing inherited), each made with
+    those permissions from its first moment, on one drive. `install` refuses a program folder that
+    holds Kilnmark and a data folder that is there already: a fresh install only.
+  - Linux `prepare` is gone into `install`, run as root (it runs itself again with `sudo` and says
+    why): it makes the account (or keeps one that is there), its rootless Podman's id ranges and
+    lingering, the folders, the settings, then runs the images, the start, the first admin and the
+    Starter Pack as the account. Every day-to-day command refuses root.
+  - Windows `install`, run from a prompt that is not elevated, asks for an administrator (UAC) for
+    the one step that makes the folders, writes the settings and places the release, in a window
+    of its own whose log goes to the data folder's `logs`; Podman's steps run as the operator.
+    The operator is whoever runs install (an answer `operator` naming anyone else is refused). Every
+    day-to-day command refuses an elevated prompt, and anyone but the operator. `upgrade` and
+    `uninstall` work the same way.
+  - The questions and the answers file: `mode`, `identity` (`bundled` or `own`; a Starter Pack
+    install always `bundled`; API tokens only is no longer an answer), `email_domain`, `host`,
+    `tls` (`off`, `on` with `tls_cert` and `tls_key`, or `proxy`), `port`, `https_port`,
+    `db_port`, `keycloak_port`, the first admin (`admin_email` and their names) or your provider
+    (`oidc_issuer`, `oidc_client_id`, `oidc_provider_name` and its groups), `project`,
+    `program_dir`, `data_dir`, `user` or `operator`. Each is checked as it is given (ports free and
+    never two answers on one; HTTPS for any host but `localhost`; the first admin at the email
+    domain, never kilnmark.com), and an answers file's problems are named by key and line, never by
+    value. An answers file refuses a key naming a password, secret or token: the client secret or
+    the first admin's temporary password is typed hidden, or piped in. `--dry-run` (`-DryRun`)
+    checks and changes nothing.
+  - `configure` shows the answers, or changes one, checks it, writes `config/.env` and
+    `config/install.conf`, and runs again only what it affects (a restart while Kilnmark runs, the
+    first admin's `people add`, or nothing); it refuses the mode, the project and the folders.
+  - `check` covers the machine and the install, by its mode: Podman 5 and its compose, the Podman
+    machine, cgroups v2 with the pids controller, WSL 2.7.11 (3.0.x breaks crun's pids
+    controller), memory (5 GB with the bundled Keycloak), disk, free ports, root or an elevated
+    prompt, the folders' owners and who may write them, the hourly run's checks, the mode and what
+    is running, each problem with the command that fixes it.
+  - Paths with spaces work everywhere: the Windows task and the Linux timer quote the script,
+    compose gets each path as one word, and `backup.sh` and `restore.sh` take the compose command
+    a word a line (`KILNMARK_COMPOSE_LINES`). The run's secrets and HTTPS's certificate are mounted
+    from the data folder (`KILNMARK_RUN_DIR`, `KILNMARK_CERTS_DIR`). The hourly run's checks cover
+    both folders, and pass a program folder of root's or the Administrators', TrustedInstaller's
+    rights on `C:\Program Files` counting as theirs.
+  - The install guide is split: a short [INSTALL.md](INSTALL.md), and
+    [Choosing a deployment](docs/guide/install/choosing-a-deployment.md), a page for each way to
+    deploy, [The control script](docs/guide/install/control-script.md), [Upgrading](docs/guide/install/upgrade.md),
+    [Uninstalling](docs/guide/install/uninstall.md) and the rest under `docs/guide/install`. Building
+    from source moved to [Development](docs/development.md).
+  - The people commands and the realm's stamp run `keycloak-setup` with `run --rm --no-deps`:
+    podman-compose 1.5 (Ubuntu 26.04's) otherwise stopped Kilnmark's database and removed its
+    server while it set up the one-off's dependencies, as the Linux walk found. Every request with
+    the admin token, the Starter Pack's turn-on included, goes through one function that checks the
+    listener and connects to 127.0.0.1; the waits and Keycloak's probes use 127.0.0.1 too, and
+    `people expire` skips only when Keycloak refuses the connection, or the connection times out
+    with nothing listening on its port (WSL's mirrored network drops a closed port's connections
+    rather than refuse them). A realm `keycloak-setup`
+    refuses stops the stack again. The Windows listener check fails closed when Windows does not
+    answer. The OIDC group mappings and Keycloak's published address
+    (`KILNMARK_KEYCLOAK_BIND`, `0.0.0.0` for a host other than `localhost`, which then needs
+    `tls=proxy` with the bundled Keycloak) come from `config/.env` only.
 - **Security: keycloak-setup reads what a person wrote as JSON** (ADR 0051, decisions 10 and 16).
   The expiry of unused temporary passwords read each person's credentials as kcadm's CSV, where a
   one-time code's label holding a line break (Keycloak 26.8's form for setting up the code keeps a
@@ -354,17 +430,15 @@ details.
 - **Every start tells the realm which install it belongs to**, once the server has recorded it, and a
   production restore refuses a Keycloak database whose realm does not say; `restore.sh` run by hand
   refuses when it cannot tell this install's mode.
-- **The hourly task and timer run only a script nobody else may change**: on Windows `up` makes the
-  install root yours alone and does not set the task up while anyone else may write `kilnmark.ps1`
-  or its folder; on Linux as root, only when root owns the root and the script. `KILNMARK_PROJECT`
+- **The hourly task and timer run only a script nobody else may change**: `up` does not set the
+  task or timer up while anyone else may write `kilnmark.ps1` (or `kilnmark.sh`) or its folder. `KILNMARK_PROJECT`
   must be lower-case letters, digits, `-` and `_`. `uninstall --purge` keeps, and names, an image
   another install on the machine still uses. The one-offs' per-run folder setting is now
   `KILNMARK_RUN_DIR`.
 - **The hourly expiry runs only what nobody else may change**: before setting the task or timer up,
   and at the start of every `people expire` (refused and audited when it fails), the control script
   checks the whole tree a run uses (root, launcher, current version's `compose.yaml` and setup
-  script, `config/.env`) for its owner and who may write it; as root on Linux, every folder up to
-  `/` too. On Windows `install` refuses an existing root someone else owns. `KILNMARK_ENGINE` goes
+  script, `config/.env`) for its owner and who may write it, and every folder up to `/` too. `KILNMARK_ENGINE` goes
   into a unit only as podman's or docker's full path; the tests' hooks need a marker no release sets.
 - **A Keycloak realm is one install's**: stamped once with its id and mode, and every
   `keycloak-setup` run refuses a realm of another install or mode, or, on production, one holding
@@ -372,23 +446,15 @@ details.
   are audit events (`auth.realm_stamped`, `server.mode_recorded`).
 - **The hourly expiry's checks reach the whole way**: every folder from the install root down to
   what a run uses, `logs` too, and every folder above the root (so the root cannot be moved away
-  and another put in its place), for a user's timer and the Windows task as for root; `current`
-  must lead into `versions/`. The check comes before anything is read: a refused `people expire`
+  and another put in its place); `current` must lead into `versions/`. The check comes before anything is read: a refused `people expire`
   reads no settings and sends no admin token anywhere, and goes to the journal or Task
-  Scheduler's history and the log. On Windows the install root is yours alone from the moment
-  install makes it, before anything is copied in, and at every `up` whatever the profile; an `up`
-  that found it open to others does not set the task up that time. Linux names the root by its
-  canonical path in the timer's unit (refusing a path a unit would misread), checks the engine and
+  Scheduler's history and the log. Linux names the root by its canonical path in the timer's unit,
+  quoted (refusing a path a unit would misread), checks the engine and
   the units' folder, keeps `logs` private and never writes a log through a link; the Windows task
   quotes the script's path. The audit event `auth.expire_refused` is gone with the call that sent it.
-- **The Windows install folder is yours alone from its first moment**: made with permissions of
-  yours alone (never made, then locked), and so is each folder in it; a folder there already that
-  is not yours, or is a link or a junction, stops the install before anything is written into it.
-  A start writes the root's permissions afresh by your SID (others' entries go too), and `install`,
-  `upgrade` and `up` stop when they cannot. Folders above the root that are links or junctions are
-  refused, and the hourly task names Windows PowerShell by its full path. The `C:\Kilnmark`
-  default is temporary: the guided install moves Windows to `C:\Program Files\Kilnmark` and
-  `C:\ProgramData\Kilnmark`, and these checks stay as a second line of defence.
+- **The Windows install's folders carry their permissions from their first moment** (the guided
+  install, above): folders above them that are links or junctions are refused, and the hourly task
+  names Windows PowerShell by its full path.
 - **The admin token goes only to a listener of yours**: before any call to Kilnmark's API, the
   control scripts check who listens on its port (Linux: the account's or root's sockets only;
   Windows: your programs only) and send nothing otherwise. On Linux the engine and the units'
@@ -433,7 +499,7 @@ details.
 - **Developer stack**: the root `compose.yaml` mounts the share at `/srv/share`, as the release
   does, and is a production install unless `KILNMARK_MODE` says otherwise (it has no Keycloak);
   `quarkusDev` and the tests are Starter Pack installs.
-- **Upgrading** (INSTALL.md, "Upgrading from 0.1.1 or earlier"): installs from before this release
+- **Upgrading** ([Upgrading](docs/guide/install/upgrade.md), "From 0.1.1 or earlier"): installs from before this release
   (0.1.1 and earlier, previews, never production releases) **cannot be upgraded**: install Kilnmark
   afresh, in the mode you want, backing up first anything you mean to carry across by hand. The
   server refuses to start on a database made before this start with no mode recorded (only a new

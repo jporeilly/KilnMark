@@ -1,37 +1,60 @@
 #!/bin/bash
-# Kilnmark's control script for Linux (INSTALL.md, "A. Install a release"; ADR 0044). One script
+# Kilnmark's control script for Linux (INSTALL.md; ADR 0044, ADR 0051 decision 17). One script
 # installs, starts, stops, upgrades and backs up Kilnmark with Podman or Docker:
-#   sudo ./kilnmark.sh prepare [--user kilnmark]      once: the service account and /opt/kilnmark
-#   ./kilnmark.sh install [--root DIR] [--offline IMAGES] [--auth] [--starter] [--skip-verify]   as that account
-#   ./kilnmark.sh up | down | restart | status | logs | check | backup | restore | upgrade | ...
-#   ./kilnmark.sh help
-# Run with no command, it starts Kilnmark (up), so a menu entry or a double-click starts it.
-# The install root holds versions/<version>/ (a release, never edited), current (which version
-# runs), config/.env (this site's settings and secrets), certs/, backups/ and logs/. Data stays in
-# the compose project's volumes (kilnmark_pgdata, kilnmark_keys, ...). No command prints a secret.
+#   sudo ./kilnmark.sh install [--answers install.conf] [--offline IMAGES]   the guided install
+#   /opt/kilnmark/kilnmark.sh up | down | restart | status | logs | check | configure | backup | ...
+#   /opt/kilnmark/kilnmark.sh help
+# install, upgrade and uninstall run as root (with sudo); every other command runs as the account
+# that runs Kilnmark (kilnmark unless install was told another), never as root. Run with no
+# command, it starts Kilnmark (up), so a menu entry or a double-click starts it.
+# The program folder (/opt/kilnmark, root's) holds versions/<version>/ (a release, never edited),
+# current (which version runs), this script and data-folder.txt, which names the data folder
+# (/var/opt/kilnmark, the account's): config/.env (this site's settings and secrets),
+# config/install.conf (the install's answers), certs/, backups/ and logs/. Data stays in the compose
+# project's volumes (kilnmark_pgdata, kilnmark_keys, ...). No command prints a secret.
 set -euo pipefail
 umask 077
 
 here="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 registry="ghcr.io/jporeilly"
-# The compose project: kilnmark, unless KILNMARK_PROJECT names another (a second install on one
-# machine, or a developer's machine whose source checkout already uses kilnmark).
-project="${KILNMARK_PROJECT:-kilnmark}"
-default_root="/opt/kilnmark"
+default_prog="/opt/kilnmark"
+# Variable data of a package in /opt belongs in /var/opt (the Filesystem Hierarchy Standard).
+default_data="/var/opt/kilnmark"
+# The compose project (set once the data folder is known, below): KILNMARK_PROJECT from the
+# environment, else config/.env's, else kilnmark.
+project="${KILNMARK_PROJECT:-}"
 # Compose fills ${NAME} from this shell's environment before config/.env. These must mean what
 # config/.env says, as this script reads them (ADR 0051), so a value exported here never counts.
 unset KILNMARK_MODE KILNMARK_STARTER KILNMARK_STARTER_PEOPLE_ACTION \
   KILNMARK_PEOPLE_ACTION KILNMARK_PERSON_EMAIL KILNMARK_PERSON_FIRST_NAME KILNMARK_PERSON_LAST_NAME \
-  KILNMARK_PERSON_GROUPS KILNMARK_INSTALL_ID KILNMARK_RUN_DIR KILNMARK_ENV_FILE
+  KILNMARK_PERSON_GROUPS KILNMARK_INSTALL_ID KILNMARK_RUN_DIR KILNMARK_ENV_FILE \
+  KILNMARK_OIDC_VIEWER_GROUPS KILNMARK_OIDC_STEWARD_GROUPS KILNMARK_OIDC_DESIGNER_GROUPS \
+  KILNMARK_OIDC_ADMIN_GROUPS KILNMARK_OIDC_UNMASK_GROUPS KILNMARK_KEYCLOAK_BIND
 
 # Rootless Podman needs the account's systemd session; sudo -iu and su do not set it up, but its
-# runtime folder exists once lingering is on (prepare turns it on).
+# runtime folder exists once lingering is on (install turns it on).
 if [ "$(id -u)" -ne 0 ] && [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ]; then
   export XDG_RUNTIME_DIR="/run/user/$(id -u)"
   export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 fi
 
-die() { echo "Error: $*" >&2; exit 1; }
+# --- progress: [n/N] steps, each OK or FAILED, with the time it took ---------------------------
+step_n=0 step_total=0 step_title="" step_began=""
+now() { if [ -n "${EPOCHREALTIME:-}" ]; then printf '%s' "${EPOCHREALTIME/,/.}"; else date +%s; fi; }
+took() { awk -v a="$step_began" -v b="$(now)" 'BEGIN { printf "%.1f s", (b - a < 0 ? 0 : b - a) }'; }
+steps() { step_total="$1"; step_n="${2:-0}"; }
+step() { step_n=$((step_n + 1)); step_title="$1"; step_began="$(now)"; echo "[$step_n/$step_total] $1"; }
+step_ok() { [ -z "$step_title" ] || echo "[$step_n/$step_total] OK ($(took)): $step_title"; step_title=""; }
+# A failure inside a step ends it FAILED, with the time it took and one line saying why.
+die() {
+  if [ -n "$step_title" ]; then
+    echo "[$step_n/$step_total] FAILED ($(took)): $step_title: $*" >&2
+    step_title=""
+  else
+    echo "Error: $*" >&2
+  fi
+  exit 1
+}
 note() { echo "$*"; }
 
 # However this script ends, the private folders it made go: the one-offs' secrets
@@ -50,17 +73,34 @@ usage() {
   cat <<'EOF'
 Kilnmark control script.
 
-  prepare [--user NAME] [--root DIR] [--engine podman|docker]
-                       Once, with sudo: make the service account (kilnmark) that runs Kilnmark,
-                       give it the container engine, and make the install root its own.
-  install [--root DIR] [--offline IMAGES.tar.gz] [--auth] [--starter] [--build] [--skip-verify] [--no-start]
-                       First setup: checks, folders, settings with new secrets, images, start.
-                       A production install, unless --starter: a Starter Pack install, for
-                       training and development only, which never becomes a production one,
-                       always with the bundled Keycloak; the Starter Pack's example data is
-                       turned on, and starter people adds the example people. A production
-                       install asks how people sign in (--auth: the bundled Keycloak). With
-                       the bundled Keycloak, install offers to add Kilnmark's first admin.
+Installing (as root, with sudo: it asks for it and says why):
+  install [--answers FILE] [--starter] [--program-dir DIR] [--data-dir DIR] [--user NAME]
+          [--offline IMAGES.tar.gz] [--build] [--skip-verify] [--no-start] [--dry-run]
+                       The guided install: it asks the questions (the mode, how people sign in,
+                       the email domain, the host name, the ports, TLS, the first admin), each
+                       with its default and checked as you answer, or reads them from an answers
+                       file (install.conf.example says every key; it holds no secrets). Then:
+                       the service account, the program folder (/opt/kilnmark, root's), the data
+                       folder (/var/opt/kilnmark, the account's), settings with new secrets, the
+                       images, the start and the first admin, each step OK or FAILED.
+                       --dry-run checks the answers and the prerequisites and changes nothing.
+  upgrade ARCHIVE [--offline IMAGES] [--no-backup] [--skip-verify]
+                       Back up, place the new version beside this one, and start it.
+  uninstall [--purge]  Stop Kilnmark, remove its hourly timer and the program folder. --purge
+                       also deletes its volumes, images and the data folder (backups too).
+
+Every day, as the account that runs Kilnmark (never as root):
+  up [--no-browser]    Start Kilnmark (and Keycloak with the bundled Keycloak); wait until it
+                       answers; open it in the browser. The default command.
+  down                 Stop. Every volume, so all data, is kept.
+  restart [SERVICE]    Restart everything (a stop, then up), or one service.
+  status               Version, folders, containers, health and the last backup.
+  logs [SERVICE] [-f]  The last 200 lines of the logs, or follow them.
+  check                Check the prerequisites and the install, for its mode, changing nothing:
+                       each problem with the command that fixes it.
+  configure [KEY=VALUE ...]
+                       Show the install's answers, or change one: checked, written to
+                       config/.env, and only what it affects run again. The mode never changes.
   people add | people import FILE | people activate EMAIL | people list | people expire
                        With the bundled Keycloak, in either mode: add one person of your own (any
                        of Kilnmark's groups, admins included; install asks for the first admin
@@ -75,29 +115,19 @@ Kilnmark control script.
                        On a Starter Pack install, the five example people in the bundled Keycloak
                        (with KILNMARK_STARTER=allowed): add them, give them all a new password, or
                        remove them. You type the password (or pipe it in): it is never shown.
-  up [--no-browser]    Start Kilnmark (and Keycloak when .env turns on the auth profile); wait
-                       until it answers; open it in the browser. The default command.
-  down                 Stop. Every volume, so all data, is kept.
-  restart [SERVICE]    Restart everything (a stop, then up), or one service.
-  status               Version, containers, health, ports and the last backup.
-  logs [SERVICE] [-f]  The last 200 lines of the logs, or follow them.
-  check                Check the prerequisites and the settings, changing nothing.
   verify FILE [--key PUB]   Check a downloaded file's signature (cosign) against Kilnmark's key.
   load-images FILE [--skip-verify]   Load the offline images file (podman/docker load).
   pull [--skip-verify] Pull this version's images from ghcr.io and check their signatures.
   build                Build the images here from containers/, instead of pulling or loading.
-  backup [DIR]         Back up the database and the keys (default: ROOT/backups).
+  backup [DIR]         Back up the database and the keys (default: the data folder's backups).
   restore BACKUP [--yes] [--without-keys]   Put Kilnmark back to a backup.
-  upgrade ARCHIVE [--offline IMAGES] [--no-backup] [--skip-verify]
-                       Back up, unpack the new version beside this one, and start it.
-  uninstall [--purge]  Stop Kilnmark. --purge also deletes its volumes (all data) and images.
   version | help
 EOF
 }
 
 # --- where things are ------------------------------------------------------------------------
 
-# The install root: this script's folder when it holds versions/, else two folders up when this
+# The program folder: this script's folder when it holds versions/, else two folders up when this
 # script runs from versions/<version>/, else (a release folder not yet installed) none.
 find_root() {
   if [ -n "${KILNMARK_ROOT:-}" ]; then printf '%s' "$KILNMARK_ROOT"; return; fi
@@ -107,14 +137,25 @@ find_root() {
 }
 root="$(find_root)"
 
+# The data folder, as data-folder.txt in the program folder names it (install writes it; only root
+# may change it): empty when Kilnmark is not installed here.
+find_data() {
+  local d=""
+  [ -n "$root" ] && [ -f "$root/data-folder.txt" ] || { printf ''; return; }
+  IFS= read -r d < "$root/data-folder.txt" || true
+  printf '%s' "${d%$'\r'}"
+}
+data="$(find_data)"
+
 # The release a folder holds, from its compose.yaml's server image.
 version_of() {
   sed -n 's/^ *image: .*\/kilnmark-server:\([^ ]*\) *$/\1/p' "$1/compose.yaml" 2>/dev/null | head -n 1
 }
 
 current_version() {
-  [ -n "$root" ] || die "Kilnmark is not installed here. Run: ./kilnmark.sh install"
+  [ -n "$root" ] || die "Kilnmark is not installed here. Install it with: sudo ./kilnmark.sh install"
   [ -L "$root/current" ] || [ -d "$root/current" ] || die "No version is installed in $root."
+  [ -n "$data" ] || die "$root/data-folder.txt does not name Kilnmark's data folder: install Kilnmark afresh (sudo ./kilnmark.sh install)."
   version_of "$root/current"
 }
 
@@ -132,12 +173,13 @@ pick_engine() {
   else die "Neither Podman nor Docker is installed. Install one first (INSTALL.md, \"What to install first\")."
   fi
   "$engine" compose version > /dev/null 2>&1 \
-    || die "'$engine compose' does not work. Install the compose plugin (Docker) or podman-compose (Podman)."
+    || die "'$engine compose' does not work: Podman needs podman-compose ($(pkg_install podman-compose)), Docker its compose plugin ($(pkg_install docker-compose-plugin)). Then run this again."
 }
 
 # A setting from config/.env as compose reads it (an export in front too); empty when it is not set.
 setting() {
-  local line value file="$root/config/.env"
+  local line value file="$data/config/.env"
+  [ -n "$data" ] || { printf ''; return; }
   [ -f "$file" ] || { printf ''; return; }
   line="$( { grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" "$file" || true; } | tail -n 1 | tr -d '\r')"
   value="${line#*=}"
@@ -149,6 +191,8 @@ setting() {
   esac
   printf '%s' "$value"
 }
+[ -n "$project" ] || project="$(setting KILNMARK_PROJECT)"
+project="${project:-kilnmark}"
 
 # The deployment mode (ADR 0051): production, or starter-pack for training and development, in
 # ASCII lower case, as the server reads it. The server refuses anything else, and so does this.
@@ -172,7 +216,7 @@ recorded_mode() { recorded_setting deployment_mode; }
 recorded_setting() {
   set_compose
   "${compose[@]}" exec -T postgres psql -U kilnmark -d kilnmark -X -q -At \
-    -c "SELECT value FROM kilnmark.server_setting WHERE key = '$1'" 2> /dev/null | tr -d '[:space:]' || true
+    -c "SELECT value FROM kilnmark.server_setting WHERE key = '$1'" < /dev/null 2> /dev/null | tr -d '[:space:]' || true
 }
 
 # The people commands act only where Kilnmark's own record says the same mode as config/.env:
@@ -202,8 +246,10 @@ set_compose() {
   # The real folder, not the current symlink: compose resolves relative paths in it (the
   # certificate folder, ../../certs/https) without following symlinks.
   local dir; dir="$(readlink -f "$root/current")"
-  [ -f "$root/config/.env" ] || die "There is no $root/config/.env. Run: ./kilnmark.sh install"
-  compose=("$engine" compose -p "$project" --env-file "$root/config/.env" -f "$dir/compose.yaml")
+  [ -f "$data/config/.env" ] || die "There is no $data/config/.env. Install Kilnmark with: sudo ./kilnmark.sh install"
+  compose=("$engine" compose -p "$project" --env-file "$data/config/.env" -f "$dir/compose.yaml")
+  # HTTPS's certificate and key, in the data folder: by its full path, which compose takes as it is
+  export KILNMARK_CERTS_DIR="$data/certs/https"
   local profiles; profiles="$(setting COMPOSE_PROFILES | tr -d '[:space:]')"
   # Some compose tools read COMPOSE_PROFILES from the env file and some do not: name each one.
   local p; IFS=',' read -r -a list <<< "$profiles"
@@ -217,8 +263,8 @@ image_names() { echo "$registry/kilnmark-server:$1 $registry/kilnmark-postgres:$
 # The few secrets each one-off needs (keycloak-setup: Keycloak's admin password and the client
 # secret; samples-db: the database's password and the samples login's), each set in a file of its
 # own, in a new folder only this account can open under config/run, for one run: compose mounts
-# them read-only (KILNMARK_RUN_DIR, relative to compose.yaml), never config/.env whole. Gone once
-# the run is over (drop_run_secrets), and however this script ends; one a killed run left goes a day on.
+# them read-only (KILNMARK_RUN_DIR, by its full path), never config/.env whole. Gone once the run is
+# over (drop_run_secrets), and however this script ends; one a killed run left goes a day on.
 run_secret_line() {
   local v; v="$(setting "$1")"
   if [[ "$v" != *"'"* ]]; then printf "%s='%s'\n" "$1" "$v"
@@ -227,7 +273,7 @@ run_secret_line() {
   fi
 }
 write_run_secrets() {
-  local base="$root/config/run"
+  local base="$data/config/run"
   [ -z "$run_secrets" ] || return 0
   mkdir -p "$base" && chmod 700 "$base" || die "Could not make $base for the one-offs' secrets."
   find "$base" -mindepth 1 -maxdepth 1 -type d -name 'r.*' -mmin +1440 -exec rm -rf {} + 2> /dev/null || true
@@ -236,7 +282,7 @@ write_run_secrets() {
   { run_secret_line KILNMARK_DB_PASSWORD; run_secret_line KILNMARK_SAMPLES_DB_PASSWORD; } > "$run_secrets/samples-db.env"
   # readable inside the containers, whichever user each runs as: the folder keeps everyone else out
   chmod 644 "$run_secrets/keycloak-setup.env" "$run_secrets/samples-db.env"
-  export KILNMARK_RUN_DIR="../../config/run/$(basename "$run_secrets")"
+  export KILNMARK_RUN_DIR="$run_secrets"
 }
 drop_run_secrets() {
   [ -z "$run_secrets" ] || rm -rf "$run_secrets"
@@ -246,76 +292,79 @@ drop_run_secrets() {
 
 # --- the hourly expiry of unused temporary passwords (ADR 0051) -----------------------------------
 
-# With the bundled Keycloak, people expire runs every hour from a systemd timer of this account (a
-# system one when this runs as root), so a temporary password left unused is disabled at most an
-# hour after its window, whether or not Kilnmark starts again. up sets it up, and removes it without
-# the bundled Keycloak; uninstall removes it. KILNMARK_SYSTEMCTL, KILNMARK_SYSTEMD_DIR and
-# KILNMARK_TEST_UID are for the tests only, and count only with their marker, which no release sets.
+# With the bundled Keycloak, people expire runs every hour from a systemd timer of the account that
+# runs Kilnmark (never root's: no day-to-day command runs as root), so a temporary password left
+# unused is disabled at most an hour after its window, whether or not Kilnmark starts again. up sets
+# it up, and removes it without the bundled Keycloak; uninstall removes it. KILNMARK_SYSTEMCTL,
+# KILNMARK_SYSTEMD_DIR and KILNMARK_TEST_UID are for the tests only, and count only with their
+# marker, which no release sets.
 expiry_unit="kilnmark-$project-people-expire"
 test_hooks() { [ "${KILNMARK_TEST_HOOKS:-}" = only-in-kilnmark-tests ]; }
-# who runs this, for the timer
-expiry_uid() { if test_hooks && [ -n "${KILNMARK_TEST_UID:-}" ]; then printf '%s' "$KILNMARK_TEST_UID"; else id -u; fi; }
+# who runs this
+my_uid() { if test_hooks && [ -n "${KILNMARK_TEST_UID:-}" ]; then printf '%s' "$KILNMARK_TEST_UID"; else id -u; fi; }
 expiry_systemctl() {
   local sc=systemctl
   if test_hooks && [ -n "${KILNMARK_SYSTEMCTL:-}" ]; then sc="$KILNMARK_SYSTEMCTL"; fi
-  if [ "$(expiry_uid)" -eq 0 ]; then "$sc" "$@"; else "$sc" --user "$@"; fi
+  "$sc" --user "$@"
 }
 expiry_dir() {
   if test_hooks && [ -n "${KILNMARK_SYSTEMD_DIR:-}" ]; then printf '%s' "$KILNMARK_SYSTEMD_DIR"
-  elif [ "$(expiry_uid)" -eq 0 ]; then printf '%s' /etc/systemd/system
   else printf '%s' "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
   fi
 }
-# The install root as the timer's unit names it: its canonical path, once, so the folders checked
-# are the ones the unit runs from; empty when it holds anything a unit file would read as more than a
-# path (a space, systemd's % specifiers, quotes, a backslash, a control character).
 # A path as this shell's own: on Git Bash, where the tests run this edition too, a Windows path as
 # its POSIX one, so a folder and where a link leads are named alike (no Linux has cygpath).
 posix_path() {
   if [[ "$1" =~ ^[A-Za-z]:[\\/] ]] && command -v cygpath > /dev/null 2>&1; then cygpath -u "$1"; else printf '%s' "$1"; fi
 }
-root_real() {
-  local r; r="$(readlink -f "$(posix_path "$root")" 2> /dev/null || true)"
-  if [[ "$r" =~ ^/[A-Za-z0-9._/+@,=-]*$ ]]; then printf '%s' "$r"; fi
+# A folder by its canonical path, once, so the folders checked are the ones a run uses; empty when
+# it holds anything a unit file would read as more than a path (systemd's % specifiers, a quote, a
+# backslash, a control character). A space is fine: the unit quotes the path.
+real_path() {
+  local r; r="$(readlink -f "$(posix_path "$1")" 2> /dev/null || true)"
+  if [[ "$r" =~ ^/[A-Za-z0-9._/+@,=\ -]*$ ]]; then printf '%s' "$r"; fi
 }
-# Why $1 may be changed by someone other than $want (a uid), or nothing: it must be theirs (or
-# root's, where $2 is "or-root"), never a link, and writable by neither its group nor others.
+root_real() { real_path "$root"; }
+# Why $1 may be changed by someone other than $want (a uid) or root, or nothing: it must be theirs,
+# never a link, and writable by neither its group nor others.
 owned_problem() {
   local info
   if [ -L "$1" ]; then echo "$1 is a link, which an hourly run would follow"; return 0; fi
   info="$(stat -c '%u %a' "$1" 2> /dev/null || echo "x 777")"
-  if { [ "${info%% *}" != "$want" ] && { [ "${2:-}" != or-root ] || [ "${info%% *}" != 0 ]; }; } \
-    || (( (8#${info##* } & 8#022) != 0 )); then
-    echo "$1 may be changed by someone other than the account that runs Kilnmark (it is not that account's own, or others may write it)"
+  if { [ "${info%% *}" != "$want" ] && [ "${info%% *}" != 0 ]; } || (( (8#${info##* } & 8#022) != 0 )); then
+    echo "$1 may be changed by someone other than root or the account that runs Kilnmark (it is neither's own, or others may write it)"
   fi
 }
-# Why someone other than the account that runs Kilnmark may change what an hourly run uses, or
-# nothing (ADR 0051, decision 15): the timer runs $root/kilnmark.sh as this account (as root, a
-# system timer), and that run reads the current version's compose.yaml and keycloak-setup's script,
-# config/.env, and writes to logs/. Each, and every folder from the root down to it, must be this
-# account's own (root's, as root), no link but current, and writable by nobody else; current must
-# lead to a folder directly in versions/. Above the root, so nobody can move it away and put
-# another in its place, every folder up to / must be root's or the account's and writable by nobody
-# else; a folder others may write (/tmp) only where it is sticky and the next one down is root's or
-# the account's, and never as root (as sshd's StrictModes asks).
+# Why someone other than root or the account that runs Kilnmark may change what an hourly run uses,
+# or nothing (ADR 0051, decisions 15 and 17): the timer runs kilnmark.sh from the program folder as
+# the account, and that run reads data-folder.txt, the current version's compose.yaml and
+# keycloak-setup's script there, and config/.env in the data folder, and writes to its logs/. Each,
+# and every folder from its root down to it, must be root's or the account's, no link but current,
+# and writable by nobody else; current must be a link of theirs to a folder directly in versions/.
+# Above each root, so nobody can move it away and put another in its place, every folder up to /
+# must be root's or the account's and writable by nobody else; a folder others may write (/tmp)
+# only where it is sticky and the next one down is root's or the account's.
 tree_problem() {
-  local want as_root=0 r cur v rel rest p seen=" " why info o m child dir
-  # as root (the timer is a system unit), root must own it all; else the account that runs this
-  if [ "$(expiry_uid)" -eq 0 ]; then want=0; as_root=1; else want="$(id -u)"; fi
+  local want r d cur v item base rel rest p seen=" " why info
+  want="$(id -u)"
   r="$(root_real)"
-  [ -n "$r" ] || { echo "the install root's path holds a character a systemd unit would read as more than a path (a space, %, a quote, a backslash or a control character)"; return 0; }
+  [ -n "$r" ] || { echo "the program folder's path holds a character a systemd unit would read as more than a path (%, a quote, a backslash or a control character)"; return 0; }
+  d="$(real_path "$data")"
+  [ -n "$d" ] || { echo "the data folder's path holds a character a systemd unit would read as more than a path (%, a quote, a backslash or a control character)"; return 0; }
   # the link itself only by its owner (a link's own permissions mean nothing)
   info="$(stat -c '%u' "$r/current" 2> /dev/null || echo x)"
-  [ -L "$r/current" ] && [ "$info" = "$want" ] \
-    || { echo "$r/current may be changed by someone other than the account that runs Kilnmark (it is not that account's own link to a version)"; return 0; }
+  [ -L "$r/current" ] && { [ "$info" = "$want" ] || [ "$info" = 0 ]; } \
+    || { echo "$r/current may be changed by someone other than root or the account that runs Kilnmark (it is not a link of theirs to a version)"; return 0; }
   cur="$(readlink -f "$r/current" 2> /dev/null || true)"
   v="${cur#"$r/versions/"}"
   if [ -z "$cur" ] || [ "$v" = "$cur" ] || [ -z "$v" ] || [[ "$v" == */* ]] || [ ! -d "$cur" ]; then
     echo "$r/current does not lead to a version in $r/versions"; return 0
   fi
-  for rel in kilnmark.sh "versions/$v/compose.yaml" "versions/$v/containers/keycloak/setup.sh" config/.env logs; do
-    [ "$rel" != logs ] || [ -e "$r/logs" ] || [ -L "$r/logs" ] || continue
-    p="$r" rest="$rel"
+  for item in "$r|kilnmark.sh" "$r|data-folder.txt" "$r|versions/$v/compose.yaml" "$r|versions/$v/containers/keycloak/setup.sh" \
+    "$d|config/.env" "$d|logs"; do
+    base="${item%%|*}" rel="${item#*|}"
+    [ "$rel" != logs ] || [ -e "$d/logs" ] || [ -L "$d/logs" ] || continue
+    p="$base" rest="$rel"
     while :; do
       if [[ "$seen" != *" $p "* ]]; then
         why="$(owned_problem "$p")"
@@ -327,13 +376,14 @@ tree_problem() {
       case "$rest" in */*) rest="${rest#*/}" ;; *) rest="" ;; esac
     done
   done
-  above_problem "$r"
+  why="$(above_problem "$r")"; [ -z "$why" ] || { echo "$why"; return 0; }
+  above_problem "$d"
 }
-# Why a folder above $1 may be changed by someone other than root or the account ($want, and
-# $as_root, the caller's), who could move $1 away and put another in its place, or nothing: each
-# up to / must be root's or the account's and writable by neither group nor others; one others may
-# write (/tmp) only where it is sticky and the next one down is root's or the account's, and never
-# as root (as sshd's StrictModes asks).
+# Why a folder above $1 may be changed by someone other than root or the account ($want, the
+# caller's), who could move $1 away and put another in its place, or nothing: each up to / must be
+# root's or the account's and writable by neither group nor others; one others may write (/tmp)
+# only where it is sticky and the next one down is root's or the account's (as sshd's StrictModes
+# asks).
 above_problem() {
   local child="$1" dir info o m
   dir="$(dirname "$child")"
@@ -341,7 +391,7 @@ above_problem() {
     info="$(stat -c '%u %a' "$dir" 2> /dev/null || echo "x 777")"
     o="${info%% *}" m=$((8#${info##* }))
     if { [ "$o" != 0 ] && [ "$o" != "$want" ]; } || { (( (m & 8#022) != 0 )) \
-      && { [ "$as_root" = 1 ] || (( (m & 8#1000) == 0 )) || ! [[ " 0 $want " == *" $(stat -c '%u' "$child" 2> /dev/null || echo x) "* ]]; }; }; then
+      && { (( (m & 8#1000) == 0 )) || ! [[ " 0 $want " == *" $(stat -c '%u' "$child" 2> /dev/null || echo x) "* ]]; }; }; then
       echo "$dir, a folder above $1, may be changed by someone other than root or the account that runs Kilnmark, who could move what is in it away and put another in its place"
       return 0
     fi
@@ -354,8 +404,8 @@ above_problem() {
 # account's, writable by nobody else, and so must every folder above it (where KILNMARK_ENGINE is a
 # link, the link's own folders too). $1 "make": the units' folder is made first, as up needs it.
 tools_problem() {
-  local want as_root=0 e t d why
-  if [ "$(expiry_uid)" -eq 0 ]; then want=0; as_root=1; else want="$(id -u)"; fi
+  local want e t d why
+  want="$(id -u)"
   e="${KILNMARK_ENGINE:-}"
   [ -n "$e" ] || e="$(command -v podman 2> /dev/null || command -v docker 2> /dev/null || true)"
   [ -z "$e" ] || [[ "$e" == */* ]] || [[ "$e" =~ ^[A-Za-z]: ]] || e="$(command -v "$e" 2> /dev/null || true)"
@@ -363,13 +413,13 @@ tools_problem() {
     e="$(posix_path "$e")"
     if [ -L "$e" ]; then why="$(above_problem "$e")"; [ -z "$why" ] || { echo "$why"; return 0; }; fi
     t="$(readlink -f "$e" 2> /dev/null || true)"
-    why="$(owned_problem "${t:-$e}" or-root)"; [ -z "$why" ] || { echo "$why"; return 0; }
+    why="$(owned_problem "${t:-$e}")"; [ -z "$why" ] || { echo "$why"; return 0; }
     why="$(above_problem "${t:-$e}")"; [ -z "$why" ] || { echo "$why"; return 0; }
   fi
   d="$(posix_path "$(expiry_dir)")"
   [ "${1:-}" != make ] || mkdir -p "$d" 2> /dev/null || true
   if [ -e "$d" ] || [ -L "$d" ]; then
-    why="$(owned_problem "$d" or-root)"; [ -z "$why" ] || { echo "$why"; return 0; }
+    why="$(owned_problem "$d")"; [ -z "$why" ] || { echo "$why"; return 0; }
     why="$(above_problem "$d")"; [ -z "$why" ] || { echo "$why"; return 0; }
   fi
 }
@@ -387,8 +437,7 @@ engine_problem() {
   fi
 }
 expiry_timer_set() {
-  local dir service timer engine_line="" why r want
-  if [ "$(expiry_uid)" -eq 0 ]; then want=0; else want="$(id -u)"; fi
+  local dir service timer engine_line="" why r
   why="$(tree_problem)"
   [ -n "$why" ] || why="$(engine_problem)"
   # the engine the unit names, and the folder its units are in, as what the run uses
@@ -396,18 +445,19 @@ expiry_timer_set() {
   dir="$(expiry_dir)"
   if [ -n "$why" ]; then
     expiry_timer_remove
-    echo "Warning: the hourly expiry of unused temporary passwords was not set up: $why. Make it so, or run Kilnmark as its own account (sudo ./kilnmark.sh prepare), then run up again. Each start expires them too." >&2
+    echo "Warning: the hourly expiry of unused temporary passwords was not set up: $why. Make it so ($root/kilnmark.sh check says how), then run up again. Each start expires them too." >&2
     return 0
   fi
   r="$(root_real)"
   [ -z "${KILNMARK_ENGINE:-}" ] || engine_line="
 Environment=KILNMARK_ENGINE=$KILNMARK_ENGINE"
+  # the script's path quoted, for a folder with a space in it
   service="[Unit]
 Description=Kilnmark ($project): disable people whose temporary password went unused
 [Service]
 Type=oneshot
 Environment=KILNMARK_PROJECT=$project$engine_line
-ExecStart=$r/kilnmark.sh people expire"
+ExecStart=\"$r/kilnmark.sh\" people expire"
   timer="[Unit]
 Description=Kilnmark ($project): expire unused temporary passwords every hour
 [Timer]
@@ -460,21 +510,23 @@ images_present() {
 # secret), joined with spaces or as a Python list. Those lines are never shown or kept in logs/:
 # filtered here for every compose call this script shows, whether or not it logs.
 compose_command_line="podman.*[[:space:]'\",[](-e|--env)([[:space:]=,'\"]|\$)"
-hide_compose_commands() { grep --line-buffered -v -E "$compose_command_line" || true; }
+hide_compose_commands() { grep --line-buffered -v -E "$compose_command_line|^[0-9a-f]{12,64}$" || true; }
 
 start_log() {
-  [ -n "$root" ] && [ -d "$root/logs" ] && [ ! -L "$root/logs" ] || return 0
-  # what the scripts said, this account's only (an install from before kept it open)
-  chmod 700 "$root/logs" 2> /dev/null || true
-  local log; log="$root/logs/$1-$(date -u +%Y%m%dT%H%M%SZ).log"
+  [ -n "$data" ] && [ -d "$data/logs" ] && [ ! -L "$data/logs" ] || return 0
+  # what the scripts said, this account's only
+  chmod 700 "$data/logs" 2> /dev/null || true
+  local log; log="$data/logs/$1-$(date -u +%Y%m%dT%H%M%SZ).log"
   # the hourly expiry keeps one log a day, not one a run
-  [ "${2:-}" != daily ] || log="$root/logs/$1-$(date -u +%Y%m%d).log"
+  [ "${2:-}" != daily ] || log="$data/logs/$1-$(date -u +%Y%m%d).log"
   # never through a link, which would write wherever it leads (as root, for a system timer)
   if [ -L "$log" ] || { [ -e "$log" ] && [ ! -f "$log" ]; }; then
     die "$log is not a plain file, so nothing was logged or done: remove it, then run this again."
   fi
+  log_path="$log"
   exec > >(hide_compose_commands | tee -a "$log") 2>&1
 }
+log_path=""
 
 # --- signatures --------------------------------------------------------------------------------
 
@@ -547,61 +599,266 @@ build_images() {
 
 # --- checks ------------------------------------------------------------------------------------
 
-problems=()
-warnings=()
-# A port as config/.env sets it, else as the environment does (for install), else the default.
+# What check found: each problem and warning with the command that fixes it, and what passed.
+problems=() fixes=() warnings=() wfixes=() passed=()
+problem() { problems+=("$1"); fixes+=("${2:-}"); }
+warning() { warnings+=("$1"); wfixes+=("${2:-}"); }
+passed() { passed+=("$1"); }
+
+# A port as the install's answers or config/.env set it, else as the environment does, else the default.
 port() {
-  local v=""; [ -n "$root" ] && v="$(setting "$1")"
+  local v="${ans[$3]:-}"
+  [ -n "$v" ] || { [ -n "$data" ] && v="$(setting "$1")"; }
   [ -n "$v" ] || v="${!1:-}"
   printf '%s' "${v:-$2}"
 }
-port_busy() { (exec 3<> "/dev/tcp/127.0.0.1/$1") 2> /dev/null; }
+# Whether something answers on the port. A connection that neither opens nor is refused within two
+# seconds counts as nothing there: WSL's mirrored networking can leave one to a free port hanging.
+port_busy() {
+  if command -v timeout > /dev/null 2>&1; then timeout 2 bash -c 'exec 3<> "/dev/tcp/127.0.0.1/$0"' "$1" 2> /dev/null
+  else (exec 3<> "/dev/tcp/127.0.0.1/$1") 2> /dev/null; fi
+}
+# A free port near $1, for a fix to name.
+free_port() {
+  local p=$(( $1 + 1 )) i
+  for i in $(seq 1 200); do
+    [ "$p" -le 65535 ] || p=20000
+    port_busy "$p" || { printf '%s' "$p"; return; }
+    p=$((p + 1))
+  done
+  printf '%s' "$1"
+}
+# The command that installs these packages here.
+pkg_install() {
+  if command -v apt-get > /dev/null 2>&1; then printf 'sudo apt-get install -y %s' "$*"
+  elif command -v dnf > /dev/null 2>&1; then printf 'sudo dnf install -y %s' "$*"
+  elif command -v zypper > /dev/null 2>&1; then printf 'sudo zypper install -y %s' "$*"
+  else printf "install %s with your distribution's package manager" "$*"
+  fi
+}
+# Whether this runs in WSL 2 (Linux under Windows), and WSL's version as Windows reports it (empty
+# when Windows' programs cannot be run from here). KILNMARK_TEST_WSL and KILNMARK_WSL are the tests'.
+in_wsl() {
+  if test_hooks && [ -n "${KILNMARK_TEST_WSL:-}" ]; then [ "$KILNMARK_TEST_WSL" = yes ]; return; fi
+  grep -qi microsoft /proc/sys/kernel/osrelease 2> /dev/null
+}
+wsl_version() {
+  local w=wsl.exe
+  if test_hooks && [ -n "${KILNMARK_WSL:-}" ]; then w="$KILNMARK_WSL"; fi
+  "$w" --version 2> /dev/null | tr -d '\0\r' | sed -n 's/^WSL[^0-9]*\([0-9][0-9.]*\).*$/\1/p' | head -n 1 || true
+}
+# The fix for a WSL that breaks Podman: WSL 2.7.11, from its own release, installed on Windows.
+wsl_fix='on Windows, in PowerShell: Invoke-WebRequest https://github.com/microsoft/WSL/releases/download/2.7.11/wsl.2.7.11.0.x64.msi -OutFile $env:TEMP\wsl.msi; Start-Process msiexec.exe -Verb RunAs -Wait -ArgumentList "/i $env:TEMP\wsl.msi"; wsl --shutdown'
 
+# The prerequisites: the engine and its compose, its version, cgroups, memory, disk, the tools, and
+# (when nothing runs) free ports. $1: whether Kilnmark is running; $2: whether it has the bundled
+# Keycloak (5 GB of memory, not 4).
 check_prerequisites() {
-  local running="${1:-false}" v mem disk ports p
-  if command -v podman > /dev/null 2>&1 || command -v docker > /dev/null 2>&1; then
-    pick_engine
-    if [ "$engine" = podman ]; then
-      v="$(podman version --format '{{.Client.Version}}' 2> /dev/null || echo 0)"
-      [ "${v%%.*}" -ge 5 ] 2> /dev/null || problems+=("Podman $v is too old: Kilnmark needs Podman 5 or later.")
-    else
-      docker info > /dev/null 2>&1 || problems+=("Docker is installed but not running, or your user may not use it (add it to the docker group).")
+  local running="${1:-false}" keycloak="${2:-false}" v mem disk p seen=" " cg ctl want_mem wv
+  if [ -n "${KILNMARK_ENGINE:-}" ] || command -v podman > /dev/null 2>&1 || command -v docker > /dev/null 2>&1; then
+    if [ -n "${KILNMARK_ENGINE:-}" ]; then engine="$KILNMARK_ENGINE"
+    elif command -v podman > /dev/null 2>&1; then engine=podman; else engine=docker; fi
+    if "$engine" compose version > /dev/null 2>&1; then passed "$engine compose works"
+    elif [[ "$engine" == *docker* ]]; then problem "'$engine compose' does not work." "$(pkg_install docker-compose-plugin)"
+    else problem "'$engine compose' does not work: Podman needs podman-compose." "$(pkg_install podman-compose)"
+    fi
+    if [[ "$engine" != *docker* ]]; then
+      v="$("$engine" version --format '{{.Client.Version}}' 2> /dev/null | head -n 1 || true)"
+      if [[ "$v" =~ ^([0-9]+)\. ]] && [ "${BASH_REMATCH[1]}" -ge 5 ]; then passed "Podman $v"
+      else problem "Podman ${v:-of an unknown version} is too old: Kilnmark needs Podman 5 or later (Ubuntu 25.04 and later, Debian 13, RHEL 9.5 and later have it)." "$(pkg_install podman podman-compose)"
+      fi
+      cg="$("$engine" info --format '{{.Host.CgroupsVersion}}' 2> /dev/null | head -n 1 || true)"
+      ctl="$("$engine" info --format '{{.Host.CgroupControllers}}' 2> /dev/null | head -n 1 || true)"
+      if [ "$cg" = v1 ]; then
+        problem "The machine uses cgroups v1: rootless Podman needs cgroups v2." \
+          "$(in_wsl && echo 'on Windows: add kernelCommandLine = cgroup_no_v1=all under [wsl2] in %UserProfile%\.wslconfig, then wsl --shutdown' || echo 'sudo grubby --update-kernel=ALL --args=systemd.unified_cgroup_hierarchy=1 (or the same in GRUB_CMDLINE_LINUX), then reboot')"
+      elif [ "$cg" = v2 ] && [[ " ${ctl//[\[\]]/ } " != *" pids "* ]]; then
+        if in_wsl; then problem "Podman cannot use cgroups' pids controller, so no container starts (WSL 3.0.x breaks crun's pids controller: Podman needs WSL 2.7.11)." "$wsl_fix"
+        else problem "Podman cannot use cgroups' pids controller here, so no container starts: systemd does not hand it to this account." \
+          "sudo mkdir -p /etc/systemd/system/user@.service.d && printf '[Service]\\nDelegate=cpu cpuset io memory pids\\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf && sudo systemctl daemon-reload, then sign in again"
+        fi
+      elif [ "$cg" = v2 ]; then passed "cgroups v2, with the pids controller"
+      fi
+    elif ! "$engine" info > /dev/null 2>&1; then
+      problem "Docker is installed but not running, or this account may not use it." "sudo systemctl enable --now docker && sudo usermod -aG docker $(id -un)"
     fi
     mem="$("$engine" info --format '{{.Host.MemTotal}}' 2> /dev/null || "$engine" info --format '{{.MemTotal}}' 2> /dev/null || echo 0)"
-    if [ "${mem:-0}" -gt 0 ] 2> /dev/null && [ "$mem" -lt $((4 * 1024 * 1024 * 1024 - 268435456)) ]; then
-      warnings+=("The container engine has $((mem / 1024 / 1024)) MB of memory; Kilnmark wants 4 GB (5 GB with Keycloak).")
+    mem="$(printf '%s' "$mem" | head -n 1 | tr -dc '0-9')"
+    want_mem=4; [ "$keycloak" != true ] || want_mem=5
+    if [ -n "$mem" ] && [ "$mem" -gt 0 ] 2> /dev/null && [ "$mem" -lt $((want_mem * 1024 * 1024 * 1024 - 268435456)) ]; then
+      warning "The container engine has $((mem / 1024 / 1024)) MB of memory; Kilnmark wants $want_mem GB$( [ "$keycloak" = true ] && echo ' with the bundled Keycloak')." \
+        "$(in_wsl && echo 'on Windows: set memory=8GB under [wsl2] in %UserProfile%\.wslconfig, then wsl --shutdown' || echo 'give this machine more memory')"
+    elif [ -n "$mem" ] && [ "$mem" -gt 0 ] 2> /dev/null; then passed "$((mem / 1024 / 1024)) MB of memory for containers"
     fi
   else
-    problems+=("Install Podman 5 or later (with podman-compose), or Docker with its compose plugin.")
+    problem "Neither Podman nor Docker is installed." "$(pkg_install podman podman-compose)"
   fi
-  command -v curl > /dev/null 2>&1 || problems+=("Install curl: the health check uses it.")
-  command -v tar > /dev/null 2>&1 || problems+=("Install tar.")
-  cosign_bin > /dev/null || warnings+=("cosign is not installed: downloads and images cannot be checked against Kilnmark's signature (--skip-verify goes on without).")
-  disk="$(df -Pk "${root:-$default_root}" 2> /dev/null | awk 'NR==2 {print $4}' || echo 0)"
+  if in_wsl; then
+    wv="$(wsl_version)"
+    case "$wv" in
+      2.7.11|2.7.11.*) passed "WSL $wv" ;;
+      "") warning "Cannot tell WSL's version from here (Windows' programs cannot be run): Podman needs WSL 2.7.11, and WSL 3.0.x breaks crun's pids controller." "on Windows: wsl --version" ;;
+      3.*|2.9.*) problem "WSL $wv breaks crun's pids controller, so no Podman container starts: Podman needs WSL 2.7.11." "$wsl_fix" ;;
+      *) warning "WSL $wv is not the one Podman is known to work with here: WSL 2.7.11 (3.0.x breaks crun's pids controller)." "$wsl_fix" ;;
+    esac
+  fi
+  if command -v curl > /dev/null 2>&1; then passed "curl"; else problem "curl is missing: the health check uses it." "$(pkg_install curl)"; fi
+  if command -v tar > /dev/null 2>&1; then passed "tar"; else problem "tar is missing." "$(pkg_install tar)"; fi
+  cosign_bin > /dev/null || warning "cosign is not installed: downloads and images cannot be checked against Kilnmark's signature (--skip-verify goes on without)." \
+    "install cosign 3 or later: https://docs.sigstore.dev/cosign/system_config/installation/"
+  p="${data:-${ans[data_dir]:-$default_data}}"
+  while [ ! -d "$p" ] && [ "$p" != / ]; do p="$(dirname "$p")"; done
+  disk="$(df -Pk "$p" 2> /dev/null | awk 'NR==2 {print $4}' || echo 0)"
   if [ "${disk:-0}" -gt 0 ] 2> /dev/null && [ "$disk" -lt $((10 * 1024 * 1024)) ]; then
-    warnings+=("Less than 10 GB free for Kilnmark's folder; images, data and backups need more.")
+    warning "Less than 10 GB free for Kilnmark's data folder; images, data and backups need more." "${engine:-podman} system prune (removes unused images), or free space on that disk"
+  elif [ "${disk:-0}" -gt 0 ] 2> /dev/null; then passed "$((disk / 1024 / 1024)) GB free for the data folder"
   fi
   if [ "$running" = false ]; then
-    ports="$(port KILNMARK_PORT 8780) $(port KILNMARK_HTTPS_PORT 8443) $(port KILNMARK_DB_PORT 5442)"
-    for p in $ports; do port_busy "$p" && problems+=("Port $p is in use: free it, or set another port in config/.env (KILNMARK_PORT, KILNMARK_HTTPS_PORT, KILNMARK_DB_PORT).")
+    for p in "$(port KILNMARK_PORT 8780 port)" "$(port KILNMARK_HTTPS_PORT 8443 https_port)" "$(port KILNMARK_DB_PORT 5442 db_port)" \
+      "$( [ "$keycloak" = true ] && port KILNMARK_KEYCLOAK_PORT 8180 keycloak_port)"; do
+      [ -n "$p" ] && [[ "$seen" != *" $p "* ]] || continue
+      seen="$seen$p "
+      if port_busy "$p"; then problem "Port $p is in use." "$(port_fix "$p")"; else passed "port $p is free"; fi
     done
   fi
   return 0
 }
+# The command that moves Kilnmark off a busy port: configure on an install, else the answer.
+port_fix() {
+  local key=port alt; alt="$(free_port "$1")"
+  [ "$1" != "$(port KILNMARK_HTTPS_PORT 8443 https_port)" ] || key=https_port
+  [ "$1" != "$(port KILNMARK_DB_PORT 5442 db_port)" ] || key=db_port
+  [ "$1" != "$(port KILNMARK_KEYCLOAK_PORT 8180 keycloak_port)" ] || key=keycloak_port
+  if [ -n "$data" ] && [ -f "$data/config/install.conf" ]; then printf '%s/kilnmark.sh configure %s=%s' "$root" "$key" "$alt"
+  else printf 'answer %s for %s (in an answers file: %s=%s)' "$alt" "$key" "$key" "$alt"
+  fi
+}
+
+# The install itself, by its mode (ADR 0051): who runs this, who owns the folders, what is running.
+check_install() {
+  local running="$1" mode user why last age want recorded kc
+  mode="$(setting KILNMARK_MODE)"
+  user="$(answer_of user)"; user="${user:-kilnmark}"
+  local group; group="$(id -gn "$user" 2> /dev/null || echo "$user")"
+  case "$mode" in
+    production|starter-pack) passed "a $mode install" ;;
+    *) problem "KILNMARK_MODE in config/.env is not production or starter-pack: Kilnmark does not start." "set KILNMARK_MODE back to the mode it was installed with in $data/config/.env" ;;
+  esac
+  if [ "$(my_uid)" -eq 0 ]; then
+    warning "check runs as root here: Kilnmark's day-to-day commands run as $user, never as root." "sudo -iu $user \"$root/kilnmark.sh\" check"
+  elif [ "$(id -un)" != "$user" ]; then
+    warning "Kilnmark runs as $user, not as $(id -un), so this account cannot start or change it." "sudo -iu $user \"$root/kilnmark.sh\" check"
+  fi
+  # the program folder root's, written by nobody else; the data folder the account's alone
+  why="$(folder_problem "$root" 0 755)"
+  if [ -z "$why" ]; then passed "the program folder is root's, and nobody else may change it"
+  else problem "$why" "sudo chown -R root:root \"$root\" && sudo chmod -R go-w \"$root\""; fi
+  why="$(folder_problem "$data" "$(id -u "$user" 2> /dev/null || echo x)" 700 config/.env)"
+  if [ -z "$why" ]; then passed "the data folder is $user's alone"
+  else problem "$why" "sudo chown -R $user:$group \"$data\" && sudo chmod 700 \"$data\" \"$data/config\" \"$data/backups\" \"$data/logs\" && sudo chmod 600 \"$data/config/.env\""; fi
+  if auth_on && [ "$(my_uid)" -ne 0 ]; then
+    # the second line of defence: what the hourly run uses, as it checks it
+    why="$(tree_problem)"
+    if [ -z "$why" ]; then passed "nobody else may change what the hourly run uses"
+    else problem "$why." "sudo chown -R root:root \"$root\" && sudo chmod -R go-w \"$root\" && sudo chown -R $user:$group \"$data\" && sudo chmod -R go-w \"$data\""; fi
+  fi
+  if [ "$mode" = starter-pack ]; then
+    auth_on || problem "A Starter Pack install needs the bundled Keycloak (auth in COMPOSE_PROFILES): it does not start without." "put COMPOSE_PROFILES=auth back in $data/config/.env, then $root/kilnmark.sh up"
+    [ "$(setting KILNMARK_STARTER)" = allowed ] \
+      || warning "KILNMARK_STARTER is not allowed in config/.env, so the example people cannot be added (and are removed at the next start)." "add KILNMARK_STARTER=allowed to $data/config/.env"
+  elif [ "$mode" = production ]; then
+    [ -z "$(setting KILNMARK_STARTER)" ] || problem "KILNMARK_STARTER is set on a production install, which never has the example people." "delete the line KILNMARK_STARTER from $data/config/.env"
+    if ! auth_on && [ "$(setting KILNMARK_OIDC_ENABLED)" = true ]; then
+      [ -n "$(setting KILNMARK_OIDC_ISSUER)" ] && [ -n "$(setting KILNMARK_OIDC_CLIENT_ID)" ] && [ -n "$(setting KILNMARK_OIDC_CLIENT_SECRET)" ] \
+        && passed "sign-in with your identity provider is set up" \
+        || problem "Sign-in with your identity provider lacks its issuer, client id or client secret." "$root/kilnmark.sh configure identity=own"
+    fi
+  fi
+  if [ "$(answer_of host)" != localhost ] && [ -n "$(answer_of host)" ] && [ "$(answer_of tls)" = off ]; then
+    warning "Kilnmark is reached as $(answer_of host) over plain HTTP: its sign-in cookies need HTTPS." "$root/kilnmark.sh configure tls=on tls_cert=FILE tls_key=FILE (or tls=proxy behind a proxy that ends TLS)"
+  fi
+  if [ "$running" = true ]; then
+    passed "Kilnmark answers at $(local_url)"
+    recorded="$(recorded_mode)"
+    if [ -n "$recorded" ] && [ "$recorded" != "$mode" ]; then
+      problem "KILNMARK_MODE in config/.env ($mode) differs from the mode Kilnmark recorded at its first start ($recorded)." "set KILNMARK_MODE=$recorded in $data/config/.env"
+    fi
+    if auth_on; then
+      kc="$(setting KILNMARK_KEYCLOAK_PORT)"
+      if curl -s -f -o /dev/null --max-time 10 "http://127.0.0.1:${kc:-8180}/realms/kilnmark"; then passed "Keycloak answers"
+      else problem "Keycloak does not answer." "$root/kilnmark.sh restart, then $root/kilnmark.sh logs keycloak"; fi
+    fi
+  else
+    warning "Kilnmark is not running." "$root/kilnmark.sh up"
+  fi
+  if auth_on && [ "$(my_uid)" -ne 0 ]; then
+    want="$(expiry_timer_state)"
+    echo "People expiry: $want"
+    [ "$want" != "not set up" ] || warning "The hourly expiry of unused temporary passwords is not set up." "$root/kilnmark.sh up"
+  fi
+  last="$(ls -1d "$data"/backups/kilnmark-* 2> /dev/null | tail -n 1 || true)"
+  if [ -z "$last" ]; then warning "There is no backup in $data/backups." "$root/kilnmark.sh backup"
+  else
+    age=$(( $(date +%s) - $(stat -c %Y "$last" 2> /dev/null || echo 0) ))
+    if [ "$age" -gt 93600 ]; then warning "The last backup is more than a day old." "$root/kilnmark.sh backup (every day, from cron)"
+    else passed "a backup from the last day"; fi
+  fi
+}
+# Why a folder is not as install leaves it, or nothing: owned by uid $2 and nobody else may write
+# it (mode no wider than $3); $4 more files in it to check the same way.
+folder_problem() {
+  local dir="$1" uid="$2" mode="$3" f info
+  shift 3
+  for f in "$dir" "$@"; do
+    [ "$f" = "$dir" ] || f="$dir/$f"
+    [ -e "$f" ] || { echo "$f is missing"; return 0; }
+    [ ! -L "$f" ] || { echo "$f is a link"; return 0; }
+    info="$(stat -c '%u %a' "$f" 2> /dev/null || echo "x 777")"
+    [ "${info%% *}" = "$uid" ] || { echo "$f is not owned by $( [ "$uid" = 0 ] && echo root || echo "the account that runs Kilnmark")"; return 0; }
+    (( (8#${info##* } & 8#022) == 0 )) || { echo "$f may be written by others than its owner"; return 0; }
+    [ "$f" != "$dir" ] || (( (8#${info##* } & ~8#$mode & 8#777) == 0 )) || { echo "$f is open wider than $mode"; return 0; }
+  done
+}
 
 report_checks() {
-  local w p
-  for w in "${warnings[@]:-}"; do [ -z "$w" ] || echo "Warning: $w"; done
+  local i
+  for i in "${!passed[@]}"; do echo "OK: ${passed[$i]}"; done
+  for i in "${!warnings[@]}"; do
+    echo "Warning: ${warnings[$i]}"
+    [ -z "${wfixes[$i]}" ] || echo "  Fix: ${wfixes[$i]}"
+  done
   if [ "${#problems[@]}" -gt 0 ]; then
-    for p in "${problems[@]}"; do echo "Problem: $p" >&2; done
+    for i in "${!problems[@]}"; do
+      echo "Problem: ${problems[$i]}" >&2
+      [ -z "${fixes[$i]}" ] || echo "  Fix: ${fixes[$i]}" >&2
+    done
     return 1
   fi
   return 0
 }
 
+cmd_check() {
+  local running=false keycloak=false
+  [ $# -eq 0 ] || die "check takes no options."
+  if [ -n "$data" ] && [ -f "$data/config/.env" ]; then
+    curl -k -s -f -o /dev/null --max-time 10 "$(local_url | sed 's/localhost/127.0.0.1/')/q/health/ready" && running=true
+    ! auth_on || keycloak=true
+    echo "Checking Kilnmark in $root (data in $data), a $(setting KILNMARK_MODE) install"
+    check_prerequisites "$running" "$keycloak"
+    check_install "$running"
+    local added; added="$(new_settings "$root/current/.env.example")"
+    [ -z "$added" ] || echo "Settings in this version's .env.example that config/.env does not mention: $(echo "$added" | tr '\n' ' ')"
+  else
+    echo "Checking this machine for a Kilnmark install"
+    [ "$(my_uid)" -eq 0 ] || echo "(install runs as root: it asks for sudo, and says why)"
+    check_prerequisites false false
+  fi
+  if report_checks; then echo "All checks passed."; else return 1; fi
+}
+
 # Settings this version's .env.example names that config/.env does not mention at all.
 new_settings() {
-  local example="$1" env="$root/config/.env" k
+  local example="$1" env="$data/config/.env" k
   [ -f "$example" ] && [ -f "$env" ] || return 0
   for k in $(sed -n 's/^#\{0,1\} *\([A-Z][A-Z0-9_]*\)=.*/\1/p' "$example" | sort -u); do
     grep -qE "^#? *$k=" "$env" || echo "$k"
@@ -625,59 +882,10 @@ set_line() {
   chmod 600 "$tmp" && mv "$tmp" "$file"
 }
 
-make_settings() {
-  local example="$1" env="$root/config/.env"
-  cp "$example" "$root/config/.env.example"
-  if [ -f "$env" ]; then
-    echo "Keeping the settings in $env."
-    return 0
-  fi
-  cp "$example" "$env" && chmod 600 "$env"
-  set_line "$env" KILNMARK_DB_PASSWORD "$(random_value)"
-  set_line "$env" KILNMARK_ADMIN_TOKEN "km_$(random_value)"
-  # The deployment mode (ADR 0051), fixed at the first start: --starter makes a Starter Pack install,
-  # for training and development, which never becomes a production one.
-  if [ "${with_starter:-false}" = true ]; then
-    set_line "$env" KILNMARK_MODE starter-pack
-    set_line "$env" KILNMARK_SAMPLES_DB_PASSWORD "$(random_value)"
-  else
-    set_line "$env" KILNMARK_MODE production
-  fi
-  # Relative to compose.yaml in versions/<version>/, so the root can move.
-  set_line "$env" KILNMARK_CERTS_DIR ../../certs/https
-  # Other ports, when install was run with them set (KILNMARK_PORT=9780 ./kilnmark.sh install).
-  local k
-  for k in KILNMARK_PORT KILNMARK_HTTPS_PORT KILNMARK_DB_PORT KILNMARK_KEYCLOAK_PORT; do
-    [ -z "${!k:-}" ] || set_line "$env" "$k" "${!k}"
-  done
-  if [ "${with_auth:-false}" = true ]; then
-    set_line "$env" COMPOSE_PROFILES auth
-    set_line "$env" KILNMARK_KEYCLOAK_DB_PASSWORD "$(random_value)"
-    set_line "$env" KILNMARK_KEYCLOAK_ADMIN_PASSWORD "$(random_value)"
-    set_line "$env" KILNMARK_OIDC_ENABLED true
-    set_line "$env" KILNMARK_OIDC_ISSUER "http://keycloak:8080/realms/kilnmark"
-    set_line "$env" KILNMARK_OIDC_CLIENT_ID kilnmark
-    set_line "$env" KILNMARK_OIDC_CLIENT_SECRET "$(random_value)"
-    set_line "$env" KILNMARK_OIDC_PROVIDER_NAME Keycloak
-    set_line "$env" KILNMARK_OIDC_VIEWER_GROUPS kilnmark-viewers
-    set_line "$env" KILNMARK_OIDC_STEWARD_GROUPS kilnmark-stewards
-    set_line "$env" KILNMARK_OIDC_DESIGNER_GROUPS kilnmark-designers
-    set_line "$env" KILNMARK_OIDC_ADMIN_GROUPS kilnmark-admins
-    set_line "$env" KILNMARK_OIDC_UNMASK_GROUPS kilnmark-sensitive-data
-    # Other ports: where browsers reach Keycloak and Kilnmark follows them, so sign-in never sends
-    # people to another install's Keycloak on the default port.
-    [ -z "${KILNMARK_KEYCLOAK_PORT:-}" ] || set_line "$env" KILNMARK_KEYCLOAK_URL "http://localhost:$KILNMARK_KEYCLOAK_PORT"
-    [ -z "${KILNMARK_PORT:-}" ] || set_line "$env" KILNMARK_URL "http://localhost:$KILNMARK_PORT"
-    # A trial install with Keycloak: the Starter Pack may add its example people (ADR 0051).
-    [ "${with_starter:-false}" = true ] && set_line "$env" KILNMARK_STARTER allowed
-  fi
-  echo "Wrote $env with new secrets (readable by you only)."
-}
-
 # Settings later versions added, as config/.env now asks: run before every start, so upgrade and up
 # keep them right. Each new secret is random.
 ensure_settings() {
-  local env="$root/config/.env" files hours
+  local env="$data/config/.env" files hours
   [ -f "$env" ] || return 0
   # Every install since deployment modes (ADR 0051) has one; an install from before them (0.1.1 or
   # earlier, a preview) is never upgraded.
@@ -719,7 +927,7 @@ wait_for() {
   local what="$1" url="$2" tries="$3" i
   echo "Waiting for $what ..."
   for i in $(seq 1 "$tries"); do
-    if curl -k -L -s -f -o /dev/null "$url"; then return 0; fi
+    if curl -k -L -s -f --max-time 10 -o /dev/null "${url/localhost/127.0.0.1}"; then return 0; fi
     sleep 2
   done
   return 1
@@ -753,6 +961,7 @@ cmd_up() {
     || die "Kilnmark did not answer within 3 minutes. See why with: ./kilnmark.sh logs kilnmark"
   after_one_offs
   if auth_on; then expiry_timer_set; else expiry_timer_remove; fi
+  boot_start
   url="$(setting KILNMARK_URL)"; url="${url:-$(local_url)}"; url="${url%/}"
   echo "Kilnmark $v is ready at $url"
   if $browser && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v xdg-open > /dev/null; then
@@ -772,7 +981,7 @@ hand_install_id() {
   auth_on || return 0
   compose_quietly up -d postgres || die "Kilnmark's database could not start. See why with: ./kilnmark.sh logs postgres"
   for i in $(seq 1 60); do
-    "${compose[@]}" exec -T postgres pg_isready -h 127.0.0.1 -U kilnmark -d kilnmark > /dev/null 2>&1 && break
+    "${compose[@]}" exec -T postgres pg_isready -h 127.0.0.1 -U kilnmark -d kilnmark < /dev/null > /dev/null 2>&1 && break
     sleep 2
   done
   recorded="$(recorded_mode)"
@@ -788,7 +997,7 @@ hand_install_id() {
 after_one_offs() {
   if auth_on; then
     local kc id; kc="$(setting KILNMARK_KEYCLOAK_PORT)"
-    wait_for Keycloak "http://localhost:${kc:-8180}/realms/kilnmark" 150 \
+    wait_for Keycloak "http://127.0.0.1:${kc:-8180}/realms/kilnmark" 150 \
       || die "Keycloak did not answer within 5 minutes. See why with: ./kilnmark.sh logs keycloak"
     people_after_up
     if [ -z "${KILNMARK_INSTALL_ID:-}" ]; then
@@ -796,7 +1005,7 @@ after_one_offs() {
       if [ -n "$id" ]; then
         local stamped
         if stamped="$(KILNMARK_PEOPLE_ACTION=stamp KILNMARK_INSTALL_ID="$id" \
-          "${compose[@]}" run --rm -T keycloak-setup < /dev/null 2>&1 | hide_compose_commands)"; then
+          "${compose[@]}" run --rm --no-deps -T keycloak-setup < /dev/null 2>&1 | hide_compose_commands)"; then
           record_own_people "$stamped" stamp
         else
           echo "Warning: Keycloak's realm was not told which install it belongs to; the next start tells it. See: ./kilnmark.sh logs keycloak-setup" >&2
@@ -837,32 +1046,405 @@ cmd_status() {
   if curl -k -s -f -o /dev/null "$(local_url)/q/health/ready"; then echo "Health: ready at $(local_url)"
   else echo "Health: not answering at $(local_url)"; fi
   ! auth_on || echo "People expiry: $(expiry_timer_state)"
-  last="$(ls -1d "$root"/backups/kilnmark-* 2> /dev/null | tail -n 1 || true)"
-  if [ -n "$last" ]; then echo "Last backup: $(basename "$last")"; else echo "Last backup: none in $root/backups"; fi
+  last="$(ls -1d "$data"/backups/kilnmark-* 2> /dev/null | tail -n 1 || true)"
+  if [ -n "$last" ]; then echo "Last backup: $(basename "$last")"; else echo "Last backup: none in $data/backups"; fi
 }
 
-# --- install, upgrade, uninstall ---------------------------------------------------------------
+# --- the install's answers (ADR 0051, decision 17) ---------------------------------------------
 
-make_folders() {
-  mkdir -p "$root/versions" "$root/config" "$root/certs/https" "$root/backups" "$root/logs" \
-    || die "Cannot create $root. Prepare it first (sudo ./kilnmark.sh prepare), or choose another with --root."
-  chmod 700 "$root/config" "$root/certs" "$root/backups" "$root/logs"
+# Each answer install asks for, or reads from an answers file (install.conf.example says each). An
+# answers file holds no secrets: secrets are generated, or typed (hidden) or piped in when asked.
+declare -A ans=() ans_line=()
+# answers configure leaves unchecked because the change is not to them (the certificate's files)
+skip_keys=" "
+answer_keys=(mode identity email_domain host port https_port db_port keycloak_port tls tls_cert tls_key
+  oidc_issuer oidc_client_id oidc_provider_name oidc_viewer_groups oidc_steward_groups oidc_designer_groups
+  oidc_admin_groups oidc_unmask_groups admin_email admin_first_name admin_last_name project program_dir data_dir user operator)
+# Answers no configure changes: each needs a new install.
+fixed_keys=" mode project program_dir data_dir user "
+answer_default() {
+  case "$1" in
+    mode) echo production ;;
+    identity) if [ "$(answer_of mode)" = starter-pack ]; then echo bundled; else echo own; fi ;;
+    host) echo localhost ;;
+    port) echo 8780 ;;
+    https_port) echo 8443 ;;
+    db_port) echo 5442 ;;
+    keycloak_port) echo 8180 ;;
+    tls) echo off ;;
+    oidc_provider_name) echo "your organisation" ;;
+    oidc_viewer_groups) echo kilnmark-viewers ;;
+    oidc_steward_groups) echo kilnmark-stewards ;;
+    oidc_designer_groups) echo kilnmark-designers ;;
+    oidc_admin_groups) echo kilnmark-admins ;;
+    oidc_unmask_groups) echo kilnmark-sensitive-data ;;
+    project) echo kilnmark ;;
+    program_dir) echo "$default_prog" ;;
+    data_dir) echo "$default_data" ;;
+    user) echo kilnmark ;;
+    *) echo "" ;;
+  esac
 }
+answer_of() { if [ -n "${ans[$1]+x}" ]; then printf '%s' "${ans[$1]}"; else answer_default "$1"; fi; }
+known_key() { [[ " ${answer_keys[*]} " == *" $1 "* ]]; }
+# Whether an answer means anything with the others: the identity provider's for own, Keycloak's and
+# the first admin's for bundled, the certificate's for tls=on.
+relevant() {
+  case "$1" in
+    oidc_*) [ "$(answer_of identity)" = own ] ;;
+    keycloak_port|admin_email) [ "$(answer_of identity)" = bundled ] ;;
+    admin_first_name|admin_last_name) [ "$(answer_of identity)" = bundled ] && [ -n "$(answer_of admin_email)" ] ;;
+    tls_cert|tls_key) [ "$(answer_of tls)" = on ] ;;
+    # the Windows edition's: who runs Kilnmark there
+    operator) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+trim() { local v="$1"; v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"; printf '%s' "$v"; }
+local_host() { [[ "$1" == localhost || "$1" == 127.0.0.1 ]]; }
 
-# Copies a release folder into versions/<version>, unless that version is there already.
-place_release() {
-  local src="$1" v="$2"
-  if [ -d "$root/versions/$v" ]; then
-    echo "Kilnmark $v is already in $root/versions/$v."
-  else
-    cp -a "$src" "$root/versions/$v.part" && mv "$root/versions/$v.part" "$root/versions/$v"
-    echo "Placed Kilnmark $v in $root/versions/$v."
+# Why an answer cannot be taken, or nothing. Never the value itself.
+answer_problem() {
+  local k="$1" v="$2" d
+  case "$k" in
+    mode) [[ "$v" =~ ^(production|starter-pack)$ ]] || echo "mode is production or starter-pack" ;;
+    identity)
+      if ! [[ "$v" =~ ^(bundled|own)$ ]]; then echo "identity is bundled (Kilnmark's own Keycloak) or own (your organisation's identity provider)"
+      elif [ "$v" = own ] && [ "$(answer_of mode)" = starter-pack ]; then echo "a Starter Pack install signs in with the bundled Keycloak only: identity is bundled"
+      fi ;;
+    email_domain)
+      if [ -n "$v" ] && ! [[ "$v" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]]; then echo "email_domain is a domain name in lower case, such as bank.example"
+      elif [[ "$v" == kilnmark.com || "$v" == *.kilnmark.com ]]; then echo "kilnmark.com is the Starter Pack's example people's domain: give your organisation's"
+      fi ;;
+    host)
+      local_host "$v" || [[ "$v" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$ ]] || [[ "$v" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] \
+        || echo "host is a host name in lower case (kilnmark.bank.example), an IPv4 address or localhost" ;;
+    port|https_port|db_port|keycloak_port)
+      if ! [[ "$v" =~ ^[0-9]{1,5}$ ]] || [ "$v" -lt 1 ] || [ "$v" -gt 65535 ]; then echo "$k is a port number from 1 to 65535"; fi ;;
+    tls) [[ "$v" =~ ^(off|on|proxy)$ ]] || echo "tls is off, on (Kilnmark ends TLS with your certificate) or proxy (a proxy in front ends it)" ;;
+    tls_cert) { [ -f "$v" ] && [ -r "$v" ] && grep -q 'BEGIN CERTIFICATE' "$v" 2> /dev/null; } || echo "tls_cert is the full path of a PEM certificate (with its chain) that install can read" ;;
+    tls_key) { [ -f "$v" ] && [ -r "$v" ] && grep -q 'PRIVATE KEY' "$v" 2> /dev/null; } || echo "tls_key is the full path of the certificate's PEM private key, which install can read" ;;
+    oidc_issuer) [[ "$v" =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^[:space:]\"\'\\]*)?$ ]] || echo "oidc_issuer is your identity provider's issuer URL, starting https://" ;;
+    oidc_client_id) [[ "$v" =~ ^[A-Za-z0-9._:/@-]+$ ]] || echo "oidc_client_id is the client id your identity provider gave Kilnmark" ;;
+    oidc_provider_name|oidc_*_groups)
+      if [ -z "$v" ] || [[ "$v" =~ [[:cntrl:]\"\'\\] ]]; then echo "$k is needed, with no quote, backslash or control character"; fi ;;
+    admin_email)
+      [ -n "$v" ] || return 0
+      if ! [[ "$v" =~ ^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$ ]]; then echo "admin_email is an email address in lower case"
+      elif [[ "$v" == *@kilnmark.com || "$v" == *.kilnmark.com ]]; then echo "kilnmark.com addresses are the Starter Pack's example people: give one of your own organisation"
+      else
+        d="$(answer_of email_domain)"
+        [ -z "$d" ] || [[ "$v" == *@"$d" || "$v" == *."$d" ]] || echo "admin_email is not at email_domain"
+      fi ;;
+    admin_first_name|admin_last_name)
+      if [ -z "$v" ] || [[ "$v" =~ [[:cntrl:]] ]]; then echo "$k is needed for the first admin"; fi ;;
+    project) [[ "$v" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || echo "project is lower-case letters, digits, - and _, starting with a letter or a digit" ;;
+    program_dir|data_dir)
+      if [[ "$v" != /* ]] || [ "$v" = / ]; then echo "$k is a full path, starting with /"
+      elif ! [[ "$v" =~ ^/[A-Za-z0-9._/+@,=\ -]*$ ]]; then echo "$k may hold letters, digits, spaces and . _ / + @ , = - only: compose and systemd read anything else as more than a path"
+      fi ;;
+    user) [[ "$v" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] && [ "$v" != root ] || echo "user is the name of the account that runs Kilnmark, in lower case, never root" ;;
+  esac
+}
+# Why the answers do not go together, or nothing; one line each.
+answers_problems() {
+  local k p seen=" " busy="${1:-}" a b
+  for k in port https_port db_port keycloak_port; do
+    relevant "$k" || continue
+    p="$(answer_of "$k")"
+    [[ "$seen" != *" $p "* ]] || echo "$k is a port another answer uses already"
+    seen="$seen$p "
+    if [ "$busy" = ports ] && [[ "$p" =~ ^[0-9]+$ ]] && port_busy "$p"; then echo "$k: port $p is in use (port $(free_port "$p") is free)"; fi
+  done
+  if ! local_host "$(answer_of host)" && [ "$(answer_of tls)" = off ]; then
+    echo "tls: people sign in over HTTPS only, so from other machines Kilnmark needs tls on or proxy (or host localhost)"
+  elif ! local_host "$(answer_of host)" && [ "$(answer_of identity)" = bundled ] && [ "$(answer_of tls)" != proxy ]; then
+    echo "tls: from other machines the bundled Keycloak is reached through a proxy that ends TLS (its realm asks for HTTPS), so tls is proxy (or host localhost)"
   fi
-  use_version "$v"
+  a="$(answer_of program_dir)"; b="$(answer_of data_dir)"
+  if [ "${a%/}" = "${b%/}" ] || [[ "${b%/}/" == "${a%/}/"* ]] || [[ "${a%/}/" == "${b%/}/"* ]]; then
+    echo "program_dir and data_dir are two folders, neither inside the other"
+  fi
+}
+# Every answer that means something, checked; each problem one line, by key (and line in a file).
+validate_answers() {
+  local k why errs=() at
+  for k in "${answer_keys[@]}"; do
+    relevant "$k" || continue
+    [[ "$skip_keys" != *" $k "* ]] || continue
+    why="$(answer_problem "$k" "$(answer_of "$k")")"
+    [ -z "$why" ] || { at=""; [ -z "${ans_line[$k]:-}" ] || at=" (line ${ans_line[$k]})"; errs+=("$k$at: $why"); }
+  done
+  while IFS= read -r why; do [ -z "$why" ] || errs+=("$why"); done < <(answers_problems "${1:-}")
+  [ "${#errs[@]}" -eq 0 ] && return 0
+  for why in "${errs[@]}"; do echo "Answer: $why" >&2; done
+  return 1
+}
+
+# Reads an answers file: KEY=VALUE lines, # comments; refuses a secret, an unknown key or a key twice.
+read_answers() {
+  local file="$1" n=0 line k v errs=() why
+  [ -f "$file" ] && [ -r "$file" ] || die "There is no answers file that install can read there."
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1)); line="${line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
+    if ! [[ "$line" =~ ^[[:space:]]*([a-z_]+)[[:space:]]*=(.*)$ ]]; then errs+=("line $n is not KEY=VALUE"); continue; fi
+    k="${BASH_REMATCH[1]}" v="$(trim "${BASH_REMATCH[2]}")"
+    if [[ "$k" =~ (password|secret|token) ]]; then errs+=("line $n: $k is a secret, and an answers file holds none: install generates them, or asks"); continue; fi
+    known_key "$k" || { errs+=("line $n: $k is not an answer install knows (install.conf.example lists them)"); continue; }
+    [ -z "${ans_line[$k]:-}" ] || { errs+=("line $n: $k is given twice"); continue; }
+    case "$v" in \"*\") v="${v:1:${#v}-2}" ;; \'*\') v="${v:1:${#v}-2}" ;; esac
+    ans[$k]="$v" ans_line[$k]="$n"
+  done < "$file"
+  if [ "${#errs[@]}" -gt 0 ]; then
+    for why in "${errs[@]}"; do echo "Answers file: $why" >&2; done
+    die "The answers file has the problems above, so nothing was changed."
+  fi
+}
+# The answers this install was made with, from config/install.conf in the data folder.
+load_installed_answers() {
+  local f="$data/config/install.conf"
+  [ -f "$f" ] || return 1
+  read_answers "$f"
+  ans_line=()
+}
+# config/install.conf: the answers that mean something, never a secret.
+write_answers() {
+  local file="$1" k
+  {
+    echo "# Kilnmark's install answers (no secrets). configure changes them; the mode never changes."
+    echo "# Every key is explained in install.conf.example, in the release."
+    for k in "${answer_keys[@]}"; do if relevant "$k"; then echo "$k=$(answer_of "$k")"; fi; done
+  } > "$file.new" && chmod 600 "$file.new" && mv -f "$file.new" "$file"
+}
+
+# Asks one question at a terminal, with its default, until the answer is one install can take.
+ask() {
+  local k="$1" q="$2" d v why
+  d="$(answer_of "$k")"
+  while :; do
+    read -r -p "$q [${d:-none}]: " v || die "No answer was given, so nothing was installed."
+    v="$(trim "$v")"; [ -n "$v" ] || v="$d"
+    [ "$v" != none ] || [ -n "$d" ] || v=""
+    ans[$k]="$v"
+    why="$(answer_problem "$k" "$v")"
+    if [ -z "$why" ] && [[ "$k" == *port ]] && port_busy "$v"; then why="port $v is in use (port $(free_port "$v") is free)"; fi
+    [ -n "$why" ] || return 0
+    echo "  $why. Try again." >&2
+    unset "ans[$k]"
+  done
+}
+# A secret typed twice with the echo off at a terminal, else one line on standard input: in
+# $secret_value, never shown or written anywhere but config/.env (the client secret) or Keycloak.
+secret_value=""
+read_secret() {
+  local q="$1" again
+  if [ -t 0 ]; then
+    read -r -s -p "$q (not shown): " secret_value; echo >&2
+    read -r -s -p "The same again: " again; echo >&2
+    [ "$secret_value" = "$again" ] || { secret_value=""; die "The two did not match. Nothing was changed."; }
+  else
+    IFS= read -r secret_value || true
+    secret_value="${secret_value%$'\r'}"
+  fi
+  [[ "$secret_value" != *[[:cntrl:]]* ]] || { secret_value=""; die "It holds a control character (a tab, say), which it may not. Nothing was changed."; }
+}
+
+# The questions, each with its default and checked as it is answered.
+ask_answers() {
+  echo "Answer each question, or press Enter for the default in [brackets]."
+  ask mode "Mode: production, for real work, or starter-pack, for training and development only (it never becomes production)"
+  if [ "$(answer_of mode)" = starter-pack ]; then
+    ans[identity]=bundled
+    echo "A Starter Pack install signs in with the bundled Keycloak, where its example people are."
+  else
+    ask identity "How people sign in: own (your organisation's identity provider, recommended for banks) or bundled (Kilnmark's own Keycloak)"
+  fi
+  ask email_domain "Your organisation's email domain, which people's addresses end in (Enter for none)"
+  ask host "The host name people reach Kilnmark on"
+  ask tls "TLS: off, on (Kilnmark ends TLS with your certificate) or proxy (a proxy in front ends it)"
+  if [ "$(answer_of tls)" = on ]; then
+    ask tls_cert "Your certificate, with its chain: the full path of its PEM file"
+    ask tls_key "Its private key: the full path of its PEM file"
+  fi
+  ask port "Kilnmark's port$( [ "$(answer_of tls)" = on ] && echo ' for plain HTTP, which it sends on to HTTPS')"
+  # published whether or not TLS is on, so it must be free either way
+  ask https_port "Kilnmark's HTTPS port$( [ "$(answer_of tls)" = on ] || echo ', published for when TLS is on')"
+  ask db_port "The port of Kilnmark's own database, on this machine only"
+  if [ "$(answer_of identity)" = bundled ]; then
+    ask keycloak_port "Keycloak's port, on this machine only"
+    ask admin_email "Kilnmark's first admin, a person of your own: their email, which is their user name (Enter to skip)"
+    if [ -n "$(answer_of admin_email)" ]; then
+      ask admin_first_name "Their first name"
+      ask admin_last_name "Their last name"
+    fi
+  else
+    ask oidc_issuer "Your identity provider's issuer URL"
+    ask oidc_client_id "The client id it gave Kilnmark"
+    ask oidc_provider_name "Its name, for the sign-in button (Sign in with ...)"
+    ask oidc_admin_groups "Its group (or groups, comma-separated) of Kilnmark's admins"
+    ask oidc_designer_groups "Its group of designers"
+    ask oidc_steward_groups "Its group of stewards"
+    ask oidc_viewer_groups "Its group of viewers"
+    ask oidc_unmask_groups "Its group of designers who see sensitive values"
+  fi
+}
+show_answers() {
+  local k
+  for k in "${answer_keys[@]}"; do if relevant "$k"; then echo "  $k=$(answer_of "$k")"; fi; done
+}
+
+# The secrets the answers need, asked before anything changes: the identity provider's client
+# secret (own), or the first admin's temporary password (bundled, with a first admin).
+person_password=""
+ask_install_secrets() {
+  if [ "$(answer_of identity)" = own ]; then
+    read_secret "The client secret your identity provider gave Kilnmark"
+    [ -n "$secret_value" ] || die "The client secret is needed for sign-in with your identity provider. Nothing was changed."
+  elif [ -n "$(answer_of admin_email)" ]; then
+    if [ -t 0 ]; then
+      read_secret "A temporary password for the first admin, 12 characters or more (they choose their own at their first sign-in)"
+    else
+      read_secret "The first admin's temporary password"
+    fi
+    person_password="$secret_value" secret_value=""
+    [ "${#person_password}" -ge 12 ] || { person_password=""; die "The first admin's temporary password is 12 characters or more (pipe it in on one line, or leave admin_email empty). Nothing was changed."; }
+  fi
+}
+
+# --- secrets and settings from the answers ----------------------------------------------------
+
+# Removes KEY from the file, as a commented line.
+unset_line() {
+  local file="$1" key="$2" tmp
+  grep -qE "^[[:space:]]*(export[[:space:]]+)?$key[[:space:]]*=" "$file" || return 0
+  tmp="$(mktemp "$file.XXXX")"
+  awk -v k="$key" '$0 ~ "^[[:space:]]*(export[[:space:]]+)?" k "[[:space:]]*=" { print "# " k "="; next } { print }' "$file" > "$tmp"
+  chmod 600 "$tmp" && mv "$tmp" "$file"
+}
+# COMPOSE_PROFILES with the auth profile ($1 on) or without it (off), keeping the others.
+set_auth_profile() {
+  local env="$1" list p out=""
+  IFS=',' read -r -a list <<< "$(setting COMPOSE_PROFILES | tr -d '[:space:]')"
+  for p in "${list[@]:-}"; do [ -z "$p" ] || [ "$p" = auth ] || out="${out:+$out,}$p"; done
+  [ "$2" != on ] || out="${out:+$out,}auth"
+  if [ -n "$out" ]; then set_line "$env" COMPOSE_PROFILES "$out"; else unset_line "$env" COMPOSE_PROFILES; fi
+}
+new_secret() { [ -n "$(setting "$2")" ] || set_line "$1" "$2" "$3"; }
+# config/.env from the answers: every setting an answer decides, written again each time, and each
+# secret new where there is none ($1 "new-client": the bundled Keycloak's client secret afresh).
+write_env() {
+  local env="$data/config/.env" scheme url kc host tlsm
+  [ -f "$env" ] || { cp "$root/current/.env.example" "$env"; chmod 600 "$env"; }
+  new_secret "$env" KILNMARK_DB_PASSWORD "$(random_value)"
+  new_secret "$env" KILNMARK_ADMIN_TOKEN "km_$(random_value)"
+  set_line "$env" KILNMARK_MODE "$(answer_of mode)"
+  [ "$(answer_of mode)" != starter-pack ] || new_secret "$env" KILNMARK_SAMPLES_DB_PASSWORD "$(random_value)"
+  set_line "$env" KILNMARK_PROJECT "$(answer_of project)"
+  if [ -n "$(answer_of email_domain)" ]; then set_line "$env" KILNMARK_EMAIL_DOMAIN "$(answer_of email_domain)"; else unset_line "$env" KILNMARK_EMAIL_DOMAIN; fi
+  set_line "$env" KILNMARK_PORT "$(answer_of port)"
+  set_line "$env" KILNMARK_HTTPS_PORT "$(answer_of https_port)"
+  set_line "$env" KILNMARK_DB_PORT "$(answer_of db_port)"
+  host="$(answer_of host)" tlsm="$(answer_of tls)"
+  case "$tlsm" in
+    on) url="https://$host$( [ "$(answer_of https_port)" = 443 ] || echo ":$(answer_of https_port)")"
+      set_line "$env" KILNMARK_TLS_CERT_FILE /etc/kilnmark/tls/server.crt
+      set_line "$env" KILNMARK_TLS_KEY_FILE /etc/kilnmark/tls/server.key
+      set_line "$env" KILNMARK_HTTP_PLAIN redirect
+      unset_line "$env" KILNMARK_OIDC_BEHIND_TLS_PROXY ;;
+    proxy) url="https://$host"
+      unset_line "$env" KILNMARK_TLS_CERT_FILE; unset_line "$env" KILNMARK_TLS_KEY_FILE; unset_line "$env" KILNMARK_HTTP_PLAIN
+      set_line "$env" KILNMARK_HTTP_HSTS always
+      set_line "$env" KILNMARK_OIDC_BEHIND_TLS_PROXY true ;;
+    *) url="http://$host:$(answer_of port)"
+      unset_line "$env" KILNMARK_TLS_CERT_FILE; unset_line "$env" KILNMARK_TLS_KEY_FILE; unset_line "$env" KILNMARK_HTTP_PLAIN
+      unset_line "$env" KILNMARK_OIDC_BEHIND_TLS_PROXY ;;
+  esac
+  set_line "$env" KILNMARK_URL "$url"
+  set_line "$env" KILNMARK_OIDC_ENABLED true
+  if [ "$(answer_of identity)" = bundled ]; then
+    set_auth_profile "$env" on
+    new_secret "$env" KILNMARK_KEYCLOAK_DB_PASSWORD "$(random_value)"
+    new_secret "$env" KILNMARK_KEYCLOAK_ADMIN_PASSWORD "$(random_value)"
+    if [ "${1:-}" = new-client ] || [ -z "$(setting KILNMARK_OIDC_CLIENT_SECRET)" ]; then set_line "$env" KILNMARK_OIDC_CLIENT_SECRET "$(random_value)"; fi
+    set_line "$env" KILNMARK_KEYCLOAK_PORT "$(answer_of keycloak_port)"
+    # Keycloak is published on this machine only: from other machines, a proxy that ends TLS
+    if local_host "$host"; then kc="http://localhost:$(answer_of keycloak_port)"; else kc="https://$host:$(answer_of keycloak_port)"; fi
+    set_line "$env" KILNMARK_KEYCLOAK_URL "$kc"
+    if local_host "$host"; then set_line "$env" KILNMARK_KEYCLOAK_BIND 127.0.0.1; else set_line "$env" KILNMARK_KEYCLOAK_BIND 0.0.0.0; fi
+    set_line "$env" KILNMARK_OIDC_ISSUER "http://keycloak:8080/realms/kilnmark"
+    set_line "$env" KILNMARK_OIDC_CLIENT_ID kilnmark
+    set_line "$env" KILNMARK_OIDC_PROVIDER_NAME Keycloak
+    set_line "$env" KILNMARK_OIDC_VIEWER_GROUPS kilnmark-viewers
+    set_line "$env" KILNMARK_OIDC_STEWARD_GROUPS kilnmark-stewards
+    set_line "$env" KILNMARK_OIDC_DESIGNER_GROUPS kilnmark-designers
+    set_line "$env" KILNMARK_OIDC_ADMIN_GROUPS kilnmark-admins
+    set_line "$env" KILNMARK_OIDC_UNMASK_GROUPS kilnmark-sensitive-data
+    # a Starter Pack install's example people may be added (ADR 0051)
+    if [ "$(answer_of mode)" = starter-pack ]; then set_line "$env" KILNMARK_STARTER allowed; else unset_line "$env" KILNMARK_STARTER; fi
+  else
+    set_auth_profile "$env" off
+    unset_line "$env" KILNMARK_STARTER
+    set_line "$env" KILNMARK_OIDC_ISSUER "$(answer_of oidc_issuer)"
+    set_line "$env" KILNMARK_OIDC_CLIENT_ID "$(answer_of oidc_client_id)"
+    [ -z "$secret_value" ] || set_line "$env" KILNMARK_OIDC_CLIENT_SECRET "$secret_value"
+    set_line "$env" KILNMARK_OIDC_PROVIDER_NAME "$(answer_of oidc_provider_name)"
+    set_line "$env" KILNMARK_OIDC_VIEWER_GROUPS "$(answer_of oidc_viewer_groups)"
+    set_line "$env" KILNMARK_OIDC_STEWARD_GROUPS "$(answer_of oidc_steward_groups)"
+    set_line "$env" KILNMARK_OIDC_DESIGNER_GROUPS "$(answer_of oidc_designer_groups)"
+    set_line "$env" KILNMARK_OIDC_ADMIN_GROUPS "$(answer_of oidc_admin_groups)"
+    set_line "$env" KILNMARK_OIDC_UNMASK_GROUPS "$(answer_of oidc_unmask_groups)"
+  fi
+  secret_value=""
+}
+# The certificate and key for tls=on, into certs/https: readable inside the container (the folder
+# above, certs, keeps everyone else on this machine out).
+place_certs() {
+  [ "$(answer_of tls)" = on ] || return 0
+  cp "$(answer_of tls_cert)" "$data/certs/https/server.crt" && cp "$(answer_of tls_key)" "$data/certs/https/server.key" \
+    || die "The certificate or its key could not be copied into $data/certs/https."
+  chmod 755 "$data/certs/https" && chmod 644 "$data/certs/https/server.crt" "$data/certs/https/server.key"
+}
+
+# --- install, upgrade, uninstall (as root) ---------------------------------------------------
+
+# install, upgrade and uninstall change root's folders: as anyone else, this says why and runs
+# itself again with sudo.
+need_root() {
+  [ "$(my_uid)" -eq 0 ] && return 0
+  echo "$1 writes $default_prog and $default_data (or the folders you named), which only root may change, so it runs as root: sudo asks for your password."
+  command -v sudo > /dev/null 2>&1 || die "Run it as root (su -c), as sudo is not here."
+  exec sudo -- "$BASH" "$here/kilnmark.sh" "$@"
+}
+# Day-to-day commands run as the account that runs Kilnmark, never as root.
+not_root() {
+  [ "$(my_uid)" -ne 0 ] && return 0
+  local user=""
+  [ -z "$data" ] || [ ! -f "$data/config/install.conf" ] || user="$(sed -n 's/^user=//p' "$data/config/install.conf" | tail -n 1)"
+  die "$1 runs as the account that runs Kilnmark, never as root: sudo -iu ${user:-kilnmark} \"$root/kilnmark.sh\" $1"
+}
+# Runs a command as the account that runs Kilnmark ($ins_user), with its own session (rootless Podman).
+ins_user=""
+as_account() {
+  local uid home
+  uid="$(id -u "$ins_user")" home="$(getent passwd "$ins_user" | cut -d: -f6)"
+  (cd / && runuser -u "$ins_user" -- env -i HOME="$home" USER="$ins_user" LOGNAME="$ins_user" \
+    PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" LANG="${LANG:-C.UTF-8}" \
+    XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+    KILNMARK_PROJECT="$project" ${KILNMARK_ENGINE:+KILNMARK_ENGINE="$KILNMARK_ENGINE"} "$@")
+}
+# A step run as the account: what it says is shown, and a failure ends the step with its own reason.
+account_step() {
+  local out rc=0 why
+  out="$(mktemp)"
+  as_account "$@" 2>&1 | tee "$out" || rc=$?
+  why="$(sed -n 's/^Error: //p; s/^\[[0-9]*\/[0-9]*\] FAILED ([^)]*): //p' "$out" | tail -n 1)"
+  rm -f "$out"
+  [ "$rc" -eq 0 ] || die "${why:-it stopped: see what it said above}"
 }
 
 # Makes VERSION the running one: current points at it, and the control script and the menu
-# launchers at the root are its own, so shortcuts made from the root survive upgrades.
+# launchers in the program folder are its own, so shortcuts made from there survive upgrades.
 use_version() {
   local f
   # Copied beside and renamed over: a running script must never be rewritten in place, since bash
@@ -873,12 +1455,28 @@ use_version() {
     fi
   done
   chmod 755 "$root"/*.sh
+  chmod 644 "$root/kilnmark.png" 2> /dev/null || true
   ln -sfn "versions/$1" "$root/current"
+}
+# A release folder copied into the program folder, root's and read-only to everyone else.
+place_version() {
+  local src="$1" v="$2"
+  if [ -d "$root/versions/$v" ]; then echo "Kilnmark $v is in $root/versions/$v already."
+  else
+    cp -a "$src" "$root/versions/$v.part" && mv "$root/versions/$v.part" "$root/versions/$v" \
+      || die "The release could not be copied into $root/versions."
+  fi
+  chown -R -h root:root "$root/versions/$v" && chmod -R u+rwX,go+rX,go-w "$root/versions/$v" \
+    || die "$root/versions/$v could not be made root's alone."
 }
 
 get_images() {
   local v="$1"
-  if [ -n "${offline:-}" ]; then load_images "$offline"
+  if [ "${offline:-}" = - ]; then
+    pick_engine
+    echo "Loading the images ..."
+    "$engine" load || die "The images could not be loaded."
+  elif [ -n "${offline:-}" ]; then load_images "$offline"
   elif images_present "$v"; then echo "The images of Kilnmark $v are already here."
   elif [ "${build:-false}" = true ]; then build_images "$v"
   else pull_images "$v"
@@ -889,170 +1487,209 @@ get_images() {
 # Rootless Podman starts containers at boot only through its podman-restart user service.
 boot_start() {
   [ "$engine" = podman ] && [ "$(id -u)" -ne 0 ] || return 0
+  systemctl --user is-enabled podman-restart.service > /dev/null 2>&1 && return 0
   if systemctl --user enable podman-restart.service > /dev/null 2>&1; then
+    echo "Kilnmark's containers start at boot (podman-restart.service)."
     if [ "$(loginctl show-user "$(id -un)" -p Linger --value 2> /dev/null)" != yes ]; then
-      echo "To start Kilnmark at boot without you signing in, run once: sudo loginctl enable-linger $(id -un)"
+      echo "To start Kilnmark at boot without this account signed in, run once: sudo loginctl enable-linger $(id -un)"
     fi
   else
     echo "Note: Kilnmark will not start by itself at boot (podman-restart.service could not be enabled)."
   fi
 }
 
-# Run once as root: the account Kilnmark runs as, with just what it needs, and its install root.
-cmd_prepare() {
-  local user=kilnmark eng=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --user) user="${2:?--user needs a name}"; shift ;;
-      --root) root="${2:?--root needs a folder}"; shift ;;
-      --engine) eng="${2:?--engine needs podman or docker}"; shift ;;
-      *) die "Unknown option $1. See: ./kilnmark.sh help" ;;
-    esac
-    shift
-  done
-  [ "$(id -u)" -eq 0 ] || die "Run prepare with sudo: sudo ./kilnmark.sh prepare"
-  [ -f "$here/compose.yaml" ] || die "Run prepare from the unpacked release folder, kilnmark-<version>."
-  local v; v="$(version_of "$here")"
-  root="${root:-$default_root}"
-  case "$root" in *[[:space:]]*|"/") die "Choose a folder without spaces for --root." ;; /*) ;; *) die "--root must be a full path." ;; esac
-  # Checked before anything is made, so a refused prepare leaves no account behind.
-  if [ -e "$root" ] || [ -L "$root" ]; then
-    die "$root exists already. prepare makes a new install root only; upgrade an installed Kilnmark as $user (./kilnmark.sh upgrade), or choose another --root."
-  fi
-  if [ -z "$eng" ]; then
-    if command -v podman > /dev/null 2>&1; then eng=podman
-    elif command -v docker > /dev/null 2>&1; then eng=docker
-    else die "Install Podman 5 or later, or Docker with its compose plugin, first."; fi
-  fi
+# The account Kilnmark runs as: made (a system account, no password), or kept when it is there,
+# with what rootless Podman needs (id ranges, lingering) or the docker group.
+make_account() {
+  local user="$1" f start i uid
   if id "$user" > /dev/null 2>&1; then
-    echo "The account $user exists already: keeping it."
+    echo "The account $user is there already: Kilnmark runs as it."
   else
     useradd --system --create-home --home-dir "/var/lib/$user" --shell /bin/bash --comment "Kilnmark" "$user" \
       || die "The account $user could not be made."
     echo "Made the account $user (no password: reach it with sudo -iu $user)."
   fi
-  if [ "$eng" = docker ]; then
-    usermod -aG docker "$user" || die "Could not add $user to the docker group."
-    echo "$user may use Docker (the docker group). Note: the docker group can act as root on this"
-    echo "machine; prefer rootless Podman where that matters, and keep the account's sudo access to admins."
-  else
-    # Rootless Podman maps each container's users onto a range of the account's own ids.
-    local f start
-    for f in /etc/subuid /etc/subgid; do
-      if ! grep -q "^$user:" "$f" 2> /dev/null; then
-        start=$(awk -F: '{ if ($2 + $3 > m) m = $2 + $3 } END { print (m > 100000 ? m : 100000) }' "$f" 2> /dev/null || echo 100000)
-        echo "$user:$start:65536" >> "$f"
-      fi
-    done
-    loginctl enable-linger "$user" || echo "Note: lingering could not be turned on; Kilnmark will not start at boot."
-    echo "$user may use rootless Podman, and its containers start at boot (lingering on)."
+  if [[ "${KILNMARK_ENGINE:-$(command -v podman || echo docker)}" == *docker* ]]; then
+    usermod -aG docker "$user" || die "$user could not be added to the docker group."
+    echo "$user may use Docker (the docker group, which can act as root on this machine: prefer rootless Podman where that matters)."
+    return 0
   fi
-  # Only a new folder: root never writes into, or hands over, a tree another account could have
-  # shaped (links planted in it, or files that are not Kilnmark's). Later versions arrive by upgrade.
-  if [ -e "$root" ] || [ -L "$root" ]; then
-    die "$root exists already. prepare makes a new install root only; upgrade an installed Kilnmark as $user (./kilnmark.sh upgrade), or choose another --root."
-  fi
-  mkdir -p "$(dirname "$root")"
-  mkdir -m 700 "$root"
-  mkdir "$root/versions" "$root/downloads"
-  cp -a "$here" "$root/versions/$v"
-  chown -R -h "$user:$user" "$root"
-  chmod 750 "$root"
-  cat <<EOF
-
-The account $user owns $root, and Kilnmark $v is in $root/versions/$v.
-Put the offline images file, if you have one, in $root/downloads (owned by $user). Then, as $user:
-  sudo -iu $user $root/versions/$v/kilnmark.sh install [--offline $root/downloads/kilnmark-$v-images.tar.gz]
-EOF
-}
-
-# How people sign in to a production install, asked at a terminal (without a terminal, or with
-# --auth, nothing is asked): the organisation's own identity provider, the bundled Keycloak, or API
-# tokens only. Only the bundled Keycloak changes what install writes; the others are config/.env's.
-own_provider=false
-ask_sign_in() {
-  local answer
-  [ -t 0 ] || return 0
-  cat <<'EOF'
-How will people sign in to Kilnmark?
-  1  Your organisation's own identity provider (recommended for banks and other regulated organisations)
-  2  The bundled Keycloak, which this install sets up, with Kilnmark's first admin
-  3  API tokens only, for now
-EOF
-  read -r -p "1, 2 or 3 [1]: " answer
-  case "${answer:-1}" in
-    1) own_provider=true ;;
-    2) with_auth=true ;;
-    3) ;;
-    *) die "Answer 1, 2 or 3. Nothing was installed." ;;
-  esac
+  for f in /etc/subuid /etc/subgid; do
+    if ! grep -q "^$user:" "$f" 2> /dev/null; then
+      start=$(awk -F: '{ if ($2 + $3 > m) m = $2 + $3 } END { print (m > 100000 ? m : 100000) }' "$f" 2> /dev/null || echo 100000)
+      (umask 022; echo "$user:$start:65536" >> "$f")
+    fi
+  done
+  loginctl enable-linger "$user" || die "Lingering could not be turned on for $user, which rootless Podman needs to run without them signed in."
+  uid="$(id -u "$user")"
+  for i in $(seq 1 30); do [ -d "/run/user/$uid" ] && break; sleep 1; done
+  [ -d "/run/user/$uid" ] || die "$user's session (/run/user/$uid) did not start: is systemd running? (WSL: systemd=true under [boot] in /etc/wsl.conf)"
+  echo "$user runs rootless Podman, and its containers start at boot (lingering on)."
 }
 
 cmd_install() {
-  local start=true
+  local start=true dry=false answers="" opt_starter=false v n=0 t k
+  local -a opts=("$@")
   while [ $# -gt 0 ]; do
     case "$1" in
-      --root) root="${2:?--root needs a folder}"; shift ;;
-      --offline) offline="${2:?--offline needs the images file}"; shift ;;
-      --auth) with_auth=true ;;
+      --answers) answers="${2:?--answers needs the answers file}"; shift ;;
       --starter) with_starter=true ;;
+      --program-dir) ans[program_dir]="${2:?--program-dir needs a folder}"; shift ;;
+      --data-dir) ans[data_dir]="${2:?--data-dir needs a folder}"; shift ;;
+      --user) ans[user]="${2:?--user needs an account}"; shift ;;
+      --offline) offline="${2:?--offline needs the images file}"; shift ;;
       --build) build=true ;;
       --skip-verify) skip_verify=true ;;
       --no-start) start=false ;;
+      --dry-run) dry=true ;;
       *) die "Unknown option $1. See: ./kilnmark.sh help" ;;
     esac
     shift
   done
   [ -f "$here/compose.yaml" ] || die "Run install from the unpacked release folder, kilnmark-<version>."
-  local v; v="$(version_of "$here")"
+  v="$(version_of "$here")"
   [ -n "$v" ] || die "Cannot tell this release's version from its compose.yaml."
-  root="${root:-$default_root}"
-  case "$root" in *[[:space:]]*) die "Choose a folder without spaces for --root." ;; /*) ;; *) root="$PWD/$root" ;; esac
-  [ -n "${offline:-}" ] && offline="$(readlink -f "$offline")"
-  echo "Installing Kilnmark $v in $root"
-  check_prerequisites
-  report_checks || die "Fix the problems above, then run install again."
-  # A Starter Pack install always has the bundled Keycloak: its example people live there.
-  if [ "${with_starter:-false}" = true ]; then with_auth=true; fi
-  [ "${with_auth:-false}" = true ] || ask_sign_in
-  make_folders
-  start_log install
-  place_release "$here" "$v"
-  make_settings "$root/versions/$v/.env.example"
-  get_images "$v"
-  boot_start
-  # Asked before the start, which takes a while, so nobody waits to answer.
-  local first_admin=false
-  people_soft=true
-  if $start && [ "${with_auth:-false}" = true ] && ask_person kilnmark-admins; then first_admin=true; fi
+  $dry || need_root install "${opts[@]}"
+  [ -z "${offline:-}" ] || offline="$(readlink -f "$offline")"
+  if [ -n "$answers" ]; then
+    local cli_prog="${ans[program_dir]-}" cli_data="${ans[data_dir]-}" cli_user="${ans[user]-}"
+    read_answers "$answers"
+    # what the command line says wins over the file
+    [ -z "$cli_prog" ] || ans[program_dir]="$cli_prog"
+    [ -z "$cli_data" ] || ans[data_dir]="$cli_data"
+    [ -z "$cli_user" ] || ans[user]="$cli_user"
+  fi
+  if [ "${with_starter:-false}" = true ]; then
+    [ -z "${ans[mode]+x}" ] || [ "${ans[mode]}" = starter-pack ] || die "--starter makes a Starter Pack install, and the answers say another mode: choose one. Nothing was changed."
+    ans[mode]=starter-pack
+  fi
+  echo "Installing Kilnmark $v"
+  if [ -z "$answers" ]; then
+    [ -t 0 ] || die "There is no terminal to ask the questions at: give the answers in a file (--answers install.conf; install.conf.example says each)."
+    ask_answers
+    echo "Install with these answers:"
+    show_answers
+    local yes; read -r -p "Go on? [Y/n]: " yes || yes=n
+    [[ "${yes:-y}" =~ ^[Yy] ]] || die "Nothing was installed."
+  fi
+  # the steps: the answers, the prerequisites, the account, the program folder, the data folder and
+  # the images; then the start, the first admin and the Starter Pack where they apply
+  t=7
   if $start; then
-    "$root/kilnmark.sh" up --no-browser < /dev/null
-    ! $first_admin || make_person || true
-    if [ "${with_starter:-false}" = true ]; then
-      starter_on
-      [ "${with_auth:-false}" != true ] \
-        || echo "Add the example people, with a password you type: $root/kilnmark.sh starter people"
+    t=$((t + 1))
+    [ -z "$(answer_of admin_email)" ] || [ "$(answer_of identity)" != bundled ] || t=$((t + 1))
+    [ "$(answer_of mode)" != starter-pack ] || t=$((t + 1))
+  fi
+  $dry && t=2
+  steps "$t"
+  step "Check the answers"
+  validate_answers ports || die "Some answers cannot be taken (above), so nothing was changed."
+  ins_user="$(answer_of user)" project="$(answer_of project)" root="$(answer_of program_dir)" data="$(answer_of data_dir)"
+  root="${root%/}" data="${data%/}"
+  expiry_unit="kilnmark-$project-people-expire"
+  $dry || ask_install_secrets
+  step_ok
+  step "Check the prerequisites"
+  check_prerequisites false "$( [ "$(answer_of identity)" = bundled ] && echo true || echo false)"
+  report_checks || die "Fix the problems above (each says how), then run install again."
+  step_ok
+  if $dry; then
+    echo "Install would place Kilnmark $v in $root (root's), keep its data in $data ($ins_user's), and run it as $ins_user, with these answers:"
+    show_answers
+    echo "Nothing was changed (--dry-run)."
+    return 0
+  fi
+  # a fresh install only: never into, or over, a folder someone else may have shaped
+  if [ -e "$root/versions" ] || [ -e "$root/kilnmark.sh" ]; then
+    die "Kilnmark is installed in $root already: upgrade it ($root/kilnmark.sh upgrade), or uninstall it first."
+  fi
+  if [ -e "$data" ] || [ -L "$data" ]; then
+    die "$data is there already: uninstall the earlier install with --purge, or remove it, or choose another data folder (--data-dir). Nothing was changed."
+  fi
+  if [ -L "$root" ] || { [ -e "$root" ] && { [ "$(stat -c %u "$root")" != 0 ] || [ -n "$(ls -A "$root")" ]; }; }; then
+    die "$root is there already and is not an empty folder of root's: choose another program folder (--program-dir). Nothing was changed."
+  fi
+  step "Make the account $ins_user, which runs Kilnmark"
+  make_account "$ins_user"
+  step_ok
+  step "Place Kilnmark $v in $root"
+  (umask 022; mkdir -p "$(dirname "$root")") && { [ -d "$root" ] || mkdir -m 755 "$root"; } && mkdir -m 755 "$root/versions" \
+    || die "$root could not be made."
+  chmod 755 "$root"
+  place_version "$here" "$v"
+  use_version "$v"
+  printf '%s\n' "$data" > "$root/data-folder.txt"
+  chown -h root:root "$root" "$root/versions" "$root/current" "$root"/*.sh "$root/data-folder.txt" && chmod 644 "$root/data-folder.txt"
+  step_ok
+  step "Check the account's Podman (rootless: its cgroups, its memory)"
+  account_step "$root/kilnmark.sh" check < /dev/null
+  step_ok
+  step "Make the data folder $data, with new secrets"
+  (umask 022; mkdir -p "$(dirname "$data")") && mkdir -m 700 "$data" && mkdir -m 700 "$data/config" "$data/backups" "$data/logs" "$data/certs" \
+    && mkdir -m 755 "$data/certs/https" || die "$data could not be made."
+  cp "$root/current/.env.example" "$data/config/.env.example"
+  write_env
+  write_answers "$data/config/install.conf"
+  place_certs
+  chown -R "$ins_user:$(id -gn "$ins_user")" "$data" || die "$data could not be made $ins_user's."
+  echo "Wrote $data/config/.env with new secrets ($ins_user's alone) and $data/config/install.conf (the answers)."
+  step_ok
+  # what install says from here, in the data folder's logs (the account's, once install ends)
+  start_log install
+  local log_file="$log_path"
+  [ -z "$log_file" ] || touch "$log_file"
+  [ -z "$log_file" ] || chown "$ins_user:$(id -gn "$ins_user")" "$log_file" 2> /dev/null || true
+  step "Get the images"
+  if [ -n "${offline:-}" ]; then
+    verify_file "$offline"
+    account_step "$root/kilnmark.sh" _images --stdin < "$offline"
+  else
+    account_step "$root/kilnmark.sh" _images ${build:+--build} $( [ "${skip_verify:-false}" = true ] && echo --skip-verify) < /dev/null
+  fi
+  step_ok
+  if $start; then
+    step "Start Kilnmark"
+    account_step "$root/kilnmark.sh" up --no-browser < /dev/null
+    step_ok
+    if [ -n "$(answer_of admin_email)" ] && [ "$(answer_of identity)" = bundled ]; then
+      step "Add the first admin"
+      account_step "$root/kilnmark.sh" people add < <(printf '%s\n' "$(answer_of admin_email)" "$(answer_of admin_first_name)" "$(answer_of admin_last_name)" kilnmark-admins "$person_password")
+      person_password=""
+      step_ok
+    fi
+    if [ "$(answer_of mode)" = starter-pack ]; then
+      step "Turn the Starter Pack on"
+      account_step "$root/kilnmark.sh" _starter-on < /dev/null
+      step_ok
     fi
   fi
-  if $own_provider; then
-    cat <<EOF
-
-To sign in with your organisation's identity provider, fill in the KILNMARK_OIDC_ settings in
-$root/config/.env, then run $root/kilnmark.sh restart (INSTALL.md, "Sign in with your identity provider").
-EOF
-  fi
+  person_password=""
+  [ -z "$log_file" ] || chown "$ins_user:$(id -gn "$ins_user")" "$log_file" 2> /dev/null || true
   cat <<EOF
 
-Kilnmark $v is installed in $root.
-  Sign in with the admin token: it is KILNMARK_ADMIN_TOKEN in $root/config/.env.
-  Then make a token of your own under API tokens, and keep it safe.
-  Control it with: $root/kilnmark.sh up | down | status | backup | help
-  Back it up every day, for example from cron: $root/kilnmark.sh backup
+Kilnmark $v is installed: the program in $root, its data in $data, run by the account $ins_user.
+  Sign in with the admin token, KILNMARK_ADMIN_TOKEN in $data/config/.env; then make a token of
+  your own under API tokens, and keep it safe.
+  Every day, as $ins_user: sudo -iu $ins_user "$root/kilnmark.sh" up | down | status | check | backup | help
+  Change an answer later: sudo -iu $ins_user "$root/kilnmark.sh" configure KEY=VALUE
+  Back it up every day, for example from $ins_user's crontab: "$root/kilnmark.sh" backup
 EOF
+  [ "$(answer_of mode)" != starter-pack ] || echo "  Add the example people, with a password you type: sudo -iu $ins_user \"$root/kilnmark.sh\" starter people"
+  if [ "$(answer_of identity)" = own ]; then
+    echo "  Register Kilnmark in your identity provider with the redirect URI $(setting KILNMARK_URL)/api/v1/auth/login."
+  fi
+}
+
+# The install's account, from its answers.
+installed_user() {
+  load_installed_answers || die "$data/config/install.conf, the install's answers, is missing: Kilnmark was not installed by this release's install."
+  ins_user="$(answer_of user)"
+  id "$ins_user" > /dev/null 2>&1 || die "The account $ins_user, which runs Kilnmark, is not on this machine."
 }
 
 cmd_upgrade() {
-  local archive="" backup=true
+  local archive="" backup=true old new tmp src recorded v
+  local -a opts=("$@")
   while [ $# -gt 0 ]; do
     case "$1" in
       --offline) offline="${2:?--offline needs the images file}"; shift ;;
@@ -1063,75 +1700,111 @@ cmd_upgrade() {
     esac
     shift
   done
-  [ -n "$archive" ] && [ -f "$archive" ] || die "Say which release to upgrade to: ./kilnmark.sh upgrade kilnmark-<version>.tar.gz"
-  local old new tmp src recorded
+  [ -n "$archive" ] && [ -f "$archive" ] || die "Say which release to upgrade to: sudo $root/kilnmark.sh upgrade kilnmark-<version>.tar.gz"
+  need_root upgrade "${opts[@]}"
+  archive="$(readlink -f "$archive")"; [ -z "${offline:-}" ] || offline="$(readlink -f "$offline")"
   old="$(current_version)"
+  installed_user
+  steps "$( $backup && echo 6 || echo 5)"
+  step "Check the new release"
   # An install from before deployment modes is never upgraded (ADR 0051): refused before anything
   # changes, by config/.env and by what the database recorded.
-  ensure_settings
-  recorded="$(recorded_mode)"
-  [ -n "$recorded" ] || die "Kilnmark's database has no deployment mode recorded (or does not answer: start it with ./kilnmark.sh up first). An install from before deployment modes (release 0.1.1 or earlier, a preview) cannot be upgraded: install Kilnmark afresh. Nothing was changed."
+  recorded="$(as_account "$root/kilnmark.sh" _recorded-mode < /dev/null)" || die "Kilnmark's settings or database refused the upgrade (above). Nothing was changed."
+  [ -n "$recorded" ] || die "Kilnmark's database has no deployment mode recorded (or does not answer: start it first). An install from before deployment modes (release 0.1.1 or earlier, a preview) cannot be upgraded: install Kilnmark afresh. Nothing was changed."
   [ "$recorded" = "$(setting KILNMARK_MODE)" ] \
     || die "KILNMARK_MODE in config/.env differs from the mode Kilnmark recorded at its first start: set it back. Nothing was changed."
-  start_log upgrade
   verify_file "$archive"
   tmp="$(mktemp -d "$root/versions/.unpack.XXXX")"
-  tar -xzf "$archive" -C "$tmp" || die "$(basename "$archive") could not be unpacked."
+  tar -xzf "$archive" -C "$tmp" || { rm -rf "$tmp"; die "$(basename "$archive") could not be unpacked."; }
   src="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
   new="$(version_of "$src")"
-  [ -n "$new" ] || die "Cannot tell the new release's version."
+  [ -n "$new" ] || { rm -rf "$tmp"; die "Cannot tell the new release's version."; }
   [ "$new" != "$old" ] || { rm -rf "$tmp"; die "Kilnmark $old is already the running version."; }
   if [ "$(printf '%s\n%s\n' "$old" "$new" | sort -V | tail -n 1)" != "$new" ]; then
     rm -rf "$tmp"; die "$new is older than the running $old: upgrade only goes forward (go back with restore)."
   fi
-  if $backup; then cmd_backup; fi
-  [ -d "$root/versions/$new" ] || mv "$src" "$root/versions/$new"
+  step_ok
+  if $backup; then
+    step "Back up Kilnmark $old"
+    account_step "$root/kilnmark.sh" backup < /dev/null
+    step_ok
+  fi
+  step "Place Kilnmark $new in $root"
+  place_version "$src" "$new"
   rm -rf "$tmp"
-  get_images "$new"
+  step_ok
+  step "Get the images"
+  if [ -n "${offline:-}" ]; then verify_file "$offline"; account_step "$root/kilnmark.sh" _images --version "$new" --stdin < "$offline"
+  else account_step "$root/kilnmark.sh" _images --version "$new" $( [ "${skip_verify:-false}" = true ] && echo --skip-verify) < /dev/null; fi
+  step_ok
+  step "Switch to Kilnmark $new"
   local added; added="$(new_settings "$root/versions/$new/.env.example")"
-  cp "$root/versions/$new/.env.example" "$root/config/.env.example"
+  cp "$root/versions/$new/.env.example" "$data/config/.env.example" && chown "$ins_user" "$data/config/.env.example"
   use_version "$new"
-  if ! "$root/kilnmark.sh" up --no-browser; then
+  step_ok
+  step "Start Kilnmark $new"
+  if ! as_account "$root/kilnmark.sh" up --no-browser < /dev/null; then
     echo "Kilnmark $new did not start: stopping it and starting $old again." >&2
-    "$root/kilnmark.sh" down || true
+    as_account "$root/kilnmark.sh" down < /dev/null || true
     use_version "$old"
-    if "$root/kilnmark.sh" up --no-browser; then
-      echo "Kilnmark $old runs again. See why $new did not start in logs/." >&2
-    else
-      echo "Kilnmark $old does not start either: $new may have changed its database already." >&2
-      echo "Put it back to the backup taken above: ./kilnmark.sh restore <that backup> --yes" >&2
+    if as_account "$root/kilnmark.sh" up --no-browser < /dev/null; then
+      die "Kilnmark $new did not start, so $old runs again. See why $new did not start in $data/logs."
     fi
-    exit 1
+    die "Kilnmark $old does not start either: $new may have changed its database already. Put it back to the backup taken above: $root/kilnmark.sh restore <that backup> --yes"
   fi
-  if [ -n "$added" ]; then
-    echo "Settings new in $new (see $root/config/.env.example): $(echo "$added" | tr '\n' ' ')"
-  fi
+  step_ok
+  [ -z "$added" ] || echo "Settings new in $new (see $data/config/.env.example): $(echo "$added" | tr '\n' ' ')"
   # Keep the two newest versions.
-  ls -1 "$root/versions" | grep -v '^\.' | sort -V | head -n -2 | while read -r d; do
-    [ "$d" = "$new" ] || [ "$d" = "$old" ] || rm -rf "${root:?}/versions/$d"
+  for v in $(ls -1 "$root/versions" | grep -v '^\.' | sort -V | head -n -2); do
+    [ "$v" = "$new" ] || [ "$v" = "$old" ] || rm -rf "${root:?}/versions/$v"
   done
   echo "Upgraded Kilnmark from $old to $new."
 }
 
 cmd_uninstall() {
-  local purge=false
+  local purge=false answer
+  local -a opts=("$@")
   for a in "$@"; do case "$a" in --purge) purge=true ;; *) die "Unknown option $a." ;; esac; done
-  local v; v="$(current_version)"; set_compose
+  current_version > /dev/null
+  need_root uninstall "${opts[@]}"
+  installed_user
+  if $purge; then
+    echo "This deletes all of Kilnmark's data: its database, the key to stored passwords, Keycloak's, and $data with every backup in it."
+    echo "Back up first, somewhere else, if you might want any of it. Type DELETE to go on:"
+    IFS= read -r answer || answer=""
+    [ "${answer%$'\r'}" = DELETE ] || die "Nothing was deleted."
+  fi
+  steps "$( $purge && echo 3 || echo 2)"
+  step "Stop Kilnmark and remove its hourly timer"
+  account_step "$root/kilnmark.sh" _stop-for-uninstall $( $purge && echo --purge) < /dev/null
+  step_ok
+  step "Remove the program folder $root"
+  rm -rf "${root:?}" || die "$root could not be removed."
+  step_ok
+  if $purge; then
+    step "Remove the data folder $data"
+    rm -rf "${data:?}" || die "$data could not be removed."
+    step_ok
+    echo "Kilnmark is uninstalled, and its data deleted. The account $ins_user is kept; remove it with: sudo userdel -r $ins_user"
+  else
+    echo "Kilnmark is uninstalled. Its data (volumes) and $data (settings, backups, logs) are kept: uninstall --purge deletes them, or install afresh with another data folder."
+  fi
+}
+
+# The account's part of uninstall: no timer, nothing running; with --purge, no volumes nor images.
+cmd_stop_for_uninstall() {
+  local purge=false i kept="" v
+  for a in "$@"; do case "$a" in --purge) purge=true ;; *) die "Unknown option $a." ;; esac; done
+  v="$(current_version)"; set_compose
   expiry_timer_remove
   if ! $purge; then
-    "${compose[@]}" down
-    echo "Kilnmark is stopped and will not start again by itself. Its data and $root are kept."
-    echo "To delete the data too: ./kilnmark.sh uninstall --purge"
+    compose_quietly down || true
+    echo "Kilnmark is stopped and will not start again by itself. Its data is kept."
     return 0
   fi
-  echo "This deletes all of Kilnmark's data: its database, the key to stored passwords, and Keycloak's."
-  echo "Back up first (./kilnmark.sh backup) if you might want any of it. Type DELETE to go on:"
-  local answer; read -r answer
-  [ "$answer" = DELETE ] || die "Nothing was deleted."
   "${compose[@]}" --profile auth --profile ai down -v
   # An image another install on this machine still runs is kept: removing it, or its name, would
   # stop that install starting again.
-  local i kept=""
   for i in $(image_names "$v"); do
     if [ -n "$("$engine" ps -a --filter "ancestor=$i" --format '{{.Names}}' 2> /dev/null || true)" ]; then
       kept="$kept $i"
@@ -1140,7 +1813,100 @@ cmd_uninstall() {
     fi
   done
   [ -z "$kept" ] || echo "Kept the images$kept: other containers on this machine use them (another install, say)."
-  echo "Kilnmark's containers, volumes and images are deleted. $root is kept: delete it yourself if you wish."
+  echo "Kilnmark's containers, volumes and images are deleted."
+}
+
+# --- configure: change an answer later (ADR 0051, decision 17) --------------------------------
+
+cmd_configure() {
+  local a k v changed=() restart=false person=false identity_was why running=false certs=false
+  current_version > /dev/null
+  load_installed_answers || die "$data/config/install.conf, the install's answers, is missing, so configure cannot tell what install chose. Nothing was changed."
+  if [ $# -eq 0 ]; then
+    echo "This install's answers ($data/config/install.conf):"
+    show_answers
+    echo "Change one with: $root/kilnmark.sh configure KEY=VALUE (install.conf.example says each)."
+    return 0
+  fi
+  identity_was="$(answer_of identity)"
+  # running is judged by the settings it runs with now, before they change
+  curl -k -s -f -o /dev/null --max-time 10 "$(local_url)/q/health/ready" && running=true
+  steps 3
+  step "Check the new answers"
+  for a in "$@"; do
+    [[ "$a" =~ ^([a-z_]+)=(.*)$ ]] || die "Say each change as KEY=VALUE, such as port=9780."
+    k="${BASH_REMATCH[1]}" v="$(trim "${BASH_REMATCH[2]}")"
+    [[ ! "$k" =~ (password|secret|token) ]] || die "$k is a secret: configure asks for one when an answer needs it, and none is given on a command line."
+    known_key "$k" || die "$k is not an answer install knows (install.conf.example lists them)."
+    if [[ "$fixed_keys" == *" $k "* ]] && [ "$v" != "$(answer_of "$k")" ]; then
+      case "$k" in
+        mode) die "An install's mode never changes (ADR 0051): for the other mode, install Kilnmark afresh. Nothing was changed." ;;
+        *) die "$k is fixed at install: changing it needs a new install. Nothing was changed." ;;
+      esac
+    fi
+    [ "$v" = "$(answer_of "$k")" ] && continue
+    ans[$k]="$v"
+    changed+=("$k")
+  done
+  [ "${#changed[@]}" -gt 0 ] || { step_ok; echo "Nothing changed: those are the answers already."; return 0; }
+  for k in "${changed[@]}"; do
+    relevant "$k" || die "$k means nothing with this install's other answers (with identity=$(answer_of identity) and tls=$(answer_of tls)). Nothing was changed."
+    if [[ "$k" == *port ]] && port_busy "$(answer_of "$k")"; then
+      die "$k: port $(answer_of "$k") is in use (port $(free_port "$(answer_of "$k")") is free). Nothing was changed."
+    fi
+  done
+  # the certificate's files are checked, and copied, only when the change is to them: install read
+  # them as root, and the account need not be able to read them again
+  if [[ " ${changed[*]} " == *" tls "* || " ${changed[*]} " == *" tls_cert "* || " ${changed[*]} " == *" tls_key "* ]]; then certs=true; fi
+  $certs || skip_keys=" tls_cert tls_key "
+  # the first admin, made at install, is checked again only when the change is to them
+  [[ " ${changed[*]} " == *" admin_"* ]] || skip_keys="$skip_keys admin_email admin_first_name admin_last_name "
+  validate_answers || die "Some answers cannot be taken (above), so nothing was changed."
+  # what a change needs before anything is written: a client secret for your own identity provider
+  if [ "$(answer_of identity)" = own ] && { [ "$identity_was" != own ] || [[ " ${changed[*]} " == *" oidc_client_id "* ]]; }; then
+    read_secret "The client secret your identity provider gave Kilnmark"
+    [ -n "$secret_value" ] || die "The client secret is needed for sign-in with your identity provider. Nothing was changed."
+  fi
+  for k in "${changed[@]}"; do
+    case "$k" in
+      email_domain) ;;
+      admin_email|admin_first_name|admin_last_name) person=true ;;
+      *) restart=true ;;
+    esac
+  done
+  if $person; then
+    [ -n "$(answer_of admin_email)" ] || die "admin_email is needed to add a first admin. Nothing was changed."
+    ask_install_secrets
+  fi
+  step_ok
+  step "Write the settings"
+  ! $certs || place_certs
+  if [ "$identity_was" != "$(answer_of identity)" ] && [ "$(answer_of identity)" = bundled ]; then write_env new-client; else write_env; fi
+  write_answers "$data/config/install.conf"
+  echo "Wrote $data/config/.env and $data/config/install.conf: ${changed[*]}."
+  step_ok
+  step "Run again what the change affects"
+  if $restart; then
+    if $running; then
+      echo "Restarting Kilnmark, so every container takes the new settings ..."
+      cmd_down
+      cmd_up --no-browser
+    else
+      echo "Kilnmark is not running: the change takes effect at its next start ($root/kilnmark.sh up)."
+    fi
+  fi
+  if $person; then
+    $running || die "Kilnmark is not running, so the first admin was not added: start it ($root/kilnmark.sh up), then run configure again."
+    run_first_admin
+  fi
+  $restart || $person || echo "Nothing to run again: ${changed[*]} takes effect as it is."
+  step_ok
+}
+# configure's first admin: people add, with the answers, the password typed (or piped in) once.
+run_first_admin() {
+  person_email="$(answer_of admin_email)" person_first="$(answer_of admin_first_name)" person_last="$(answer_of admin_last_name)"
+  person_groups=kilnmark-admins
+  make_person
 }
 
 # --- the Starter Pack (ADR 0051) ----------------------------------------------------------------
@@ -1162,24 +1928,18 @@ one_off_done() {
 }
 
 # Turns the Starter Pack's example data on through Kilnmark's own API, as Settings > Starter Pack
-# does: Kilnmark does the work. The admin token goes to curl in a file in a new folder only this
-# account can open, never on a command line; the folder goes however the script ends.
+# does: Kilnmark does the work. Through api_call, as every request with the admin token: only to a
+# listener of this account's, at 127.0.0.1, the token in a file, never on a command line.
 starter_on() {
-  local answer code
+  local answer code answer_file
   set_compose
   one_off_done samples-db \
-    || echo "Warning: samples-db did not finish well, so the Starter Pack may not find its database. See: ./kilnmark.sh logs samples-db"
-  starter_work="$(mktemp -d)" || die "Could not make a private folder for the request."
-  {
-    cat <<EOF
-header = "Authorization: Bearer $(setting KILNMARK_ADMIN_TOKEN)"
-EOF
-  } > "$starter_work/curl.conf"
+    || echo "Warning: samples-db did not finish well, so the Starter Pack may not find its database. See: kilnmark.sh logs samples-db"
   echo "Turning the Starter Pack on ..."
-  code="$(curl -k -s --config "$starter_work/curl.conf" -X POST --max-time 600 -o "$starter_work/answer" \
-    -w '%{http_code}' "$(local_url)/api/v1/starter-pack")" || code=000
-  answer="$(cat "$starter_work/answer" 2> /dev/null || true)"
-  rm -rf "$starter_work"; starter_work=""
+  answer_file="$(mktemp)" || die "Could not make a private file for the answer."
+  code="$(KM_ANSWER_FILE="$answer_file" api_call POST /api/v1/starter-pack "")"
+  answer="$(cat "$answer_file" 2> /dev/null || true)"
+  rm -f "$answer_file"
   if [ "$code" != 200 ]; then
     echo "The Starter Pack was not turned on (HTTP $code): $(sed -n 's/^{"error":"\(.*\)"}$/\1/p' <<< "$answer")" >&2
     echo "Turn it on later under Settings > Starter Pack." >&2
@@ -1205,6 +1965,11 @@ people_after_up() {
   # Only its latest run: it says "started" first.
   out="$("$engine" logs "$id" 2>&1 | hide_compose_commands \
     | awk '/^keycloak-setup: started/ { buf = "" } { buf = buf $0 "\n" } END { printf "%s", buf }')"
+  if grep -q "^keycloak-setup: this Keycloak's realm .* is not this install's" <<< "$out"; then
+    sed -n "s/^keycloak-setup: \(this Keycloak's realm .*\)$/\1/p" <<< "$out" >&2
+    compose_quietly down || true
+    die "keycloak-setup refused this Keycloak's realm (above), so Kilnmark was stopped again: no sign-in goes to a realm that is not this install's."
+  fi
   record_own_people "$out" expire
   # anyone the pack's removal only took out of its group, not one of the example people
   sed -n 's/^keycloak-setup: \(took .*\)$/\1/p' <<< "$out"
@@ -1240,6 +2005,20 @@ listener_problem() {
     done < <(tail -n +2 "$f")
   done
 }
+# Whether the kernel shows no socket listening on port $1, on the loopback or all addresses; false
+# where it cannot be told (no /proc/net/tcp).
+nothing_listens() {
+  local f hex addr st
+  [ -r /proc/net/tcp ] || return 1
+  hex="$(printf '%04X' "$1")"
+  for f in /proc/net/tcp /proc/net/tcp6; do
+    [ -r "$f" ] || continue
+    while read -r _ addr _ st _; do
+      [ "$st" = 0A ] && [ "${addr##*:}" = "$hex" ] && return 1
+    done < <(tail -n +2 "$f")
+  done
+  return 0
+}
 api_call() {
   local code url why
   # the admin token only to a listener of this account's or root's, at 127.0.0.1
@@ -1267,6 +2046,8 @@ EOF
   code="$(curl -k -s --config "$starter_work/curl.conf" -X "$1" --max-time 600 -o "$starter_work/answer" \
     --data-binary "@$starter_work/body" -w '%{http_code}' "${url/localhost/127.0.0.1}$2")" || code=000
   api_answer="$(cat "$starter_work/answer" 2> /dev/null || true)"
+  # the answer for a caller that needs it (this runs in a subshell): a file of its own
+  [ -z "${KM_ANSWER_FILE:-}" ] || cp "$starter_work/answer" "$KM_ANSWER_FILE" 2> /dev/null || true
   rm -rf "$starter_work"; starter_work=""
   printf '%s' "$code"
 }
@@ -1326,7 +2107,7 @@ cmd_starter() {
   current_version > /dev/null; ensure_settings
   profiles="$(setting COMPOSE_PROFILES | tr -d '[:space:]')"
   [[ ",$profiles," == *",auth,"* ]] \
-    || die "The example people need the bundled Keycloak: the auth profile (INSTALL.md, \"Keycloak, if you have no identity provider\")."
+    || die "The example people need the bundled Keycloak: the auth profile (docs/guide/install/production-bundled-keycloak.md)."
   starter_mode || die "This is a production install: it never has the Starter Pack's example people. Nothing was changed."
   if [ "$action" != remove ]; then
     [ "$(setting KILNMARK_STARTER)" = allowed ] \
@@ -1341,7 +2122,7 @@ cmd_starter() {
   id="$(recorded_setting install_id)"
   write_run_secrets
   out="$(printf '%s\n' "$people_password" | KILNMARK_STARTER_PEOPLE_ACTION="$action" KILNMARK_MODE=starter-pack \
-    KILNMARK_INSTALL_ID="$id" "${compose[@]}" run --rm -T keycloak-setup 2>&1 | hide_compose_commands)" || ok=false
+    KILNMARK_INSTALL_ID="$id" "${compose[@]}" run --rm --no-deps -T keycloak-setup 2>&1 | hide_compose_commands)" || ok=false
   drop_run_secrets
   if ! $ok; then
     people_password=""
@@ -1392,7 +2173,7 @@ ask_person() {
   person_email="$(printf '%s' "${person_email%$'\r'}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
   if [ -z "$person_email" ]; then
     if [ -n "$1" ]; then
-      echo "No first admin was made. Add people later with $root/kilnmark.sh people add (or people import, or Keycloak's console: INSTALL.md, \"Keycloak, if you have no identity provider\")."
+      echo "No first admin was made. Add people later with $root/kilnmark.sh people add (or people import, or Keycloak's console: docs/guide/install/production-bundled-keycloak.md)."
     else
       people_no "No email was given. Nobody was made."
     fi
@@ -1479,7 +2260,7 @@ record_own_people() {
   # Those given a temporary password just now wait, disabled, for this record: enabled only once
   # Kilnmark has it (fail closed), so a run cut short leaves nobody able to sign in unrecorded.
   local todo kept_out="$people_out" p left=""
-  todo="$(sed -n 's/^keycloak-setup: made \([a-z0-9._%+@-]*\) (.*): they choose their own password.*$/\1/p; s/^keycloak-setup: activated \([a-z0-9._%+@-]*\): .*$/\1/p' <<< "$1")"
+  todo="$(sed -n 's/^keycloak-setup: made \([a-z0-9._%+@-]*\) ([a-z;-]*): they choose their own password.*$/\1/p; s/^keycloak-setup: activated \([a-z0-9._%+@-]*\): they choose their own password.*$/\1/p' <<< "$1")"
   if [ "$code" != 204 ]; then
     echo "Warning: Kilnmark did not record this in its audit log (HTTP $code); Keycloak's admin events have it." >&2
     [ -z "$todo" ] || echo "So they stay disabled, until Kilnmark answers: then give each a temporary password with people activate EMAIL." >&2
@@ -1520,7 +2301,7 @@ run_people_setup() {
   people_out="$(KILNMARK_PEOPLE_ACTION="$1" KILNMARK_PERSON_EMAIL="$person_email" \
     KILNMARK_PERSON_FIRST_NAME="$person_first" KILNMARK_PERSON_LAST_NAME="$person_last" \
     KILNMARK_PERSON_GROUPS="$person_groups" KILNMARK_MODE="$people_mode" KILNMARK_INSTALL_ID="$id" \
-    "${compose[@]}" run --rm -T keycloak-setup 2>&1 | hide_compose_commands)" || rc=$?
+    "${compose[@]}" run --rm --no-deps -T keycloak-setup 2>&1 | hide_compose_commands)" || rc=$?
   drop_run_secrets
   return "$rc"
 }
@@ -1608,8 +2389,12 @@ cmd_people() {
       # nobody signs in then, and each start expires them first.
       [ $# -eq 0 ] || die "people expire takes no options."
       # the tree it runs from was checked first (expire_guard)
-      local kcp; kcp="$(setting KILNMARK_KEYCLOAK_PORT)"
-      if ! curl -s -f -o /dev/null --max-time 10 "http://localhost:${kcp:-8180}/realms/kilnmark"; then
+      local kcp rc=0; kcp="$(setting KILNMARK_KEYCLOAK_PORT)"
+      # only a refused connection is "not running", or one that timed out with nothing listening
+      # on the port (WSL's mirrored network drops a closed port's connections rather than refuse
+      # them): anything else answering there goes on to setup, which checks the realm itself
+      curl -s -o /dev/null --max-time 10 "http://127.0.0.1:${kcp:-8180}/realms/kilnmark" || rc=$?
+      if [ "$rc" -eq 7 ] || { [ "$rc" -eq 28 ] && nothing_listens "${kcp:-8180}"; }; then
         echo "Keycloak does not answer, so nothing was expired now: each start of Kilnmark expires unused temporary passwords too."
         return 0
       fi
@@ -1624,8 +2409,9 @@ cmd_people() {
 
 # --- backup and restore (the scripts beside compose.yaml) --------------------------------------
 
-# backup.sh and restore.sh split KILNMARK_COMPOSE on spaces, which is why the root has none.
-compose_line() { echo "${compose[*]}"; }
+# The compose command for backup.sh and restore.sh, a word a line (KILNMARK_COMPOSE_LINES), so a
+# folder with a space in its path stays one word.
+compose_lines() { printf '%s\n' "${compose[@]}"; }
 
 # on when the bundled Keycloak is (the auth profile): backup.sh and restore.sh take its database too.
 keycloak_on() {
@@ -1633,17 +2419,17 @@ keycloak_on() {
 }
 
 cmd_backup() {
-  local dest="${1:-$root/backups}"
+  local dest="${1:-$data/backups}"
   current_version > /dev/null; set_compose
   mkdir -p "$dest"
-  (cd "$root/current" && KILNMARK_COMPOSE="$(compose_line)" KILNMARK_KEYCLOAK="$(keycloak_on)" sh ./backup.sh "$dest")
+  (cd "$root/current" && KILNMARK_COMPOSE_LINES="$(compose_lines)" KILNMARK_KEYCLOAK="$(keycloak_on)" sh ./backup.sh "$dest")
 }
 
 cmd_restore() {
   current_version > /dev/null; set_compose
   # its last step starts Kilnmark: the one-offs get their secrets for that run only
   write_run_secrets
-  (cd "$root/current" && KILNMARK_COMPOSE="$(compose_line)" KILNMARK_KEYCLOAK="$(keycloak_on)" \
+  (cd "$root/current" && KILNMARK_COMPOSE_LINES="$(compose_lines)" KILNMARK_KEYCLOAK="$(keycloak_on)" \
     KILNMARK_EXPECTED_MODE="$(setting KILNMARK_MODE)" sh ./restore.sh "$@")
   case " $* " in *" --yes "*) after_one_offs ;; esac
   drop_run_secrets
@@ -1657,17 +2443,17 @@ cmd_restore() {
 # reads nothing more (never config/.env, nor the admin token in it), and goes to the system's
 # journal (a timer's run goes there anyway) and to standard error.
 expire_guard() {
-  local why r log want as_root=0
-  [ -n "$root" ] || die "Kilnmark is not installed here. Run: ./kilnmark.sh install"
+  local why d log want
+  [ -n "$root" ] && [ -n "$data" ] || die "Kilnmark is not installed here. Install it with: sudo ./kilnmark.sh install"
   why="$(tree_problem)"
   [ -n "$why" ] || why="$(tools_problem)"
   [ -n "$why" ] || return 0
   logger -t "kilnmark-people-expire" -p user.warning "people expire was refused: $why" > /dev/null 2>&1 || true
   # and a line in the day's log, where logs/ passes the same check and that log is a plain file
-  if [ "$(expiry_uid)" -eq 0 ]; then want=0; as_root=1; else want="$(id -u)"; fi
-  r="$(root_real)"
-  if [ -n "$r" ] && [ -d "$r/logs" ] && [ -z "$(owned_problem "$r/logs")" ]; then
-    log="$r/logs/people-expire-$(date -u +%Y%m%d).log"
+  want="$(id -u)"
+  d="$(real_path "$data")"
+  if [ -n "$d" ] && [ -d "$d/logs" ] && [ -z "$(owned_problem "$d/logs")" ]; then
+    log="$d/logs/people-expire-$(date -u +%Y%m%d).log"
     if [ ! -L "$log" ] && { [ ! -e "$log" ] || [ -f "$log" ]; }; then
       printf '%s people expire was refused: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$why" >> "$log" 2> /dev/null || true
     fi
@@ -1678,9 +2464,15 @@ expire_guard() {
 main() {
 command="${1:-up}"
 [ $# -eq 0 ] || shift
+# Day-to-day commands run as the account that runs Kilnmark, never as root.
 case "$command" in
-  prepare) cmd_prepare "$@" ;;
+  install|upgrade|uninstall|check|version|help|-h|--help) ;;
+  *) not_root "$command" ;;
+esac
+case "$command" in
   install) cmd_install "$@" ;;
+  upgrade) cmd_upgrade "$@" ;;
+  uninstall) cmd_uninstall "$@" ;;
   up|start) start_log up; cmd_up "$@" ;;
   down|stop) start_log down; cmd_down ;;
   restart) start_log restart; cmd_restart "$@" ;;
@@ -1690,26 +2482,15 @@ case "$command" in
     follow=(); svc=()
     for a in "$@"; do case "$a" in -f) follow=(-f) ;; *) svc+=("$a") ;; esac; done
     "${compose[@]}" logs --tail 200 "${follow[@]}" "${svc[@]}" ;;
-  check)
-    running=false; [ -n "$root" ] && curl -k -s -f -o /dev/null "$(local_url)/q/health/ready" && running=true
-    check_prerequisites "$running"
-    if [ -n "$root" ] && [ -f "$root/config/.env" ]; then
-      added="$(new_settings "$root/current/.env.example")"
-      [ -z "$added" ] || echo "Settings in this version's .env.example that config/.env does not mention: $(echo "$added" | tr '\n' ' ')"
-      if auth_on; then
-        expiry="$(expiry_timer_state)"
-        echo "People expiry: $expiry"
-        [ "$expiry" != "not set up" ] || warnings+=("The hourly expiry of unused temporary passwords is not set up: ./kilnmark.sh up sets it up (a systemd timer).")
-      fi
-    fi
-    report_checks && echo "All checks passed." ;;
+  check) load_installed_answers || true; cmd_check "$@" ;;
+  configure) start_log configure; cmd_configure "$@" ;;
   verify)
     file=""; while [ $# -gt 0 ]; do case "$1" in --key) key_override="${2:?}"; shift ;; *) file="$1" ;; esac; shift; done
-    [ -n "$file" ] || die "Say which file: ./kilnmark.sh verify FILE"
+    [ -n "$file" ] || die "Say which file: kilnmark.sh verify FILE"
     verify_file "$file" ;;
   load-images)
     file=""; for a in "$@"; do case "$a" in --skip-verify) skip_verify=true ;; *) file="$a" ;; esac; done
-    [ -n "$file" ] || die "Say which file: ./kilnmark.sh load-images kilnmark-<version>-images.tar.gz"
+    [ -n "$file" ] || die "Say which file: kilnmark.sh load-images kilnmark-<version>-images.tar.gz"
     load_images "$file" ;;
   pull)
     for a in "$@"; do case "$a" in --skip-verify) skip_verify=true ;; *) die "Unknown option $a." ;; esac; done
@@ -1719,9 +2500,19 @@ case "$command" in
   starter) start_log starter; cmd_starter "$@" ;;
   people) if [ "${1:-}" = expire ]; then expire_guard; start_log people-expire daily; else start_log people; fi; cmd_people "$@" ;;
   restore) start_log restore; cmd_restore "$@" ;;
-  upgrade) cmd_upgrade "$@" ;;
-  uninstall) cmd_uninstall "$@" ;;
-  version) if [ -n "$root" ]; then echo "Kilnmark $(current_version)"; else echo "Kilnmark $(version_of "$here") (not installed)"; fi ;;
+  # the account's parts of install, upgrade and uninstall, which run as root
+  _images)
+    v="$(current_version)"
+    while [ $# -gt 0 ]; do
+      case "$1" in --stdin) offline=- ;; --build) build=true ;; --skip-verify) skip_verify=true ;;
+        --version) v="${2:?}"; shift ;; *) die "Unknown option $1." ;; esac
+      shift
+    done
+    get_images "$v" ;;
+  _starter-on) current_version > /dev/null; starter_on ;;
+  _recorded-mode) current_version > /dev/null; ensure_settings; set_compose; recorded_mode ;;
+  _stop-for-uninstall) start_log uninstall; cmd_stop_for_uninstall "$@" ;;
+  version) if [ -n "$root" ] && [ -n "$data" ]; then echo "Kilnmark $(current_version)"; else echo "Kilnmark $(version_of "$here") (not installed)"; fi ;;
   help|-h|--help) usage ;;
   *) usage; exit 2 ;;
 esac
