@@ -134,7 +134,7 @@ It is for upsert only: the other modes write every row.
   row of their key; the rows written, and the write's profile, count each row sent, those written
   over too. A row number in a message from the database counts the rows sent, not those that
   arrived.
-- `dedupe` and `lookup` take the same rule ([Which row wins](pipeline-nodes.md#which-row-wins)).
+- `dedupe` and `lookup` take the same rule ([Which row wins](reference-pipeline-nodes.md#which-row-wins)).
 
 ### Rows the table would refuse
 
@@ -151,7 +151,7 @@ stops the write, as before.
 | `does_not_fit`, `not_storable` | A value the column's type or size cannot hold. |
 
 Error rows are the row as it arrived, with `error_node`, `error_column`, `error_code` and
-`error_message`, as for [rows that fail](pipeline-nodes.md#rows-that-fail) at other nodes; the
+`error_message`, as for [rows that fail](rows-that-fail.md) at other nodes; the
 message never holds the value. `max_errors` and `max_error_share` stop the write past a count or a
 share, and the share is judged before anything is committed. With `commit_every`, rows are
 committed before the share can be judged, so a write cannot have both; with `max_errors`, rows

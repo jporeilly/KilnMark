@@ -1,4 +1,5 @@
 import { Marked } from "marked";
+import { movedDoc } from "./groups";
 import { docHref, docPage, docPicture, plainHeading, slug, uniqueSlug, type DocPage } from "./index";
 
 const ENTITIES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
@@ -6,15 +7,20 @@ const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ENTITIES[c]);
 
 /**
  * Where a link in a guide should point inside the app, or null to show its words without a link.
- * In-page anchors (#thresholds) and links to other guides (other.md#part) become hash routes, so
- * they never break the router; web and mail addresses and paths on this server (/api/docs) stay.
+ * In-page anchors (#thresholds) and links to other guides (other.md#part, install/other.md or
+ * ../other.md, as GitHub reads them) become hash routes, so they never break the router; a link to
+ * a page or section that moved goes where it is now (groups.ts). Web and mail addresses and paths on
+ * this server (/api/docs) stay.
  */
 function target(page: DocPage, href: string): string | null {
   // Backslashes and control characters can make a browser read a path as another host.
   if (/[\u0000-\u001f\u007f\\]/.test(href)) return null;
   if (href.startsWith("#")) return docHref(page.id, decode(href.slice(1)) || null);
-  const other = /^(?:\.\/)?([\w-]+)\.md(?:#(.*))?$/.exec(href);
-  if (other) return docPage(other[1]) ? docHref(other[1], other[2] ? decode(other[2]) : null) : null;
+  const other = /^(?:\.\/)?(?:\.\.\/|install\/)?([\w-]+)\.md(?:#(.*))?$/.exec(href);
+  if (other) {
+    const to = movedDoc(other[1], other[2] ? decode(other[2]) : null);
+    return docPage(to.id) ? docHref(to.id, to.section) : null;
+  }
   if (/^(?:https?:|mailto:)/i.test(href)) return href;
   if (href.startsWith("/")) {
     try {

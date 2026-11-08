@@ -3397,6 +3397,19 @@ table.sample td {
   text-overflow: ellipsis;
 }
 
+/* The documentation's groups, each a heading, a line on who it is for, and its guides. */
+.docs-group {
+  margin-top: calc(var(--km-gap) * 2);
+}
+
+.docs-group > h2 {
+  margin: 0 0 4px;
+}
+
+.docs-group > .hint {
+  margin: 0 0 var(--km-gap);
+}
+
 /* A gallery of cards on the page (sources). */
 .km-gallery {
   list-style: none;

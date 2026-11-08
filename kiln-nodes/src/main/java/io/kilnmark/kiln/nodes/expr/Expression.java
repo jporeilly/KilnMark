@@ -7,7 +7,7 @@ import org.apache.arrow.vector.types.pojo.Schema;
 
 /**
  * An expression of the pipeline expression language (docs/design/pipelines.md, section 3;
- * docs/guide/pipeline-nodes.md): parsed once with {@link #parse}, checked against the columns it
+ * docs/guide/expressions.md): parsed once with {@link #parse}, checked against the columns it
  * will see with {@link #compile}, then worked out a batch at a time. It never runs code: the
  * parser is hand-written, there is no reflection on what users write, and functions come from a
  * fixed list.

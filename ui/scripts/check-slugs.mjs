@@ -5,7 +5,7 @@
 //    headings, HTML blocks, headings inside lists or quotes), and the viewer's headings there are
 //    exactly those the server's line-by-line reading finds (a copy of DocSections.headingSlugs).
 // Runs before every build (npm "prebuild"), on any Node that Vite supports: plain JavaScript only.
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { marked } from "marked";
 import { markdownHeadings, plainHeading, slug, uniqueSlug } from "../src/docs/anchors.js";
@@ -74,9 +74,11 @@ function risky(markdown) {
   return found;
 }
 
-const pages = readdirSync(root + "docs/guide")
-  .filter((f) => f.endsWith(".md"))
-  .map((f) => ["docs/guide/" + f, readFileSync(root + "docs/guide/" + f, "utf8")]);
+// The guides, and the install guides in docs/guide/install/ when there are any.
+const pages = ["docs/guide/", "docs/guide/install/"]
+  .filter((dir) => existsSync(root + dir))
+  .flatMap((dir) => readdirSync(root + dir).filter((f) => f.endsWith(".md")).map((f) => dir + f))
+  .map((f) => [f, readFileSync(root + f, "utf8")]);
 pages.push(["CHANGELOG.md", readFileSync(root + "CHANGELOG.md", "utf8")]);
 for (const [file, markdown] of pages) {
   for (const r of risky(markdown)) wrong.push(`${file} has ${r}; use # headings and plain Markdown`);

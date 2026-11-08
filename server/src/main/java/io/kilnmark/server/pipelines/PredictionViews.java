@@ -5,7 +5,7 @@ import java.util.Map;
 
 /**
  * What the prediction and suggestion API takes and returns (docs/design/data-quality.md section 8;
- * docs/guide/pipelines.md, "Predicted quality"). Every score here is an estimate from the catalogue's
+ * docs/guide/quality-gates.md, "Predicted quality"). Every score here is an estimate from the catalogue's
  * metadata ({@code estimate} is always true), worked out without reading any data. Words, counts and
  * shares only, never values from the data.
  */

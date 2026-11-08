@@ -15,7 +15,7 @@ The numbers are not like for like:
   count.
 - **Operations on one value are expression functions.** Trimming, replacing, changing case,
   regular expressions, parsing and formatting dates and rounding are functions inside `compute`
-  and `filter` (docs/guide/pipeline-nodes.md), where other products often give each its own
+  and `filter` (docs/guide/expressions.md), where other products often give each its own
   component.
 
 Even so, some common shapes of work cannot be written with Kilnmark's nodes today: sorting, a

@@ -1,5 +1,5 @@
 /**
- * Predicted quality (docs/guide/pipelines.md, "Predicted quality"): what the catalogue's metadata
+ * Predicted quality (docs/guide/quality-gates.md, "Predicted quality"): what the catalogue's metadata
  * says each write and gate will score before the pipeline runs, and suggestions that would raise
  * it. Every figure is an estimate and is labelled so wherever it is shown. Calls and pure word
  * helpers, unit tested; loaded with the pipeline pages, outside the main bundle.

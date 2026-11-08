@@ -1,8 +1,9 @@
 # Reference: pipeline nodes
 
-Every node a pipeline can use, with every setting it takes. A pipeline reads rows from sources,
-changes them, checks them and writes them, in one pass; how to build and run one is in
-[Building and running a pipeline](pipelines.md). For the other kinds of component, see the
+Every node a pipeline can use, with every setting it takes and what to know about it. A pipeline
+reads rows from sources, changes them, checks them and writes them, in one pass; how to build and
+run one is in [Building and running a pipeline](pipelines.md). The expression language several
+nodes share is in [Expressions](expressions.md). For the other kinds of component, see the
 [Components reference](components-reference.md).
 
 Each entry gives what the node does and its kind, the ports it reads from and writes to, a table
@@ -21,14 +22,29 @@ variables](pipelines.md#parameters-and-server-variables) explains.
 | `input` | The node that feeds this one: `input: tidy` reads the `out` port of `tidy`, `input: tidy.rejected` its `rejected` port. A `union` lists several: `input: [north, south]`. |
 | `inputs` | For a node with named inputs, each input and the node feeding it: `inputs: { main: orders, lookup: customers }`. |
 
-Rows sent to a port that nothing reads are dropped. Every other key of a node is one of its
-settings; a key the node does not take is a problem, with its line.
+Every other key of a node is one of its settings; a key the node does not take is a problem, with
+its line.
+
+## How nodes connect
+
+![A pipeline on the canvas with the Nodes panel open: nodes grouped by what they do, the Transform folder open showing Compute columns, Select columns and Sort rows, and a pipeline of a read, a sort and a write, each joined from its out port to the next node's in port](images/node-palette.png)
+
+Every node has named **ports**, which each entry below lists. Most nodes read from `in` and write
+to `out`; some have more, such as a filter's `rejected`, a gate's `quarantine` or a route's named
+routes. In YAML, `input: tidy` reads the `out` port of the node called `tidy`, and
+`input: tidy.rejected` reads its `rejected` port. A node with two inputs names them:
+`inputs: { main: spend, lookup: tidy }`, or `inputs: { left: orders, right: customers }` for a
+join. A union lists its inputs: `input: [north, south]`.
+
+Rows sent to a port that nothing reads are dropped. For example, a filter whose `rejected` port is
+not connected simply drops the rows it does not keep. The `errors` port is the exception: with
+nothing connected to it, a row that fails stops the run ([Rows that fail](rows-that-fail.md)).
 
 ## The pipeline's own keys
 
 A pipeline's own keys are `kilnmark` (always `pipeline/v1`), `name`, `description`, `parameters`
 ([Parameters and server variables](pipelines.md#parameters-and-server-variables)), `quality`
-(`min_score`, [Quality of what a run writes](pipelines.md#quality-of-what-a-run-writes)), `run`
+(`min_score`, [Quality of what a run writes](quality-gates.md#quality-of-what-a-run-writes)), `run`
 (below), `nodes` and `layout` (where the canvas draws each node).
 
 `run:` says how each run of the pipeline is tried, as in `run: { retries: 2, retry_delay: 5m }`
@@ -197,11 +213,10 @@ The writer settings, which only some kinds of source take:
 
 - Give the target as `table` (`schema.table`) for a database, `path` for a file, or `target` for
   either. A file's `format` is `csv` or `parquet`, taken from its extension when left out.
-- `mode`: `create` writes a new table or file and fails if it exists; `append` adds rows to what is
-  there; `replace` fills a new table or file and swaps it in at the end; `upsert` updates rows with
-  the same `key` and adds the rest. Each source kind's writer may refuse a mode: generic JDBC
-  sources take `append` and `create` only, and files `create` and `replace` only, as files are
-  written whole.
+- `mode` is as the settings table says; what each needs of the table, and the column types a
+  `create` chooses, are in [Modes](writing-data.md#modes). Each source kind's writer may refuse a
+  mode: generic JDBC sources take `append` and `create` only, and files `create` and `replace`
+  only, as files are written whole.
 - Nothing appears until the write has finished: a table write is one transaction, and a file is
   written under a temporary name and put in place at the end, unless `commit_every` says otherwise.
 - The writer settings depend on the target source's kind: a setting the source's writer does not
@@ -321,8 +336,8 @@ nodes:
     mode: replace
 ```
 
-Related: [Quality gates](pipelines.md#quality-gates), [What a gate does when rows
-fail](pipelines.md#what-happens-when-rows-fail).
+Related: [Quality gates](quality-gates.md), [What a gate does when rows
+fail](quality-gates.md#what-happens-when-rows-fail).
 
 ## filter
 
@@ -344,8 +359,9 @@ Keeps the rows where a condition is true.
 [end: node filter]: #
 
 **What to know.** Rows where the condition is false or empty (null) go to `rejected`; if nothing
-reads `rejected`, they are dropped. The condition is an [expression](pipeline-nodes.md#expressions),
-checked against the columns before the pipeline runs.
+reads `rejected`, they are dropped. The condition is an [expression](expressions.md), checked
+against the columns before the pipeline runs. A row where the condition fails (a cast that does not
+fit, say) is a [row that fails](rows-that-fail.md).
 
 ```yaml
 kilnmark: pipeline/v1
@@ -377,8 +393,6 @@ nodes:
     path: exports/other-customers.csv
     mode: replace
 ```
-
-Related: [filter](pipeline-nodes.md#filter).
 
 ## compute
 
@@ -430,7 +444,7 @@ nodes:
     mode: replace
 ```
 
-Related: [compute](pipeline-nodes.md#compute), [Functions](pipeline-nodes.md#functions).
+Related: [Functions](expressions.md#functions), [Rows that fail](rows-that-fail.md).
 
 ## select
 
@@ -456,8 +470,9 @@ Keeps or drops columns, renames them, puts them in order and changes their type.
 [end: node select]: #
 
 **What to know.** Every setting names columns as they arrive. They apply in this order: keep
-or drop, change type, rename, order. Casting text is strict: a value that does not fit stops the
-run.
+or drop, change type, rename, order. `cast` takes the [types](expressions.md#types) of the
+expression language. Casting text is strict: a value that does not fit stops the run, or goes to
+`errors` when something reads it ([Rows that fail](rows-that-fail.md)).
 
 ```yaml
 kilnmark: pipeline/v1
@@ -486,8 +501,6 @@ nodes:
     mode: replace
 ```
 
-Related: [select](pipeline-nodes.md#select), [Types](pipeline-nodes.md#types).
-
 ## lookup
 
 Adds columns from the `lookup` input to each row of the `main` input with the same key, like a
@@ -512,13 +525,23 @@ join.
 
 [end: node lookup]: #
 
-**What to know.** The lookup input is read in full and held in memory first, up to
-`memory_limit_mb`; then main rows stream through. Keys match by value (`1`, `1.0` and `1.00`
-match), empty keys never match, and text never matches a number. An added column must not have the
-same name as a main column. When the lookup side has a key more than once, `duplicates` says which
-of its rows is used: the first to arrive unless you say otherwise, the last, the latest or earliest
-by the lookup column `duplicates_by` names, or `error`, which stops the run naming the key's columns
-but never its value ([Which row wins](pipeline-nodes.md#which-row-wins)).
+**What to know.**
+
+- The lookup input is read in full and held in memory first; then main rows stream through, in
+  their order. If the lookup input is larger than `memory_limit_mb`, the run stops with a message
+  saying so: raise the limit, or keep fewer columns.
+- While the lookup input loads, main rows that are ready may be held in memory too (counted
+  against the same limit), so a pipeline where both inputs come from one node keeps moving.
+- Keys match by value: `1`, `1.0` and `1.00` match, whatever the column types, and a date matches
+  a timestamp at midnight. Text never matches a number; change one with `select` first. Empty
+  (null) keys never match.
+- An added column must not have the same name as a main column. List the ones you want in `keep`,
+  or rename one side with `select`.
+- When the lookup side has a key more than once, `duplicates` says which of its rows is used: the
+  first to arrive unless you say otherwise ([Which row wins](#which-row-wins)). `duplicates_by`
+  need not be among the columns kept.
+- To join two large inputs, or keep every pair when keys repeat on both sides, use a
+  [`join`](#join).
 
 ```yaml
 kilnmark: pipeline/v1
@@ -559,8 +582,6 @@ nodes:
     mode: replace
 ```
 
-Related: [lookup](pipeline-nodes.md#lookup).
-
 ## aggregate
 
 Groups rows that share values and summarises each group.
@@ -580,10 +601,12 @@ Groups rows that share values and summarises each group.
 
 [end: node aggregate]: #
 
-**What to know.** Without `group_by` it summarises all rows into one, even when there are none. A
-value can combine [aggregate functions](pipeline-nodes.md#aggregate) and group-by columns; a column
-used outside an aggregate must be in `group_by`. Groups are held in memory up to
-`memory_limit_mb`, and come out in the order they were first seen.
+**What to know.** Without `group_by` it summarises all rows into one, even when there are none (a
+count of 0). Empty values in a `group_by` column form a group of their own. A value can combine
+[aggregate functions](expressions.md#aggregate-functions) and group-by columns, such as
+`sum(amount) / count(*)`; a column used outside an aggregate must be in `group_by`, and aggregates
+cannot be inside each other. Groups are held in memory up to `memory_limit_mb`, and come out in the
+order they were first seen.
 
 ```yaml
 kilnmark: pipeline/v1
@@ -613,7 +636,7 @@ nodes:
     mode: replace
 ```
 
-Related: [aggregate](pipeline-nodes.md#aggregate).
+Related: [Aggregate functions](expressions.md#aggregate-functions).
 
 ## union
 
@@ -633,10 +656,16 @@ Appends the rows of all its inputs, matching columns by name.
 
 [end: node union]: #
 
-**What to know.** Columns come out in the order they first appear across the inputs. A column
-missing from an input is empty in its rows; a column whose type differs is widened to one that
-holds both, and other differences stop the pipeline before it runs. With `strict: true`, every input
-must have exactly the same columns and types.
+**What to know.**
+
+- Columns come out in the order they first appear across the inputs, as listed, including the
+  columns of an input that turns out to have no rows.
+- A column missing from an input is empty in that input's rows.
+- A column whose type differs between inputs is widened to a type that holds both: whole numbers of
+  different sizes to `int64`, whole numbers and decimals to `decimal`, numbers to `float64` when
+  one side is a float, dates and timestamps to `timestamp`. Other differences (text and a number,
+  say) stop the pipeline before it runs; change one with `select`.
+- With `strict: true`, every input must have exactly the same columns and types.
 
 ```yaml
 kilnmark: pipeline/v1
@@ -666,8 +695,6 @@ nodes:
     mode: replace
 ```
 
-Related: [union](pipeline-nodes.md#union).
-
 ## dedupe
 
 Keeps one row for each key, the first to arrive unless you say otherwise; the other rows with the
@@ -690,12 +717,11 @@ same key go to `rejected`.
 [end: node dedupe]: #
 
 **What to know.** Empty values count as equal to each other. Without `key`, whole rows are
-compared. Which row of a key is kept is `duplicates`: the first to arrive unless you say
-otherwise, the last, the latest or earliest by `duplicates_by` (a tie goes to the first of the tied
-rows, and an empty value never wins), or `error`, which stops the run naming the key's columns
-([Which row wins](pipeline-nodes.md#which-row-wins)). The keys seen so far are held in memory up to
-`memory_limit_mb`; under `last`, `latest` and `earliest` the rows are held too, and sent on in the
-order they came once the input ends.
+compared. Which row of a key is kept is `duplicates` ([Which row wins](#which-row-wins), below).
+The keys seen so far are held in memory up to `memory_limit_mb`. Under `first` and `error`, rows
+pass on as they arrive. Under `last`, `latest` and `earliest` a row's fate is known only once every
+row has arrived, so the rows are held too, until the input ends, and then sent on in the order they
+came: the winners to `out`, the rest to `rejected`.
 
 ```yaml
 kilnmark: pipeline/v1
@@ -728,7 +754,28 @@ nodes:
     mode: replace
 ```
 
-Related: [dedupe](pipeline-nodes.md#dedupe).
+### Which row wins
+
+The rule for which row wins, `duplicates`, is the same on `dedupe`, `lookup` (its lookup side) and an
+upsert `write`:
+
+| `duplicates` | Which row of a key is kept |
+| --- | --- |
+| `first` | The first to arrive. The default for `dedupe` and `lookup`. |
+| `last` | The last to arrive. The default for an upsert. |
+| `latest` | The one with the largest value in the column `duplicates_by` names. |
+| `earliest` | The one with the smallest value in that column. |
+| `error` | None: the run stops when a key repeats. The message names the key's columns, never its value. |
+
+Under `latest` and `earliest`, a tie goes to the first of the tied rows to arrive, and an empty
+value never beats a value. Values order as `sort` orders them: numbers by value, dates and times
+in time, text by Unicode code point, `false` before `true`. The canvas shows each node's rule on
+its card ("first kept", "latest by updated_at kept"), the default too, so the rule is always in
+sight.
+
+Upsert writes are in [Writing data](writing-data.md#which-row-an-upsert-keeps). The sample
+`sample-which-row` keeps the latest customer of each email with a dedupe, and the latest delivery
+price of each product with a lookup.
 
 ## route
 
@@ -751,7 +798,8 @@ Sends each row to the first route whose condition it meets; rows that meet none 
 
 **What to know.** Each route's name is an output port of its own, besides `out`, that other nodes
 read as `input: <node>.<route>`. Port names use small letters, digits, `-` and `_`, and cannot be
-`in` or `out`. Routes are tried in the order written.
+`in` or `out`; nor `errors`, which is the port for [rows that fail](rows-that-fail.md). Routes are
+tried in the order written, and each row goes to the first it meets.
 
 ```yaml
 kilnmark: pipeline/v1
@@ -792,8 +840,6 @@ nodes:
     table: sales.orders_home
     mode: replace
 ```
-
-Related: [route](pipeline-nodes.md#route).
 
 ## limit
 
@@ -840,8 +886,6 @@ nodes:
     mode: replace
 ```
 
-Related: [limit](pipeline-nodes.md#limit).
-
 ## sort
 
 Orders rows by one or more columns, each ascending or descending.
@@ -860,16 +904,34 @@ Orders rows by one or more columns, each ascending or descending.
 
 [end: node sort]: #
 
-**What to know.** Each entry in `by` is a column, then perhaps `desc` (largest first; `asc` is the
-default), then perhaps `nulls first` (empty values go last by default, whichever the direction).
-Values order as conditions compare them: numbers by value, text by Unicode code point with no
-collation (so `B` comes before `a`, and accented letters after `z`), dates and timestamps in time
-(to the nanosecond), whole numbers by value (unsigned ones too), `false` before `true`, and a floating-point NaN after every other number. Rows with equal values
-keep the order they arrived in. Nothing is passed on until every row has arrived. Rows are held up
-to `memory_limit_mb`; past it they are sorted in parts, written to a private temporary folder on
-the server (encrypted, with a key only the running node holds) and merged at the end, so any number
-of rows can be sorted; the run's log says when that happened and how much was written. The folder
-is deleted when the node ends, fails or is stopped, and a file damaged while there fails the run.
+On the canvas, each column in **Order by** has its direction (Smallest first or Largest first) and
+where its empty values go, and **Up** moves it before the column above:
+
+![The settings of a sort node: Order by lists status smallest first, shipping_fee largest first and ordered_at smallest first, each with empty values last, with Up and Remove beside each, and the memory limit of 256 MB](images/sort-settings.png)
+
+**What to know.**
+
+- Each entry in `by` is a column, then perhaps `desc` (largest first; `asc` is the default), then
+  perhaps `nulls first`, as in SQL's `order by`. Empty (null) values go last, ascending or
+  descending, unless the column says `nulls first`.
+- Values order as conditions compare them (`<`, `>`): numbers by value (unsigned whole numbers
+  too), dates and timestamps in time (to the nanosecond, for columns that hold nanoseconds),
+  `false` before `true`, and a floating-point NaN after every other number. Text is ordered by
+  Unicode code point, not by any language's rules: capital letters come before small ones (`B`
+  before `a`), and accented letters after `z`. To sort ignoring case, add a column with
+  `lower(name)` in a `compute` node and sort by that.
+- Rows with equal values keep the order they arrived in (the sort is stable), so sorting by
+  `region` keeps each region's rows in their earlier order.
+- A sort passes nothing on until all its rows have arrived.
+- Any number of rows can be sorted. Up to `memory_limit_mb` the sort works in memory; past it, it
+  writes sorted parts to a temporary folder on the server and merges them at the end. The files
+  are encrypted with a key only the running node holds, readable only by the server's user, and
+  deleted when the node ends, fails or is stopped; if a file is damaged while it is there, the
+  run fails rather than losing rows. The run's log says how much was written.
+
+  ![How a sort carries on on disk: rows arrive and are held in memory up to memory_limit_mb; past the limit they are sorted and written as a run; when the input ends the runs are merged, 64 at a time, into rows in order for the next node](images/sort-spill.svg)
+- A table read in a fixed order is not guaranteed to arrive in that order. Sort just before a
+  write when the order matters, for example for a file someone reads.
 
 ```yaml
 kilnmark: pipeline/v1
@@ -895,8 +957,6 @@ nodes:
     mode: replace
 ```
 
-Related: [sort](pipeline-nodes.md#sort).
-
 ## join
 
 Joins the rows of a `left` and a `right` input whose key columns are equal, as SQL joins them.
@@ -917,17 +977,43 @@ Joins the rows of a `left` and a `right` input whose key columns are equal, as S
 
 [end: node join]: #
 
-**What to know.** `inner` keeps the pairs of rows that match; `left` also keeps left rows with no
-match, `right` right rows with none, and `full` both, with the other side's columns empty. Every
-pair comes out: a key on three left rows and two right rows gives six. Keys match by value, as a
-lookup's do (`1`, `1.0` and `1.00` match; a date matches a timestamp at midnight; a float matches
-by its shortest decimal, so a very large one may not match the whole number it holds; timestamps
-match to the nanosecond); text never matches a number; an empty (null) key matches nothing, not even another empty key. Every column of
-both inputs comes out with its type, the left's first; a right column whose name a left column
-already has, ignoring case, is renamed with `right_prefix` (`right_customer_id`). Rows come out in
-order of their keys, rows with an empty key last. Both inputs are sorted by their keys within
-`memory_limit_mb` between them, and on disk past it, so either may be larger than memory; the run's
-log says when that happened. To add a few columns from a small table, a `lookup` is quicker.
+![The sample-join pipeline on the canvas: orders into the join's left port and customers into its right port, the join node saying "full on customer_id = customer_id" and 707 rows out, and a write to a file](images/join-canvas.png)
+
+In its settings, **Match on** pairs each left column with the right column it must equal, and
+**Join** chooses which rows with no match to keep:
+
+![The settings of a join node: Match on with left column customer_id and right column customer_id, Add a key, Join set to full, Right prefix right_ and a memory limit of 256 MB](images/join-settings.png)
+
+![The four kinds of join as pairs of circles, left and right: inner keeps only the overlap, the pairs that match; left adds the left rows with no match; right adds the right rows with none; full keeps every row of both. Where there is no match the other side's columns are empty, and an empty key matches nothing](images/join-kinds.svg)
+
+**What to know.**
+
+- Every pair comes out: a key on three left rows and two right rows gives six rows.
+- Keys match by value, as a lookup's do: `1`, `1.0` and `1.00` match, and a date matches a
+  timestamp at midnight. A floating-point number matches by its shortest decimal, so a very large
+  float may not match the whole number it holds; cast it with `select` to match exactly.
+  Timestamps match to the nanosecond. Text never matches a number; change one with `select`
+  first. Several key columns must all be equal.
+- An empty (null) key never matches anything, not even another empty key, as in SQL.
+- Every column of both inputs comes out with its type, the left's first. A right column whose
+  name a left column already has (ignoring case) is renamed with `right_prefix`, so a join on
+  `customer_id` gives `customer_id` and `right_customer_id`; drop the one you do not need with
+  `select`. Columns of a side that may have no match can be empty.
+- Rows come out in order of their keys, rows with an empty key last. Within a key, each left row
+  comes in the order it arrived, with its right rows in theirs.
+- Any number of rows can be joined: both inputs are sorted by their keys, in memory up to
+  `memory_limit_mb` between them and on disk past it, as a sort does. A key with more right rows
+  than a quarter of that limit holds them on disk while its left rows are joined to them. Nothing
+  is passed on until both inputs have ended, except that a join that can give no rows (an `inner`
+  join with an empty input, say) stops as soon as it knows. The run's log says how much was
+  written to disk.
+
+**join or lookup?** A `lookup` reads its lookup input into memory and streams the main input past
+it, keeping the main rows' order: quickest when one side is small, such as a table of codes. It
+uses one row of a repeated key, by a rule you state (or stops), and sends main rows with no match
+to `rejected` if you like. A `join` sorts both sides, so either may be larger than memory, keeps
+every pair when keys repeat, can keep the rows of either side with no match, and passes both
+sides' columns on.
 
 ```yaml
 kilnmark: pipeline/v1
@@ -960,8 +1046,6 @@ nodes:
     mode: replace
 ```
 
-Related: [join](pipeline-nodes.md#join).
-
 ## window
 
 Adds row numbers, ranks, running totals and the previous or next row's values, worked out over
@@ -983,21 +1067,31 @@ each group of rows in order.
 
 [end: node window]: #
 
-**What to know.** Rows with equal `partition_by` values form a group (empty values a group of their
-own), and each group is worked out on its own, in `order_by` order, written as for `sort`. Each new
-column is one window function: `row_number()`, `rank()`, `dense_rank()`, the running totals
-`count(*)`, `count(x)`, `sum(x)`, `avg(x)`, `min(x)` and `max(x)` over the rows so far (this one
-included, one row at a time, so tied rows get different totals in the order they arrived), and
-`lag(x, offset, default)` and `lead(...)`, the value `offset` rows before or after in the group
-(1 unless given; up to 1,000) or the default (empty unless given). Arguments are expressions over
-the row's columns. Rows with equal `order_by` values keep the order they arrived in; empty values go
-last unless a column says `nulls first`. Every input row comes out, its columns and then the new
-ones, in order of group and then of `order_by`; a new column cannot have an input column's name, in
-any case. Nothing is passed on until every row has arrived. Rows are put in order within
-`memory_limit_mb`, and on disk past it, as a sort does (encrypted, in a private temporary folder
-deleted when the node ends); the run's log says when that happened and how much was written. The
-rows a `lead` looks ahead to and the values a `lag` looks back to are held within a limit of the
-same size, so a window may hold up to about twice `memory_limit_mb` in all.
+In the settings, **Partition by** lists the grouping columns, **Order by** takes each column with
+its direction and where its empty values go, as a sort's does, and **Columns** pairs each new
+column's name with its function.
+
+**What to know.**
+
+- Rows with equal `partition_by` values form a group (a **partition**, such as one account's
+  transactions; empty values form a group of their own), and each group is worked out on its own,
+  in `order_by` order, written as for `sort`. Every row comes out, with its own columns and then
+  the new ones.
+- Each new column is one [window function](expressions.md#window-functions): a row number, a rank,
+  a running total, or the value of the row before or after (`lag`, `lead`).
+- Rows with equal `order_by` values keep the order they arrived in, as in a sort, and `row_number`
+  numbers them in that order. Empty values in an `order_by` column go last, unless the column says
+  `nulls first`.
+- A new column cannot have the name of a column already there, in any case; rename or drop that
+  column first.
+- Rows come out in order of their group (empty values last) and then of `order_by`. A window passes
+  nothing on until all its rows have arrived.
+- Any number of rows can be used: rows are put in order as a `sort` puts them, in memory up to
+  `memory_limit_mb` and on disk past it, in a temporary folder only the server can read, encrypted
+  and deleted when the node ends. The run's log says how much was written. The rows a `lead` looks
+  ahead to, and the values a `lag` looks back to, are held too, within a limit of the same size, so
+  a window may hold up to about twice `memory_limit_mb` in all; with very wide rows and a large
+  offset the run stops and says so.
 
 ```yaml
 kilnmark: pipeline/v1
@@ -1028,4 +1122,38 @@ nodes:
     mode: replace
 ```
 
-Related: [window](pipeline-nodes.md#window).
+The latest row for each key: number each group's rows newest first, then keep row number 1.
+
+```yaml
+kilnmark: pipeline/v1
+name: latest-order
+description: Each customer's latest order.
+
+nodes:
+  - id: orders
+    type: read
+    source: sales-db
+    asset: sales.orders
+
+  - id: newest_first
+    type: window
+    input: orders
+    partition_by: [customer_id]
+    order_by: [ordered_at desc, order_id desc]
+    columns:
+      recency: "row_number()"
+
+  - id: latest
+    type: filter
+    input: newest_first
+    condition: "recency = 1"
+
+  - id: out
+    type: write
+    input: latest
+    source: files
+    path: exports/latest-orders.csv
+    mode: replace
+```
+
+Related: [Window functions](expressions.md#window-functions).

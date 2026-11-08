@@ -143,7 +143,8 @@ bank or person.
 | `09-volume` | `sample-volume` | Four million rows through a compute, a lookup, a route and an aggregate, long enough to see where a run's time goes: the run's page shows each node's time, rows per second and which node held the others up | Trying the platform on volumes like your own, for example when moving from another ETL tool |
 
 The [pipelines guide](../docs/guide/pipelines.md),
-[Pipeline nodes and expressions](../docs/guide/pipeline-nodes.md) and
+[Reference: pipeline nodes](../docs/guide/reference-pipeline-nodes.md),
+[Expressions](../docs/guide/expressions.md) and
 [Reference: flow nodes](../docs/guide/reference-flow-nodes.md) describe every setting.
 
 ## How each sample explains itself

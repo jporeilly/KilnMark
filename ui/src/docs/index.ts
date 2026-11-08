@@ -12,13 +12,17 @@ import { markdownHeadings, plainHeading, type DocHeading } from "./anchors";
 export { docHref, WHATS_NEW } from "./links";
 export { markdownHeadings, plainHeading, slug, uniqueSlug, type DocHeading } from "./anchors";
 
-/** A bundled guide: id is its file name without .md, title its first heading. */
-export type DocPage = { id: string; title: string; markdown: string };
+/**
+ * A bundled guide: id is its file name without .md, title its first heading, and folder the
+ * subfolder of docs/guide it is in ("install" for the install guides), or "" for the others.
+ */
+export type DocPage = { id: string; title: string; markdown: string; folder?: string };
 
-const files = import.meta.glob("../../../docs/guide/*.md", { query: "?raw", import: "default", eager: true }) as Record<
-  string,
-  string
->;
+const files = import.meta.glob(["../../../docs/guide/*.md", "../../../docs/guide/install/*.md"], {
+  query: "?raw",
+  import: "default",
+  eager: true,
+}) as Record<string, string>;
 
 /** Every bundled page: What's new first, then the guides in title order. */
 export const DOC_PAGES: DocPage[] = [
@@ -26,8 +30,9 @@ export const DOC_PAGES: DocPage[] = [
   ...Object.entries(files)
     .map(([path, markdown]) => {
       const id = path.replace(/^.*\//, "").replace(/\.md$/, "");
+      const folder = /\/docs\/guide\/([\w-]+)\/[^/]+$/.exec(path)?.[1] ?? "";
       const first = /^#\s+(.+)$/m.exec(markdown)?.[1];
-      return { id, title: first ? plainHeading(first) : id, markdown };
+      return { id, title: first ? plainHeading(first) : id, markdown, folder };
     })
     .sort((a, b) => a.title.localeCompare(b.title, "en-GB")),
 ];

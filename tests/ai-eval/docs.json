@@ -24,7 +24,14 @@
     {"question": "When was version 0.0.1 released and what did it contain?", "relevant": ["whats-new/001-24-october-2026"]},
     {"question": "What do the numbers in brackets in an answer link to?", "relevant": ["assistant/sources-and-links"]},
     {"question": "How do I commit a very large table write in parts instead of one transaction?", "relevant": ["writing-data/large-writes"]},
-    {"question": "How do I add columns from a lookup input to each row with the same key, like a join?", "relevant": ["pipeline-nodes/lookup"]},
-    {"question": "Who saved each version of a pipeline, and can I see the YAML of an earlier version?", "relevant": ["pipelines/saving-versions"]}
+    {"question": "How do I add columns from a lookup input to each row with the same key, like a join?", "relevant": ["reference-pipeline-nodes/lookup"]},
+    {"question": "Who saved each version of a pipeline, and can I see the YAML of an earlier version?", "relevant": ["pipelines/saving-versions"]},
+    {"question": "How do I send rows whose cast fails to a quarantine file instead of stopping the run?", "relevant": ["rows-that-fail/the-errors-port"]},
+    {"question": "What does split_part give for a field number of -1?", "relevant": ["expressions/functions"]},
+    {"question": "Which row of a repeated key does dedupe keep with duplicates set to latest?", "relevant": ["reference-pipeline-nodes/which-row-wins"]},
+    {"question": "What does on_fail quarantine do with the rows that fail a gate's rules?", "relevant": ["quality-gates/what-happens-when-rows-fail"]},
+    {"question": "Who are a pipeline's owners, and are they always told when its run fails?", "relevant": ["notifications/owners-of-pipelines-and-flows"]},
+    {"question": "How do I set a longest lifetime for API tokens?", "relevant": ["people-and-access/token-lifetime-and-the-access-review"]},
+    {"question": "Which JDBC driver does a MySQL source use, and does it ship with Kilnmark?", "relevant": ["drivers/drivers-kilnmark-ships", "reference-connectors/mysql"]}
   ]
 }
