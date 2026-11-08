@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import DocsPage from "./DocsPage";
+import { DOC_PAGES } from "../docs";
 import { DOC_GROUPS } from "../docs/groups";
 
 // Rendered as markup, as a browser-like environment may not read the bundled changelog. Where a
@@ -19,10 +20,12 @@ describe("the documentation page", () => {
     expect(html.indexOf('href="#/docs/whats-new"')).toBeLessThan(html.indexOf('id="docs-group-get-started"'));
   });
 
-  test("an install group with no guides yet points to INSTALL.md", () => {
+  test("the install group lists the guides in docs/guide/install, or points to INSTALL.md until there are any", () => {
     const html = page(null);
     const install = html.slice(html.indexOf('id="docs-group-install"'), html.indexOf('id="docs-group-administer"'));
-    expect(install).toContain("INSTALL.md");
+    const guides = DOC_PAGES.filter((p) => p.folder === "install");
+    if (guides.length === 0) expect(install).toContain("INSTALL.md");
+    for (const g of guides) expect(install).toContain(`href="#/docs/${g.id}"`);
   });
 
   test("a page that moved is not called missing while the reader is sent on", () => {
