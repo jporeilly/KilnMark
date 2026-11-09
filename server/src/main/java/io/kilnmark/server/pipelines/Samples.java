@@ -248,7 +248,7 @@ public class Samples {
             }
         }
         if (at < 0) {
-            return yaml.replace("\r\n", "\n").replaceAll("\n*$", "\n");
+            return oneLineEnd(yaml.replace("\r\n", "\n"));
         }
         int end = at + 1;
         while (end < lines.length && !lines[end].matches("^[^\\s#].*")) {
@@ -263,7 +263,16 @@ public class Samples {
         }
         List<String> kept = new ArrayList<>(List.of(lines).subList(0, start));
         kept.addAll(List.of(lines).subList(end, lines.length));
-        return String.join("\n", kept).replaceAll("\n*$", "\n");
+        return oneLineEnd(String.join("\n", kept));
+    }
+
+    /** The text ending in exactly one line break. */
+    private static String oneLineEnd(String text) {
+        int end = text.length();
+        while (end > 0 && text.charAt(end - 1) == '\n') {
+            end--;
+        }
+        return text.substring(0, end) + "\n";
     }
 
     /** The bundled files, read once: they are the server's own resources and never change while it runs. */
