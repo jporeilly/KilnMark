@@ -222,7 +222,7 @@ public class WrittenFiles {
             detail.put("unrecorded", true);
         }
         audit.record(actor, AuditLog.FILE_DOWNLOADED, target, detail);
-        return new Download(c.file(), filename(w.target()), contentType(w.target()), detail(w, c.file().size()));
+        return new Download(c.file(), filename(w.target()), contentType(w.target()), detail);
     }
 
     private PipelineStore.Run run(long id) {

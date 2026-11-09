@@ -193,7 +193,8 @@ public class AuditLog {
     /**
      * A download of a file a pipeline run wrote was refused (ADR 0055); detail as
      * {@link #FILE_DOWNLOADED} where known, with refused (why: sensitive, no_values, deleted,
-     * changed, ...) and the status. Any viewer may ask, so, as {@link #API_REFUSED} is, at most 30 a
+     * changed, ...) and the status. A 403 is also an {@link #API_REFUSED} event, as every 403 is. Any viewer
+     * may ask, so, as {@link #API_REFUSED} is, at most 30 a
      * minute are kept in the table for each caller.
      */
     public static final String FILE_DOWNLOAD_REFUSED = "file.download_refused";

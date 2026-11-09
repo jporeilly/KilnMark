@@ -187,6 +187,7 @@ public class PipelineRunResource {
             + "run wrote it, or it cannot be reached (not in a folder on this server, or the way to it changed)"),
         @APIResponse(responseCode = "410", description = "The file, or the source it was written to, has been "
             + "deleted")})
+    @RunOnVirtualThread // a slow reader holds no worker thread
     public Response file(@PathParam("id") long id, @PathParam("index") String index,
                          @jakarta.ws.rs.HeaderParam("Sec-Fetch-Site") String fetchSite,
                          @jakarta.ws.rs.core.Context jakarta.ws.rs.core.HttpHeaders headers) {

@@ -54,8 +54,8 @@ wrote, and must be in the audit log (ADR 0029).
 5. **Every download and every refusal is an audit event**: `file.downloaded` and
    `file.download_refused`, on `pipeline-run/<id>`, with the node, source, path in the source and
    size, and why when refused; never the file's contents. Refusals, which any viewer can cause, are
-   kept at most 30 a minute for each caller, in a share of their own so they cannot crowd out
-   `api.refused`; the JSON line has every one. HEAD is not offered (405): it would run the download
+   kept at most 30 a minute for each caller, in a share of their own; the JSON line has every one.
+   A 403 is also a Request refused (`api.refused`) event, as every 403 is. HEAD is not offered (405): it would run the download
    without sending it. A download cleared but not sent whole (the file changed as it was opened, or
    the connection broke) is recorded too, as refused with `not_sent`, after its `file.downloaded`.
 

@@ -717,7 +717,9 @@ Only files in a folder on the Kilnmark server can be downloaded; a file written 
 from the bucket. Kilnmark finds the file only where its write put it: you choose a file of a run,
 never a path, and nothing reached through a link is sent. Every download, and every refusal, is in
 the [audit log](audit-log.md). Signed in with your organisation's identity provider, the browser
-saves the file as it arrives. Signed in with an API token, the page fetches the file and then saves
+saves the file as it arrives; Kilnmark must then be on HTTPS or localhost (as sign-in through your organisation
+needs anyway), since browsers say which page asked for a download only to secure sites, and a
+download whose browser does not say so is refused. Signed in with an API token, the page fetches the file and then saves
 it, so for a very large file use the API with your token instead:
 
 ```sh

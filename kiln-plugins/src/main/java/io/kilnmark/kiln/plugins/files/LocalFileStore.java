@@ -240,6 +240,9 @@ public final class LocalFileStore implements FileStore {
             java.nio.file.attribute.BasicFileAttributeView view = at.getFileAttributeView(name,
                 java.nio.file.attribute.BasicFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
             BasicFileAttributes before = view.readAttributes();
+            if (!before.isRegularFile()) {
+                throw new IOException("not a file"); // never opened: a pipe would wait for ever
+            }
             java.nio.channels.SeekableByteChannel channel = at.newByteChannel(name,
                 java.util.Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS));
             try {

@@ -1163,7 +1163,7 @@ asset's previous profile.
   were marked) when the run did not catalogue it or it has no columns there, or when an asset the
   run read has a mark newer than the run's start. Every download and refusal is an audit
   event (`file.downloaded`, `file.download_refused`, the latter rate-limited per caller as
-  `api.refused` is, in a share of their own). A GET with the session cookie changes nothing, so a
+  `api.refused` is, in a share of their own; a 403 is also an `api.refused` event, as every 403 is). A GET with the session cookie changes nothing, so a
   plain link works for a provider sign-in; one whose `Sec-Fetch-Site` says another site sent it,
   or a cookie request without a token or that header, is refused (`cross_site`); HEAD answers 405;
   a download not sent whole is recorded as refused with `not_sent`. A token sign-in fetches the file with its token.
