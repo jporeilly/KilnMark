@@ -1,0 +1,54 @@
+# Customer onboarding: a pseudonymised copy for analytics (a Kilnmark sample).
+# The second step of the onboarding scenario. Reads the golden customer file, checks it, and writes a
+# copy analysts can use: a SHA-256 hash in place of the email and the National Insurance number, an
+# age band in place of the date of birth, and the postcode's area in place of the full postcode.
+# Names and phone numbers are left out. It keeps only the columns it lists, so a column added to the
+# golden file later stays out of the copy until someone adds it here.
+# Why it matters: Analytics teams rarely need to know who a customer is. Pseudonymised data, with
+# direct identifiers removed or replaced, is a typical GDPR safeguard that lowers the harm if the
+# copy is lost or misused. It is still personal data, so a hash stays marked sensitive.
+# Look for: the gate checks the golden file's own quality rules, the ones a steward adds on it in
+# Quality, as well as the two written here; a failing rule stops the run before the copy is written.
+# The hashes and the age band are worked out from marked columns, so they are marked too; only an
+# admin can clear a mark, for example on the age band once the steward agrees it says too little to
+# identify anyone.
+# Needs: files, and a run of sample-onboarding-merge first, which writes the golden file it reads.
+kilnmark: pipeline/v1
+name: sample-onboarding-pseudonymise
+description: The golden customers, pseudonymised for analytics.
+
+nodes:
+  - id: golden
+    type: read
+    source: files
+    asset: samples/scenarios/onboarding/golden_customers.parquet
+
+  - id: check
+    type: gate
+    input: golden
+    on_fail: stop                  # the steward's rules on the golden file are checked too
+    rules:
+      - {name: one row per email, type: unique, field: email}
+      - {name: has a source key, type: not_null, field: source_key}
+
+  - id: pseudonymised
+    type: compute
+    input: check
+    columns:
+      email_hash: "sha256(email)"
+      ni_hash: "sha256(ni_number)"             # empty for shop customers, who have none
+      age: "date_diff('year', date_of_birth, today())"
+      age_band: "case when age is null then 'unknown' when age < 25 then '18-24' when age < 35 then '25-34' when age < 50 then '35-49' when age < 65 then '50-64' else '65 and over' end"
+      postcode_area: "upper(regex_replace(postcode, '^([A-Za-z]+).*$', '$1'))"
+
+  - id: analytics_columns
+    type: select
+    input: pseudonymised
+    keep: [email_hash, ni_hash, age_band, postcode_area, came_from, created_at]
+
+  - id: out
+    type: write
+    input: analytics_columns
+    source: files
+    path: samples/scenarios/onboarding/analytics_customers.parquet
+    mode: replace

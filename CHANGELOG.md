@@ -160,9 +160,31 @@ details.
   Each connector's entry says which driver it uses, and
   [Database drivers](docs/guide/drivers.md#drivers-kilnmark-ships) lists those Kilnmark ships with
   their versions and licences. Old links to a page or section that moved still arrive.
+- **Business scenarios among the samples**: three whole processes, each several pipelines, the flow
+  that runs them and a data steward's part, in the Library under **Scenarios**. Customer
+  onboarding merges three customer tables into one golden record per person, sets invalid emails
+  aside for review and writes a pseudonymised copy for analytics, nightly
+  (`sample-onboarding-nightly`). Supplier intake waits for a partner's file, checks it against the
+  products and their agreed costs, and loads it only when nothing needs review. The month-end close
+  waits for the billing periods table to say the invoices are out, reconciles each region and
+  closes the month. [Business scenarios](docs/guide/scenarios.md) walks through each with the
+  Starter Pack's example people: who builds, who reviews, who sees the results and who sees
+  sensitive values unmasked.
 
 ### Details
 
+- **The business scenarios** (`samples/10-scenarios`, ADR 0051, decision 4): eight pipelines and
+  three flows. Two sample tables are new, made by `generate.py` with a random generator of their
+  own: `billing.periods`, one row a month, September 2026 open, and `stock.product_costs`, the cost
+  agreed for each product, five of which the supplier feed moves by more than 20%; `sample-tables`
+  creates them with the rest, and the lab's MariaDB has `stock.product_costs` too. Five rows are
+  appended to the 2023 archive and the shop's customers, people who are in the CRM too, and every
+  earlier row stays as it was. The supplier check reads the file the flow waits for. Adding the samples with a schema now points a sql node's
+  `statements` at the sample tables, as it does a query. The Starter Pack adds every scenario but
+  `sample-close-month-end`, which runs SQL: a designer who may see unmasked values adds it with
+  **Add samples**. The tests that check every sample now check one that reads a file another
+  writes against the columns that one writes, and the end-to-end test runs the onboarding and
+  supplier flows, the steward's load and every region's reconciliation.
 - **The guided install and the 0.1.2 layout** (ADR 0051, decision 17):
   - Two folders. The program folder holds `versions/<version>/`, `current` or `current.txt`, the
     launchers and `data-folder.txt`, naming the data folder, which holds `config/.env`,
@@ -804,6 +826,10 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
   on a flow's node is wider, so long names are not cut off, and no longer offers `sample-tables`,
   which Kilnmark keeps to copy the sample data; a `stop` node has its own icon (a raised hand) in a
   flow run's timeline, as on the diagram, not a tick.
+- **Uninstalling on Windows ends cleanly.** `kilnmark.cmd uninstall` removed everything, then said
+  "The system cannot find the path specified" and returned 1: Command Prompt reads a batch file
+  line by line as it runs it, and uninstall had just deleted it. It now ends with no error and
+  returns 0 once the program folder is gone, and the Command Prompt window stays open.
 - **Windows says how to get a prompt that is not elevated.** A day-to-day command refused an
   elevated prompt with only "open one without Run as administrator", but in Windows Terminal
   every tab of a window opened as administrator is elevated too, Command Prompt tabs included,

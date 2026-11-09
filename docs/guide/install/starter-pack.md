@@ -51,6 +51,12 @@ on**. Kilnmark then, by itself:
 The page shows each step and how it went. A source called `starter-samples-db` or
 `starter-samples-files` that the pack did not make, your own, is left as it is: the page says so.
 
+To see Kilnmark used for a whole business process, try the **business scenarios** in the Library:
+customer onboarding, a supplier's file arriving and the month-end close, each with several
+pipelines, a flow and a data steward's part. [Business scenarios](../scenarios.md) walks through
+each with the example people below: who builds, who reviews, who sees the results and who sees
+sensitive values unmasked.
+
 **Turn it off** under **Settings**, **Starter Pack**: choose **Turn off** and type `DELETE`.
 Kilnmark deletes the samples' schedules, the example schedule included, cancels any sample's run
 still queued or running, then removes every sample in the Library, the pack's sources, the tables

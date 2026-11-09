@@ -1,0 +1,26 @@
+# Supplier intake: the partner's file arrives (a Kilnmark sample).
+# The first step of the supplier intake scenario. It stands in for the supplier: it copies the
+# supplier's price feed into the incoming folder of the file storage, as the supplier's own system
+# would deliver it, so the flow has a file to wait for and sample-supplier-check a file to read.
+# Why it matters: Partners' files typically land in a shared folder at a time nobody controls, and
+# the work that reads them must wait until they are there. In real work this step is the partner's;
+# here it lets the scenario run end to end on the sample data.
+# Look for: the file it writes, under samples/scenarios/supplier-intake/incoming. sample-supplier-intake
+# waits for it with a wait-for node.
+# Needs: shop-db (the stock schema) and files.
+kilnmark: pipeline/v1
+name: sample-supplier-feed-arrives
+description: The supplier's price feed, delivered to the incoming folder.
+
+nodes:
+  - id: feed
+    type: read
+    source: shop-db
+    asset: stock.supplier_feed
+
+  - id: delivered
+    type: write
+    input: feed
+    source: files
+    path: samples/scenarios/supplier-intake/incoming/supplier_feed.csv
+    mode: replace

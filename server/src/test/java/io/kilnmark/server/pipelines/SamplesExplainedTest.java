@@ -118,6 +118,27 @@ class SamplesExplainedTest {
         // A wait-for query is pointed at the sample tables too, as a read's query is.
         assertTrue(Samples.withTables(sql, "s1").contains("query: SELECT count(*) > 0 FROM s1.shop_orders"),
             Samples.withTables(sql, "s1"));
+        // So are a sql node's statements, on their own lines or in a list on one, and nothing after them.
+        String statements = sql + """
+              - id: close
+                type: sql
+                source: crm-db
+                statements:
+                  - UPDATE billing.periods SET status = 'closed' WHERE status = 'open'
+                  - ANALYZE billing.periods
+              - id: again
+                type: sql
+                source: crm-db
+                statements: ["DELETE FROM shop.orders WHERE false"]
+              - id: done
+                type: notify
+                title: billing.periods closed
+            """;
+        String repointed = Samples.withTables(statements, "s1");
+        assertTrue(repointed.contains("      - UPDATE s1.billing_periods SET status = 'closed' WHERE status = 'open'\n")
+            && repointed.contains("      - ANALYZE s1.billing_periods\n")
+            && repointed.contains("    statements: [\"DELETE FROM s1.shop_orders WHERE false\"]\n")
+            && repointed.contains("    title: billing.periods closed\n"), repointed);
         // A flow that does not read is checked as if every source it names ran SQL.
         assertEquals(List.of("crm-db", "files"), Samples.sqlSources("kilnmark: flow/v1\nnodes: [\n  - source: crm-db\n"
             + "  - source: files\n"));

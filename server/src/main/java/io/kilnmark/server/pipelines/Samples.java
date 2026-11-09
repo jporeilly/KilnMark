@@ -58,10 +58,10 @@ public class Samples {
     public static final List<Placeholder> PLACEHOLDERS = List.of(
         new Placeholder("crm-db", "databases",
             "A database with customer and billing tables: schemas crm (customers, customers_archive_2023, "
-                + "accounts) and billing (transactions, invoices)"),
+                + "accounts) and billing (transactions, invoices, periods)"),
         new Placeholder("shop-db", "databases",
             "A database with shop orders and stock: schemas shop (customers, orders, order_lines) and stock "
-                + "(products, supplier_feed)"),
+                + "(products, supplier_feed, product_costs)"),
         new Placeholder("files", "files",
             "File storage the samples write to, under samples/; a designer or an admin must turn on Allow "
                 + "writing for it"));
@@ -148,8 +148,8 @@ public class Samples {
     public static final String SETUP = "sample-tables";
     /** The tables the samples read, as group.table: the sample data's folder and file. */
     public static final List<String> TABLES = List.of("crm.customers", "crm.customers_archive_2023", "crm.accounts",
-        "billing.transactions", "billing.invoices", "shop.customers", "shop.orders", "shop.order_lines",
-        "stock.products", "stock.supplier_feed");
+        "billing.transactions", "billing.invoices", "billing.periods", "shop.customers", "shop.orders",
+        "shop.order_lines", "stock.products", "stock.supplier_feed", "stock.product_costs");
     /** A schema to create the sample tables in: a plain name, so it needs no quoting anywhere. */
     private static final Pattern SCHEMA = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,62}");
     /** {@code asset: group.table} for one of {@link #TABLES}, optionally quoted: group and table in groups 3 and 4. */
@@ -314,18 +314,22 @@ public class Samples {
         return yaml.lines().anyMatch(l -> QUERY_LINE.matcher(l).matches());
     }
 
+    /** A {@code query:} or a sql node's {@code statements:}: its indent in group 1, its key in 2, the rest in 3. */
+    private static final Pattern SQL_LINE = Pattern.compile("^( *)(query|statements)\\s*:(.*)$");
+
     /**
-     * Each {@code query:} (its first line and the lines indented under it) with the sample tables it
-     * names as created in {@code schema}, as {@link #withTables} does for {@code asset:}.
+     * Each {@code query:} and each sql node's {@code statements:} (the first line and the lines
+     * indented under it) with the sample tables it names as created in {@code schema}, as
+     * {@link #withTables} does for {@code asset:}.
      */
     static String queriesWithTables(String yaml, String schema) {
         String[] lines = yaml.split("\n", -1);
         int under = -1;
         for (int i = 0; i < lines.length; i++) {
-            Matcher q = QUERY_LINE.matcher(lines[i]);
+            Matcher q = SQL_LINE.matcher(lines[i]);
             if (q.matches()) {
                 under = q.group(1).length();
-                lines[i] = q.group(1) + "query:" + tablesIn(q.group(2), schema);
+                lines[i] = q.group(1) + q.group(2) + ":" + tablesIn(q.group(3), schema);
             } else if (under >= 0 && (lines[i].isBlank() || indent(lines[i]) > under)) {
                 lines[i] = tablesIn(lines[i], schema);
             } else {
