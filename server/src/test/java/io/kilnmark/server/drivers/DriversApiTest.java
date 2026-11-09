@@ -92,7 +92,12 @@ class DriversApiTest {
         admin().get("/api/v1/connectors").then().statusCode(200)
             .body("find { it.kind == 'oracle' }.driver", equalTo("missing"))
             .body("find { it.kind == 'oracle' }.driverBundled", equalTo(false))
-            .body("find { it.kind == 'postgresql' }.driver", equalTo("bundled"));
+            // the tile names the exact driver to install, the version Kilnmark is tested with
+            .body("find { it.kind == 'oracle' }.driverName", equalTo("ojdbc11"))
+            .body("find { it.kind == 'oracle' }.driverVersion", equalTo(io.kilnmark.kiln.plugins.jdbc.OracleConnector.DRIVER.version()))
+            .body("find { it.kind == 'postgresql' }.driver", equalTo("bundled"))
+            .body("find { it.kind == 'postgresql' }.driverName", org.hamcrest.Matchers.nullValue())
+            .body("find { it.kind == 'postgresql' }.driverVersion", org.hamcrest.Matchers.nullValue());
     }
 
     @Test

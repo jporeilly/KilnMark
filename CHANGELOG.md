@@ -830,6 +830,13 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
   "The system cannot find the path specified" and returned 1: Command Prompt reads a batch file
   line by line as it runs it, and uninstall had just deleted it. It now ends with no error and
   returns 0 once the program folder is gone, and the Command Prompt window stays open.
+- **A connector's card names the driver to install, with its version.** **Add a connection** said
+  only "Needs its driver"; the Oracle card now says **Tested with `ojdbc11 23.26.3.0.0`**, the exact
+  version Kilnmark downloads under Settings › Drivers, and names the driver once it is installed
+  (`driverName` and `driverVersion` in `GET /api/v1/connectors`).
+- **The MySQL and MariaDB driver's source ships with it.** LGPL 2.1 asks that whoever ships the
+  library also makes its source available: the release now has MariaDB Connector/J's sources jar,
+  as MariaDB published it, in `licenses/` beside the licence (ADR 0007).
 
 ## 0.1.1 (6 November 2026)
 

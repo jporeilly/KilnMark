@@ -210,6 +210,9 @@ export type Connector = {
   driverBundled: boolean;
   /** bundled, ready (installed by an admin), or missing, mismatch or unreadable: then it needs its driver. */
   driver?: "bundled" | "ready" | "missing" | "mismatch" | "unreadable";
+  /** The driver a customer installs (such as ojdbc11) and the exact version Kilnmark is tested with; null when shipped. */
+  driverName?: string | null;
+  driverVersion?: string | null;
 };
 /** id is the kind it is expected to have, so a branding manifest can name it. */
 export type PlannedConnector = {

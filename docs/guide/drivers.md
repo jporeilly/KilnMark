@@ -31,6 +31,11 @@ connection, and a connection test says that the driver is missing.
 
 ## Install a driver (admins)
 
+A connector whose driver Kilnmark cannot ship says so on its card in **Add a connection**: **Needs
+its driver**, with the exact driver and version Kilnmark is tested with, for example **Tested with
+`ojdbc11 23.26.3.0.0`**, and a link to **Settings**, **Drivers**. Once it is installed, the card
+names the driver in place of that.
+
 ![Settings › Drivers: a driver Kilnmark does not ship, with its licence, whether it is installed, and Accept and download](images/drivers-page.png)
 
 Open **Settings**, **Drivers**. Each driver your server's connectors need is listed with the

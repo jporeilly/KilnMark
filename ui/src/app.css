@@ -2739,6 +2739,17 @@ a.km-stat--link:hover {
   font-size: var(--km-text-xs);
   font-weight: 600;
 }
+/* The driver a customer installs, with the exact version Kilnmark is tested with and downloads. */
+.card-driver {
+  display: block;
+  font-size: var(--km-text-xs);
+  color: var(--km-muted);
+  overflow-wrap: anywhere;
+}
+.card-driver code {
+  font-size: inherit;
+  color: inherit;
+}
 /* Below a connector's card when its driver still has to be installed (Settings › Drivers). */
 .card-driver-link {
   display: inline-block;

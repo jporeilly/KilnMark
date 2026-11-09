@@ -40,7 +40,9 @@ and is LGPL 2.1 or later, which allows a proprietary or source-available program
 library as long as the library itself stays free: it is shipped unmodified, as its own jar
 (`lib/main/org.mariadb.jdbc.mariadb-java-client-<version>.jar` in the server's folder), so anyone
 can replace it with another build, and its licence and source location are listed in
-`THIRD-PARTY-NOTICES.md`.
+`THIRD-PARTY-NOTICES.md`. Its source itself ships too (amended 9 November 2026): the sources jar
+MariaDB published with that version, `licenses/mariadb-java-client-<version>-sources.jar`, beside
+`licenses/LGPL-2.1.txt`, checked against MariaDB's signing key like the driver.
 
 `config/allowed-licenses.json` therefore allows `LGPL-2.1-or-later` **for
 `org.mariadb.jdbc:mariadb-java-client` only** (the entry names the module). LGPL in general is
