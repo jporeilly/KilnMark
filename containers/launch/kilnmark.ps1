@@ -2799,10 +2799,11 @@ function Send-OwnPeopleDone([string[]]$Lines, [string]$Via) {
         elseif ($line -cmatch '^keycloak-setup: left ([a-z0-9._%+@-]+) as they are: someone with this address is here already') { $kept += ('"' + $Matches[1] + '"') }
         elseif ($line -cmatch '^keycloak-setup: people import: made [0-9]+, already there [0-9]+, refused ([0-9]+)') { $refused = $Matches[1] }
         elseif ($line -cmatch '^keycloak-setup: activated ([a-z0-9._%+@-]+): they choose their own password') { $activated += ('"' + $Matches[1] + '"') }
-        # those whose temporary password went unused for the hours setup names, and those for whom it
-        # could not tell when it was set: recorded apart, so that only the first carry the hours
-        elseif ($line -cmatch '^keycloak-setup: disabled ([a-z0-9._%+@-]+): their temporary password was not used within ([0-9]{1,3}) hours') { $disabled += ('"' + $Matches[1] + '"'); $hours = $Matches[2] }
-        elseif ($line -cmatch '^keycloak-setup: disabled ([a-z0-9._%+@-]+): their temporary password was not used yet,') { $unclear += ('"' + $Matches[1] + '"') }
+        # those whose temporary password went unused for the hours setup names, and anyone else it
+        # disabled for an unused password (when it could not tell when it was set, say): recorded
+        # apart, so that only the first carry the hours, as a JSON number (072 in config\.env is 72)
+        elseif ($line -cmatch '^keycloak-setup: disabled ([a-z0-9._%+@-]+): their temporary password was not used within ([0-9]{1,3}) hours') { $disabled += ('"' + $Matches[1] + '"'); $hours = [string][int]$Matches[2] }
+        elseif ($line -cmatch '^keycloak-setup: disabled ([a-z0-9._%+@-]+): their temporary password was not used') { $unclear += ('"' + $Matches[1] + '"') }
     }
     $bodies = @()
     # what an ordinary run of setup did, before the command's own work: its own record, 500 people

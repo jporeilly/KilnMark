@@ -122,8 +122,9 @@ them:
 
 - **What each role can do**: a table of what a viewer, a steward, a designer and an admin may and may
   not do, which lines need the sensitive-data grant, and which of your identity provider's groups
-  give each role and the grant. It comes from the server itself, and Kilnmark's tests fail if a line
-  says more or less than the server enforces.
+  give each role and the grant. It comes from the server itself. Kilnmark's tests hold every line to
+  the role each endpoint asks, and try each line as every role, so a line that says more or less
+  than those checks fails the build.
 - **Rules in force**, read-only: the longest token lifetime, whether a second person approves the
   sensitive-data grant, whether people sign in with your identity provider and, if they do, the
   longest sign-in and whether a second factor is required, when a person's schedules pause, and
@@ -142,6 +143,7 @@ The states a person can be in:
 | Signed in, but given no role | The control script made them and they signed in, but no sign-in of theirs was ever given a role (no second factor, say). Others never given a role are not listed: they never had access | Their latest sign-in |
 | Waiting for first sign-in | The control script made them in the bundled Keycloak (`people add`, `people import` on a Starter Pack install, or `people activate`), and they have not signed in since | What `people add` or `people import` gave them, under your settings today |
 | Waiting to be activated | `people import` made them on a production install, with no password: `people activate` gives them one | As above |
+| (any of the above) | Someone the control script could not enable after Kilnmark recorded them stays disabled in Keycloak, but shows as waiting: the control script said so ("recorded, but not enabled") when it ran | |
 | Disabled: temporary password unused for 72 hours | Their temporary password went unused for longer than `KILNMARK_PEOPLE_ACTIVATION_HOURS`, so Keycloak's setup disabled them; `people activate` gives them a new one | As above |
 
 **Who sees sensitive values unmasked** is marked **Sees sensitive values**: an active token that

@@ -2425,11 +2425,13 @@ record_own_people() {
   kept="$(sed -n 's/^keycloak-setup: left \([a-z0-9._%+@-]*\) as they are: someone with this address is here already.*$/"\1"/p' <<< "$1" | paste -sd, -)"
   refused="$(sed -n 's/^keycloak-setup: people import: made [0-9]*, already there [0-9]*, refused \([0-9]*\).*$/\1/p' <<< "$1" | tail -n 1)"
   activated="$(sed -n 's/^keycloak-setup: activated \([a-z0-9._%+@-]*\): they choose their own password.*$/"\1"/p' <<< "$1" | paste -sd, -)"
-  # those whose temporary password went unused for the hours setup names, and those for whom it could
-  # not tell when it was set: recorded apart, so that only the first carry the hours
-  disabled="$(sed -n 's/^keycloak-setup: disabled \([a-z0-9._%+@-]*\): their temporary password was not used within [0-9]* hours.*$/"\1"/p' <<< "$1" | paste -sd, -)"
+  # those whose temporary password went unused for the hours setup names, and anyone else it disabled
+  # for an unused password (when it could not tell when it was set, say): recorded apart, so that
+  # only the first carry the hours. The hours as a JSON number: 072 in config/.env is 72.
+  disabled="$(sed -n 's/^keycloak-setup: disabled \([a-z0-9._%+@-]*\): their temporary password was not used within [0-9]\{1,3\} hours.*$/"\1"/p' <<< "$1" | paste -sd, -)"
   hours="$(sed -n 's/^keycloak-setup: disabled [a-z0-9._%+@-]*: their temporary password was not used within \([0-9]\{1,3\}\) hours.*$/\1/p' <<< "$1" | tail -n 1)"
-  unclear="$(sed -n 's/^keycloak-setup: disabled \([a-z0-9._%+@-]*\): their temporary password was not used yet,.*$/"\1"/p' <<< "$1" | paste -sd, -)"
+  hours="${hours:+$((10#$hours))}"
+  unclear="$(sed -n '/: their temporary password was not used within [0-9]\{1,3\} hours/!s/^keycloak-setup: disabled \([a-z0-9._%+@-]*\): their temporary password was not used.*$/"\1"/p' <<< "$1" | paste -sd, -)"
   # what an ordinary run of setup did, before the command's own work: its own record
   [ -z "$disabled" ] || post_disabled "$disabled" "$hours"
   [ -z "$unclear" ] || post_disabled "$unclear" ""

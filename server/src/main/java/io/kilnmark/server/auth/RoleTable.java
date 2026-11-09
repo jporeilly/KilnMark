@@ -8,10 +8,12 @@ import java.util.Map;
  * What each role may do, as Settings › Access review shows it (ADR 0037): one line for each thing a
  * role allows, with the least role it takes, whether it also takes the sensitive-data grant
  * ({@link AccessRole#UNMASK_GRANT}), and the endpoints that allow it. {@code RoleTableTest} holds it
- * to the server: every endpoint above viewer must be named here with the role its
- * {@code @RolesAllowed} asks, and each line is tried as every role, so a line that says more or less
- * than the server enforces fails the build. Lines whose check is in the code, not only in
- * {@code @RolesAllowed}, say so ({@code inCode}).
+ * to {@code @RolesAllowed}: every endpoint above viewer must be named here, a line checked only there
+ * must name endpoints that ask exactly its role, and a line checked in the code too ({@code inCode})
+ * endpoints that ask no more. {@code RoleTableProbeTest} then tries each line as every role: a line
+ * checked in the code on every endpoint it names, any other on one. What neither catches is a check
+ * in the code that narrows a line not marked {@code inCode}; the lines below say those narrowings in
+ * words (run again, for example).
  *
  * <p>Plain words for the people who review access, not a full list of every rule: the guide
  * (docs/guide/signing-in.md) has the finer ones, and each line names only what the server enforces.
@@ -62,15 +64,17 @@ public final class RoleTable {
             "GET /api/v1/sources/{name}/explore/count"),
         can("table-sql", "Have Kilnmark write the SQL to make or change one of a source's tables, as text that is "
             + "never run", AccessRole.STEWARD, "POST /api/v1/sources/{name}/explore/sql"),
-        can("run", "Run pipelines and flows, cancel runs, and run a failed flow again", AccessRole.STEWARD,
+        can("run", "Run pipelines and flows, cancel runs, and run a failed flow again (one that acts as a role no "
+            + "higher than theirs)", AccessRole.STEWARD,
             "POST /api/v1/pipelines/{name}/runs", "POST /api/v1/flows/{name}/runs",
             "POST /api/v1/pipeline-runs/{id}/cancel", "POST /api/v1/flow-runs/{id}/cancel",
             "POST /api/v1/flow-runs/{id}/run-again"),
         can("check-sources", "Test, browse and scan sources", AccessRole.STEWARD,
             "POST /api/v1/sources/{name}/test", "GET /api/v1/sources/{name}/containers",
             "GET /api/v1/sources/{name}/assets", "POST /api/v1/sources/{name}/scans"),
-        can("quality", "Look after quality: add, change, run and delete rules (not custom SQL), check assets, set "
-            + "baselines, work on issues and add patterns", AccessRole.STEWARD,
+        can("quality", "Look after quality: add, change, run and delete rules (custom SQL ones only as part of "
+            + "checking a whole asset), check assets, set baselines, work on issues and add patterns",
+            AccessRole.STEWARD,
             "POST /api/v1/quality/rules", "PUT /api/v1/quality/rules/{id}", "DELETE /api/v1/quality/rules/{id}",
             "POST /api/v1/quality/rules/{id}/run", "POST /api/v1/quality/asset/runs",
             "PUT /api/v1/quality/asset/baseline", "PUT /api/v1/quality/issues/{id}",

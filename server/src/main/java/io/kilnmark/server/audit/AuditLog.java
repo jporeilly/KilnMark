@@ -447,7 +447,8 @@ public class AuditLog {
                         long id = rs.getLong(1);
                         Instant at = Db.instant(rs.getTimestamp(2));
                         long token = rs.getLong(4);
-                        String by = new Actor(rs.getString(3), rs.wasNull() ? null : token).toString();
+                        Long tokenId = rs.wasNull() ? null : token;
+                        String by = new Actor(rs.getString(3), tokenId).toString();
                         String action = rs.getString(5);
                         PersonRecord was = out.get(person);
                         if (PERSON_ADDED.equals(action)) {

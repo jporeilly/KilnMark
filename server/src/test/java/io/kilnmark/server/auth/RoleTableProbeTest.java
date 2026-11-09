@@ -25,7 +25,8 @@ import io.restassured.specification.RequestSpecification;
  * a steward, a designer, a designer holding the sensitive-data grant and an admin, and fails when
  * the server lets anyone do more or less than the line says. Each line has one probe: a request that
  * the server refuses (403) for want of the role or grant, and otherwise answers some other way (often
- * 404, for something that is not there). {@code RoleTableTest} checks the lines against
+ * 404, for something that is not there). A line checked in the code is tried on every endpoint it
+ * names; one checked only by {@code @RolesAllowed}, on one of them. {@code RoleTableTest} checks the lines against
  * {@code @RolesAllowed}; this checks the checks made in the code too.
  */
 @QuarkusTest
@@ -33,6 +34,29 @@ class RoleTableProbeTest {
 
     private static final String NONE = "987654321";
     private static final AtomicInteger ROWS = new AtomicInteger(20);
+
+    /** A pipeline whose read runs a query (ADR 0028). */
+    private static final String QUERY = """
+        kilnmark: pipeline/v1
+        name: %s
+        nodes:
+          - id: q
+            type: read
+            source: rt-none
+            query: SELECT 1
+        """;
+
+    /** A flow with a sql node (ADR 0028). */
+    private static final String SQL_FLOW = """
+        kilnmark: flow/v1
+        name: %s
+        nodes:
+          - id: s
+            type: sql
+            source: rt-none
+            statements:
+              - SELECT 1
+        """;
 
     private record Caller(String label, AccessRole role, boolean grant, String token) {
     }
@@ -49,6 +73,24 @@ class RoleTableProbeTest {
         String body = r.asString();
         last = r.statusCode() + " " + (body.length() > 200 ? body.substring(0, 200) : body);
         return r.statusCode() != 401 && r.statusCode() != 403;
+    }
+
+    /** Endpoints of one line that answered one caller differently, which the test then fails on. */
+    private static final List<String> SPLIT = new ArrayList<>();
+
+    /**
+     * Whether a line's endpoints, each tried in turn, let the caller through: all must answer alike, or
+     * the line is split (one endpoint allowing what another refuses) and the test fails.
+     */
+    private static boolean alike(String line, boolean... tried) {
+        for (boolean t : tried) {
+            if (t != tried[0]) {
+                SPLIT.add(line + ": its endpoints answer one caller differently " + java.util.Arrays.toString(tried)
+                    + " (" + last + ")");
+                break;
+            }
+        }
+        return tried[0];
     }
 
     /** Whether the server did it: a 2xx answer, for a probe whose request is meant to succeed. */
@@ -104,11 +146,17 @@ class RoleTableProbeTest {
         probes.put("build", t -> through(as(t).delete("/api/v1/pipelines/rt-none")));
         probes.put("schedules", t -> through(as(t).delete("/api/v1/schedules/" + NONE)));
         probes.put("sources", t -> through(as(t).delete("/api/v1/sources/rt-none")));
-        probes.put("set-variables", t -> through(as(t).body(Map.of("type", "text", "value", "probe"))
-            .put("/api/v1/variables/rt_probe_" + suffix)));
+        // a line checked in the code is tried on every endpoint it names
+        probes.put("set-variables", t -> alike("set-variables", through(as(t).body(Map.of("type", "text", "value",
+            "probe")).put("/api/v1/variables/rt_probe_" + suffix)), through(as(t).delete("/api/v1/variables/rt_none"))));
         probes.put("samples", t -> through(as(t).body(Map.of("sources", Map.of())).post("/api/v1/samples")));
-        probes.put("write-sql", t -> through(as(t).body(Map.of("assetUrn", "urn:kilnmark:none:x", "type", "custom_sql"))
-            .post("/api/v1/quality/rules")));
+        probes.put("write-sql", t -> alike("write-sql",
+            through(as(t).body(Map.of("assetUrn", "urn:kilnmark:none:x", "type", "custom_sql"))
+                .post("/api/v1/quality/rules")),
+            through(as(t).body(Map.of("name", "rt-q-" + suffix, "yaml", QUERY.formatted("rt-q-" + suffix)))
+                .post("/api/v1/pipelines")),
+            through(as(t).body(Map.of("yaml", SQL_FLOW.formatted("rt-f-" + suffix), "message", "probe"))
+                .post("/api/v1/flows"))));
         // a changed reading setting asks for the password again: sent, so only the grant decides
         probes.put("reading-marked", t -> done(as(t).body(Map.of("settings", Map.of("rows",
             String.valueOf(ROWS.incrementAndGet())), "password", "probe-secret-1")).put("/api/v1/sources/" + marked)));
@@ -126,8 +174,11 @@ class RoleTableProbeTest {
             assertEquals(cleared, deleted, "clearing a mark and deleting a marked source take the same");
             return cleared;
         });
-        probes.put("admin-kinds", t -> through(as(t).body(Map.of("name", "rt-jdbc", "kind", "jdbc", "settings",
-            Map.of("url", "jdbc:h2:mem:x"))).post("/api/v1/drafts/test")));
+        probes.put("admin-kinds", t -> alike("admin-kinds",
+            through(as(t).body(Map.of("name", "rt-jdbc", "kind", "jdbc", "settings", Map.of("url", "jdbc:h2:mem:x")))
+                .post("/api/v1/drafts/test")),
+            through(as(t).body(Map.of("name", "rt-jdbc-" + suffix, "kind", "jdbc", "settings",
+                Map.of("url", "jdbc:h2:mem:x"))).post("/api/v1/sources"))));
         probes.put("settings", t -> through(as(t).get("/api/v1/mail/settings")));
         probes.put("tokens", t -> through(as(t).get("/api/v1/tokens")));
         probes.put("audit", t -> through(as(t).get("/api/v1/audit?limit=1")));
@@ -156,9 +207,13 @@ class RoleTableProbeTest {
             }
         } finally {
             admin().delete("/api/v1/variables/rt_probe_" + suffix);
+            admin().delete("/api/v1/pipelines/rt-q-" + suffix);
+            admin().delete("/api/v1/flows/rt-f-" + suffix);
+            admin().delete("/api/v1/sources/rt-jdbc-" + suffix);
             admin().delete("/api/v1/sources/" + marked);
             admin().delete("/api/v1/sources/" + gone);
         }
         assertEquals(List.of(), wrong);
+        assertEquals(List.of(), SPLIT);
     }
 }

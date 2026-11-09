@@ -9,7 +9,8 @@ details.
 
 - **Settings › Access review shows everyone, and what each role can do**: a table of what a
   viewer, a steward, a designer and an admin may and may not do, with the groups that give each
-  role and the sensitive-data grant, taken from the server and held to its role checks by tests;
+  role and the sensitive-data grant, taken from the server and tried against its role checks by
+  tests;
   the rules in force (the longest token lifetime, whether a second person approves the grant, the
   longest sign-in, MFA, when schedules pause, models outside your network), read-only; and, beside
   everyone who has signed in, the people the control script made in the bundled Keycloak who have

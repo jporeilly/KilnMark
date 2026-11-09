@@ -217,6 +217,9 @@ class AccessReviewPeopleTest {
         assertTrue(AccessReviewResource.sameUser("sso:rita@bank.example (0f1e)", "rita@bank.example"));
         assertFalse(AccessReviewResource.sameUser("sso:rita@bank.example.evil (0f1e)", "rita@bank.example"));
         assertFalse(AccessReviewResource.sameUser("sso:xrita@bank.example (0f1e)", "rita@bank.example"));
+        // a user name that itself ends in a bracketed word is someone else
+        assertFalse(AccessReviewResource.sameUser("sso:rita@bank.example (x) (0f1e)", "rita@bank.example"));
+        assertFalse(AccessReviewResource.sameUser("sso:rita@bank.example ()", "rita@bank.example"));
         assertFalse(AccessReviewResource.sameUser("rita@bank.example (0f1e)", "rita@bank.example"));
         assertFalse(AccessReviewResource.sameUser(null, "rita@bank.example"));
     }

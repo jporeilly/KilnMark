@@ -55,7 +55,8 @@ export function seesUnmasked(e: AccessReviewEntry): boolean {
 export function sensitiveWords(e: AccessReviewEntry): string {
   const groups = e.sensitiveGroups ?? [];
   if (e.unmask) {
-    return notSignedIn(e) ? "Will see them unmasked once signed in" : "Sees them unmasked";
+    if (e.state === "waiting") return "Will see them unmasked once signed in";
+    return notSignedIn(e) ? "Will see them unmasked once activated and signed in" : "Sees them unmasked";
   }
   if (groups.length > 0) {
     return `In ${groups.join(", ")}, but not a designer: sees them masked`;
@@ -101,7 +102,10 @@ export function lastSeen(e: AccessReviewEntry): string {
   }
   if (!e.lastUsedAt) return "Never";
   const when = formatTime(e.lastUsedAt);
-  return e.kind === "provider" && e.signIns != null ? `${when} (${plural(e.signIns, "sign-in")})` : when;
+  // a sign-in given no role counts no sign-ins, which would read oddly beside its time
+  return e.kind === "provider" && e.signIns != null && e.state !== "no-role"
+    ? `${when} (${plural(e.signIns, "sign-in")})`
+    : when;
 }
 
 /** The tone of a person's state. */

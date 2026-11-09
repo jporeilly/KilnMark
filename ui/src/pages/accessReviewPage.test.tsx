@@ -174,6 +174,12 @@ describe("the access review's words", () => {
     expect(cellWord("no")).toBe("No");
     expect(sensitiveWords(person({ role: "designer", unmask: true, state: "signed-in" }))).toBe("Sees them unmasked");
     expect(sensitiveWords(person({ role: "designer", unmask: true }))).toBe("Will see them unmasked once signed in");
+    expect(sensitiveWords(person({ role: "designer", unmask: true, state: "disabled" }))).toBe(
+      "Will see them unmasked once activated and signed in",
+    );
+    expect(
+      lastSeen(person({ state: "no-role", lastUsedAt: "2026-11-02T10:00:00Z", signIns: 0, status: "signed in, but given no role" })),
+    ).not.toContain("sign-ins");
     expect(sensitiveWords(person({ groups: null, sensitiveGroups: null }))).toBe("Not recorded");
     expect(groupWords(person({ groups: [] }))).toBe("None that gives a role");
     expect(lastSeen(person({ createdAt: null }))).toBe("Not yet");

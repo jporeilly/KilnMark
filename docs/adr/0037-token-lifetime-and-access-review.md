@@ -65,7 +65,10 @@ also gives:
   `@RolesAllowed` asks another role, or when an endpoint above viewer is named by no line, and
   `RoleTableProbeTest` tries each line as a viewer, a steward, a designer with and without the
   grant, and an admin, so a check made in the code (clearing a mark, setting a variable, writing
-  SQL) is held to the line too. Generating the `@RolesAllowed` annotations from the table instead
+  SQL) is held to the line too: a line checked in the code on every endpoint it names, any other on
+  one. What neither catches is a check in the code that narrows a line checked only by its
+  annotation (running a flow again acts as no higher a role than the caller's, say): the line says
+  it in words, and a review of a change to such a check must look at the table. Generating the `@RolesAllowed` annotations from the table instead
   was rejected: the in-code checks would still need a test, and it would touch every resource.
 - **The groups mapped to each role** and to the grant, and **the rules in force**: the settings
   that limit people, read-only, each with its name. Only settings Kilnmark has; the idle limit of a

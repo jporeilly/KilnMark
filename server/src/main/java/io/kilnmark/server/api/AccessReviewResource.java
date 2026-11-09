@@ -168,11 +168,13 @@ public class AccessReviewResource {
 
     /**
      * Whether a sign-in's name ({@code sso:} with the user name and, in brackets, the provider's ID)
-     * is the user {@code person}. An email holds no space or bracket, so no other user name matches.
+     * is the user {@code person}: exactly that shape, the ID one word, so no other user name (one
+     * that itself ends in a bracketed word, say) passes for theirs.
      */
     static boolean sameUser(String signInName, String person) {
-        return signInName != null && signInName.startsWith(io.kilnmark.server.auth.OidcIdentityAugmentor.PREFIX + person
-            + " (") && signInName.endsWith(")");
+        return signInName != null && person != null && java.util.regex.Pattern.compile(java.util.regex.Pattern.quote(
+            io.kilnmark.server.auth.OidcIdentityAugmentor.PREFIX + person) + " \\([^()\\s]+\\)").matcher(signInName)
+            .matches();
     }
 
     private static Entry signedInEntry(KilnmarkConfig.Oidc oidc, AuditLog.SignedIn s) {
