@@ -808,7 +808,9 @@ it installed once, under **Settings > Drivers** ([docs/design/drivers.md](design
 
 In the compose stack the folder is in the `keys` volume, so a driver survives upgrades. To put one
 in by hand: `podman compose cp ojdbc11-23.26.3.0.0.jar kilnmark:/var/lib/kilnmark/drivers/` (the
-developer stack), or `kilnmark.sh compose cp ...` for an installed release.
+developer stack, with Docker Compose as the compose tool: podman-compose has no `cp`), or, for an
+installed release and any compose tool, the engine's own `cp` on the container the compose labels
+name, as [Database drivers](guide/drivers.md) shows.
 
 **Preview.** The first rows of a table or file (100 by default, at most 1,000), read live through
 the connector with the same time limit and places as connection tests, and never stored, logged
