@@ -18,14 +18,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 import com.sun.net.httpserver.HttpServer;
 
 import io.kilnmark.server.Tokens;
+import io.quarkus.test.common.QuarkusTestResource;
+import io.quarkus.test.common.QuarkusTestResourceLifecycleManager;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 
@@ -35,36 +35,55 @@ import io.restassured.http.ContentType;
  * server stands in for Maven Central (%test.kilnmark.drivers.maven-url).
  */
 @QuarkusTest
+@QuarkusTestResource(value = DriversApiTest.FakeMaven.class, restrictToAnnotatedClass = true)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class DriversApiTest {
 
     private static final String JAR = "/maven2/com/oracle/database/jdbc/ojdbc11/23.26.3.0.0/ojdbc11-23.26.3.0.0.jar";
 
-    private HttpServer maven;
-    private final AtomicReference<byte[]> served = new AtomicReference<>();
+    private static final AtomicReference<byte[]> served = FakeMaven.SERVED;
 
-    @SuppressWarnings("AddressSelection") // the loopback address written out, not a host name to look up
-    @BeforeAll
-    void startMaven() throws Exception {
-        maven = HttpServer.create(new InetSocketAddress("127.0.0.1", 47393), 0);
-        maven.createContext("/maven2/", exchange -> {
-            byte[] body = served.get();
-            if (body == null || !exchange.getRequestURI().getPath().equals(JAR)) {
-                exchange.sendResponseHeaders(404, -1);
-            } else {
-                exchange.sendResponseHeaders(200, body.length);
-                try (OutputStream out = exchange.getResponseBody()) {
-                    out.write(body);
-                }
+    /**
+     * Stands in for Maven Central on a free loopback port, chosen when Quarkus starts for this class,
+     * and points kilnmark.drivers.maven-url at it. A fixed port clashed when two runs met on one
+     * host: CI runners in WSL share loopback with Windows under mirrored networking.
+     */
+    public static class FakeMaven implements QuarkusTestResourceLifecycleManager {
+        static final AtomicReference<byte[]> SERVED = new AtomicReference<>();
+        static volatile int port;
+        private HttpServer server;
+
+        @SuppressWarnings("AddressSelection") // the loopback address written out, not a host name to look up
+        @Override
+        public Map<String, String> start() {
+            try {
+                server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
             }
-            exchange.close();
-        });
-        maven.start();
-    }
+            server.createContext("/maven2/", exchange -> {
+                byte[] body = SERVED.get();
+                if (body == null || !exchange.getRequestURI().getPath().equals(JAR)) {
+                    exchange.sendResponseHeaders(404, -1);
+                } else {
+                    exchange.sendResponseHeaders(200, body.length);
+                    try (OutputStream out = exchange.getResponseBody()) {
+                        out.write(body);
+                    }
+                }
+                exchange.close();
+            });
+            server.start();
+            port = server.getAddress().getPort();
+            return Map.of("kilnmark.drivers.maven-url", "http:" + "/" + "/127.0.0.1:" + port + "/maven2/");
+        }
 
-    @AfterAll
-    void stopMaven() {
-        maven.stop(0);
+        @Override
+        public void stop() {
+            if (server != null) {
+                server.stop(0);
+            }
+        }
     }
 
     private static String viewerToken() {
@@ -88,7 +107,7 @@ class DriversApiTest {
             .body("find { it.id == 'ojdbc11' }.licence", containsString("Free Use Terms"))
             .body("find { it.id == 'ojdbc11' }.state", equalTo("missing"))
             .body("find { it.id == 'ojdbc11' }.download", equalTo(true))
-            .body("find { it.id == 'ojdbc11' }.downloadUrl", equalTo("http://127.0.0.1:47393" + JAR));
+            .body("find { it.id == 'ojdbc11' }.downloadUrl", equalTo("http:" + "/" + "/127.0.0.1:" + FakeMaven.port + JAR));
         admin().get("/api/v1/connectors").then().statusCode(200)
             .body("find { it.kind == 'oracle' }.driver", equalTo("missing"))
             .body("find { it.kind == 'oracle' }.driverBundled", equalTo(false))
