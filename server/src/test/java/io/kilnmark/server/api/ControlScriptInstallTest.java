@@ -621,8 +621,8 @@ class ControlScriptInstallTest {
         ControlScriptStarterTest.icacls(release.resolve("compose.yaml"), "/grant", "*S-1-5-11:(M)");
         String refused = run(e, release.resolve("kilnmark.ps1"), dry, none, engine, env, "");
         assertTrue(refused.contains("[2/2] FAILED") && refused.contains("install was refused, before asking for an administrator")
-            && refused.contains("compose.yaml may be changed by") && refused.contains("your own Downloads folder")
-            && refused.contains("icacls \"" + release + "\" /inheritance:r"), refused);
+            && refused.contains("compose.yaml may be changed by") && refused.contains("Download the release again into your own Downloads folder")
+            && !refused.contains("icacls"), refused);
         // for real: refused before UAC is asked, and nothing made
         Path images = Files.createTempFile("kilnmark-images", ".tar.gz");
         String real = run(e, release.resolve("kilnmark.ps1"), List.of("install", "-Answers", answersFile(answers).toString(), "-NoStart",
@@ -639,13 +639,30 @@ class ControlScriptInstallTest {
         assertTrue(Files.readString(result).startsWith("FAILED The release folder was refused: ") && Files.readString(result).contains("compose.yaml"),
             elevated);
         assertFalse(Files.exists(prog) || Files.exists(data), elevated);
-        // a folder above it that lets others delete what is in it: unpack it elsewhere (no icacls of it helps)
+        // the elevated step trusts the operator by a user's SID, never a group's (a group's would trust
+        // everyone in it): your SID's domain's ordinary users' group (513) is refused
+        String group = mySid().replaceAll("-[0-9]+$", "-513");
+        Path result2 = work.resolve("result2.txt");
+        String grouped = run(e, e.release().resolve("kilnmark.ps1"), List.of("_install-elevated", "-Answers", conf.toString(), "-OperatorSid", group,
+            "-Result", result2.toString()), prog, engine, Map.of(), "");
+        assertTrue(Files.readString(result2).startsWith("FAILED The operator was not named (a user's SID"), grouped);
+        assertFalse(Files.exists(prog) || Files.exists(data), grouped);
+        // a release unpacked in OneDrive (its files are reparse points, here a junction in it): said so
+        Path oneDrive = Files.createTempDirectory("kilnmark-onedrive");
+        Path inCloud = Files.move(e.release(), oneDrive.resolve("kilnmark-9.9.9"));
+        ControlScriptStarterTest.link(inCloud.resolve("containers/cloud"), Files.createTempDirectory("kilnmark-cloud"));
+        Map<String, String> cloudEnv = new LinkedHashMap<>(env);
+        cloudEnv.put("OneDrive", oneDrive.toString());
+        String cloud = run(e, inCloud.resolve("kilnmark.ps1"), dry, none, engine, cloudEnv, "");
+        assertTrue(cloud.contains("install was refused") && cloud.contains("is a OneDrive file or folder") && cloud.contains("unpack the release outside OneDrive"),
+            cloud);
+        // a folder above it that lets others delete what is in it: unpack it elsewhere
         Path above = Files.createTempDirectory("kilnmark-above");
         Path moved = Files.move(e.release(), above.resolve("kilnmark-9.9.9"));
         ControlScriptStarterTest.icacls(above, "/grant", "*S-1-5-11:(DC)");
         String up = run(e, moved.resolve("kilnmark.ps1"), dry, none, engine, env, "");
         assertTrue(up.contains("install was refused") && up.contains(", a folder above ") && up.contains("your own Downloads folder")
-            && !up.contains("/inheritance:r"), up);
+            && !up.contains("icacls"), up);
         // upgrade: an archive others may change is refused before anything, its own or a folder above it
         Path root = ControlScriptStarterTest.installRoot(true);
         Path archive = Files.createTempDirectory("kilnmark-download").resolve("kilnmark-9.9.10.zip");
@@ -653,7 +670,7 @@ class ControlScriptInstallTest {
         ControlScriptStarterTest.icacls(archive, "/grant", "*S-1-5-11:(M)");
         String upgrade = run(e, launcher(e), List.of("upgrade", archive.toString()), root, engine, Map.of(), "");
         assertTrue(upgrade.contains("upgrade was refused, before asking for an administrator") && upgrade.contains("kilnmark-9.9.10.zip may be changed by")
-            && upgrade.contains("icacls \"" + archive + "\" /inheritance:r /grant:r ") && !upgrade.contains("(OI)(CI)"), upgrade);
+            && upgrade.contains("Download the release again into your own Downloads folder") && !upgrade.contains("icacls"), upgrade);
         // and the copy is what is checked and unpacked: upgrade copies the archive into a folder of its own first
         String ps = Files.readString(LAUNCH.resolve("kilnmark.ps1")).replace("\r\n", "\n");
         String part = ps.substring(ps.indexOf("function Invoke-Upgrade("), ps.indexOf("function Invoke-PlaceVersion("));
@@ -708,6 +725,23 @@ class ControlScriptInstallTest {
             assertFalse(out.contains("[1/"), "no step began: " + out);
             assertTrue(Files.exists(root.resolve("versions/9.9.9/compose.yaml")) && Files.exists(root.resolve("config/.env")), "nothing removed");
         }
+        // install.conf naming the folder's owner: then the folders above the program and data folders
+        // must be root's alone, which a temporary folder's are not (the tests' own, or a sticky /tmp)
+        String bash = System.getenv("KILNMARK_TEST_BASH");
+        Process who = new ProcessBuilder(bash != null && !bash.isBlank() ? bash : "bash", "-c",
+            "stat -c %U '" + root.toString().replace('\\', '/') + "'").redirectErrorStream(true).start();
+        String owner = new String(who.getInputStream().readAllBytes(), StandardCharsets.UTF_8).strip();
+        assertEquals(0, who.waitFor(), owner);
+        Files.writeString(root.resolve("config/install.conf"), Files.readString(root.resolve("config/install.conf"))
+            .replace("user=kmtest-nobody\n", "user=" + owner + "\n"));
+        String above = run(e, launcher(e), List.of("upgrade", archive.toString()), root, engine, asRoot, "");
+        assertTrue(above.contains("Nothing was changed") && !above.contains("[1/") && (owner.equals("root")
+            ? above.contains("is not owned by an account of this machine other than root")
+            : above.contains(", a folder above ") && above.contains("may be changed by someone other than root")), above);
+        // the offline images file, as the archive: a copy of root's is checked and loaded, never the file twice
+        String shText = Files.readString(LAUNCH.resolve("kilnmark.sh"));
+        assertFalse(shText.contains("< \"$offline\""), "the images file is never read again after its check");
+        assertEquals(2, shText.split("offline_copy; account_step|offline_copy\n    account_step", -1).length - 1, "install and upgrade load the checked copy");
         // the data folder data-folder.txt names, a link: refused
         Path link = Files.createTempDirectory("kilnmark-link-parent").resolve("data");
         ControlScriptStarterTest.link(link, root);

@@ -220,10 +220,42 @@ function Get-EnginePath {
     }
     return ''
 }
+# The programs a run starts, looked up once a run, so what the hourly run's checks passed
+# (Get-EngineProblem) is what runs: the engine by its full path (Get-EnginePath), and the compose
+# tool. With Podman, PODMAN_COMPOSE_PROVIDER if set, else docker-compose, else podman-compose as PATH
+# finds them, each a program by its full path, which PODMAN_COMPOSE_PROVIDER is then set to, so
+# Podman launches that one and looks for no other. With Docker, every folder it looks in for its
+# compose plugin (DOCKER_CONFIG's or yours, ProgramData's, Program Files' and Docker Desktop's).
+$script:Tools = $null
+function Get-Tools {
+    if ($script:Tools) { return $script:Tools }
+    $e = Get-EnginePath
+    $name = ''; if ($e) { $name = [IO.Path]::GetFileNameWithoutExtension($e) }
+    $compose = ''; $plugins = @()
+    if ($name -eq 'podman') {
+        $want = $env:PODMAN_COMPOSE_PROVIDER
+        if ($want) {
+            if ([IO.Path]::IsPathRooted($want)) { $compose = $want }
+            else { $c = Get-Command $want -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if ($c) { $compose = $c.Source } }
+        } else {
+            foreach ($n in @('docker-compose', 'podman-compose')) {
+                $c = Get-Command $n -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($c) { $compose = $c.Source; break }
+            }
+        }
+        if ($compose) { $env:PODMAN_COMPOSE_PROVIDER = $compose } else { Remove-Item Env:PODMAN_COMPOSE_PROVIDER -ErrorAction SilentlyContinue }
+    } elseif ($name -eq 'docker') {
+        $config = $env:DOCKER_CONFIG; if (-not $config) { $config = Join-Path $env:USERPROFILE '.docker' }
+        $plugins = @((Join-Path $config 'cli-plugins'), (Join-Path $env:ProgramData 'Docker\cli-plugins'),
+            (Join-Path $env:ProgramFiles 'Docker\cli-plugins'), (Join-Path $env:ProgramFiles 'Docker\Docker\resources\cli-plugins'))
+    }
+    $script:Tools = @{ Engine = $e; Compose = $compose; PluginDirs = $plugins }
+    return $script:Tools
+}
 $script:EngineName = ''
 function Select-Engine {
     if ($script:Engine) { return }
-    $script:Engine = Get-EnginePath
+    $script:Engine = (Get-Tools).Engine
     if (-not $script:Engine) {
         if ($env:KILNMARK_ENGINE) { Fail 'KILNMARK_ENGINE names no program on this machine: give the full path of podman.exe or docker.exe, or unset it.' }
         Fail 'Neither Podman nor Docker is installed. Install Podman Desktop or Docker Desktop first (INSTALL.md, "What to install first").'
@@ -404,12 +436,25 @@ function Test-OwnerOk([string]$Path, [switch]$Above) {
     return ($ok -contains $sid)
 }
 
+# What a link, a junction or a OneDrive file is, said after its path. OneDrive keeps its files and
+# folders as reparse points that Windows fetches from the cloud when they are read (the
+# recall-on-open, recall-on-data-access, pinned and unpinned attributes), so a release unpacked
+# there is refused for being one: said so, with where to unpack it instead.
+function Get-ReparseWhy($Item) {
+    $cloud = (([long]$Item.Attributes -band (0x40000 -bor 0x80000 -bor 0x100000 -bor 0x400000)) -ne 0)
+    foreach ($o in @($env:OneDrive, $env:OneDriveCommercial, $env:OneDriveConsumer)) {
+        if ($o -and ($Item.FullName + '\').StartsWith($o.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { $cloud = $true }
+    }
+    if ($cloud) { return ' is a OneDrive file or folder, which OneDrive keeps in the cloud and Windows fetches when it is read: unpack the release outside OneDrive, in your own Downloads folder (if OneDrive does not hold it) or another folder only you may change' }
+    return ' is a link or a junction, which leads wherever someone made it lead'
+}
+
 # Why someone other than you, SYSTEM or the Administrators may change $Path, or nothing: it must be
 # there, no link or junction, owned by one of them, and writable by nobody else.
 function Get-ItemProblem([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return ($Path + ' is not there') }
     $item = Get-Item -LiteralPath $Path -Force
-    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return ($Path + ' is a link or a junction, which leads wherever someone made it lead') }
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return ($Path + (Get-ReparseWhy $item)) }
     if (-not (Test-OwnerOk $Path)) { return ($Path + ' is owned by someone other than you, SYSTEM or the Administrators, who may change it whenever they like') }
     $others = @(Get-OthersWriting $Path)
     if ($others.Count -gt 0) { return ($Path + ' may be changed by ' + (($others | Select-Object -Unique) -join ', ')) }
@@ -426,7 +471,7 @@ function Get-AboveProblem([string]$Top) {
         $why = ''
         $item = Get-Item -LiteralPath $dir -Force -ErrorAction SilentlyContinue
         if (-not $item) { $why = 'could not be read' }
-        elseif (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { $why = 'is a link or a junction, which leads wherever someone made it lead' }
+        elseif (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { $why = (Get-ReparseWhy $item).TrimStart(' ') }
         elseif (-not (Test-OwnerOk $dir -Above)) { $why = 'is owned by someone other than you, SYSTEM, the Administrators or TrustedInstaller' }
         else {
             $others = @(Get-OthersWriting $dir $AboveWrites -Above)
@@ -468,12 +513,9 @@ function Assert-ReleaseItsOwn([string]$Path, [string]$What) {
     Write-Host ('Checking that nobody else may change ' + $Path + ' ...')
     $why = Get-ReleaseProblem $Path
     if (-not $why) { return }
-    $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $fix = ' Unpack the release in your own Downloads folder (or another folder only you and the administrators may change), then run ' + $What + ' from there.'
-    if (-not (Get-AboveProblem ([IO.Path]::GetFullPath($Path).TrimEnd('\')))) {
-        $f = ''; if (Test-Path -LiteralPath $Path -PathType Container) { $f = '(OI)(CI)' }
-        $fix += ' Or take the others'' rights away: icacls "' + $Path + '" /inheritance:r /grant:r "' + $me + ':' + $f + 'F" *S-1-5-32-544:' + $f + 'F *S-1-5-18:' + $f + 'F'
-    }
+    # Only a fresh copy helps: changing the permissions now would not take back what someone may
+    # have changed already, nor a handle to a file they hold open to write.
+    $fix = ' Download the release again into your own Downloads folder (or another folder only you and the administrators may change), check it, unpack it there, and run ' + $What + ' from there.'
     Fail ($What + ' was refused, before asking for an administrator: ' + $why + '. Windows would run what is in it as an administrator, so nobody else may change it.' + $fix)
 }
 
@@ -504,38 +546,33 @@ function Get-ToolProblem([string]$Path) {
     }
     return (Get-AboveProblem $dir)
 }
-# The engine an hourly run uses (Get-EnginePath, the path Select-Engine then runs it by), and the
-# compose tool it may launch: with Podman, PODMAN_COMPOSE_PROVIDER, and docker-compose and
-# podman-compose as PATH finds them; with Docker, its compose plugin in each folder Docker looks in
-# (yours, ProgramData's, Program Files' and Docker Desktop's). Why one may be changed by someone
-# else, or nothing. A known limit: a compose tool in a folder that is not there yet, which someone
-# may make later (C:\ProgramData\Docker\cli-plugins, say), or one podman's containers.conf names.
+# The programs an hourly run starts (Get-Tools, the same paths Select-Engine then runs): why one may
+# be changed by someone else, or nothing. The engine and Podman's compose tool must pass
+# Get-ToolProblem. Each folder Docker looks in for its compose plugin, there or not, must let nobody
+# else put one there: one that is there must take nothing from anyone else (and its plugin pass
+# Get-ToolProblem); one that is not there, nobody else may make (the nearest folder above that is
+# there must let nobody else add to it: C:\ProgramData lets Users make folders), since Docker would
+# run a plugin put there.
 function Get-EngineProblem {
-    $e = Get-EnginePath
-    if (-not $e) { return '' }
-    $why = Get-ToolProblem $e
+    $t = Get-Tools
+    if (-not $t.Engine) { return '' }
+    $why = Get-ToolProblem $t.Engine
     if ($why) { return $why }
-    $tools = @()
-    $name = [IO.Path]::GetFileNameWithoutExtension($e)
-    if ($name -eq 'docker') {
-        foreach ($d in @((Join-Path $env:USERPROFILE '.docker\cli-plugins'), (Join-Path $env:ProgramData 'Docker\cli-plugins'),
-            (Join-Path $env:ProgramFiles 'Docker\cli-plugins'), (Join-Path $env:ProgramFiles 'Docker\Docker\resources\cli-plugins'))) {
-            $f = Join-Path $d 'docker-compose.exe'
-            if (Test-Path -LiteralPath $f) { $tools += $f }
+    if ($t.Compose) { $why = Get-ToolProblem $t.Compose; if ($why) { return $why } }
+    elseif ([IO.Path]::GetFileNameWithoutExtension($t.Engine) -eq 'podman') { return ('the compose tool Podman would launch (PODMAN_COMPOSE_PROVIDER, else docker-compose or podman-compose on PATH) is not a program PATH finds, so it cannot be checked: install one (winget install Docker.DockerCompose), or set PODMAN_COMPOSE_PROVIDER to its full path') }
+    foreach ($d in $t.PluginDirs) {
+        $f = Join-Path $d 'docker-compose.exe'
+        if (Test-Path -LiteralPath $f) { $why = Get-ToolProblem $f; if ($why) { return $why }; continue }
+        $at = $d
+        while ($at -and -not (Test-Path -LiteralPath $at)) { $at = Split-Path $at -Parent }
+        if (-not $at) { continue }
+        $item = Get-Item -LiteralPath $at -Force
+        $others = @()
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0 -and (Test-OwnerOk $at -Above)) { $others = @(Get-OthersWriting $at $TreeWrites -Above) } else { $others = @('someone else') }
+        if ($others.Count -gt 0) {
+            if ($at -ceq $d) { return ($d + ', a folder Docker runs its compose plugin from, may be changed by ' + (($others | Select-Object -Unique) -join ', ')) }
+            return ($d + ', a folder Docker runs its compose plugin from, is not there, and ' + (($others | Select-Object -Unique) -join ', ') + ' may make it in ' + $at + ' and put one there: make it as an administrator, nobody else able to add to it (an elevated prompt: mkdir "' + $d + '", then icacls "' + $d + '" /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX)')
         }
-    }
-    if ($name -ne 'podman' -and $tools.Count -eq 0) { return '' }
-    if ($name -eq 'podman') {
-        if ($env:PODMAN_COMPOSE_PROVIDER) { $tools += $env:PODMAN_COMPOSE_PROVIDER }
-        foreach ($n in @('docker-compose', 'podman-compose')) {
-            $c = Get-Command $n -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($c) { $tools += $c.Source }
-        }
-    }
-    foreach ($t in $tools) {
-        if (-not [IO.Path]::IsPathRooted($t)) { continue }
-        $why = Get-ToolProblem $t
-        if ($why) { return $why }
     }
     return ''
 }
@@ -655,17 +692,19 @@ function Get-ComposeArgs {
     return $list
 }
 
-# A value both kinds of compose tool read alike in a file of settings: podman takes a line of it as
-# it is, Docker Compose reads quotes, # comments, $ and \ in it. So none of those, no space and no
-# control character.
+# A value Set-Line writes as it is and Get-Setting reads back the same: no space, quote mark, #, $,
+# backtick, backslash or control character. For the client secret, which is typed or piped in.
 function Test-PlainValue([string]$Value) { return ($Value -and $Value -notmatch '[\s\p{Cc}"''#$`\\]') }
 
-# The secrets of the services that keep running (ADR 0051, decision 13): never in their environment,
-# which podman-compose puts on podman's command line, but in a file for each service that compose
-# hands podman as --env-file (env_file in compose.yaml). In config\run\services, yours alone (as
-# each run's folder), written afresh from config\.env before every compose command: Docker Compose
-# reads them for every command, down and ps too. They hold nothing config\.env does not. Never
-# written elevated: the folder would then be the administrator's alone.
+# The secrets of the services that keep running (ADR 0051, decision 13): never a setting of their
+# containers, which compose tools put on podman's command line (podman-compose puts an env_file's
+# lines there too). A file for each service, NAME=value a line, as Get-Setting reads config\.env,
+# which compose mounts read-only into that service alone (/run/kilnmark/env), where
+# containers/kilnmark-env.sh reads it into that program's environment. In config\run\services,
+# yours alone (as each run's folder), written afresh from config\.env before every compose command.
+# They hold nothing config\.env does not. Never written elevated: the folder would then be the
+# administrator's alone. A command that stops or looks (down, status, logs, check, uninstall)
+# never fails over them: what it does needs no secret.
 $script:ServiceSecretsFor = $null
 function Get-ServiceSecretLine([string]$Name, [string]$Setting) {
     $v = Get-Setting $Setting
@@ -681,11 +720,10 @@ function Write-ServiceSecrets([string]$VersionDir) {
     if (Test-Elevated) { return }
     $text = [IO.File]::ReadAllText((Join-Path $script:Data 'config\.env'))
     if ($script:ServiceSecretsFor -cne $text -or -not (Test-Path -LiteralPath $dir)) {
-        if (-not (Get-Setting 'KILNMARK_DB_PASSWORD')) { Fail ('KILNMARK_DB_PASSWORD is not set in ' + (Join-Path $script:Data 'config\.env') + ": Kilnmark's database has no password without it. Put back the line install wrote. Nothing was changed.") }
-        if (-not (Get-Setting 'KILNMARK_ADMIN_TOKEN')) { Fail ('KILNMARK_ADMIN_TOKEN is not set in ' + (Join-Path $script:Data 'config\.env') + ': Kilnmark has no admin token without it. Put back the line install wrote. Nothing was changed.') }
-        foreach ($s in @('KILNMARK_DB_PASSWORD', 'KILNMARK_ADMIN_TOKEN', 'KILNMARK_SAMPLES_DB_PASSWORD', 'KILNMARK_OIDC_CLIENT_SECRET', 'KILNMARK_KEYCLOAK_DB_PASSWORD', 'KILNMARK_KEYCLOAK_ADMIN_PASSWORD')) {
-            $v = Get-Setting $s
-            if ($v -and -not (Test-PlainValue $v)) { Fail ($s + ' in config\.env holds a space, a quote mark, #, $, ` or \, which compose tools do not all read alike: use one without them (install never makes one with them). Nothing was changed.') }
+        foreach ($s in @('KILNMARK_DB_PASSWORD', 'KILNMARK_ADMIN_TOKEN')) {
+            if (Get-Setting $s) { continue }
+            if ($Command -cin @('down', 'stop', 'status', 'logs', 'check', 'uninstall')) { return }
+            Fail ($s + ' is not set in ' + (Join-Path $script:Data 'config\.env') + ': Kilnmark has no database password or admin token without it. Put back the line install wrote. Nothing was started.')
         }
         try {
             $base = Join-Path $script:Data 'config\run'
@@ -814,11 +852,21 @@ function Test-FileSignature([string]$File) {
 
 function Import-Images([string]$File) {
     if (-not (Test-Path $File)) { Fail ('There is no file ' + $File + '.') }
-    Test-FileSignature $File
-    Select-Engine
-    Write-Host ('Loading the images from ' + (Split-Path $File -Leaf) + ' ...')
-    & $script:Engine load -i $File | Out-Host
-    if ($LASTEXITCODE -ne 0) { Fail 'The images could not be loaded.' }
+    # copied into a folder of yours alone first, with its signature: the copy is what is checked and
+    # what is loaded, so nothing can be put in its place between the two
+    $work = New-WorkFolder
+    try {
+        $copy = Join-Path $work (Split-Path $File -Leaf)
+        try {
+            Copy-Item -LiteralPath $File -Destination $copy -ErrorAction Stop
+            if (Test-Path -LiteralPath ($File + '.sigstore.json')) { Copy-Item -LiteralPath ($File + '.sigstore.json') -Destination ($copy + '.sigstore.json') -ErrorAction Stop }
+        } catch { Fail ((Split-Path $File -Leaf) + ' could not be copied into a folder of yours to check it.') }
+        Test-FileSignature $copy
+        Select-Engine
+        Write-Host ('Loading the images from ' + (Split-Path $File -Leaf) + ' ...')
+        & $script:Engine load -i $copy | Out-Host
+        if ($LASTEXITCODE -ne 0) { Fail 'The images could not be loaded.' }
+    } finally { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 function Get-Images([string]$V) {
@@ -916,7 +964,7 @@ $WslFix = 'Invoke-WebRequest https://github.com/microsoft/WSL/releases/download/
 # has the bundled Keycloak (5 GB of memory, not 4). Never starts the Podman machine.
 function Test-Prerequisites([bool]$Running, [bool]$Keycloak = $false) {
     # by the full path every other command runs it by (a program, never a script of its name)
-    $engine = Get-EnginePath
+    $engine = (Get-Tools).Engine
     if (-not $engine) {
         Add-Problem 'Neither Podman nor Docker is installed.' 'winget install RedHat.Podman-Desktop (then make its machine: podman machine init --rootful)'
     } else {
@@ -1733,6 +1781,28 @@ function Assert-Operator([string]$What) {
     }
 }
 
+# Whether $Sid is a user's, as Windows names it (LookupAccountSid says a user, never a group, an
+# alias or a well-known SID): the operator the elevated steps trust besides the Administrators and
+# SYSTEM, so a group's SID would trust everyone in it.
+function Test-UserSid([string]$Sid) {
+    if ($Sid -cnotmatch '^S-1-(5-21|12-1)-[0-9-]+$') { return $false }
+    if (-not ('Kilnmark.Sids' -as [type])) {
+        Add-Type -Namespace Kilnmark -Name Sids -MemberDefinition @'
+[DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+public static extern bool LookupAccountSid(string system, byte[] sid, System.Text.StringBuilder name, ref uint nameLength, System.Text.StringBuilder domain, ref uint domainLength, out int use);
+'@
+    }
+    try {
+        $id = New-Object Security.Principal.SecurityIdentifier($Sid)
+        $bytes = New-Object byte[] ($id.BinaryLength)
+        $id.GetBinaryForm($bytes, 0)
+        $name = New-Object Text.StringBuilder 256; $domain = New-Object Text.StringBuilder 256
+        [uint32]$nl = 256; [uint32]$dl = 256; $use = 0
+        if (-not [Kilnmark.Sids]::LookupAccountSid($null, $bytes, $name, [ref]$nl, $domain, [ref]$dl, [ref]$use)) { return $false }
+        return ($use -eq 1)
+    } catch { return $false }
+}
+
 # Runs a part of install, upgrade or uninstall as an administrator: Windows asks (UAC), and it runs
 # in a window of its own; its log is in the data folder's logs. The tests run it as they are.
 function Invoke-Elevated([string]$Script, [string[]]$Arguments) {
@@ -1935,7 +2005,7 @@ function Invoke-InstallElevated([string[]]$Options) {
         }
     }
     if (-not (Test-Elevated) -and -not (Test-TestHooks)) { Fail 'This part of install needs an administrator.' }
-    if ($operatorSid -cnotmatch '^S-1-(5-21|12-1)-[0-9-]+$') { Fail 'The operator was not named (a user''s SID).' }
+    if (-not (Test-UserSid $operatorSid)) { Fail 'The operator was not named (a user''s SID, which Windows knows as a user, never a group).' }
     # the release this runs from, checked again as an administrator before anything is copied
     $script:AlsoTrusted = @($operatorSid)
     $why = Get-ReleaseProblem $Here
@@ -2069,7 +2139,7 @@ function Invoke-PlaceVersion([string[]]$Options) {
         }
     }
     if (-not (Test-Elevated) -and -not (Test-TestHooks)) { Fail 'This part of upgrade needs an administrator.' }
-    if ($operatorSid -cnotmatch '^S-1-(5-21|12-1)-[0-9-]+$') { Fail 'The operator was not named (a user''s SID).' }
+    if (-not (Test-UserSid $operatorSid)) { Fail 'The operator was not named (a user''s SID, which Windows knows as a user, never a group).' }
     # the new release, checked again as an administrator before anything is copied
     $script:AlsoTrusted = @($operatorSid)
     $why = Get-ReleaseProblem $src

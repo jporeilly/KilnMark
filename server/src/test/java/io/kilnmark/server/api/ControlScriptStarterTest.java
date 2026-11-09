@@ -119,16 +119,17 @@ class ControlScriptStarterTest {
 
     /**
      * No Keycloak credential reaches the kilnmark container, whatever config/.env says: its service
-     * names no Keycloak setting and no password or secret at all, and its one env_file is the file the
-     * control script writes for it alone, holding only its own four secrets (the fake engines check
-     * that file's lines).
+     * names no Keycloak setting and no password or secret at all, takes no env_file, and the one file
+     * of secrets mounted into it is the one the control script writes for it alone, holding only its
+     * own four secrets (the fake engines check that file's lines).
      */
     @Test
     void noKeycloakCredentialReachesKilnmarkInAnyConfiguration() throws IOException {
         String c = Files.readString(COMPOSE);
         String kilnmark = c.substring(c.indexOf("\n  kilnmark:\n"), c.indexOf("\n  keycloak-db:\n"));
-        assertEquals(1, kilnmark.split("env_file:", -1).length - 1, "one env_file");
-        assertTrue(kilnmark.contains("    env_file:\n      - ${KILNMARK_SECRETS_DIR:-../../config/run/services}/kilnmark.env\n"),
+        assertFalse(kilnmark.contains("env_file:"), "no env_file: podman-compose puts its lines on podman's command line");
+        assertEquals(1, kilnmark.split(":/run/kilnmark/env:", -1).length - 1, "one file of secrets");
+        assertTrue(kilnmark.contains("      - ${KILNMARK_SECRETS_DIR:-../../config/run/services}/kilnmark.env:/run/kilnmark/env:ro,z\n"),
             "only the file the control script writes for Kilnmark");
         String sh = Files.readString(LAUNCH.resolve("kilnmark.sh"));
         assertTrue(sh.contains("      kilnmark) service_secret_line QUARKUS_DATASOURCE_PASSWORD KILNMARK_DB_PASSWORD\n"
@@ -144,7 +145,7 @@ class ControlScriptStarterTest {
             String from = code.substring(code.indexOf("${") + 2).replaceAll("[:}?-].*$", "");
             assertFalse(from.contains("KEYCLOAK"), "a Keycloak setting reaches Kilnmark: " + code);
             assertFalse(from.contains("STARTER"), "a Starter Pack people setting reaches Kilnmark: " + code);
-            // (the folder of the services' secrets files is not a secret: env_file names it, above)
+            // (the folder of the services' secrets files is not a secret: the mount names it, above)
             assertFalse(!from.equals("KILNMARK_SECRETS_DIR") && (from.contains("PASSWORD") || from.contains("SECRET") || from.endsWith("_TOKEN")),
                 "a secret in Kilnmark's environment: " + code);
         }
@@ -190,10 +191,12 @@ class ControlScriptStarterTest {
     }
 
     /**
-     * No secret is in any service's environment (ADR 0051, decision 13): podman-compose puts each
-     * setting there on podman's command line, which any account on the machine may read in /proc.
-     * The services that keep running read theirs from a file the control script writes for each
-     * (env_file); the one-offs from a file mounted for one run.
+     * No secret is a setting of any container (ADR 0051, decision 13): compose tools put each one on
+     * podman's command line, which any account on the machine may read in /proc, and podman-compose
+     * 1.6 does so for an env_file's lines too. The services that keep running read theirs from a file
+     * the control script writes for each, mounted read-only, through kilnmark-env.sh, which compose
+     * runs in place of the image's entrypoint and which then runs that entrypoint; the one-offs from
+     * a file mounted for one run.
      */
     @Test
     void noSecretIsInAnyServicesEnvironment() throws IOException {
@@ -205,11 +208,25 @@ class ControlScriptStarterTest {
                 + "      POSTGRES_PASSWORD: ${KILNMARK_DB_PASSWORD:?Set it}\n    volumes:\n      - pgdata:/var/lib/postgresql\n"));
         assertEquals(List.of("kilnmark: KILNMARK_ADMIN_TOKEN: ${KILNMARK_ADMIN_TOKEN}"),
             secretsInEnvironments("services:\n  kilnmark:\n    environment:\n      KILNMARK_ADMIN_TOKEN: ${KILNMARK_ADMIN_TOKEN}\n"));
-        // each service with a secret reads it from its own file, which the control scripts write
+        // no env_file anywhere; each service with a secret reads it from its own file, mounted, which
+        // the control scripts write, through kilnmark-env.sh, then the image's own entrypoint
+        assertFalse(Pattern.compile("(?m)^\\s+env_file:").matcher(c).find(), "no env_file");
+        String server = Files.readString(Path.of("../containers/server/Containerfile"));
+        String postgres = Files.readString(Path.of("../containers/postgres/Containerfile"));
+        Map<String, String> own = Map.of(
+            "postgres", "\"kilnmark-tls.sh\"]\n    command: [\"postgres\"]\n",
+            "keycloak-db", "\"kilnmark-tls.sh\"]\n    command: [\"postgres\"]\n",
+            "kilnmark", "\"java\", \"-XX:+UseZGC\", \"-jar\", \"quarkus-run.jar\"]\n",
+            "keycloak", "\"/opt/keycloak/bin/kc.sh\"]\n    command: [\"start\"]\n");
+        assertTrue(server.contains("ENTRYPOINT [\"java\", \"-XX:+UseZGC\", \"-jar\", \"quarkus-run.jar\"]\n"), "the server image's own entrypoint");
+        assertTrue(postgres.contains("ENTRYPOINT [\"kilnmark-tls.sh\"]\nCMD [\"postgres\"]\n"), "the database image's own");
         for (String service : List.of("postgres", "kilnmark", "keycloak-db", "keycloak")) {
             String block = serviceBlock(c, service);
-            assertTrue(block.contains("    env_file:\n      - ${KILNMARK_SECRETS_DIR:-../../config/run/services}/" + service + ".env\n"),
-                service + " reads its secrets from its own file");
+            assertTrue(block.contains("      - ${KILNMARK_SECRETS_DIR:-../../config/run/services}/" + service + ".env:/run/kilnmark/env:ro,z\n"),
+                service + " reads its secrets from its own file, mounted");
+            assertTrue(block.contains("      - ./containers/kilnmark-env.sh:/run/kilnmark/start.sh:ro,z\n"), service + ": kilnmark-env.sh");
+            assertTrue(block.contains("    entrypoint: [\"/bin/bash\", \"/run/kilnmark/start.sh\", " + own.get(service)),
+                service + " starts through kilnmark-env.sh, then its image's own entrypoint and command");
         }
         String sh = Files.readString(LAUNCH.resolve("kilnmark.sh"));
         String ps = Files.readString(LAUNCH.resolve("kilnmark.ps1"));
@@ -217,10 +234,142 @@ class ControlScriptStarterTest {
             assertTrue(sh.contains("for f in postgres kilnmark keycloak-db keycloak; do") && ps.contains("'" + f + ".env' = @("), f);
         }
         // written before every compose command, so every start (up, restart, upgrade, configure's
-        // restart, install's start, the hourly run) has them, and Docker Compose's down and ps too
+        // restart, install's start, the hourly run) has them
         assertTrue(sh.contains("  ! samples_allowed || compose+=(--profile starter-pack)\n  write_service_secrets\n}"), "set_compose writes them");
         assertTrue(ps.replace("\r\n", "\n").contains("    Write-ServiceSecrets $dir\n    return $list\n}"), "Get-ComposeArgs writes them");
         assertTrue(sh.contains("export KILNMARK_SECRETS_DIR=\"$dir\"") && ps.contains("$env:KILNMARK_SECRETS_DIR = $rel"));
+    }
+
+    /**
+     * kilnmark-env.sh, run for real: each NAME=value line of its file, taken as it is (spaces, #,
+     * quotes, $ and \ too), goes into the environment of the program it then runs, and nowhere
+     * else; a file that is not there, or a line that is not NAME=value, stops the service and says
+     * why, never showing a value.
+     */
+    @Test
+    void kilnmarkEnvHandsEachSecretToTheProgramAsItIs() throws Exception {
+        String bash = System.getenv("KILNMARK_TEST_BASH");
+        boolean windows = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win");
+        String shell = bash != null && !bash.isBlank() ? bash : windows ? null : "bash";
+        Assumptions.assumeTrue(shell != null, "set KILNMARK_TEST_BASH to bash to run this on Windows");
+        Path dir = Files.createTempDirectory("kilnmark-env");
+        Path env = dir.resolve("env");
+        Path script = dir.resolve("start.sh");
+        Files.writeString(script, Files.readString(Path.of("../containers/kilnmark-env.sh"))
+            .replace("f=/run/kilnmark/env", "f='" + env.toString().replace('\\', '/') + "'"));
+        Files.writeString(env, "A_PASSWORD=x y #z\nB_TOKEN='q\"$HOME\\n\n\nC=\n");
+        String s = script.toString().replace('\\', '/');
+        // the program it runs, as a script file: Windows would mangle the quotes of a -c argument
+        Path show = dir.resolve("show.sh");
+        Files.writeString(show, "printf '[%s][%s][%s]' \"$A_PASSWORD\" \"$B_TOKEN\" \"${C-unset}\"\n");
+        Process p = new ProcessBuilder(shell, s, shell, show.toString().replace('\\', '/')).redirectErrorStream(true).start();
+        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertEquals(0, p.waitFor(), out);
+        assertEquals("[x y #z]['q\"$HOME\\n][]", out);
+        for (String[] bad : new String[][] {{"no equals sign here\n", "line 1 of"}, {"lower=case\n", "line 1 of"}, {null, "are not there"}}) {
+            if (bad[0] == null) {
+                Files.delete(env);
+            } else {
+                Files.writeString(env, bad[0]);
+            }
+            Process q = new ProcessBuilder(shell, s, shell, "-c", "echo ran").redirectErrorStream(true).start();
+            String said = new String(q.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            assertEquals(78, q.waitFor(), said);
+            assertTrue(said.contains(bad[1]) && !said.contains("ran") && !said.contains("case"), said);
+        }
+    }
+
+    /**
+     * podman-compose itself, where KILNMARK_TEST_PODMAN_COMPOSE names it (podman-compose 1.6 is
+     * what `podman compose` runs on a Podman machine): `--dry-run up` with every profile and a
+     * podman that answers nothing prints every podman command it would run, and none holds a
+     * secret's value or its name. And the check fails where it should: the same command over the
+     * compose file as it was before 0.1.2's reviews puts them there.
+     */
+    @Test
+    void podmanComposePutsNoSecretOnPodmansCommandLine() throws Exception {
+        String pc = System.getenv("KILNMARK_TEST_PODMAN_COMPOSE");
+        Assumptions.assumeTrue(pc != null && !pc.isBlank(), "set KILNMARK_TEST_PODMAN_COMPOSE to podman-compose to run this");
+        String now = Files.readString(COMPOSE);
+        List<String> seen = podmanComposeLeaks(pc, now);
+        assertEquals(List.of(), seen, "secrets on podman's command line");
+        String before = now.substring(0, now.indexOf("\nservices:\n")) + "\nservices:\n  postgres:\n"
+            + "    image: ghcr.io/jporeilly/kilnmark-postgres:@VERSION@\n    environment:\n      POSTGRES_PASSWORD: ${KILNMARK_DB_PASSWORD}\n"
+            + "  kilnmark:\n    image: ghcr.io/jporeilly/kilnmark-server:@VERSION@\n"
+            + "    env_file:\n      - ${KILNMARK_SECRETS_DIR:-../../config/run/services}/kilnmark.env\n";
+        assertTrue(podmanComposeLeaks(pc, before).containsAll(List.of("value of KILNMARK_DB_PASSWORD", "value of KILNMARK_ADMIN_TOKEN",
+            "name POSTGRES_PASSWORD", "name KILNMARK_ADMIN_TOKEN")), "the check sees an environment's secret, and an env_file's");
+    }
+
+    /** What of the secrets podman-compose --dry-run up prints over {@code compose}, with throwaway values. */
+    static List<String> podmanComposeLeaks(String pc, String compose) throws Exception {
+        boolean windows = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win");
+        Path root = Files.createTempDirectory("kilnmark-dry");
+        Path v = Files.createDirectories(root.resolve("versions/9.9.9"));
+        Files.createDirectories(v.resolve("containers/keycloak/themes/kilnmark"));
+        Files.writeString(v.resolve("compose.yaml"), compose.replace("@VERSION@", "9.9.9"));
+        Files.copy(Path.of("../containers/kilnmark-env.sh"), v.resolve("containers/kilnmark-env.sh"));
+        Files.writeString(v.resolve("containers/keycloak/setup.sh"), "# setup\n");
+        Map<String, String> secrets = new LinkedHashMap<>();
+        secrets.put("KILNMARK_DB_PASSWORD", "throwawayDb1aaaa");
+        secrets.put("KILNMARK_ADMIN_TOKEN", "km_throwawayToken2bbbb");
+        secrets.put("KILNMARK_SAMPLES_DB_PASSWORD", "throwawaySamples3cccc");
+        secrets.put("KILNMARK_OIDC_CLIENT_SECRET", "throwawayClient4dddd");
+        secrets.put("KILNMARK_KEYCLOAK_DB_PASSWORD", "throwawayKcDb5eeee");
+        secrets.put("KILNMARK_KEYCLOAK_ADMIN_PASSWORD", "throwawayKcAdmin6ffff");
+        Path services = Files.createDirectories(root.resolve("config/run/services"));
+        Path run = Files.createDirectories(root.resolve("config/run/r.test"));
+        StringBuilder env = new StringBuilder("KILNMARK_MODE=starter-pack\nCOMPOSE_PROFILES=auth\n");
+        secrets.forEach((k, val) -> env.append(k).append('=').append(val).append('\n'));
+        Files.writeString(root.resolve("config/.env"), env.toString());
+        Files.writeString(services.resolve("postgres.env"), "POSTGRES_PASSWORD=" + secrets.get("KILNMARK_DB_PASSWORD") + "\n");
+        Files.writeString(services.resolve("kilnmark.env"), "QUARKUS_DATASOURCE_PASSWORD=" + secrets.get("KILNMARK_DB_PASSWORD")
+            + "\nKILNMARK_ADMIN_TOKEN=" + secrets.get("KILNMARK_ADMIN_TOKEN") + "\nKILNMARK_SAMPLES_DB_PASSWORD=" + secrets.get("KILNMARK_SAMPLES_DB_PASSWORD")
+            + "\nQUARKUS_OIDC_CREDENTIALS_SECRET=" + secrets.get("KILNMARK_OIDC_CLIENT_SECRET") + "\n");
+        Files.writeString(services.resolve("keycloak-db.env"), "POSTGRES_PASSWORD=" + secrets.get("KILNMARK_KEYCLOAK_DB_PASSWORD") + "\n");
+        Files.writeString(services.resolve("keycloak.env"), "KC_DB_PASSWORD=" + secrets.get("KILNMARK_KEYCLOAK_DB_PASSWORD")
+            + "\nKC_BOOTSTRAP_ADMIN_PASSWORD=" + secrets.get("KILNMARK_KEYCLOAK_ADMIN_PASSWORD") + "\n");
+        Files.writeString(run.resolve("keycloak-setup.env"), "KILNMARK_KEYCLOAK_ADMIN_PASSWORD='" + secrets.get("KILNMARK_KEYCLOAK_ADMIN_PASSWORD")
+            + "'\nKILNMARK_OIDC_CLIENT_SECRET='" + secrets.get("KILNMARK_OIDC_CLIENT_SECRET") + "'\n");
+        Files.writeString(run.resolve("samples-db.env"), "KILNMARK_DB_PASSWORD='" + secrets.get("KILNMARK_DB_PASSWORD")
+            + "'\nKILNMARK_SAMPLES_DB_PASSWORD='" + secrets.get("KILNMARK_SAMPLES_DB_PASSWORD") + "'\n");
+        // a podman that answers nothing: no machine, no container, nothing is run
+        Path fake;
+        if (windows) {
+            fake = root.resolve("podman.cmd");
+            Files.writeString(fake, "@echo off\r\nif \"%1\"==\"--version\" (echo podman version 5.4.2& exit /b 0)\r\n"
+                + "if \"%1\"==\"version\" (echo 5.4.2& exit /b 0)\r\nif \"%1\"==\"ps\" (echo []& exit /b 0)\r\n"
+                + "if \"%2\"==\"inspect\" (echo []& exit /b 0)\r\nexit /b 0\r\n");
+        } else {
+            fake = root.resolve("podman");
+            Files.writeString(fake, "#!/bin/sh\ncase \"$1\" in --version) echo 'podman version 5.4.2' ;; version) echo 5.4.2 ;; ps) echo '[]' ;;"
+                + " *) [ \"${2-}\" != inspect ] || echo '[]' ;; esac\nexit 0\n");
+            fake.toFile().setExecutable(true);
+        }
+        ProcessBuilder pb = new ProcessBuilder(pc, "--verbose", "--dry-run", "--podman-path", fake.toString(), "-p", "kmdry",
+            "--env-file", root.resolve("config/.env").toString(), "-f", v.resolve("compose.yaml").toString(),
+            "--profile", "auth", "--profile", "starter-pack", "up", "-d").redirectErrorStream(true).directory(root.toFile());
+        pb.environment().put("KILNMARK_SECRETS_DIR", "../../config/run/services");
+        pb.environment().put("KILNMARK_RUN_DIR", "../../config/run/r.test");
+        Process p = pb.start();
+        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertTrue(p.waitFor(120, TimeUnit.SECONDS), "podman-compose stopped");
+        assertEquals(0, p.exitValue(), "podman-compose --dry-run up failed");
+        assertTrue(out.contains(" create ") || out.contains("'create'"), "podman-compose printed what it would create");
+        List<String> leaks = new ArrayList<>();
+        secrets.forEach((k, val) -> {
+            if (out.contains(val)) {
+                leaks.add("value of " + k);
+            }
+        });
+        for (String n : List.of("POSTGRES_PASSWORD", "QUARKUS_DATASOURCE_PASSWORD", "KILNMARK_ADMIN_TOKEN", "KILNMARK_SAMPLES_DB_PASSWORD",
+            "QUARKUS_OIDC_CREDENTIALS_SECRET", "KC_DB_PASSWORD", "KC_BOOTSTRAP_ADMIN_PASSWORD", "KILNMARK_DB_PASSWORD", "KILNMARK_OIDC_CLIENT_SECRET",
+            "KILNMARK_KEYCLOAK_DB_PASSWORD", "KILNMARK_KEYCLOAK_ADMIN_PASSWORD")) {
+            if (Pattern.compile("(?<![A-Z_])" + n + "(?![A-Z_])").matcher(out).find()) {
+                leaks.add("name " + n);
+            }
+        }
+        return leaks;
     }
 
     /** Each line of a service's environment naming a secret (its own name or the setting it takes), as "service: line". */
@@ -653,17 +802,12 @@ class ControlScriptStarterTest {
         // (ADR 0051, decision 13): Kilnmark's holds none of Keycloak's
         assertTrue(handed.out().contains("services: secrets [as compose reads them]"), handed.out());
         assertFalse(handed.out().contains("kc-admin-1") || handed.out().contains("bare-secret"), "a secret was shown");
-        // a secret the two kinds of compose tool would read apart (a space, a quote, #, $) is refused,
-        // by its name, never its value, before anything runs
-        for (String odd : List.of("\"kc admin 1\"", "kc#admin", "kc$admin", "'kc\"admin'")) {
-            Map<String, String> bad = new LinkedHashMap<>(WITH_KEYCLOAK);
-            bad.put("KILNMARK_KEYCLOAK_ADMIN_PASSWORD", odd);
-            Admin refused = a.run(bad, ADD, typed, true);
-            assertTrue(refused.out().contains("KILNMARK_KEYCLOAK_ADMIN_PASSWORD in config")
-                && refused.out().contains("holds a space, a quote mark") && !refused.out().contains("keycloak-setup:")
-                && !refused.out().contains("kc admin") && !refused.out().contains("kc#") && !refused.out().contains("kc$"),
-                odd + ": " + refused.out());
-        }
+        // a database password or admin token missing: nothing starts, and that is said by its name
+        Map<String, String> noToken = new LinkedHashMap<>(WITH_KEYCLOAK);
+        noToken.put("KILNMARK_ADMIN_TOKEN", "");
+        Admin noTokenRun = a.run(noToken, ADD, typed, true);
+        assertTrue(noTokenRun.out().contains("KILNMARK_ADMIN_TOKEN is not set in") && !noTokenRun.out().contains("keycloak-setup: person"),
+            noTokenRun.out());
         // the people commands act only where the record says config/.env's mode, and the database answers
         for (List<String> args : List.of(ADD, List.of("people", "import", EXAMPLE_CSV), List.of("people", "activate",
             "rita@bank.example"), List.of("people", "list"), List.of("people", "expire"))) {
@@ -957,11 +1101,22 @@ class ControlScriptStarterTest {
             String system = System.getenv("SystemRoot");
             Map<String, String> path = new LinkedHashMap<>(recordedAsEnv(WITH_KEYCLOAK, Map.of()));
             path.put("PATH", dc.getParent() + ";" + system + "\\System32;" + system + ";" + system + "\\System32\\WindowsPowerShell\\v1.0");
+            // (whatever PODMAN_COMPOSE_PROVIDER says outside the tests)
+            path.put("PODMAN_COMPOSE_PROVIDER", "");
+            Path provider = Files.createTempFile("kilnmark-provider", ".log");
+            path.put("FAKE_PROVIDER_LOG", provider.toString());
             String clean = run(expire, tools, podman.toString(), path);
             assertFalse(clean.contains("people expire was refused"), clean);
+            // and Podman is told to launch that one, by the full path that was checked, and no other
+            assertTrue(Files.readString(provider).contains("provider [" + dc + "]"), Files.readString(provider));
             icacls(dc, "/grant", "*S-1-5-11:(M)");
             String composeOut = run(expire, tools, podman.toString(), path);
             assertTrue(composeOut.contains("people expire was refused") && composeOut.contains("docker-compose.cmd"), composeOut);
+            // a compose tool named that PATH does not find as a program: Podman would look for one itself, unchecked
+            Map<String, String> unnamed = new LinkedHashMap<>(path);
+            unnamed.put("PODMAN_COMPOSE_PROVIDER", "no-such-compose");
+            String unfound = run(expire, tools, podman.toString(), unnamed);
+            assertTrue(unfound.contains("people expire was refused") && unfound.contains("so it cannot be checked"), unfound);
             // the engine by a name: the program PATH finds, never a script of that name earlier on it, is
             // what is checked and what runs
             Path evil = Files.createTempDirectory("kilnmark-evil");
@@ -981,11 +1136,25 @@ class ControlScriptStarterTest {
             Path plugin = Files.createDirectories(home.resolve(".docker/cli-plugins")).resolve("docker-compose.exe");
             Files.writeString(plugin, "not a program");
             icacls(plugin, "/grant", "*S-1-5-11:(M)");
+            // (ProgramData and Program Files as the tests make them: folders of yours alone)
+            Path programData = Files.createTempDirectory("kilnmark-programdata");
+            Path programFiles = Files.createTempDirectory("kilnmark-programfiles");
             Map<String, String> docker = new LinkedHashMap<>(recordedAsEnv(WITH_KEYCLOAK, Map.of()));
             docker.put("USERPROFILE", home.toString());
+            docker.put("ProgramData", programData.toString());
+            docker.put("ProgramFiles", programFiles.toString());
             String dockerOut = run(expire, tools, dockerBin.resolve("docker.cmd").toString(), docker);
             assertTrue(dockerOut.contains("people expire was refused") && dockerOut.contains("docker-compose.exe, a program an hourly run starts"),
                 dockerOut);
+            // with no plugin there, the folders Docker looks in all clean: it runs
+            Files.delete(plugin);
+            String dockerClean = run(expire, tools, dockerBin.resolve("docker.cmd").toString(), docker);
+            assertFalse(dockerClean.contains("people expire was refused"), dockerClean);
+            // a plugin folder that is not there, where others may make it (as C:\ProgramData lets Users)
+            icacls(programData, "/grant", "*S-1-5-11:(AD)");
+            String missing = run(expire, tools, dockerBin.resolve("docker.cmd").toString(), docker);
+            assertTrue(missing.contains("people expire was refused") && missing.contains(programData.resolve("Docker\\cli-plugins")
+                + ", a folder Docker runs its compose plugin from, is not there") && missing.contains("make it as an administrator"), missing);
             // the admin token goes only to a listener of yours (port 135: Windows' own RPC service)
             Path elsewhereRoot = installRoot(true);
             Map<String, String> rpc = new LinkedHashMap<>(withApi(WITH_KEYCLOAK, api));
@@ -1353,6 +1522,7 @@ class ControlScriptStarterTest {
         if (windows) {
             Path f = dir.resolve(name + ".cmd");
             Files.writeString(f, "@echo off\r\n"
+                + "if defined FAKE_PROVIDER_LOG echo provider [%PODMAN_COMPOSE_PROVIDER%]>> \"%FAKE_PROVIDER_LOG%\"\r\n"
                 + "if \"%1 %2\"==\"compose version\" exit /b 0\r\n"
                 + "if not defined FAKE_PODMAN_VERSION set FAKE_PODMAN_VERSION=5.4.2\r\n"
                 + "if not defined FAKE_CGROUPS set FAKE_CGROUPS=[cpu memory pids]\r\n"
