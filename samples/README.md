@@ -1,7 +1,7 @@
 # Samples
 
-Small pipelines and flows, one idea each, sorted by what they show, and synthetic sample data for
-them to read. They ship with Kilnmark: the server bundles them, and the release has the samples in
+Small pipelines and flows, one idea each, sorted by what they show; three business scenarios, each a
+whole process of several pipelines and a flow; and synthetic sample data for them to read. They ship with Kilnmark: the server bundles them, and the release has the samples in
 its `samples` folder. They write only under `samples/` in the file storage they are given.
 
 ## The Starter Pack
@@ -30,13 +30,15 @@ Every sample can then run. Through the API: `POST /api/v1/samples/tables` with
 
 ### The sample data
 
-`data/` holds the sample data: ten small tables of made-up customers, accounts, transactions,
-invoices, orders, order lines, products and a supplier feed, as CSV files in a folder per group
+`data/` holds the sample data: twelve small tables of made-up customers, accounts, transactions,
+invoices, orders, order lines, products, a supplier feed, the costs agreed for each product and the
+billing periods the month-end close reads, as CSV files in a folder per group
 (`crm`, `billing`, `shop`, `stock`). `data/generate.py` writes them, with a fixed seed; run it again
 (`python samples/data/generate.py`) after changing it. The rows are shaped for the samples: a few
 messy and repeated emails, missing emails and unknown segments for the quarantine gate (under 5%),
 orders whose customer is not there, two shipping fees out of range for the gate that stops, and
-repeated or badly shaped SKUs for the gate that warns and for the rows that fail.
+repeated or badly shaped SKUs for the gate that warns and for the rows that fail, and five agreed
+costs that the supplier feed moves by more than 20%, for the supplier intake scenario.
 
 One table is large: `volume/sales.csv`, four million made-up till sales (about 216 MB of CSV). It is
 not stored: Kilnmark writes it as it is read, from a fixed seed, so it is the same on every read and
@@ -54,8 +56,8 @@ to a source you have saved:
 
 | Placeholder | Stands for | Used by |
 | --- | --- | --- |
-| `crm-db` | A database with schemas `crm` (customers, customers_archive_2023, accounts) and `billing` (transactions, invoices) | read and write, Parquet, read some columns and rows, read with a query (PostgreSQL with Allow SQL on), limit, compute, functions, dedupe, which row wins, window, union, quarantine gate; the flow that checks a source |
-| `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed) | filter, route, select, sort, lookup, join, which row wins, both aggregates, warn and stop gates, rows that fail, both parameter samples; the sql flow |
+| `crm-db` | A database with schemas `crm` (customers, customers_archive_2023, accounts) and `billing` (transactions, invoices, periods) | read and write, Parquet, read some columns and rows, read with a query (PostgreSQL with Allow SQL on), limit, compute, functions, dedupe, which row wins, window, union, quarantine gate; the flow that checks a source |
+| `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed, product_costs) | filter, route, select, sort, lookup, join, which row wins, both aggregates, warn and stop gates, rows that fail, both parameter samples; the sql flow |
 | `files` | File storage the samples write to, under `samples/`; it must allow writing | every pipeline, and the flow that waits for a file |
 
 A placeholder you do not map skips the samples that use it. Each sample is checked against what
@@ -87,8 +89,8 @@ opens in the editor as a new pipeline or flow of your own. `GET /api/v1/template
   sources as [lab/sample-sources.csv](../lab/sample-sources.csv) says: `crm-db` to `lab-db`,
   `shop-db` to `lab-mariadb` and `files` to `lab-warehouse`.
 
-Either way, a sample already there is left as it is, so your changes are kept. The flows in
-`08-flows` are added after the pipelines they run; a flow whose pipelines were not all added is
+Either way, a sample already there is left as it is, so your changes are kept. The flows are
+added after the pipelines they run; a flow whose pipelines were not all added is
 skipped, saying which it needs.
 
 For `07-parameters/server-variable.yaml`, set the server variable it reads (as a steward or admin;
@@ -141,6 +143,20 @@ bank or person.
 | | `sample-checks-and-waits` | A `check-source` node before the work, a `wait-for` node waiting for a file, and `priority` on two pipelines | A clear notice at the start when what a batch needs has not arrived |
 | | `sample-for-each-region` | A `for-each` node: `sample-server-variable` once for each of three regions, two at once, each writing its own file; a condition on `regions.failed` | The same load for each region, legal entity, branch or area |
 | `09-volume` | `sample-volume` | Four million rows through a compute, a lookup, a route and an aggregate, long enough to see where a run's time goes: the run's page shows each node's time, rows per second and which node held the others up | Trying the platform on volumes like your own, for example when moving from another ETL tool |
+| `10-scenarios` | `sample-onboarding-merge` | Customer onboarding: three customer tables in one golden record per email, the latest winning; invalid emails quarantined for the steward | One current record per customer, which KYC and consent reporting often rely on, with the rows that could not be matched kept for review |
+| | `sample-onboarding-pseudonymise` | Customer onboarding: a copy for analytics with hashes, an age band and a postcode area in place of the identifiers, after a gate that checks the golden file's own rules | A typical GDPR safeguard: analysts get data they need without who it is about |
+| | `sample-onboarding-record` | Customer onboarding: a record of each load, counted by source system | How many records a nightly load produced, and when, without reading the data |
+| | `sample-onboarding-nightly` | Customer onboarding, the flow: checks the tables, merges, then the analytics copy and the record; tells the stewards and stops when too many rows were set aside | A nightly load that stops and says so before anything downstream uses it |
+| | `sample-supplier-feed-arrives` | Supplier intake: stands in for the supplier, delivering its feed to the incoming folder | A partner's file landing in a shared folder at a time nobody controls |
+| | `sample-supplier-check` | Supplier intake: each SKU's latest delivery looked up among the products and their agreed costs; unknown products and costs that are not positive quarantined, costs moved by more than 20% sent for price review | A partner's prices checked before they reach invoices or valuations |
+| | `sample-supplier-load` | Supplier intake: the agreed cost of every product, with the accepted new costs in place | Only checked data changes the prices a business relies on |
+| | `sample-supplier-intake` | Supplier intake, the flow: waits for the file, checks it, and loads it only if nothing was held for review; otherwise tells the reviewers | A person decides what happens to what a check would not accept |
+| | `sample-close-reconcile` | Month-end close: one region's invoices matched with its customers' payments; paid, underpaid and unmatched | Billed against received, a core month-end control, per region so each exception has an owner |
+| | `sample-close-summary` | Month-end close: every region's exceptions in one worklist, largest first, and a summary by region and kind | The summary a close is signed off on, with each exception listed for someone to clear |
+| | `sample-close-month-end` | Month-end close, the flow: waits for a query on the billing periods table to be true, reconciles each region with `for-each`, then marks the month closed with a `sql` node (needs `crm-db` with Allow SQL and Allow writing) | A close that starts only when the invoices are out, and is marked done only when every region reconciled |
+The scenarios in `10-scenarios` are whole business processes rather than one idea each: each has
+several pipelines and the flow that runs them, and a step for a data steward. Who does what in each,
+with the Starter Pack's example people, is in [Business scenarios](../docs/guide/scenarios.md).
 
 The [pipelines guide](../docs/guide/pipelines.md),
 [Reference: pipeline nodes](../docs/guide/reference-pipeline-nodes.md),

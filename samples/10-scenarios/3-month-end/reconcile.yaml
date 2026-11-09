@@ -1,0 +1,138 @@
+# Month-end close: reconcile one region (a Kilnmark sample).
+# The first step of the month-end scenario, run once for each region. Puts each customer in a region
+# by the area of their postcode, then totals what the region's customers were invoiced and what they
+# paid. Invoices name the customer as C-00170 and payments as 170, so it works out the number from
+# the invoice's reference to match them. A full join keeps customers on either side alone. Each
+# customer is then paid, underpaid, or unmatched (an invoice with no payment, or a payment with no
+# invoice). Paid customers go to one file and the exceptions to another, for the steward.
+# Why it matters: Reconciling what was billed against what was received is a core month-end control
+# for banks and other regulated firms, and every exception needs an owner before the books close.
+# Running it per region keeps each region's exceptions with the team that owns them.
+# Look for: split_part and cast making the invoice's key match the payment's, the full join, owed and
+# status, and the route's two outputs, underpaid and unmatched, joined into the exceptions file.
+# Payments in a currency other than pounds are counted in other_currency, not in received: converting
+# them is the steward's call. A postcode in no region is Unassigned, which the flow reconciles too,
+# so no customer is left out.
+# Needs: crm-db (the crm and billing schemas) and files.
+kilnmark: pipeline/v1
+name: sample-close-reconcile
+description: One region's invoices matched with its customers' payments.
+
+parameters:
+  region: { type: text, default: London, description: The region to reconcile }
+
+nodes:
+  - id: customers
+    type: read
+    source: crm-db
+    asset: crm.customers
+    columns: [customer_id, postcode]
+
+  - id: regions
+    type: compute
+    input: customers
+    columns:
+      postcode_area: "upper(regex_replace(postcode, '^([A-Za-z]+).*$', '$1'))"
+      region: "case when postcode_area in ('SW', 'N', 'E') then 'London' when postcode_area in ('LS', 'M', 'NE', 'YO', 'B') then 'North' when postcode_area in ('BS', 'CF', 'OX', 'CB', 'BN') then 'South' when postcode_area in ('EH', 'G') then 'Scotland' else 'Unassigned' end"
+
+  - id: book
+    type: filter
+    input: regions
+    condition: "region = ${region}"
+
+  - id: invoices
+    type: read
+    source: crm-db
+    asset: billing.invoices
+
+  - id: invoice_customer
+    type: compute
+    input: invoices
+    columns:
+      customer_id: "cast(split_part(cust_ref, '-', 2) as int64)"   # C-00170 is customer 170
+
+  - id: invoices_in_book
+    type: lookup
+    inputs: { main: invoice_customer, lookup: book }
+    on: { customer_id: customer_id }
+    keep: [region]
+    unmatched: drop                  # another region's customers
+
+  - id: invoiced
+    type: aggregate
+    input: invoices_in_book
+    group_by: [customer_id, region]
+    values:
+      invoices: "count(*)"
+      invoiced: "sum(total)"
+      marked_paid: "sum(if(paid, 1, 0))"
+      last_invoice: "max(issued_on)"
+
+  - id: transactions
+    type: read
+    source: crm-db
+    asset: billing.transactions
+    columns: [customer_id, amount, currency, txn_at]
+
+  - id: payments_in_book
+    type: lookup
+    inputs: { main: transactions, lookup: book }
+    on: { customer_id: customer_id }
+    keep: [region]
+    unmatched: drop
+
+  - id: received
+    type: aggregate
+    input: payments_in_book
+    group_by: [customer_id, region]
+    values:
+      payments: "count(*)"
+      received: "sum(if(currency = 'GBP', amount, 0))"
+      other_currency: "sum(if(currency = 'GBP', 0, 1))"
+      last_payment: "max(txn_at)"
+
+  - id: matched
+    type: join
+    inputs: { left: invoiced, right: received }
+    on: { customer_id: customer_id }
+    how: full                        # customers on either side alone are kept
+
+  - id: owed
+    type: compute
+    input: matched
+    columns:
+      customer: "coalesce(customer_id, right_customer_id)"
+      book_region: "coalesce(region, right_region)"
+      owed: "coalesce(invoiced, 0) - coalesce(received, 0)"
+      status: "case when invoices is null then 'payment with no invoice' when payments is null then 'invoice with no payment' when owed > 0 then 'underpaid' else 'paid' end"
+
+  - id: tidy
+    type: select
+    input: owed
+    keep: [customer, book_region, status, invoices, invoiced, marked_paid, last_invoice, payments, received, other_currency, last_payment, owed]
+    rename: { customer: customer_id, book_region: region }
+
+  - id: by_status
+    type: route
+    input: tidy
+    routes:
+      underpaid: "status = 'underpaid'"
+      unmatched: "status <> 'paid'"  # the first route that fits wins: underpaid rows never get here
+
+  - id: exceptions
+    type: union
+    input: [by_status.underpaid, by_status.unmatched]
+
+  - id: paid_out
+    type: write
+    input: by_status
+    source: files
+    path: samples/scenarios/month-end/paid_${region}.parquet
+    mode: replace
+
+  - id: exceptions_out
+    type: write
+    input: exceptions
+    source: files
+    path: samples/scenarios/month-end/exceptions_${region}.parquet
+    mode: replace

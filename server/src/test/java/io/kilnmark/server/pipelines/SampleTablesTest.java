@@ -82,6 +82,16 @@ class SampleTablesTest {
     void everySampleChecksAgainstTheSampleTables() throws Exception {
         FakeSources s = sources();
         Map<String, String> mapping = Map.of("crm-db", "my-db", "shop-db", "my-db", "files", "my-bucket");
+        // First what each pipeline writes, for those that read what another writes (the scenarios).
+        for (int pass = 0; pass < 3; pass++) {
+            for (Samples.Sample sample : Samples.bundled()) {
+                if ("pipeline".equals(sample.type())) {
+                    String yaml = Samples.withTables(Samples.withSources(sample.yaml(), mapping), SCHEMA);
+                    LabPipelinesTest.recordWrites(s, yaml, new KilnPipelineCompiler().check(yaml, nodes(s), Map.of(),
+                        LabPipelinesTest.SAMPLE_VARIABLES));
+                }
+            }
+        }
         int checked = 0;
         for (Samples.Sample sample : Samples.bundled()) {
             if (!"pipeline".equals(sample.type())) {
@@ -103,7 +113,7 @@ class SampleTablesTest {
             }
             checked++;
         }
-        assertEquals(26, checked);
+        assertEquals(34, checked);
     }
 
     @Test
@@ -115,7 +125,7 @@ class SampleTablesTest {
         PipelineCompilerPort.Compilation c = new KilnPipelineCompiler().check(yaml, nodes(sources()), Map.of(),
             Map.of());
         assertEquals(List.of(), c.problems());
-        assertEquals(20, c.nodes().size());
+        assertEquals(2 * Samples.TABLES.size(), c.nodes().size());
     }
 
     @Test

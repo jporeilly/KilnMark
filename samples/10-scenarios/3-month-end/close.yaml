@@ -1,0 +1,82 @@
+# Flow: month-end close (a Kilnmark sample).
+# Runs the month-end scenario. It waits until the billing periods table says an open month has all
+# its invoices issued. Then it reconciles each region, two at a time, puts the exceptions into one
+# worklist and summary, and marks the month closed in the billing periods table. A notice then says
+# so. If the month is not ready after an hour, or a region fails, it says so and closes nothing.
+# Why it matters: A close must not start before the month's invoices are all out, and must not be
+# marked done unless every region was reconciled. A control table that the billing system updates,
+# and a flow that waits on it, keep that order without anyone watching the clock.
+# Look for: the wait-for node waiting for a query to be true, the for-each node over the regions, the
+# condition on regions.failed, and the sql node that marks the month closed, with rows_affected in
+# the notice. Neither the query nor the SQL can take the flow's values, since a value put into SQL
+# could change what it does: the billing periods table says which month is open. The month is closed
+# once: to run it again on the sample data, run sample-tables again, which puts the table back.
+# Needs: sample-close-reconcile and sample-close-summary, so crm-db and files, and crm-db as a
+# PostgreSQL source with Allow SQL and Allow writing on. Only a designer who may see unmasked values
+# adds or changes it, so turning on the Starter Pack, an admin's act, leaves it for such a designer
+# to add under Library, Add samples. Running it needs a steward or above.
+kilnmark: flow/v1
+name: sample-close-month-end
+description: Wait for the month's invoices, reconcile each region, then close the month.
+max_parallel: 2
+
+nodes:
+  - id: ready
+    type: wait-for
+    source: crm-db
+    query: "SELECT EXISTS (SELECT 1 FROM billing.periods WHERE status = 'open' AND invoices_issued)"
+    every: 1m
+    timeout: 1h
+
+  - id: regions
+    type: for-each
+    pipeline: sample-close-reconcile
+    items: [London, North, South, Scotland, Unassigned]
+    as: region
+    max_parallel: 2
+    timeout: 30m
+
+  - id: summary
+    type: run-pipeline
+    pipeline: sample-close-summary
+
+  - id: close
+    type: sql
+    source: crm-db
+    statements:
+      - UPDATE billing.periods SET status = 'closed' WHERE status = 'open' AND invoices_issued
+    timeout: 5m
+
+  - id: done
+    type: notify
+    title: "Month closed: ${close.rows_affected} period closed, ${regions.items} regions reconciled"
+    message: The exceptions worklist and summary are ready for the stewards.
+
+  - id: not_ready
+    type: notify
+    severity: medium
+    title: "No month ready to close after ${ready.waited_s} seconds"
+    message: No open month has all its invoices issued. Nothing was reconciled or closed.
+
+  - id: failed
+    type: notify
+    severity: high
+    title: The month-end close stopped
+    message: A region, the summary or the close failed, so the month stays open. Open the flow's run for which and why.
+
+  - id: halt
+    type: stop
+    status: failed
+    message: The month was not closed
+
+connections:
+  - { from: ready, to: regions }
+  - { from: ready, to: not_ready, when: failure }
+  - { from: regions, to: summary, when: "regions.failed = 0" }
+  - { from: regions, to: failed, when: failure }
+  - { from: summary, to: close }
+  - { from: summary, to: failed, when: failure }
+  - { from: close, to: done }
+  - { from: close, to: failed, when: failure }
+  - { from: not_ready, to: halt }
+  - { from: failed, to: halt }

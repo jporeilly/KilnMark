@@ -17,7 +17,8 @@ certificate, and only a release nobody else may change run as an administrator, 
 amended again the same day after a third: no secret in an env_file either, each read from a file
 mounted into its service, decision 13; the tools looked up once and Docker's plugin folders,
 decision 15; root never under a folder others may change, the images file checked as a copy, and
-the operator a user's SID, decision 17)
+the operator a user's SID, decision 17; amended 9 November 2026: the business scenarios among the
+samples the pack adds, decision 4)
 
 ## Context
 
@@ -90,11 +91,15 @@ converted: Production or Starter Pack.
 
 4. **Settings > Starter Pack, for admins, and Kilnmark does the work.** `POST /api/v1/starter-pack`
    (admin) turns it on: a PostgreSQL source `starter-samples-db` on `kilnmark_samples` (its own
-   login, over TLS, **Allow writing** and **Allow SQL** on, so the two samples that run SQL can be
+   login, over TLS, **Allow writing** and **Allow SQL** on, so the samples that run SQL can be
    added by a designer who may see unmasked values) and a files source `starter-samples-files` on
    `/srv/files/starter-pack` (**Allow writing** on); then the existing starter pack: the sample
    tables (the `sample-tables` pipeline, run at once) and every sample into the Library reading
-   them. `DELETE /api/v1/starter-pack` with `{"confirm": "DELETE"}` turns it off: every sample
+   them, the business scenarios among them (amended 9 November 2026: `samples/10-scenarios`,
+   customer onboarding, a supplier's file and the month-end close, each several pipelines and a
+   flow, with two more sample tables, `billing.periods` and `stock.product_costs`; the nightly
+   onboarding flow, `sample-onboarding-nightly`, runs no SQL, so the pack adds it, ready for a
+   schedule; the month-end flow runs SQL, so it is left, as below). `DELETE /api/v1/starter-pack` with `{"confirm": "DELETE"}` turns it off: every sample
    pipeline and flow in the Library, the two sources (and `sample-data` unless a team's own pipeline
    or flow reads it), the `sample_region` variable the pack set, every table and schema the samples'
    login owns in `kilnmark_samples` (the database stays, empty) and the pack's folder in the files
@@ -669,5 +674,6 @@ converted: Production or Starter Pack.
 - The developer stack (`compose.yaml` at the repository's root) has no Keycloak, so it is a
   production install unless `KILNMARK_MODE` says otherwise; `quarkusDev` and the tests run as a
   Starter Pack install and skip the bundled-Keycloak check, as they have none.
-- The two samples that run SQL are not added by the pack (an admin may not see unmasked values,
+- The samples that run SQL (`sample-read-query`, `sample-sql-before-and-after` and
+  `sample-close-month-end`) are not added by the pack (an admin may not see unmasked values,
   ADR 0027); a designer who may adds them under **Library > Add samples**.

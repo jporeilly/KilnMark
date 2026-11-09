@@ -15,6 +15,7 @@ links still arrive.
 
 - [Signing in, roles and tokens](guide/signing-in.md): the two ways in, the four roles and the unmask grant, using an API token, and signing in with your organisation or the bundled Keycloak
 - [The Library: samples and templates](guide/library.md): the samples, kept apart from your own pipelines and flows; the Starter Pack; templates to start your own from
+- [Business scenarios](guide/scenarios.md): customer onboarding, a supplier's file arriving and the month-end close, each as pipelines, a flow and a data steward's part, walked through with the Starter Pack's example people
 - [Your first pipeline](guide/first-pipeline.md): from signing in to a finished run, a step at a time
 - [Asking Kilnmark](guide/assistant.md): the Ask panel, what it answers from, sources and links, and privacy
 

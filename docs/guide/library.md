@@ -17,7 +17,9 @@ work so the two never mix:
 ![The Library's Samples tab: the samples grouped by what they show, each a pipeline or a flow, with the last run of those added; About this sample is open on sample-read-columns-where, giving What it shows, Why it matters, Look for when it runs and Needs](images/library-samples.png)
 
 The **Samples** tab lists every sample by what it shows: reading and writing, filtering and
-routing, transforming, combining, totals, quality gates, parameters, flows and volume. Each row
+routing, transforming, combining, totals, quality gates, parameters, flows, volume and, last, the
+business scenarios: customer onboarding, a supplier's file arriving and the month-end close, each a
+whole process of several pipelines and a flow ([Business scenarios](scenarios.md)). Each row
 shows:
 
 - whether it is a **Pipeline** or a **Flow**, and its name, `sample-...`. Once added, the name
@@ -68,8 +70,9 @@ off takes all of it out again. A production install never has the pack: its page
 
 ![The Library's Samples tab after the Starter Pack was turned on: every sample added, with the marking saying this is a Starter Pack install, for training and development only, with its example data and accounts on](images/library-starter-pack.png)
 
-The pack does not add the two samples that run SQL (`sample-read-query` and
-`sample-sql-before-and-after`): an admin may not see unmasked values. A designer who may adds them
+The pack does not add the three samples that run SQL (`sample-read-query`,
+`sample-sql-before-and-after` and the month-end scenario's flow, `sample-close-month-end`): an admin
+may not see unmasked values. A designer who may adds them
 with **Add samples**, choosing the pack's database, `starter-samples-db`, which has **Allow SQL**
 on.
 
@@ -98,8 +101,8 @@ The samples name their sources by placeholders rather than real sources:
 
 | Placeholder | Stands for |
 | --- | --- |
-| `crm-db` | A database with schemas `crm` (customers, customers_archive_2023, accounts) and `billing` (transactions, invoices) |
-| `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed) |
+| `crm-db` | A database with schemas `crm` (customers, customers_archive_2023, accounts) and `billing` (transactions, invoices, periods) |
+| `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed, product_costs) |
 | `files` | File storage the samples write to, under `samples/`; a designer or an admin must turn on **Allow writing** for it |
 
 1. In the **Library**, on the **Samples** tab, choose **Add samples** (designers and admins).
@@ -115,8 +118,9 @@ change its `asset` to one of yours, or its columns.
 
 The sample flows are added after the pipelines they run. A flow whose pipelines were not all added
 (because a placeholder they use was left out) is not added either, and the dialog says which
-pipeline it needs. `sample-sql-before-and-after` runs SQL, so it is added only when `shop-db` is a
-PostgreSQL source with **Allow SQL** on, by a designer who may see unmasked values.
+pipeline it needs. `sample-sql-before-and-after` and `sample-close-month-end` run SQL, so each is
+added only when the database it runs SQL on (`shop-db` and `crm-db`) is a PostgreSQL source with
+**Allow SQL** on, by a designer who may see unmasked values.
 
 ## Templates
 

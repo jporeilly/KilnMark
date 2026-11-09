@@ -1,0 +1,108 @@
+# Customer onboarding: one golden record per customer (a Kilnmark sample).
+# The first step of the onboarding scenario. Puts the CRM customers, the 2023 archive and the shop's
+# customers together, tidies each email and name, and sets aside every row whose email is missing
+# or does not look like an email. Then it keeps one row per email, the most recently created, and
+# writes the golden customer file. The older records folded into it go to a file of their own.
+# Why it matters: Banks typically hold one customer in several systems, and KYC, complaints and
+# marketing consent all need one current record for each person. Rows that cannot be matched are set
+# aside for a data steward to review, not loaded or dropped, so the control has evidence.
+# Look for: the union of three reads, the gate's quarantine output (the rows a steward reviews), and
+# the dedupe's rule on the canvas ("latest by created_at kept"). The golden file carries the marks
+# of the columns it came from: once a steward marks email, ni_number and date_of_birth sensitive on
+# the source tables, they are masked here too for everyone but designers who may see unmasked values.
+# sample-onboarding-nightly runs it each night.
+# Needs: crm-db (the crm schema), shop-db (the shop schema) and files.
+kilnmark: pipeline/v1
+name: sample-onboarding-merge
+description: CRM, archived and shop customers merged into one golden record per email.
+
+nodes:
+  - id: crm_current
+    type: read
+    source: crm-db
+    asset: crm.customers
+    columns: [customer_id, first_name, last_name, email, phone, date_of_birth, postcode, ni_number, created_at]
+
+  - id: crm_archive
+    type: read
+    source: crm-db
+    asset: crm.customers_archive_2023
+    columns: [customer_id, first_name, last_name, email, phone, date_of_birth, postcode, ni_number, created_at]
+
+  - id: shop
+    type: read
+    source: shop-db
+    asset: shop.customers
+    columns: [customer_id, first_name, last_name, email, phone, date_of_birth, postcode, created_at]
+
+  - id: crm_current_marked
+    type: compute
+    input: crm_current
+    columns:
+      came_from: "'crm'"
+      source_key: "'CRM-' || cast(customer_id as utf8)"
+
+  - id: crm_archive_marked
+    type: compute
+    input: crm_archive
+    columns:
+      came_from: "'crm archive 2023'"
+      source_key: "'CRM-' || cast(customer_id as utf8)"
+
+  - id: shop_marked
+    type: compute
+    input: shop
+    columns:
+      came_from: "'shop'"
+      source_key: "'SHOP-' || cast(customer_id as utf8)"
+
+  - id: everyone
+    type: union
+    input: [crm_current_marked, crm_archive_marked, shop_marked]   # shop customers have no ni_number: left empty
+
+  - id: tidy
+    type: compute
+    input: everyone
+    columns:
+      email: "lower(trim(email))"
+      first_name: "trim(first_name)"
+      last_name: "trim(last_name)"
+      name_key: "lower(trim(first_name) || ' ' || trim(last_name))"
+
+  - id: valid_email
+    type: gate
+    input: tidy
+    on_fail: quarantine
+    asset_rules: false             # three tables are read: the rules are written here
+    rules:
+      - {name: has an email, type: not_null, field: email, blank_is_missing: true}
+      - {name: email looks like one, type: matches_pattern, field: email, regex: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"}
+    max_failing_share: 0.1         # more than 10% failing stops the run: a source has gone wrong
+
+  - id: one_per_person
+    type: dedupe
+    input: valid_email
+    key: [email]
+    duplicates: latest
+    duplicates_by: created_at      # the record created most recently wins
+
+  - id: golden
+    type: write
+    input: one_per_person
+    source: files
+    path: samples/scenarios/onboarding/golden_customers.parquet
+    mode: replace
+
+  - id: quarantine
+    type: write
+    input: valid_email.quarantine
+    source: files
+    path: samples/scenarios/onboarding/quarantined_customers.csv
+    mode: replace
+
+  - id: folded_in
+    type: write
+    input: one_per_person.rejected
+    source: files
+    path: samples/scenarios/onboarding/merged_records.csv
+    mode: replace

@@ -1,0 +1,92 @@
+# Flow: nightly customer onboarding (a Kilnmark sample).
+# Runs the onboarding scenario end to end. It checks that the three customer tables are there, then
+# merges them into the golden customer file. If more than limit_share of the rows were set aside for
+# review, or the merge failed, it tells the stewards and stops. Otherwise it writes the pseudonymised
+# copy for analytics and the load record, and says it is done. If the pseudonymised copy's checks
+# fail, it tells the stewards and stops before the load record.
+# Why it matters: Onboarding feeds KYC, customer reporting and analytics, so a nightly load that has
+# gone wrong must stop and say so before anything downstream uses it. Stewards are told once, with
+# the share set aside, and review the quarantined rows the next morning.
+# Look for: the two check-source nodes, the condition on merge.quarantined_share, the notify and stop
+# nodes, and the run's diagram, which shows which way the flow went. Give it a schedule (designers
+# and admins, under Schedules) to run it every night. It runs no SQL, so the Starter Pack adds it
+# for everyone.
+# Needs: sample-onboarding-merge, sample-onboarding-pseudonymise and sample-onboarding-record, so
+# crm-db, shop-db and files. Running it needs a steward or above.
+kilnmark: flow/v1
+name: sample-onboarding-nightly
+description: Check the customer tables, merge them, then the analytics copy and the load record.
+
+parameters:
+  limit_share: { type: number, default: 0.05, description: The largest share of customer rows that may be set aside }
+
+nodes:
+  - id: crm_ready
+    type: check-source
+    source: crm-db
+    tables: [crm.customers, crm.customers_archive_2023]
+    timeout: 2m
+
+  - id: shop_ready
+    type: check-source
+    source: shop-db
+    tables: [shop.customers]
+    timeout: 2m
+
+  - id: merge
+    type: run-pipeline
+    pipeline: sample-onboarding-merge
+    timeout: 30m
+
+  - id: pseudonymise
+    type: run-pipeline
+    pipeline: sample-onboarding-pseudonymise
+    timeout: 30m
+
+  - id: record
+    type: run-pipeline
+    pipeline: sample-onboarding-record
+
+  - id: done
+    type: notify
+    title: "Customer onboarding done: ${merge.quarantined_share} of rows set aside for review"
+    message: The golden customers, the analytics copy and the load record are written.
+
+  - id: not_ready
+    type: notify
+    severity: high
+    title: The customer tables are not ready
+    message: The check that failed names the tables missing, or says the database could not be reached. Nothing was loaded.
+
+  - id: quality
+    type: notify
+    severity: medium
+    title: "Customer onboarding stopped: ${merge.quarantined_share} of rows set aside, more than ${limit_share}"
+    message: The analytics copy and the load record did not run. Review the quarantined customers, then run the flow again.
+
+  - id: failed
+    type: notify
+    severity: high
+    title: Customer onboarding failed
+    message: A pipeline run failed or its quality checks stopped it. Open the flow's run for the pipeline run and why.
+
+  - id: halt
+    type: stop
+    status: failed
+    message: Customer onboarding stopped before it finished
+
+connections:
+  - { from: crm_ready, to: shop_ready }
+  - { from: crm_ready, to: not_ready, when: failure }
+  - { from: shop_ready, to: merge }
+  - { from: shop_ready, to: not_ready, when: failure }
+  - { from: not_ready, to: halt }
+  - { from: merge, to: pseudonymise, when: "merge.quarantined_share < limit_share" }
+  - { from: merge, to: quality, when: "merge.quarantined_share >= limit_share" }
+  - { from: merge, to: failed, when: failure }
+  - { from: quality, to: halt }
+  - { from: pseudonymise, to: record }
+  - { from: pseudonymise, to: failed, when: failure }
+  - { from: record, to: done }
+  - { from: record, to: failed, when: failure }
+  - { from: failed, to: halt }

@@ -1,0 +1,77 @@
+# Month-end close: the exceptions summary (a Kilnmark sample).
+# The second step of the month-end scenario. Puts every region's exceptions together into one
+# worklist for the steward, largest amount owed first, and summarises them by region and kind:
+# how many customers, and how much is owed.
+# Why it matters: Before a period is closed, finance and risk typically sign off a summary of what
+# did not reconcile, with each exception listed for someone to clear. Totals that add up to the
+# worklist are what such a review checks.
+# Look for: the union of the five regions' files, the sort (owed desc) for the worklist, and the
+# aggregate. Its regions are the ones sample-close-month-end reconciles: keep the two lists alike.
+# Needs: files, and runs of sample-close-reconcile for the five regions first, which write the files
+# it reads; sample-close-month-end runs them all.
+kilnmark: pipeline/v1
+name: sample-close-summary
+description: Every region's exceptions in one worklist, and a summary by region and kind.
+
+nodes:
+  - id: london
+    type: read
+    source: files
+    asset: samples/scenarios/month-end/exceptions_London.parquet
+
+  - id: north
+    type: read
+    source: files
+    asset: samples/scenarios/month-end/exceptions_North.parquet
+
+  - id: south
+    type: read
+    source: files
+    asset: samples/scenarios/month-end/exceptions_South.parquet
+
+  - id: scotland
+    type: read
+    source: files
+    asset: samples/scenarios/month-end/exceptions_Scotland.parquet
+
+  - id: unassigned
+    type: read
+    source: files
+    asset: samples/scenarios/month-end/exceptions_Unassigned.parquet
+
+  - id: all_regions
+    type: union
+    input: [london, north, south, scotland, unassigned]
+
+  - id: worklist
+    type: sort
+    input: all_regions
+    by: [owed desc, region, customer_id]
+
+  - id: summary
+    type: aggregate
+    input: all_regions
+    group_by: [region, status]
+    values:
+      customers: "count(*)"
+      owed: "sum(owed)"
+      other_currency_payments: "sum(other_currency)"
+
+  - id: summary_in_order
+    type: sort
+    input: summary
+    by: [region, status]
+
+  - id: worklist_out
+    type: write
+    input: worklist
+    source: files
+    path: samples/scenarios/month-end/exceptions_worklist.csv
+    mode: replace
+
+  - id: summary_out
+    type: write
+    input: summary_in_order
+    source: files
+    path: samples/scenarios/month-end/exceptions_summary.csv
+    mode: replace

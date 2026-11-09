@@ -213,10 +213,54 @@ def lines(orders, products):
     write("shop", "order_lines", ["order_id", "line_no", "product_id", "quantity", "unit_price"], out)
 
 
+def read(schema, table):
+    with open(os.path.join(HERE, schema, table + ".csv"), encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def scenarios():
+    """The tables the business scenarios (samples/10-scenarios) need besides the others.
+
+    Made last, from the files already written and with a random generator of their own, so the
+    tables above stay exactly as they were.
+    """
+    r = random.Random(20261109)
+    # The cost agreed with the supplier for each product, before the latest feed. Most of the feed's
+    # latest costs are within a few percent of it; a few have moved by more than 20%, for the steward
+    # to review before they are trusted.
+    latest = {}
+    for row in read("stock", "supplier_feed"):
+        if row["sku"] not in latest or row["received_on"] > latest[row["sku"]]["received_on"]:
+            latest[row["sku"]] = row
+    big = {"KIT-1004": 0.35, "GAR-1014": -0.28, "OFF-1023": 0.42, "OUT-1032": 0.25, "LIG-1046": -0.31}
+    costs = []
+    for p in read("stock", "products"):
+        feed = latest.get(p["sku"])
+        if feed is None or float(feed["cost_price"]) <= 0:
+            agreed = float(p["list_price"]) * 0.4
+        else:
+            change = big.get(p["sku"], r.uniform(-0.08, 0.08))
+            agreed = float(feed["cost_price"]) / (1 + change)
+        agreed_on = dt.date(2026, 3, 1) + dt.timedelta(days=r.randrange(122))
+        costs.append([p["sku"], f"{max(agreed, 0.5):.2f}", agreed_on.isoformat()])
+    write("stock", "product_costs", ["sku", "agreed_cost", "agreed_on"], costs)
+
+    # The billing periods: one a month, as the month-end close reads and closes them. September is
+    # open, its invoices all issued, so the close can run; the months before are closed.
+    periods = []
+    for month in range(1, 10):
+        first = dt.date(2026, month, 1)
+        last = dt.date(2026, month + 1, 1) - dt.timedelta(days=1)
+        periods.append([first.strftime("%Y-%m"), first.isoformat(), last.isoformat(), "true",
+                        "open" if month == 9 else "closed"])
+    write("billing", "periods", ["period", "first_day", "last_day", "invoices_issued", "status"], periods)
+
+
 if __name__ == "__main__":
     accounts = crm()
     billing(accounts)
     orders = shop()
     products = stock()
     lines(orders, products)
+    scenarios()
     print("Wrote the sample data under", HERE)
