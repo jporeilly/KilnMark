@@ -50,6 +50,12 @@ fails, so it can be scheduled. No command prints a secret. Without cosign, `inst
 log records. Commands whose names start with `_` are the parts of install, upgrade and uninstall
 that run as another account; run them only through those three.
 
+On Windows, the logs leave out the error text of a check that finds nothing it needs to worry
+about, such as `image not known` before the images are there, or `The system cannot find the file
+specified` before the hourly task is set up. Such a check is part of a command working as it
+should, so it leaves nothing in the log that reads like a failure. When a check finds something
+wrong, the command says so in its own words.
+
 ## configure: change an answer later
 
 `configure` with no words shows the answers install was given, from `config/install.conf` in the

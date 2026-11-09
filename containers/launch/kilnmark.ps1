@@ -49,6 +49,7 @@ $script:Warnings = New-Object System.Collections.ArrayList
 $script:WarningFixes = New-Object System.Collections.ArrayList
 $script:Passed = New-Object System.Collections.ArrayList
 $script:Logging = $false
+$script:QuietError = ''
 
 # --- progress: [n/N] steps, each OK or FAILED, with the time it took ---------------------------
 $script:StepN = 0; $script:StepTotal = 0; $script:StepTitle = ''; $script:StepClock = $null
@@ -203,6 +204,100 @@ function Test-Elevated {
     return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# --- probes: programs whose error output is not news -------------------------------------------
+
+# Windows PowerShell's transcript (the logs in logs\) keeps what a program writes to its error output
+# even when it is sent to $null, and keeps a terminating error the script catches. A probe meant to
+# find nothing (an image not built yet, a scheduled task not made yet, a database still starting)
+# would leave error text in the log that reads like a failure. So a probe runs its program through
+# Invoke-Quiet, and a cmdlet that may find nothing runs with -ErrorAction SilentlyContinue (with
+# -ErrorVariable where the error matters), never Stop. A command whose error output the operator
+# should see runs as it always has.
+
+# One argument as a Windows program reads it back from its command line (CommandLineToArgvW and the
+# C runtime): as it is, or in double quotes when it is empty or holds a space, tab or double quote,
+# each double quote then escaped with a backslash and the backslashes before one (or before the
+# closing quote) doubled. -Always quotes it anyway.
+function ConvertTo-WindowsArgument([string]$Arg, [switch]$Always) {
+    if (-not $Always -and $Arg.Length -gt 0 -and $Arg -notmatch '[\s"]') { return $Arg }
+    $bs = [char]92
+    $sb = New-Object Text.StringBuilder
+    [void]$sb.Append('"')
+    $n = 0
+    foreach ($ch in $Arg.ToCharArray()) {
+        if ($ch -eq $bs) { $n++; continue }
+        if ($ch -eq [char]34) { [void]$sb.Append($bs, (2 * $n + 1)) }
+        elseif ($n -gt 0) { [void]$sb.Append($bs, $n) }
+        [void]$sb.Append($ch)
+        $n = 0
+    }
+    if ($n -gt 0) { [void]$sb.Append($bs, (2 * $n)) }
+    [void]$sb.Append('"')
+    return $sb.ToString()
+}
+
+# Runs a program (the first argument) with the rest as its arguments, its standard input closed
+# (never this script's, which a person's lines may be waiting on) and its error output read and
+# dropped outside PowerShell, so neither the screen nor the log sees it. Returns what it printed,
+# read as UTF-8, as one string, and sets $LASTEXITCODE to its exit code (9009, as cmd.exe says, when
+# there is no such program). What it wrote to its error output is kept in $script:QuietError, for a
+# caller to show when the answer means something went wrong. It inherits this process's environment (compose's KILNMARK_SECRETS_DIR,
+# KILNMARK_HOST_ADDRESS and PODMAN_COMPOSE_PROVIDER) and current folder. A name without a folder is
+# found as PowerShell finds a program, on PATH, never in the current folder first. Windows hands a
+# .cmd or .bat (the tests' stand-ins) to cmd.exe, which reads a % or a double quote in an argument
+# its own way: such an argument runs it as before, through PowerShell, error output and all.
+function Invoke-Quiet {
+    $list = @(foreach ($a in $args) { foreach ($x in @($a)) { if ($null -ne $x) { [string]$x } } })
+    $exe = $list[0]
+    $rest = @(); if ($list.Count -gt 1) { $rest = @($list[1..($list.Count - 1)]) }
+    $global:LASTEXITCODE = 9009; $script:QuietError = ''
+    if (-not [IO.Path]::IsPathRooted($exe)) {
+        $c = Get-Command $exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $c) { return '' }
+        $exe = $c.Source
+    }
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { return '' }
+    $batch = ([IO.Path]::GetExtension($exe) -match '^\.(cmd|bat)$')
+    if ($batch -and @($rest | Where-Object { $_ -match '[%"]' }).Count -gt 0) { return ((& $exe @rest 2> $null) | Out-String) }
+    # for cmd.exe, an argument with &, |, <, > or ^ in it is quoted, so it is not a command of its own
+    $quoted = @(foreach ($r in $rest) { ConvertTo-WindowsArgument $r -Always:($batch -and $r -match '[&|<>^]') })
+    $psi = New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName = $exe
+    $psi.Arguments = ($quoted -join ' ')
+    $psi.WorkingDirectory = (Get-Location -PSProvider FileSystem).ProviderPath
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $utf8 = New-Object Text.UTF8Encoding $false
+    $psi.StandardOutputEncoding = $utf8
+    $psi.StandardErrorEncoding = $utf8
+    # .NET starts a program's standard input with a byte-order mark when the console's input
+    # encoding has one (UTF-8 with a mark); PowerShell's own "$null |" sends none, and nor does this.
+    # Changing the encoding makes a new reader of this script's input, so the old one, with any
+    # lines it has read ahead, is put back.
+    $was = [Console]::InputEncoding
+    $swap = ($was.CodePage -eq 65001 -and $was.GetPreamble().Length -gt 0)
+    $reader = $null; if ($swap) { $reader = [Console]::In; [Console]::InputEncoding = $utf8 }
+    $p = $null
+    try { $p = [Diagnostics.Process]::Start($psi) } catch { $p = $null }
+    finally { if ($swap) { [Console]::InputEncoding = $was; [Console]::SetIn($reader) } }
+    if (-not $p) { return '' }
+    try {
+        $p.StandardInput.Close()
+        # the error output is read while the output is, so neither pipe fills and stops the program
+        $err = $p.StandardError.ReadToEndAsync()
+        $out = $p.StandardOutput.ReadToEnd()
+        $p.WaitForExit()
+        $script:QuietError = $err.Result
+        $global:LASTEXITCODE = $p.ExitCode
+        return $out
+    } finally { $p.Dispose() }
+}
+# The first line of a program's output, trimmed; empty when there is none.
+function Get-FirstLine([string]$Text) { return ('' + ($Text -split "`r?`n")[0]).Trim() }
+
 # --- engine and compose ------------------------------------------------------------------------
 
 # The engine's program by its full path: KILNMARK_ENGINE (a path, or a program's name), else podman
@@ -271,7 +366,8 @@ function Select-Engine {
     # its name, for the commands this script prints
     $script:EngineName = [IO.Path]::GetFileNameWithoutExtension($script:Engine)
     if ($script:EngineName -eq 'podman') {
-        & $script:Engine info *> $null
+        # a machine not started yet is what this finds out
+        $null = Invoke-Quiet $script:Engine info
         if ($LASTEXITCODE -ne 0) {
             Write-Host 'Starting the Podman machine ...'
             & $script:Engine machine start | Out-Host
@@ -328,13 +424,9 @@ function Get-RecordedMode { return (Get-RecordedSetting 'deployment_mode') }
 # id, made at its first start); empty when there is none, or the database does not answer.
 function Get-RecordedSetting([string]$Key) {
     $base = Get-ComposeArgs
-    # Asks first whether the table is there: on a fresh database, before Kilnmark's first start
-    # makes it, the answer is then empty rather than an error, which Windows PowerShell's transcript
-    # (the install log) keeps even when it is sent to $null.
-    # Never this script's standard input, which a person's lines may be waiting on.
-    $have = ($null | & $script:Engine @base exec -T postgres psql -U kilnmark -d kilnmark -X -q -At -c "SELECT to_regclass('kilnmark.server_setting') IS NOT NULL" 2> $null | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or $have -ne 't') { return '' }
-    $out = ($null | & $script:Engine @base exec -T postgres psql -U kilnmark -d kilnmark -X -q -At -c ("SELECT value FROM kilnmark.server_setting WHERE key = '" + $Key + "'") 2> $null | Out-String).Trim()
+    # Quietly: on a fresh database, before Kilnmark's first start makes the table, psql's error is
+    # the expected answer, "nothing recorded yet", and stays out of the install log.
+    $out = (Invoke-Quiet $script:Engine @base exec -T postgres psql -U kilnmark -d kilnmark -X -q -At -c ("SELECT value FROM kilnmark.server_setting WHERE key = '" + $Key + "'")).Trim()
     if ($LASTEXITCODE -ne 0) { return '' }
     return $out
 }
@@ -399,12 +491,13 @@ function Remove-RunSecrets {
 # release sets.
 function Test-TestHooks { return ($env:KILNMARK_TEST_HOOKS -ceq 'only-in-kilnmark-tests') }
 function Get-ExpiryTaskName { return ('Kilnmark ' + $Project + ' people expire') }
+function Get-SchtasksPath { if ((Test-TestHooks) -and $env:KILNMARK_SCHTASKS) { return $env:KILNMARK_SCHTASKS }; return 'schtasks.exe' }
 function Invoke-Schtasks {
-    $exe = 'schtasks.exe'; if ((Test-TestHooks) -and $env:KILNMARK_SCHTASKS) { $exe = $env:KILNMARK_SCHTASKS }
-    & $exe @args *> $null
+    & (Get-SchtasksPath) @args *> $null
     return ($LASTEXITCODE -eq 0)
 }
-function Test-ExpiryTask { return (Invoke-Schtasks /Query /TN (Get-ExpiryTaskName)) }
+# Quietly: no task yet is a usual answer, not an error for the log.
+function Test-ExpiryTask { $null = Invoke-Quiet (Get-SchtasksPath) /Query /TN (Get-ExpiryTaskName); return ($LASTEXITCODE -eq 0) }
 # Rights that change a file or folder, or what is in a folder: writing, appending, attributes,
 # adding or deleting what is in it, deleting, permissions, ownership, and the generic write and all.
 $TreeWrites = [long](0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x40000000 -bor 0x10000000)
@@ -767,7 +860,7 @@ function Test-WslHostLoopback { return ((Get-WslSetting 'experimental' 'hostAddr
 function Get-NetworkAddress {
     try {
         $best = ''; $bestMetric = [int]::MaxValue
-        foreach ($r in @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop)) {
+        foreach ($r in @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue)) {
             $ips = @(Get-NetIPAddress -InterfaceIndex $r.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notmatch '^(169\.254\.|127\.)' })
             if ($ips.Count -eq 0) { continue }
             $ifMetric = (Get-NetIPInterface -InterfaceIndex $r.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).InterfaceMetric
@@ -898,7 +991,7 @@ function Get-ImageNames([string]$V) { return @(($Registry + '/kilnmark-server:' 
 function Test-ImagesPresent([string]$V) {
     Select-Engine
     foreach ($i in (Get-ImageNames $V)) {
-        & $script:Engine image inspect $i *> $null
+        $null = Invoke-Quiet $script:Engine image inspect $i
         if ($LASTEXITCODE -ne 0) { return $false }
     }
     return $true
@@ -1073,7 +1166,8 @@ function Get-PortFix([int]$Port) {
 function Get-WslVersion {
     $w = 'wsl.exe'; if ((Test-TestHooks) -and $env:KILNMARK_WSL) { $w = $env:KILNMARK_WSL }
     $text = ''
-    try { $text = ((& $w --version 2> $null | Out-String) -replace "`0", '') } catch { $text = '' }
+    # wsl.exe writes UTF-16: read as UTF-8, its NULs go
+    $text = ((Invoke-Quiet $w --version) -replace "`0", '')
     if ($text -match 'WSL[^0-9\r\n]*([0-9][0-9.]*)') { return $Matches[1] }
     return ''
 }
@@ -1094,20 +1188,20 @@ function Test-Prerequisites([bool]$Running, [bool]$Keycloak = $false) {
         elseif ($docker) { Add-Problem ("'" + [IO.Path]::GetFileNameWithoutExtension($engine) + " compose' does not work.") 'winget install Docker.DockerCompose' }
         else { Add-Problem ("'" + [IO.Path]::GetFileNameWithoutExtension($engine) + " compose' does not work: Podman needs a compose tool.") 'winget install Docker.DockerCompose' }
         $info = $true
-        & $engine info *> $null
+        $null = Invoke-Quiet $engine info
         if ($LASTEXITCODE -ne 0) {
             $info = $false
             if ($docker) { Add-Problem 'Docker Desktop is not running.' 'start Docker Desktop' }
             else { Add-Problem 'The Podman machine is not running (or there is none).' 'podman machine start (none yet: podman machine init --rootful, then podman machine start)' }
         }
         if (-not $docker) {
-            $v = (& $engine version --format '{{.Client.Version}}' 2> $null | Select-Object -First 1 | Out-String).Trim()
+            $v = Get-FirstLine (Invoke-Quiet $engine version --format '{{.Client.Version}}')
             $major = 0; [void][int]::TryParse(($v -split '\.')[0], [ref]$major)
             if ($major -ge 5) { Add-Passed ('Podman ' + $v) }
             else { $shown = $v; if (-not $shown -or $major -eq 0) { $shown = 'of an unknown version' }; Add-Problem ('Podman ' + $shown + ' is too old: Kilnmark needs Podman 5 or later.') 'winget upgrade RedHat.Podman-Desktop' }
             if ($info) {
-                $cg = (& $engine info --format '{{.Host.CgroupsVersion}}' 2> $null | Select-Object -First 1 | Out-String).Trim()
-                $ctl = (& $engine info --format '{{.Host.CgroupControllers}}' 2> $null | Select-Object -First 1 | Out-String).Trim()
+                $cg = Get-FirstLine (Invoke-Quiet $engine info --format '{{.Host.CgroupsVersion}}')
+                $ctl = Get-FirstLine (Invoke-Quiet $engine info --format '{{.Host.CgroupControllers}}')
                 if ($cg -eq 'v1') { Add-Problem 'The Podman machine uses cgroups v1: rootless Podman needs cgroups v2.' 'add kernelCommandLine = cgroup_no_v1=all under [wsl2] in %UserProfile%\.wslconfig, then wsl --shutdown' }
                 elseif ($cg -eq 'v2' -and (' ' + ($ctl -replace '[\[\]]', ' ') + ' ') -notmatch ' pids ') { Add-Problem "Podman cannot use cgroups' pids controller, so no container starts (WSL 3.0.x breaks crun's pids controller: Podman needs WSL 2.7.11)." $WslFix }
                 elseif ($cg -eq 'v2') { Add-Passed 'cgroups v2, with the pids controller' }
@@ -1119,7 +1213,7 @@ function Test-Prerequisites([bool]$Running, [bool]$Keycloak = $false) {
             else { Add-Warning ('WSL ' + $wv + " is not the one Podman is known to work with here: WSL 2.7.11 (3.0.x breaks crun's pids controller).") $WslFix }
         }
         if ($info) {
-            $mem = (& $engine info --format $(if ($docker) { '{{.MemTotal}}' } else { '{{.Host.MemTotal}}' }) 2> $null | Select-Object -First 1 | Out-String).Trim()
+            $mem = Get-FirstLine (Invoke-Quiet $engine info --format $(if ($docker) { '{{.MemTotal}}' } else { '{{.Host.MemTotal}}' }))
             $bytes = [int64]0
             $want = 4; if ($Keycloak) { $want = 5 }
             if ([int64]::TryParse($mem, [ref]$bytes) -and $bytes -gt 0) {
@@ -1852,7 +1946,7 @@ function Set-InstallIdForSetup {
     if (-not (Invoke-ComposeQuietly up -d postgres)) { Fail "Kilnmark's database could not start. See why with: kilnmark.cmd logs postgres" }
     $base = Get-ComposeArgs
     for ($i = 0; $i -lt 60; $i++) {
-        & $script:Engine @base exec -T postgres pg_isready -h 127.0.0.1 -U kilnmark -d kilnmark *> $null
+        $null = Invoke-Quiet $script:Engine @base exec -T postgres pg_isready -h 127.0.0.1 -U kilnmark -d kilnmark
         if ($LASTEXITCODE -eq 0) { break }
         Start-Sleep -Seconds 2
     }
@@ -2343,8 +2437,8 @@ function Invoke-StopForUninstall([bool]$Purge) {
     # stop that install starting again.
     $kept = @()
     foreach ($i in (Get-ImageNames $v)) {
-        $users = (& $script:Engine ps -a --filter ('ancestor=' + $i) --format '{{.Names}}' 2> $null | Out-String).Trim()
-        if ($users) { $kept += $i } else { & $script:Engine rmi $i *> $null }
+        $users = (Invoke-Quiet $script:Engine ps -a --filter ('ancestor=' + $i) --format '{{.Names}}').Trim()
+        if ($users) { $kept += $i } else { $null = Invoke-Quiet $script:Engine rmi $i }
     }
     if ($kept.Count -gt 0) { Write-Host ('Kept the images ' + ($kept -join ' ') + ': other containers on this machine use them (another install, say).') }
     Write-Host "Kilnmark's containers, volumes and images are deleted."
@@ -2455,8 +2549,7 @@ function Invoke-Configure([string[]]$Options) {
 function Wait-OneOff([string]$Service) {
     Select-Engine
     for ($i = 0; $i -lt 150; $i++) {
-        $state = (& $script:Engine ps -a --filter ('label=com.docker.compose.project=' + $Project) --filter ('label=com.docker.compose.service=' + $Service) --format '{{.Status}}' 2> $null | Select-Object -First 1)
-        $state = ('' + $state).Trim()
+        $state = Get-FirstLine (Invoke-Quiet $script:Engine ps -a --filter ('label=com.docker.compose.project=' + $Project) --filter ('label=com.docker.compose.service=' + $Service) --format '{{.Status}}')
         if ($state.StartsWith('Exited (0)')) { return $true }
         if ($state.StartsWith('Exited')) { return $false }
         Start-Sleep -Seconds 2
@@ -3100,7 +3193,7 @@ function Invoke-Restore([string[]]$Options) {
     $ready = $false
     for ($i = 0; $i -lt 60; $i++) {
         $base = Get-ComposeArgs
-        & $script:Engine @base exec -T postgres pg_isready -h 127.0.0.1 -U kilnmark -d postgres *> $null
+        $null = Invoke-Quiet $script:Engine @base exec -T postgres pg_isready -h 127.0.0.1 -U kilnmark -d postgres
         if ($LASTEXITCODE -eq 0) { $ready = $true; break }
         Start-Sleep -Seconds 2
     }
@@ -3119,7 +3212,7 @@ function Invoke-Restore([string[]]$Options) {
         $ready = $false
         for ($i = 0; $i -lt 60; $i++) {
             $base = Get-ComposeArgs
-            & $script:Engine @base exec -T keycloak-db pg_isready -h 127.0.0.1 -U keycloak -d postgres *> $null
+            $null = Invoke-Quiet $script:Engine @base exec -T keycloak-db pg_isready -h 127.0.0.1 -U keycloak -d postgres
             if ($LASTEXITCODE -eq 0) { $ready = $true; break }
             Start-Sleep -Seconds 2
         }
@@ -3136,12 +3229,12 @@ function Invoke-Restore([string[]]$Options) {
     # restored copy, before anything is stopped or replaced.
     $modeSql = "SELECT value FROM kilnmark.server_setting WHERE key = 'deployment_mode'"
     $base = Get-ComposeArgs
-    $backupMode = (& $script:Engine @base exec -T postgres psql -U kilnmark -d kilnmark_restoring -X -q -At -c $modeSql 2> $null | Out-String).Trim()
+    $backupMode = (Invoke-Quiet $script:Engine @base exec -T postgres psql -U kilnmark -d kilnmark_restoring -X -q -At -c $modeSql).Trim()
     $liveMode = Get-RecordedMode
     if (-not $backupMode) { Fail 'The backup has no deployment mode recorded: it is from before deployment modes (release 0.1.1 or earlier, a preview), which cannot be restored into this release. Install Kilnmark afresh. Nothing was changed.' }
     # backup.txt names the mode and the install's id, as the dump recorded them: both must agree, so a
     # dump of another install, or a backup.txt changed since, is refused.
-    $backupId = (& $script:Engine @base exec -T postgres psql -U kilnmark -d kilnmark_restoring -X -q -At -c "SELECT value FROM kilnmark.server_setting WHERE key = 'install_id'" 2> $null | Out-String).Trim()
+    $backupId = (Invoke-Quiet $script:Engine @base exec -T postgres psql -U kilnmark -d kilnmark_restoring -X -q -At -c "SELECT value FROM kilnmark.server_setting WHERE key = 'install_id'").Trim()
     $fileMode = $info['deployment_mode']; $fileId = $info['install_id']
     if (-not $fileMode -or -not $fileId -or -not $backupId) { Fail 'The backup does not say which install it is of, and in which mode (taken by an earlier version, before they were recorded): take a new backup with this version. Nothing was changed.' }
     if ($fileMode -cne $backupMode -or $fileId -cne $backupId) { Fail "The backup's backup.txt does not match its database (the dump is of another install, or backup.txt was changed): the backup is not whole. Nothing was changed." }
@@ -3155,8 +3248,11 @@ function Invoke-Restore([string[]]$Options) {
         $kcSql = {
             param($q)
             $b = Get-ComposeArgs
-            $o = (& $script:Engine @b exec -T keycloak-db psql -U keycloak -d keycloak_restoring -X -q -At -v ON_ERROR_STOP=1 -c $q 2> $null | Out-String).Trim()
-            if ($LASTEXITCODE -ne 0) { Fail "Keycloak's database in the backup could not be checked. Nothing was changed." }
+            $o = (Invoke-Quiet $script:Engine @b exec -T keycloak-db psql -U keycloak -d keycloak_restoring -X -q -At -v ON_ERROR_STOP=1 -c $q).Trim()
+            if ($LASTEXITCODE -ne 0) {
+                if ($script:QuietError.Trim()) { Write-Host $script:QuietError.Trim() }
+                Fail "Keycloak's database in the backup could not be checked (why is above). Nothing was changed."
+            }
             return $o
         }
         $attr = "SELECT ra.value FROM realm_attribute ra JOIN realm r ON r.id = ra.realm_id WHERE r.name = 'kilnmark' AND ra.name = '{0}'"
@@ -3174,7 +3270,7 @@ function Invoke-Restore([string[]]$Options) {
     Write-Host 'Stopping Kilnmark'
     [void](Invoke-Compose stop kilnmark)
     $base = Get-ComposeArgs
-    & $script:Engine @base exec -T kilnmark true *> $null
+    $null = Invoke-Quiet $script:Engine @base exec -T kilnmark true
     if ($LASTEXITCODE -eq 0) { Fail 'Kilnmark is still running after the stop: nothing was replaced. Stop it, then run restore again.' }
 
     Write-Host ('Putting the restored database in place; the previous one is kept as ' + $before)
@@ -3206,7 +3302,7 @@ function Invoke-Restore([string[]]$Options) {
             & $script:Engine exec $cid sh -c $script | Out-Host
             $ok = ($LASTEXITCODE -eq 0)
         }
-        & $script:Engine rm -f $cid *> $null
+        $null = Invoke-Quiet $script:Engine rm -f $cid
     }
     Remove-Item $stage -Recurse -Force
     if (-not $ok) { Fail ('The keys volume could not be restored. Kilnmark is stopped; its previous database is ' + $before + ' and its previous keys are in before-restore-' + $stamp + ': see the guide, "Going back".') }

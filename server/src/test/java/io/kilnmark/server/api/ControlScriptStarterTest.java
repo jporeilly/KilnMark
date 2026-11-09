@@ -966,6 +966,44 @@ class ControlScriptStarterTest {
         }
     }
 
+    /**
+     * Windows PowerShell's transcript (logs\) keeps what a program writes to its error output even
+     * when the script sends it to $null. A probe that finds what it often finds, nothing (the images
+     * not there yet, no hourly task yet), leaves no error text there to read like a failure: it runs
+     * through Invoke-Quiet. What the script itself says is still logged.
+     */
+    @Test
+    void aProbeThatFindsNothingLeavesNoErrorInTheWindowsLog() throws Exception {
+        String powershell = System.getenv("KILNMARK_TEST_POWERSHELL");
+        Assumptions.assumeTrue(powershell != null && !powershell.isBlank(),
+            "set KILNMARK_TEST_POWERSHELL to powershell.exe to run this");
+        Path dir = Files.createTempDirectory("kilnmark-noisy-probes");
+        // an engine with no images until FAKE_IMAGES is set, saying so on its error output as Podman does
+        Path engine = dir.resolve("engine-ok.cmd");
+        Files.writeString(engine, "@echo off\r\n"
+            + "if \"%1 %2\"==\"image inspect\" if not defined FAKE_IMAGES (echo Error: unable to find the image: image not known 1>&2& exit /b 125)\r\n"
+            + "exit /b 0\r\n");
+        // a Task Scheduler with no task, saying so as schtasks.exe does
+        Path schtasks = dir.resolve("schtasks.cmd");
+        Files.writeString(schtasks, "@echo off\r\n"
+            + "if /i \"%1\"==\"/Query\" (echo ERROR: The system cannot find the file specified. 1>&2& exit /b 1)\r\n"
+            + "exit /b 0\r\n");
+        List<String> up = List.of(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+            LAUNCH.resolve("kilnmark.ps1").toAbsolutePath().toString(), "up", "-NoBrowser");
+        try (Api api = Api.start()) {
+            Path root = adminRoot(true, Map.of("KILNMARK_MODE", "production"), api);
+            String missing = run(up, root, engine.toString(), Map.of("KILNMARK_SCHTASKS", schtasks.toString()));
+            assertTrue(missing.contains("are not here"), missing);
+            // with the images, up goes on to the hourly task, looked for to remove it (no bundled Keycloak)
+            String started = run(up, root, engine.toString(), Map.of("KILNMARK_SCHTASKS", schtasks.toString(), "FAKE_IMAGES", "yes"));
+            assertTrue(started.contains("is ready at"), started);
+            String logs = logsOf(root);
+            assertTrue(logs.contains("are not here") && logs.contains("is ready at"), "both runs were logged: " + logs);
+            assertFalse(logs.contains("image not known"), "the image probe's error output was logged: " + logs);
+            assertFalse(logs.contains("cannot find the file specified"), "the task probe's error output was logged: " + logs);
+        }
+    }
+
     /** An install root with these settings, Kilnmark's API at the test's server. */
     private static Path adminRoot(boolean windows, Map<String, String> settings, Api api) throws IOException {
         Path root = installRoot(windows);
