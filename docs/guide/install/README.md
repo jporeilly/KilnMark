@@ -12,6 +12,7 @@ pages say the rest.
 | [The control script](control-script.md) | Every command, `configure`, `check`, the folders and who may change them |
 | [HTTPS and TLS](https.md) | HTTPS for Kilnmark, and TLS to its own database |
 | [Running Kilnmark](running-kilnmark.md) | Workers and their sizing, the files folder, external schedulers |
+| [A model server or database on this computer](models-on-this-computer.md) | Reaching Ollama, LM Studio or a database on the machine running Kilnmark |
 | [Checking a release](checking-a-release.md) | Signatures, checksums and SBOMs |
 | [Upgrading](upgrade.md) | Moving to a later release |
 | [Uninstalling](uninstall.md) | Taking Kilnmark off a machine |

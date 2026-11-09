@@ -150,7 +150,7 @@ Until you remove them, the database and keys the restore replaced are kept. To g
 its database, and run compose through the control script, which runs it with the install's
 project, settings, secrets and profiles: `kilnmark.sh ...` on Linux, as the account that runs
 Kilnmark (`sudo -iu kilnmark /opt/kilnmark/kilnmark.sh ...`), or
-`"C:\Program Files\Kilnmark\kilnmark.cmd" ...` on Windows. A plain `podman compose` or
+`& "C:\Program Files\Kilnmark\kilnmark.cmd" ...` on Windows. A plain `podman compose` or
 `docker compose` lacks them, and stops:
 
 ```

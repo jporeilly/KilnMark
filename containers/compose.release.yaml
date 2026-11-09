@@ -157,8 +157,14 @@ services:
     # KILNMARK_OIDC_CLIENT_SECRET). No default for any of them: unset, the line is left out of the
     # file (the last two then stay off). After kilnmark-env.sh, the image's own entrypoint.
     entrypoint: ["/bin/bash", "/run/kilnmark/start.sh", "java", "-XX:+UseZGC", "-jar", "quarkus-run.jar"]
+    # This computer, as Kilnmark's container reaches it: databases and model servers (Ollama, LM
+    # Studio) on the machine running Kilnmark. host-gateway, the engine's own route, unless
+    # KILNMARK_HOST_ADDRESS says otherwise: the Windows control script sets it to this computer's
+    # network address under WSL's mirrored networking, where host-gateway reaches the Podman
+    # machine, not Windows; set it in config/.env to choose the address yourself.
     extra_hosts:
-      - "host.docker.internal:host-gateway"   # reach databases on this machine (Podman also has host.containers.internal)
+      - "host.docker.internal:${KILNMARK_HOST_ADDRESS:-host-gateway}"
+      - "host.containers.internal:${KILNMARK_HOST_ADDRESS:-host-gateway}"
     volumes:
       - keys:/var/lib/kilnmark     # the key for stored source passwords, and drivers/ (Settings > Drivers): back it up apart from pgdata
       # Kilnmark's own files folder, writable: the files volume. The samples and the Starter Pack

@@ -46,7 +46,9 @@ short extract, like a search.
 For administrators: give the Assistant a model profile of its own. Answers take longer than the
 other features' calls, and a profile shared with **Ask in plain English** would make searches wait
 behind them. Set the profile's context size to the model server's: Kilnmark sends as much
-documentation and conversation as fits, and with less room it sends less.
+documentation and conversation as fits, and with less room it sends less. For a model server
+such as Ollama on the computer running Kilnmark, see
+[A model server or database on this computer](install/models-on-this-computer.md).
 
 With an embedding model set for **Search by meaning**, sections are found by meaning as well as
 by their words.
