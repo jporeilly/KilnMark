@@ -10,6 +10,7 @@ import {
   type RunTries as Tries,
   type RunTry,
 } from "../api";
+import { Who } from "./Who";
 
 /** "14:05": when a run's next try starts, in the reader's time. */
 export function clock(iso: string): string {
@@ -133,39 +134,59 @@ export function OwnersSection({ kind, name, role }: { kind: "pipeline" | "flow";
           {owners.none ? (
             <p className="small warning">{owners.note ?? "No owner: admins are told in their place."}</p>
           ) : (
-            <ul className="small owners-list">
+            <ul className="owners-list" aria-label={`Owners of the ${kind}`}>
               {owners.owners.map((o, i) => (
                 <li key={i}>
-                  {o.label}
-                  {o.kind === "team" && <span className="muted"> (team address)</span>}
+                  {/* A token by its name and a provider sign-in by its sso: name, the full record on hover. */}
+                  {o.kind === "team" ? <span className="km-who">{o.label}</span> : <Who name={o.label} />}
+                  {/* A team address hidden from this reader is labelled "A team address" already. */}
+                  {(o.kind !== "team" || o.entry != null) && (
+                    <span className="small muted">{o.kind === "team" ? "Team address" : "Person"}</span>
+                  )}
                 </li>
               ))}
             </ul>
           )}
-          <p className="small muted">
+          <p className="hint">
             Owners are told when a run fails after its last try, recovers, or takes longer than expected. Owning gives
             no rights.
           </p>
           {designer && (
-            <button type="button" onClick={start}>
-              Change owners
-            </button>
+            <div className="buttons">
+              <button type="button" onClick={start}>
+                Change owners
+              </button>
+            </div>
           )}
         </>
       )}
       {editing && (
-        <>
-          <label htmlFor="owners-edit">Sign-in names and team addresses, one a line (at most 10)</label>
-          <textarea id="owners-edit" rows={4} value={text} onChange={(e) => setText(e.target.value)} />
-          <div className="pl-head-actions">
-            <button type="button" onClick={submit} disabled={saving}>
+        // As the app's other forms: the label above, the box across the card, the hint under it, then the buttons.
+        <div className="owners-form">
+          <div className="field">
+            <label htmlFor="owners-edit">Owners, one a line</label>
+            <textarea
+              id="owners-edit"
+              rows={4}
+              value={text}
+              spellCheck={false}
+              aria-describedby="owners-edit-hint"
+              onChange={(e) => setText(e.target.value)}
+            />
+            <p className="hint" id="owners-edit-hint">
+              A person's sign-in name as Kilnmark records it (an API token's name, or sso: and a name for someone who signs
+              in through the identity provider), or a team address an admin added under Settings, Email. At most 10.
+            </p>
+          </div>
+          <div className="buttons">
+            <button type="button" className="primary" onClick={submit} disabled={saving}>
               {saving ? "Saving…" : "Save owners"}
             </button>
             <button type="button" onClick={() => setEditing(false)} disabled={saving}>
               Cancel
             </button>
           </div>
-        </>
+        </div>
       )}
       {error && (
         <p role="alert" className="error">

@@ -1,15 +1,16 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { api, formatNumber, type PipelineColumn, type PipelineProblem, type PipelineNodeQuality, type PipelineValidation, type Source, type NodeType, plural } from "../../api";
 import { dimensionWord, percent, RULE_STATUS_WORDS, nodeQualityWords } from "../quality";
 import type { PredictedQuality } from "../prediction";
 import { PredictedSection } from "./PredictedSection";
 import { browseApi } from "../../browse/browseApi";
-import { columnsText } from "../outline";
 import { arrivingColumns, columnSide, kindWord, problemSetting, problemWords, shownSettings } from "./insight";
 import { portOfLink, portsOf, refText, type Catalogue, type GraphEdge, type GraphNode, type Value } from "./model";
 import { SettingControl } from "./SettingControls";
 import { runWords, NodeIcon, type NodeRunInfo } from "./NodeCard";
 import { NodeMetricsList } from "../NodeMetricsList";
+import { ReadSqlShown } from "./ReadSqlShown";
+import { PortColumns } from "./PortColumns";
 import type { NodeMetrics } from "../nodeMetrics";
 
 const assetCache = new Map<string, Promise<string[]>>();
@@ -96,6 +97,7 @@ export function SettingsPanel({
   predicted = null,
   metrics = null,
   parameters = [],
+  yaml,
   onSetting,
   onRename,
   onDisconnect,
@@ -119,6 +121,8 @@ export function SettingsPanel({
   metrics?: NodeMetrics | null;
   /** The parameters the pipeline declares, offered as `${name}` in expressions. */
   parameters?: string[];
+  /** The pipeline's YAML as it stands, for the server to work out a read's SQL from; none: not shown. */
+  yaml?: string;
   onSetting: (key: string, value: Value | undefined, kind: string) => void;
   onRename: (to: string) => string | null;
   onDisconnect: (edge: GraphEdge) => void;
@@ -278,25 +282,30 @@ export function SettingsPanel({
           <h4 id={`${base}-settings`}>Settings</h4>
           {specs.length === 0 && extra.length === 0 && <p className="small muted">This node has no settings.</p>}
           {specs.map((spec) => (
-            <SettingControl
-              key={`${node.id}:${spec.key}`}
-              spec={spec}
-              id={`${base}-${spec.key}`}
-              value={node.settings[spec.key]}
-              text={node.texts[spec.key]}
-              readOnly={readOnly}
-              problems={bySetting.get(spec.key) ?? []}
-              onChange={(v) => onSetting(spec.key, v, spec.kind)}
-              context={{
-                columns,
-                side: columnSide(node.type, spec.key),
-                sources,
-                writing: type.kind === "sink",
-                assets: spec.kind === "asset" ? assets : null,
-                nodeType: node.type,
-                parameters,
-              }}
-            />
+            <Fragment key={`${node.id}:${spec.key}`}>
+              <SettingControl
+                spec={spec}
+                id={`${base}-${spec.key}`}
+                value={node.settings[spec.key]}
+                text={node.texts[spec.key]}
+                readOnly={readOnly}
+                problems={bySetting.get(spec.key) ?? []}
+                onChange={(v) => onSetting(spec.key, v, spec.kind)}
+                context={{
+                  columns,
+                  side: columnSide(node.type, spec.key),
+                  sources,
+                  writing: type.kind === "sink",
+                  assets: spec.kind === "asset" ? assets : null,
+                  nodeType: node.type,
+                  parameters,
+                }}
+              />
+              {/* What the read sends to its database, under the box where a person's own query would go. */}
+              {node.type === "read" && spec.key === "query" && (
+                <ReadSqlShown id={`${base}-sql`} yaml={yaml} node={node.id} query={node.settings.query != null} />
+              )}
+            </Fragment>
           ))}
           {notes.length > 0 && (
             <ul className="cv-node-notes" aria-label={`Notes on ${node.id}`}>
@@ -333,7 +342,11 @@ export function SettingsPanel({
       <div className="cv-set-run">
       <section className="cv-section" aria-labelledby={`${base}-cols`}>
         <h4 id={`${base}-cols`}>Columns leaving this node</h4>
-        <p className="small">{outline ? columnsText(outline) : "Known once the pipeline has been checked."}</p>
+        {outline ? (
+          <PortColumns outline={outline} label={`Columns leaving ${node.id}, by output`} />
+        ) : (
+          <p className="small">Known once the pipeline has been checked.</p>
+        )}
       </section>
 
       {predicted && <PredictedSection p={predicted} id={`${base}-predicted`} />}
