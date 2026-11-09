@@ -28,7 +28,8 @@ class WrittenFilesStreamTest {
 
     private static FilesConnector.LocalFile checked(Path file) throws IOException {
         BasicFileAttributes a = Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-        return new FilesConnector.LocalFile(file, a.size(), a.lastModifiedTime().toInstant(), a.fileKey());
+        return new FilesConnector.LocalFile(file, a.size(), a.lastModifiedTime().toInstant(), a.fileKey(),
+            file.getParent().toRealPath(), file.getFileName().toString());
     }
 
     /** Counts what is written, keeping none of it. */
@@ -85,6 +86,17 @@ class WrittenFilesStreamTest {
         Counting out = new Counting();
         WrittenFiles.copy(was, out);
         assertEquals(5, out.bytes);
+    }
+
+    @Test
+    void anotherSitesPageIsToldApartFromKilnmarksOwn() {
+        assertEquals(false, WrittenFiles.crossSite("same-origin", true, false), "Kilnmark's own page");
+        assertEquals(false, WrittenFiles.crossSite("none", true, false), "an address typed or bookmarked");
+        assertEquals(true, WrittenFiles.crossSite("cross-site", true, false));
+        assertEquals(true, WrittenFiles.crossSite("same-site", false, true), "a browser saying so is believed");
+        assertEquals(true, WrittenFiles.crossSite(null, true, false), "a session cookie from a browser saying nothing");
+        assertEquals(false, WrittenFiles.crossSite(null, false, true), "a script with its token");
+        assertEquals(false, WrittenFiles.crossSite(null, true, true), "a token, whatever cookie comes with it");
     }
 
     @Test

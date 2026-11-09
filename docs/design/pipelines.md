@@ -1154,16 +1154,19 @@ asset's previous profile.
   folder opened and checked against the roots as for any read, the target checked again as a write's
   (`FileTarget`), then `LocalFileStore.exact`, which takes only a regular file reached through no
   link, with no other name (`unix:nlink` 1) and spelt as on disk; it must match the recorded place,
-  size, time and key, and is checked again as it is opened (`NOFOLLOW_LINKS`, links, size, time
-  and file key). With nothing recorded (older runs)
-  it must have changed within the run's own time, in a folder the server may write. Who may have it
+  size, time and key, and is opened by `LocalFileStore.openBelow` one folder at a time through
+  `SecureDirectoryStream` handles that never follow a link (Linux; by path elsewhere), its
+  attributes read through that handle before and after the open and compared again. With nothing recorded (older runs)
+  it must have changed within the run's own time, in a folder the server may write, and is treated
+  as sensitive. Who may have it
   is `Sights.wholeFile`: the quality views' rule asked to unmask, failing closed (as if every column
   were marked) when the run did not catalogue it or it has no columns there, or when an asset the
   run read has a mark newer than the run's start. Every download and refusal is an audit
   event (`file.downloaded`, `file.download_refused`, the latter rate-limited per caller as
   `api.refused` is, in a share of their own). A GET with the session cookie changes nothing, so a
-  plain link works for a provider sign-in; one whose `Sec-Fetch-Site` says another site sent it is
-  refused (`cross_site`); HEAD answers 405. A token sign-in fetches the file with its token.
+  plain link works for a provider sign-in; one whose `Sec-Fetch-Site` says another site sent it,
+  or a cookie request without a token or that header, is refused (`cross_site`); HEAD answers 405;
+  a download not sent whole is recorded as refused with `not_sent`. A token sign-in fetches the file with its token.
 - **Cancelling.** A queued run is cancelled at once and its job taken off the queue; a running one
   is interrupted within about half a second, and one asked to stop while its nodes are being set
   up stops before they run. A running run reads whether it is asked to stop in memory, from its

@@ -709,8 +709,9 @@ run's:
 - **Deleted**, or **changed since**: the file was deleted, or written again or replaced (by a later
   run, say). Kilnmark checks the file's place, size and time against what the run recorded when it
   wrote it, and never sends a file that is not the run's. Download it from the run that wrote it
-  last, or run the pipeline again. Runs from before this release recorded no size: their files can
-  still be downloaded, with a note that they may have changed.
+  last, or run the pipeline again. Runs from before this release recorded no size, so Kilnmark
+  cannot be sure the file there is theirs: those files are treated as sensitive, with a note that
+  they may have changed.
 
 Only files in a folder on the Kilnmark server can be downloaded; a file written to a bucket is read
 from the bucket. Kilnmark finds the file only where its write put it: you choose a file of a run,

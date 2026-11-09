@@ -180,7 +180,7 @@ for seeing values:
 
 Anyone who may see the run sees its files listed, and the reason when the button is off. A file is
 treated as sensitive when a column it holds is marked (by a steward, or carried by the run from what
-it read), when its columns are not in the catalogue, and when something it was made from has had a
+it read), when its columns are not in the catalogue or the run did not record the file, and when something it was made from has had a
 column marked since the run. Every download and every refusal is in the audit log, with who, the
 run, the source and path, and the size; never the file's contents.
 

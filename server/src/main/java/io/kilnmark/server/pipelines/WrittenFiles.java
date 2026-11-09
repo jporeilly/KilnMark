@@ -30,6 +30,7 @@ import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.kiln.plugins.files.FilesConnector;
+import io.kilnmark.kiln.plugins.files.LocalFileStore;
 import io.kilnmark.server.audit.AuditLog;
 import io.kilnmark.server.quality.Masking;
 import io.kilnmark.server.quality.Sights;
@@ -75,6 +76,9 @@ public class WrittenFiles {
     static final String SOURCE_GONE = "The source this run wrote to has been deleted, so its file cannot be found.";
     static final String NOT_HERE = "Only files written to a folder on this server can be downloaded; this one is "
         + "elsewhere (in a bucket, say). Read it from there.";
+    static final String UNRECORDED_SENSITIVE = "This run did not record the file it wrote, so Kilnmark cannot be "
+        + "sure it is the run's own: it is treated as sensitive, and only people who may see sensitive values "
+        + "unmasked can download it.";
     static final String CROSS_SITE = "This download was asked for by another site's page, so it was refused. "
         + "Download the file from Kilnmark's own page.";
     static final String UNRECORDED = "This run did not record the file's size, so it may have changed since the run.";
@@ -106,7 +110,8 @@ public class WrittenFiles {
     }
 
     /** A file cleared for sending: where it is, as checked, and how to name it. */
-    public record Download(FilesConnector.LocalFile file, String filename, String contentType) {
+    public record Download(FilesConnector.LocalFile file, String filename, String contentType,
+                           Map<String, Object> detail) {
     }
 
     /** One entry of the run's record of what it wrote, with its place there. */
@@ -217,7 +222,7 @@ public class WrittenFiles {
             detail.put("unrecorded", true);
         }
         audit.record(actor, AuditLog.FILE_DOWNLOADED, target, detail);
-        return new Download(c.file(), filename(w.target()), contentType(w.target()));
+        return new Download(c.file(), filename(w.target()), contentType(w.target()), detail(w, c.file().size()));
     }
 
     private PipelineStore.Run run(long id) {
@@ -305,8 +310,11 @@ public class WrittenFiles {
 
     /** Why the caller may not take the file, in words, or null when they may: decided by {@link Sights}. */
     String refusal(PipelineStore.Run r, Written w, Sights sights) {
-        boolean known = w.registered() && graph.asset(w.urn()).map(a -> !a.fields().isEmpty() && a.removedAt() == null)
-            .orElse(false);
+        // A file the run did not record cannot be told apart from one written there since (by another
+        // source over the same folder, say), so its columns are not known either.
+        boolean recorded = w.bytes() != null && w.modified() != null && w.location() != null;
+        boolean known = recorded && w.registered()
+            && graph.asset(w.urn()).map(a -> !a.fields().isEmpty() && a.removedAt() == null).orElse(false);
         // What it was made from: its lineage, and everything the run read (more than this write's
         // inputs, perhaps, which only fails closed).
         java.util.Set<String> from = new java.util.LinkedHashSet<>();
@@ -331,7 +339,7 @@ public class WrittenFiles {
         if (!sights.marks(w.urn()).isEmpty()) {
             return SENSITIVE;
         }
-        return known ? MARKED_SINCE : UNKNOWN;
+        return known ? MARKED_SINCE : recorded ? UNKNOWN : UNRECORDED_SENSITIVE;
     }
 
     private WebApplicationException refuse(AuditLog.Actor actor, String target, Written w, Long bytes, String code,
@@ -400,14 +408,25 @@ public class WrittenFiles {
      * exactly its checked size is sent, so a file growing meanwhile sends no more.
      */
     public static void copy(FilesConnector.LocalFile expected, OutputStream out) throws IOException {
-        try (FileChannel channel = FileChannel.open(expected.path(), StandardOpenOption.READ,
-            LinkOption.NOFOLLOW_LINKS)) {
-            BasicFileAttributes a = Files.readAttributes(expected.path(), BasicFileAttributes.class,
-                LinkOption.NOFOLLOW_LINKS);
-            if (!a.isRegularFile() || FilesConnector.otherNames(expected.path()) || a.size() != expected.size()
-                || channel.size() != expected.size()
-                || !a.lastModifiedTime().toInstant().equals(expected.modified())
-                || !Objects.equals(a.fileKey(), expected.key())) {
+        // Through folder handles that never follow a link, where the file system has them (Linux): a
+        // folder swapped for a link meanwhile leads nowhere. Elsewhere, by path.
+        LocalFileStore.Opened opened = expected.root() == null ? null
+            : LocalFileStore.openBelow(expected.root(), expected.relative());
+        java.nio.channels.SeekableByteChannel open;
+        BasicFileAttributes before;
+        BasicFileAttributes after;
+        if (opened != null) {
+            open = opened.channel();
+            before = opened.before();
+            after = opened.after();
+        } else {
+            open = FileChannel.open(expected.path(), StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+            before = Files.readAttributes(expected.path(), BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            after = before;
+        }
+        try (java.nio.channels.SeekableByteChannel channel = open) {
+            if (!same(before, expected) || !same(after, expected) || channel.size() != expected.size()
+                || FilesConnector.otherNames(expected.path())) {
                 throw new IOException("The file changed as it was about to be sent");
             }
             byte[] chunk = new byte[1 << 16];
@@ -427,5 +446,35 @@ public class WrittenFiles {
             }
             out.flush();
         }
+    }
+
+    /** Whether the attributes are those of the file as it was checked: a regular file, its size, time and key. */
+    private static boolean same(BasicFileAttributes a, FilesConnector.LocalFile expected) {
+        return a.isRegularFile() && a.size() == expected.size()
+            && a.lastModifiedTime().toInstant().equals(expected.modified()) && Objects.equals(a.fileKey(), expected.key());
+    }
+
+    /**
+     * Whether a download was started by another site's page, to refuse: its browser says so
+     * ({@code Sec-Fetch-Site} other than same-origin, or none for an address typed or bookmarked), or,
+     * signed in by a session cookie and not a token, its browser says nothing (an older browser),
+     * since a link on another site sends the cookie too. Scripts are signed in by their token.
+     */
+    public static boolean crossSite(String fetchSite, boolean sessionCookie, boolean bearer) {
+        if (fetchSite == null) {
+            return sessionCookie && !bearer;
+        }
+        return !fetchSite.equalsIgnoreCase("same-origin") && !fetchSite.equalsIgnoreCase("none");
+    }
+
+    /**
+     * Records that a download cleared to go was not sent whole: the file changed as it was opened, or
+     * the connection broke. The {@code file.downloaded} event before it says it was asked for.
+     */
+    public void notSent(AuditLog.Actor actor, long id, Download d) {
+        Map<String, Object> detail = new java.util.LinkedHashMap<>(d.detail());
+        detail.put("refused", "not_sent");
+        detail.put("status", 500);
+        audit.record(actor, AuditLog.FILE_DOWNLOAD_REFUSED, "pipeline-run/" + id, detail);
     }
 }

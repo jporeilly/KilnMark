@@ -35,17 +35,20 @@ wrote, and must be in the audit log (ADR 0029).
    size, time and file key, and is checked once more as it is opened. A file deleted is refused as deleted (410); one written again,
    replaced, or reached another way (a moved folder, a link) as changed or unreachable (409). Runs
    from before this recorded nothing: their file must have changed within the run's own time (not
-   after it ended), in a folder the server may write (so never the read-only share), and is sent with a note that it may
-   have changed. Only folders on this server are served; a file in a bucket is read from there.
+   after it ended), in a folder the server may write (so never the read-only share); as it cannot be
+   told from a file written there since, it is treated as sensitive (point 4) and comes with a note
+   that it may have changed. Only folders on this server are served; a file in a bucket is read from there.
 
 4. **Who may have it is decided by `Sights`, failing closed.** `Sights.wholeFile` is the quality
    views' rule (`Sights.of`, asked to unmask, since a file holds every value): values only for roles
    that may see data (stewards and above), and a file holding a column marked sensitive, a mark the
    run carried included, only for a designer with the unmask grant, approved when approval is on.
    Admins see it masked everywhere, so they cannot download it. A file is treated as sensitive when
-   its columns are not in the catalogue (the run did not catalogue it), and when an asset the run
+   its columns are not in the catalogue (the run did not catalogue it), when the run did not record
+   it, and when an asset the run
    read (its lineage, and everything the run read) has had a column marked since the run started,
-   which the run could not carry.
+   which the run could not carry. Only marks on what the run read are looked at, not on what those
+   were made from: the same reach as marks carried by a run.
    Anyone who may see the run sees the list, with the reason a file cannot be downloaded.
 
 5. **Every download and every refusal is an audit event**: `file.downloaded` and
@@ -53,7 +56,8 @@ wrote, and must be in the audit log (ADR 0029).
    size, and why when refused; never the file's contents. Refusals, which any viewer can cause, are
    kept at most 30 a minute for each caller, in a share of their own so they cannot crowd out
    `api.refused`; the JSON line has every one. HEAD is not offered (405): it would run the download
-   without sending it.
+   without sending it. A download cleared but not sent whole (the file changed as it was opened, or
+   the connection broke) is recorded too, as refused with `not_sent`, after its `file.downloaded`.
 
 6. **GET with the caller's own sign-in, not a signed link.** The download is a plain GET, signed in
    as every other request is: by an API token's header, or by the provider session's cookie. GET
@@ -62,7 +66,8 @@ wrote, and must be in the audit log (ADR 0029).
    cookie is SameSite=Lax, a page on another site could also send the browser there: it could not
    read the file, but it would land in the person's downloads and the audit log as theirs. So a
    request whose browser says it came from another site (`Sec-Fetch-Site` other than `same-origin`
-   or `none`) is refused and recorded (`cross_site`); scripts send no such header. A page
+   or `none`), or that comes with the session cookie, no token and no such header (an older
+   browser), is refused and recorded (`cross_site`); scripts send their token. A page
    signed in with a token cannot put the token on a link, so it fetches the file with the header
    and saves it.
 
@@ -85,10 +90,14 @@ wrote, and must be in the audit log (ADR 0029).
   see why. A steward who needs such a file asks one.
 - A run's file can be downloaded only while it is still the run's: a later run that replaces it
   makes the earlier run's download refuse, pointing at the later run.
-- Someone with write access to the source's folder on the server itself could swap a checked
-  folder for a link between the check and the open; the final check as the file is opened (no
-  link, no other name, same size, time and file key) narrows that, and the folders an administrator allows should be
-  writable only by Kilnmark and people trusted with what it writes, as for writes.
+- On Linux the file is opened one folder at a time through handles that never follow a link, and
+  its attributes are read through the same handle just before and after it is opened, so a folder
+  swapped for a link leads nowhere. Someone with write access to the file's own folder on the server
+  could still rename another file of the same size into its place and back around the moment it is
+  opened; Java gives no way to read the opened file's own identity. On Windows (development only)
+  files are opened by path, with no file key or link count to compare. The folders an administrator
+  allows should be writable only by Kilnmark and people trusted with what it writes, as for writes.
+  Such a swap can only serve a file from that same folder, which is the source's own.
 - A deployment that splits api and worker processes must give the api processes the same files
   volume, or downloads say the file cannot be reached.
 - A page signed in with an API token holds the file in the browser's memory before saving it; for

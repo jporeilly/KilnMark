@@ -160,6 +160,19 @@ class LocalFileStoreTest {
             assertThrows(IOException.class, () -> files.writtenFile(source, "exports/twin.csv"));
             assertThrows(IOException.class, () -> files.writtenFile(source, "exports/2025/orders.csv"));
         }
+        // Opened one folder at a time, never through a link (where the file system has folder handles).
+        Path real = share.toRealPath();
+        LocalFileStore.Opened opened = LocalFileStore.openBelow(real, "exports/2025/orders.csv");
+        if (opened != null) {
+            try (var c = opened.channel()) {
+                assertEquals(Files.size(share.resolve("exports/2025/orders.csv")), c.size());
+                assertEquals(opened.before().fileKey(), opened.after().fileKey());
+            }
+            for (String refused : List.of("escape-dir/passwords.csv", "escape.csv", "inside-link.csv", "../secret/passwords.csv",
+                "exports/./2025/orders.csv")) {
+                assertThrows(IOException.class, () -> LocalFileStore.openBelow(real, refused), refused);
+            }
+        }
         Files.createDirectories(share.resolve("folder.csv"));
         assertThrows(IOException.class, () -> files.writtenFile(source, "folder.csv"), "a folder is not a file");
         // A source outside the allowed roots finds nothing, whatever the path.

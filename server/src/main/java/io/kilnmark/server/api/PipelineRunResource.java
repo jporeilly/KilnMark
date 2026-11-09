@@ -188,21 +188,25 @@ public class PipelineRunResource {
         @APIResponse(responseCode = "410", description = "The file, or the source it was written to, has been "
             + "deleted")})
     public Response file(@PathParam("id") long id, @PathParam("index") String index,
-                         @jakarta.ws.rs.HeaderParam("Sec-Fetch-Site") String fetchSite) {
+                         @jakarta.ws.rs.HeaderParam("Sec-Fetch-Site") String fetchSite,
+                         @jakarta.ws.rs.core.Context jakarta.ws.rs.core.HttpHeaders headers) {
         // A page on another site can send the browser here with the session cookie (it is SameSite=Lax):
         // it could not read the file, but would save it on the person's computer and in the audit log as
         // theirs. Browsers say where a request came from (Kilnmark's own pages: same-origin; a typed
         // address: none); scripts send nothing, and are signed in by their token.
-        boolean crossSite = fetchSite != null && !fetchSite.equalsIgnoreCase("same-origin")
-            && !fetchSite.equalsIgnoreCase("none");
-        io.kilnmark.server.pipelines.WrittenFiles.Download d = writtenFiles.download(id, index, sights,
-            io.kilnmark.server.audit.AuditLog.actor(identity), crossSite);
+        String authorization = headers.getHeaderString("Authorization");
+        boolean bearer = authorization != null && authorization.regionMatches(true, 0, "Bearer ", 0, 7);
+        boolean session = headers.getCookies().keySet().stream().anyMatch(n -> n.startsWith("q_session"));
+        io.kilnmark.server.audit.AuditLog.Actor actor = io.kilnmark.server.audit.AuditLog.actor(identity);
+        io.kilnmark.server.pipelines.WrittenFiles.Download d = writtenFiles.download(id, index, sights, actor,
+            io.kilnmark.server.pipelines.WrittenFiles.crossSite(fetchSite, session, bearer));
         jakarta.ws.rs.core.StreamingOutput body = out -> {
             try {
                 io.kilnmark.server.pipelines.WrittenFiles.copy(d.file(), out);
-            } catch (java.io.IOException e) {
+            } catch (java.io.IOException | RuntimeException e) {
                 org.jboss.logging.Logger.getLogger(PipelineRunResource.class).warnf("Pipeline run %d's file %s was "
                     + "not sent whole: %s", id, index, e.getMessage());
+                writtenFiles.notSent(actor, id, d);
                 throw e;
             }
         };

@@ -240,8 +240,12 @@ public final class FilesConnector extends FileSourceConnector {
      * @param size     its size in bytes
      * @param modified when it was last changed
      * @param key      what the file system knows it by (an inode), or null where it has none
+     * @param root     the source's folder, links resolved, which {@code relative} is below; null to
+     *                 open {@code path} as it is
+     * @param relative the file's path below {@code root}
      */
-    public record LocalFile(Path path, long size, java.time.Instant modified, Object key) {
+    public record LocalFile(Path path, long size, java.time.Instant modified, Object key, Path root,
+                            String relative) {
     }
 
     /**
@@ -272,7 +276,8 @@ public final class FilesConnector extends FileSourceConnector {
             }
             java.nio.file.attribute.BasicFileAttributes a = Files.readAttributes(file,
                 java.nio.file.attribute.BasicFileAttributes.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
-            return new LocalFile(file, a.size(), a.lastModifiedTime().toInstant(), a.fileKey());
+            return new LocalFile(file, a.size(), a.lastModifiedTime().toInstant(), a.fileKey(), local.root(),
+                checked.path());
         }
     }
 }

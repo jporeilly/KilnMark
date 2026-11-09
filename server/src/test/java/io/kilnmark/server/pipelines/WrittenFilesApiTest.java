@@ -321,6 +321,16 @@ class WrittenFilesApiTest {
                 assertEquals(WrittenFiles.UNREACHABLE, r.jsonPath().getString("error"));
                 assertFalse(r.asString().contains("secret"));
             }
+            // A file the run did not record (a run from before files were recorded) cannot be told from one
+            // written there since: it is for those who may see sensitive values unmasked only.
+            sql("UPDATE kilnmark.pipeline_run SET result = ?::jsonb WHERE id = ?", before, plain);
+            sql("UPDATE kilnmark.pipeline_run SET result = jsonb_set(result, '{written,0,file}', 'null'::jsonb) "
+                + "WHERE id = ?", plain);
+            download(steward, plain, 0).then().statusCode(403).body("error", equalTo(WrittenFiles.UNRECORDED_SENSITIVE));
+            JsonPath unrecorded = as(unmask).get("/api/v1/pipeline-runs/" + plain + "/files").then().extract().jsonPath();
+            assertEquals("unrecorded", unrecorded.getString("files[0].state"), unrecorded.prettify());
+            assertEquals(WrittenFiles.UNRECORDED, unrecorded.getString("files[0].note"));
+            download(unmask, plain, 0).then().statusCode(200);
         } finally {
             sql("UPDATE kilnmark.pipeline_run SET result = ?::jsonb WHERE id = ?", before, plain);
         }
