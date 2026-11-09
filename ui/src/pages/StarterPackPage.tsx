@@ -22,6 +22,7 @@ const STEP_LABELS: Record<string, string> = {
   "files source": "Files source",
   "sample tables": "Sample tables",
   samples: "Samples in the Library",
+  "example schedule": "Example schedule",
   "sample flows": "Sample flows",
   "sample pipelines": "Sample pipelines",
   sources: "Sources",
@@ -196,7 +197,11 @@ export function StarterPackPage() {
               a database source and a files source on it, both allowing writing, with the files in{" "}
               <span className="mono">{d.files ?? "the files folder"}</span>;
             </li>
-            <li>every sample, in the Library, ready to run ({d.samples} there now).</li>
+            <li>every sample, in the Library, ready to run ({d.samples} there now);</li>
+            <li>
+              an example schedule, on the <a href={href.schedules()}>Schedules</a> page: it runs{" "}
+              <span className="mono">sample-read-write-csv</span> every hour. Pause or delete it as you like.
+            </li>
           </ul>
           {d.tablesRun && (
             <p>
@@ -208,8 +213,8 @@ export function StarterPackPage() {
             </p>
           )}
           <p className="hint">
-            Turning it off removes every sample in the Library, the pack&apos;s sources, its tables (the database stays,
-            empty) and its files, and nothing else. Both are in the audit log.
+            Turning it off removes every sample in the Library with its schedules, the pack&apos;s sources, its tables
+            (the database stays, empty) and its files, and nothing else. Both are in the audit log.
           </p>
         </Card>
       )}

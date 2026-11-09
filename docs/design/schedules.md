@@ -174,6 +174,11 @@ the schedules its own transaction deleted, so one added while it was being delet
 never removed unrecorded. The runs themselves are recorded as runs, requested by the
 schedule.
 
+The Starter Pack (ADR 0051, decision 4) sets one example schedule when it is turned on, through
+`ScheduleService.create` with the admin's own setter and role, as the API does, and records
+`schedule.set` with `via: starter pack`. It adds none while its sample has a schedule, and its
+sample's delete takes it when the pack is turned off.
+
 ## 9. Settings
 
 | Setting | Default | Meaning |

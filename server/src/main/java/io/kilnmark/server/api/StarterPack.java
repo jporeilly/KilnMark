@@ -44,6 +44,7 @@ import io.kilnmark.server.pipelines.Samples;
 import io.kilnmark.server.quality.Sights;
 import io.kilnmark.server.schedules.ScheduleService;
 import io.kilnmark.server.schedules.ScheduleStore;
+import io.kilnmark.server.schedules.ScheduleViews;
 import io.kilnmark.server.sources.HostPolicy;
 import io.kilnmark.server.starter.ExampleAccounts;
 import io.kilnmark.server.variables.VariableService;
@@ -59,8 +60,9 @@ import jakarta.ws.rs.core.Response;
  * <li>on: a database source on {@code kilnmark_samples} (the empty database every install has on
  * Kilnmark's own PostgreSQL server, reached with its own login, which can connect to that database
  * only) and a files source on a folder of its own in the files folder, both with Allow writing on;
- * the sample tables and the samples in the Library reading them; then the banner;</li>
- * <li>off, once the admin has typed DELETE: the samples, those sources, the tables in
+ * the sample tables and the samples in the Library reading them; one example schedule, on
+ * {@value #EXAMPLE_PIPELINE}; then the banner;</li>
+ * <li>off, once the admin has typed DELETE: the samples with their schedules, those sources, the tables in
  * kilnmark_samples (the database stays, empty) and the files in the pack's folder.</li>
  * </ul>
  *
@@ -93,6 +95,19 @@ public class StarterPack {
     public static final String SCHEMA = "public";
     /** What the admin types to turn the pack off. */
     public static final String CONFIRM = "DELETE";
+
+    /**
+     * The sample the pack schedules, so a new install shows a schedule and its runs: one read and one
+     * write, the CRM accounts into one CSV file in the pack's own folder, replaced on each run.
+     */
+    public static final String EXAMPLE_PIPELINE = "sample-read-write-csv";
+    /** When the example schedule runs: every hour, on the hour. */
+    public static final String EXAMPLE_CRON = "0 * * * *";
+    /** The example schedule's zone. */
+    public static final String EXAMPLE_ZONE = "UTC";
+    /** The example schedule's description, which says whose it is. */
+    public static final String EXAMPLE_DESCRIPTION = "The Starter Pack's example schedule: runs "
+        + EXAMPLE_PIPELINE + " every hour. Pause or delete it as you like.";
 
     /** One step of turning the pack on or off: what, how it went (done, skipped, failed), and what happened. */
     public record Step(String step, String outcome, String detail) {
@@ -136,12 +151,13 @@ public class StarterPack {
     private final FlowService flows;
     private final FlowStore flowStore;
     private final VariableService variables;
+    private final ScheduleService schedules;
     private final AuditLog audit;
     private final Object lock = new Object();
 
     public StarterPack(KilnmarkConfig config, ServerSettings settings, GraphStore store, SecretBox secrets,
                        SourceService sources, Samples samples, PipelineService pipelines, FlowService flows,
-                       FlowStore flowStore, VariableService variables, AuditLog audit) {
+                       FlowStore flowStore, VariableService variables, ScheduleService schedules, AuditLog audit) {
         this.config = config;
         this.settings = settings;
         this.store = store;
@@ -152,6 +168,7 @@ public class StarterPack {
         this.flows = flows;
         this.flowStore = flowStore;
         this.variables = variables;
+        this.schedules = schedules;
         this.audit = audit;
     }
 
@@ -296,10 +313,12 @@ public class StarterPack {
     // ---- turning it on ----
 
     /**
-     * Turns the pack on: the two sources, the sample tables and the samples. Refused (409) on a
-     * production install, always: only a Starter Pack install has it (ADR 0051).
+     * Turns the pack on: the two sources, the sample tables, the samples and the example schedule,
+     * set by {@code setter} as a schedule the API adds is. Refused (409) on a production install,
+     * always: only a Starter Pack install has it (ADR 0051).
      */
-    public Result turnOn(String by, AccessRole role, Sights sights, AuditLog.Actor actor) {
+    public Result turnOn(String by, ScheduleStore.Setter setter, AccessRole role, Sights sights,
+                         AuditLog.Actor actor) {
         if (!io.kilnmark.server.starter.ModeCheck.samplesAllowed(config)) {
             throw refused(actor, "production", "This is a production install: the Starter Pack, for training and "
                 + "development only, is never turned on here. Nothing was changed. For a trial, install a separate "
@@ -361,6 +380,7 @@ public class StarterPack {
                     }
                     return String.join(", ", words) + ", in the Library";
                 });
+                exampleSchedule(steps, setter, role, sights, actor);
             }
             audit.record(actor, AuditLog.STARTER_PACK_ADDED, "starter pack", Map.of("steps", outcomes(steps)));
             LOG.infof("Starter Pack turned on by %s", by);
@@ -372,6 +392,40 @@ public class StarterPack {
     private WebApplicationException refused(AuditLog.Actor actor, String why, String message) {
         audit.record(actor, AuditLog.STARTER_PACK_ADDED, "starter pack", Map.of("refused", why));
         return ApiError.of(Response.Status.CONFLICT, message);
+    }
+
+    /** The step that sets the example schedule. */
+    static final String EXAMPLE_STEP = "example schedule";
+
+    /**
+     * Sets the example schedule on {@value #EXAMPLE_PIPELINE} as {@code POST /api/v1/schedules} does,
+     * and records it as {@code schedule.set} with {@code via: starter pack} (ADR 0029, ADR 0046). Only
+     * on the pack's own sample in the Library, and only while it has no schedule: turning the pack on
+     * again never adds a second. It goes with the sample when the pack is turned off.
+     */
+    private void exampleSchedule(List<Step> steps, ScheduleStore.Setter setter, AccessRole role, Sights sights,
+                                 AuditLog.Actor actor) {
+        boolean ours = pipelines.list(sights).stream().anyMatch(p -> EXAMPLE_PIPELINE.equals(p.name())
+            && Samples.LIBRARY.equals(p.library()));
+        if (!ours) {
+            steps.add(new Step(EXAMPLE_STEP, "skipped", EXAMPLE_PIPELINE + " is not a sample in the Library, so no "
+                + "schedule was set on it"));
+            return;
+        }
+        run(steps, EXAMPLE_STEP, () -> {
+            List<ScheduleViews.Schedule> there = schedules.list(EXAMPLE_PIPELINE, null, false);
+            if (!there.isEmpty()) {
+                return "already there: " + EXAMPLE_PIPELINE + " has a schedule (schedule " + there.get(0).id()
+                    + "), so no second one was added";
+            }
+            ScheduleStore.Schedule s = schedules.create(new ScheduleViews.ScheduleChange(EXAMPLE_PIPELINE, null,
+                EXAMPLE_CRON, EXAMPLE_ZONE, Map.of(), null, true, EXAMPLE_DESCRIPTION), setter, role);
+            Map<String, Object> detail = ScheduleService.auditDetail(s);
+            detail.put("via", "starter pack");
+            audit.record(actor, AuditLog.SCHEDULE_SET, "schedule " + s.id(), detail);
+            return "schedule " + s.id() + " runs " + EXAMPLE_PIPELINE + " every hour, on the hour (UTC), on the "
+                + "Schedules page";
+        });
     }
 
     private static Map<String, String> outcomes(List<Step> steps) {

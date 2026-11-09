@@ -76,7 +76,9 @@ public class StarterPackResource {
     @Operation(summary = "Turn the Starter Pack on", description = "Adds the pack: a database source on "
         + "kilnmark_samples (its own database on Kilnmark's PostgreSQL server, reached with its own login) and a files "
         + "source on the pack's folder in the files folder, both with Allow writing on; the sample tables (the pipeline "
-        + "sample-tables, run at once) and every sample into the Library. A source of either name that the pack did "
+        + "sample-tables, run at once), every sample into the Library, and an example schedule running "
+        + "sample-read-write-csv every hour, set by you and recorded as schedule.set, unless that sample has a "
+        + "schedule already. A source of either name that the pack did "
         + "not make is left as it is. Safe to repeat. Refused (409) on a production install, always, and recorded. "
         + "Answers with each step and how it went. Role: admin.")
     @APIResponses({
@@ -86,7 +88,8 @@ public class StarterPackResource {
         @APIResponse(responseCode = "409", description = "A production install, the samples not offered, or no "
             + "database for the pack here")})
     public StarterPack.Result turnOn() {
-        return pack.turnOn(who(), AccessRole.highest(identity::hasRole), sights, AuditLog.actor(identity));
+        return pack.turnOn(who(), io.kilnmark.server.schedules.ScheduleService.setter(identity, who()),
+            AccessRole.highest(identity::hasRole), sights, AuditLog.actor(identity));
     }
 
     /** Body of {@code POST /api/v1/starter-pack/people}. */
@@ -118,7 +121,8 @@ public class StarterPackResource {
     @Consumes(MediaType.APPLICATION_JSON)
     @RolesAllowed(AccessRole.ADMIN_ROLE)
     @Operation(summary = "Turn the Starter Pack off", description = "Removes what the pack added, once confirmed with "
-        + "{\"confirm\": \"DELETE\"}: every sample pipeline and flow in the Library, the pack's two sources (and "
+        + "{\"confirm\": \"DELETE\"}: every sample pipeline and flow in the Library with "
+        + "its schedules, the example schedule included, the pack's two sources (and "
         + "Kilnmark's sample data source unless your own pipelines or flows read it), the tables in kilnmark_samples "
         + "(the database stays, empty) and the files in the pack's folder. Nothing else: the example people are the "
         + "control script's to remove. Safe to repeat. Answers with each step and how it went; the banner goes once "

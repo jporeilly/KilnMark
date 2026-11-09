@@ -175,5 +175,6 @@ describe("Settings, Starter Pack", () => {
     expect(host.textContent).toContain("Skipped");
     expect(host.textContent).not.toMatch(/password/i);
     expect(stepLabel("sample tables")).toBe("Sample tables");
+    expect(stepLabel("example schedule")).toBe("Example schedule");
   });
 });

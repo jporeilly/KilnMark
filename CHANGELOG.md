@@ -759,6 +759,14 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
   longer suggests turning the pack off, which would leave the example people in Keycloak.
 - **Auto-layout orders a join's inputs by their ports**: on sample-join, orders (`left`) sits above
   customers (`right`), so their connections no longer cross.
+- **A Starter Pack install shows a schedule from the start.** The Schedules page was empty. Turning
+  the Starter Pack on now sets one example schedule: `sample-read-write-csv` every hour, on the
+  hour (UTC), which reads the example accounts and replaces one CSV file in the pack's folder, so
+  running it again and again is harmless. It is set by the admin who turned the pack on, acts as
+  steward, and is in the audit log as **Schedule set** (`via: starter pack`). Pause or delete it
+  like any schedule. Turning the pack on again never adds a second; turning it off deletes it with
+  the sample. A production install never has it
+  ([A Starter Pack install](docs/guide/install/starter-pack.md#the-example-schedule)).
 - **Smaller things**: the Library's **Look for when it runs** and the other parts of a sample's
   explanation start with a capital, unless they start with something to type; the Pipeline choice
   on a flow's node is wider, so long names are not cut off, and no longer offers `sample-tables`,
