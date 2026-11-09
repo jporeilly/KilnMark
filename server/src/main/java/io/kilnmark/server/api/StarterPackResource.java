@@ -121,8 +121,9 @@ public class StarterPackResource {
     @Consumes(MediaType.APPLICATION_JSON)
     @RolesAllowed(AccessRole.ADMIN_ROLE)
     @Operation(summary = "Turn the Starter Pack off", description = "Removes what the pack added, once confirmed with "
-        + "{\"confirm\": \"DELETE\"}: every sample pipeline and flow in the Library with "
-        + "its schedules, the example schedule included, the pack's two sources (and "
+        + "{\"confirm\": \"DELETE\"}: the samples' schedules, the example schedule included (each recorded as "
+        + "schedule.deleted); their runs still queued or running, cancelled; every sample pipeline and flow in the "
+        + "Library, naming any still busy and going on with the rest; the pack's two sources (and "
         + "Kilnmark's sample data source unless your own pipelines or flows read it), the tables in kilnmark_samples "
         + "(the database stays, empty) and the files in the pack's folder. Nothing else: the example people are the "
         + "control script's to remove. Safe to repeat. Answers with each step and how it went; the banner goes once "

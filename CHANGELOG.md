@@ -762,10 +762,13 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
 - **A Starter Pack install shows a schedule from the start.** The Schedules page was empty. Turning
   the Starter Pack on now sets one example schedule: `sample-read-write-csv` every hour, on the
   hour (UTC), which reads the example accounts and replaces one CSV file in the pack's folder, so
-  running it again and again is harmless. It is set by the admin who turned the pack on, acts as
-  steward, and is in the audit log as **Schedule set** (`via: starter pack`). Pause or delete it
-  like any schedule. Turning the pack on again never adds a second; turning it off deletes it with
-  the sample. A production install never has it
+  running it again and again is harmless: the file does not grow, though the run history gains one
+  short run an hour until the schedule is paused or deleted. It is set by the admin who turned the
+  pack on, acts as steward, and is in the audit log as **Schedule set** (`via: starter pack`).
+  Pause or delete it like any schedule. Turning the pack on again never adds a second. Turning it
+  off now deletes the samples' schedules first, then cancels any sample's run still queued or
+  running, so a run never stops the samples going; a sample still busy is named, and the rest go
+  on. A production install never has it
   ([A Starter Pack install](docs/guide/install/starter-pack.md#the-example-schedule)).
 - **Smaller things**: the Library's **Look for when it runs** and the other parts of a sample's
   explanation start with a capital, unless they start with something to type; the Pipeline choice

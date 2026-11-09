@@ -23,6 +23,8 @@ const STEP_LABELS: Record<string, string> = {
   "sample tables": "Sample tables",
   samples: "Samples in the Library",
   "example schedule": "Example schedule",
+  "sample schedules": "Sample schedules",
+  "sample runs": "Sample runs",
   "sample flows": "Sample flows",
   "sample pipelines": "Sample pipelines",
   sources: "Sources",
@@ -213,8 +215,9 @@ export function StarterPackPage() {
             </p>
           )}
           <p className="hint">
-            Turning it off removes every sample in the Library with its schedules, the pack&apos;s sources, its tables
-            (the database stays, empty) and its files, and nothing else. Both are in the audit log.
+            Turning it off deletes the samples&apos; schedules, cancels their runs still queued or running, and removes
+            every sample in the Library, the pack&apos;s sources, its tables (the database stays, empty) and its files,
+            and nothing else. Both are in the audit log.
           </p>
         </Card>
       )}

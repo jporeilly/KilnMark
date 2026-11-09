@@ -98,14 +98,19 @@ converted: Production or Starter Pack.
    them; then one example schedule (owner, 9 November 2026, from walking 0.1.2: the Schedules page
    of a new install was empty). It runs `sample-read-write-csv` every hour, on the hour, in UTC: one
    read of the example CRM accounts and one write, `mode: replace`, of one CSV file in the pack's
-   folder, so its runs only read the example data and overwrite the same file, and nothing grows.
-   It is set through `ScheduleService` as `POST /api/v1/schedules` sets one, by the admin turning the
+   folder, so its runs only read the example data and overwrite the same file: the files do not
+   grow. The run history does: one short run an hour, about 24 a day, until the schedule is paused
+   or deleted, as Kilnmark trims no run history. It is set through `ScheduleService` as `POST /api/v1/schedules` sets one, by the admin turning the
    pack on (install's admin token, when install does it), acting as steward, and recorded as
    `schedule.set` with `via: starter pack`. Only on the pack's own sample in the Library, and only
    while that sample has no schedule, so turning the pack on again never adds a second.
-   `DELETE /api/v1/starter-pack` with `{"confirm": "DELETE"}` turns it off: every sample
-   pipeline and flow in the Library with its schedules (the example one included, each recorded
-   as `schedule.deleted`, `via: pipeline deleted`), the two sources (and `sample-data` unless a team's own pipeline
+   `DELETE /api/v1/starter-pack` with `{"confirm": "DELETE"}` turns it off. First the samples'
+   schedules, the example one included, each recorded as `schedule.deleted` with
+   `via: starter pack`, so no sample starts again; then every run of a sample still queued or
+   running, cancelled as **Cancel** cancels it and named in `starter.removed`, since a pipeline or
+   flow with a run going cannot be deleted, and a queued run never clears while no worker runs.
+   Then every sample pipeline and flow in the Library; one that still cannot be deleted is named
+   and the rest go on. Then the two sources (and `sample-data` unless a team's own pipeline
    or flow reads it), the `sample_region` variable the pack set, every table and schema the samples'
    login owns in `kilnmark_samples` (the database stays, empty) and the pack's folder in the files
    folder. Nothing else; the pack is reported off only once every step has worked. Both are safe to

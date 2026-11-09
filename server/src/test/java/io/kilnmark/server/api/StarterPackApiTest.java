@@ -211,6 +211,27 @@ class StarterPackApiTest {
     @jakarta.inject.Inject
     io.kilnmark.server.schedules.Scheduler scheduler;
 
+    /**
+     * Holds every pipeline job queued from now on in the queue, as when no worker is running (true),
+     * or stops holding them (false): a trigger keeps their run_after a day ahead, even when a freed
+     * place makes waiting jobs due.
+     */
+    private void holdPipelineJobs(boolean hold) throws Exception {
+        try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
+            if (hold) {
+                s.execute("CREATE OR REPLACE FUNCTION kilnmark.test_hold_pipeline_jobs() RETURNS trigger LANGUAGE "
+                    + "plpgsql AS $$ BEGIN IF NEW.kind = '"
+                    + io.kilnmark.server.pipelines.PipelineStore.JOB_KIND + "' AND NEW.status = 'queued' THEN "
+                    + "NEW.run_after := now() + interval '1 day'; END IF; RETURN NEW; END $$");
+                s.execute("CREATE TRIGGER test_hold_pipeline_jobs BEFORE INSERT OR UPDATE ON kilnmark.job FOR EACH ROW "
+                    + "EXECUTE FUNCTION kilnmark.test_hold_pipeline_jobs()");
+            } else {
+                s.execute("DROP TRIGGER IF EXISTS test_hold_pipeline_jobs ON kilnmark.job");
+                s.execute("DROP FUNCTION IF EXISTS kilnmark.test_hold_pipeline_jobs()");
+            }
+        }
+    }
+
     @Test
     @Order(3)
     void theExampleScheduleRunsOneSampleEveryHourAndRunningItAgainIsHarmless() throws Exception {
@@ -320,30 +341,49 @@ class StarterPackApiTest {
         }
         admin().contentType(ContentType.JSON).body(Map.of("field", field, "sensitive", true))
             .put("/api/v1/quality/asset/sensitive?urn=" + urn).then().statusCode(204);
-        // a schedule on a sample: deleted with it, and recorded as a pipeline's own delete records it
+        // a schedule on a sample: deleted before it, and recorded as any schedule's delete is
         long schedule = admin().contentType(ContentType.JSON).body(Map.of("pipeline", "sample-limit", "cron", "0 6 * * *"))
             .post("/api/v1/schedules").then().statusCode(201).extract().jsonPath().getLong("id");
-        // and the pack's example schedule, which goes with its sample in the same way
+        // and the pack's example schedule, whose run is queued when the pack is turned off: held in
+        // the queue, as it is when no worker is running, so its sample cannot be deleted until it is
+        // cancelled
         long example = ((Number) exampleSchedules().get(0).get("id")).longValue();
         int removed = events(AuditLog.STARTER_PACK_REMOVED);
         int schedulesDeleted = events(AuditLog.SCHEDULE_DELETED);
-        JsonPath r = admin().contentType(ContentType.JSON).body(Map.of("confirm", "DELETE")).delete("/api/v1/starter-pack")
-            .then().statusCode(200).extract().jsonPath();
+        JsonPath r;
+        long queued;
+        holdPipelineJobs(true);
+        try {
+            fireNow(example);
+            queued = admin().get("/api/v1/schedules/" + example).then().statusCode(200).extract().jsonPath()
+                .getLong("lastPipelineRun");
+            admin().get("/api/v1/pipeline-runs/" + queued).then().statusCode(200).body("run.status", equalTo("queued"));
+            r = admin().contentType(ContentType.JSON).body(Map.of("confirm", "DELETE")).delete("/api/v1/starter-pack")
+                .then().statusCode(200).extract().jsonPath();
+        } finally {
+            holdPipelineJobs(false);
+        }
         assertFalse(r.getBoolean("on"), r.prettify());
         assertEquals(List.of(), r.getList("steps.findAll { it.outcome == 'failed' }"), r.prettify());
+        assertEquals("1 queued or running, cancelled", r.getString("steps.find { it.step == 'sample runs' }.detail"),
+            r.prettify());
         eventually(AuditLog.STARTER_PACK_REMOVED, removed + 1);
         eventually(AuditLog.SCHEDULE_DELETED, schedulesDeleted + 2);
         JsonPath gone = admin().get("/api/v1/audit?action=" + AuditLog.SCHEDULE_DELETED + "&limit=2").then().statusCode(200)
             .extract().jsonPath();
         String limitGone = "events.find { it.target == 'schedule " + schedule + "' }";
         assertEquals("sample-limit", gone.getString(limitGone + ".detail.pipeline"), gone.prettify());
+        assertEquals("starter pack", gone.getString(limitGone + ".detail.via"), gone.prettify());
         String exampleGone = "events.find { it.target == 'schedule " + example + "' }";
         assertEquals(StarterPack.EXAMPLE_PIPELINE, gone.getString(exampleGone + ".detail.pipeline"), gone.prettify());
-        assertEquals("pipeline deleted", gone.getString(exampleGone + ".detail.via"), gone.prettify());
+        assertEquals("starter pack", gone.getString(exampleGone + ".detail.via"), gone.prettify());
         assertEquals(List.of(), exampleSchedules(), "the example schedule is gone");
-        // starter.removed names what went
+        // starter.removed names what went, the cancelled run included
         JsonPath ev = admin().get("/api/v1/audit?action=" + AuditLog.STARTER_PACK_REMOVED + "&limit=1").then().statusCode(200)
             .extract().jsonPath();
+        assertTrue(ev.getList("events[0].detail.pipelineRunsCancelled").contains((int) queued), ev.prettify());
+        assertTrue(ev.getList("events[0].detail.pipelines").contains(StarterPack.EXAMPLE_PIPELINE), ev.prettify());
+        assertEquals(2, ev.getList("events[0].detail.schedules").size(), ev.prettify());
         assertTrue(ev.getList("events[0].detail.pipelines").contains("sample-limit"), ev.prettify());
         assertTrue(ev.getList("events[0].detail.pipelines").contains(Samples.SETUP), ev.prettify());
         assertFalse(ev.getList("events[0].detail.flows").isEmpty(), ev.prettify());

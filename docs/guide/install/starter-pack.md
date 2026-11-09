@@ -52,8 +52,9 @@ The page shows each step and how it went. A source called `starter-samples-db` o
 `starter-samples-files` that the pack did not make, your own, is left as it is: the page says so.
 
 **Turn it off** under **Settings**, **Starter Pack**: choose **Turn off** and type `DELETE`.
-Kilnmark removes every sample in the Library with its schedules, the example schedule included,
-the pack's sources, the tables in `kilnmark_samples`
+Kilnmark deletes the samples' schedules, the example schedule included, cancels any sample's run
+still queued or running, then removes every sample in the Library, the pack's sources, the tables
+in `kilnmark_samples`
 (the database stays, empty) and the files in `/srv/files/starter-pack`. Nothing else changes, and
 the install stays a Starter Pack install. The example people stay until you remove them. Both
 turning on and off are in the audit log, and the access review marks kilnmark.com accounts as
@@ -66,8 +67,9 @@ sets one schedule: it runs `sample-read-write-csv` every hour, on the hour, in U
 (`0 * * * *`). Its description says it is the Starter Pack's example schedule. That sample is the
 smallest there is: it reads the CRM accounts from `kilnmark_samples` and writes them to one CSV
 file in the pack's folder, `samples/read-and-write/accounts.csv`, replacing it on each run. So the
-runs only ever read the example data and overwrite the same file: nothing grows, and nothing
-outside the pack is touched.
+runs only ever read the example data and overwrite the same file, and nothing outside the pack
+is touched. The files do not grow; the run history does, by one short run an hour (about 24 a
+day), until you pause or delete the schedule.
 
 - **Who set it.** The admin who turned the pack on (when install turns it on, the server's admin
   token), as if they had added it on the Schedules page. Its runs act as steward, never as an admin,
@@ -81,8 +83,10 @@ outside the pack is touched.
 - **Turning the pack on again** adds it only if `sample-read-write-csv` has no schedule at all, so
   there is never a second one. If you deleted it, turning the pack on again brings it back; if you
   paused it, it stays paused.
-- **Turning the pack off** deletes it with the sample, recorded as **Schedule deleted**, with
-  `via: pipeline deleted`.
+- **Turning the pack off** deletes it first, recorded as **Schedule deleted**, with
+  `via: starter pack`, then cancels any sample's run still queued or running, then deletes the
+  samples. If a sample's run is still stopping, the page names that sample and the rest go on:
+  nothing of the pack's is scheduled any more, and turning it off again a minute later finishes.
 
 ## Its database
 
