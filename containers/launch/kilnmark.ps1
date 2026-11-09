@@ -26,7 +26,7 @@ $Project = ''; if ($env:KILNMARK_PROJECT) { $Project = $env:KILNMARK_PROJECT }
 # Compose fills ${NAME} from this process's environment before config\.env. These must mean what
 # config\.env says, as this script reads them (ADR 0051), so a value set outside never counts.
 $OneRun = @('KILNMARK_STARTER_PEOPLE_ACTION', 'KILNMARK_PEOPLE_ACTION', 'KILNMARK_PERSON_EMAIL', 'KILNMARK_PERSON_FIRST_NAME', 'KILNMARK_PERSON_LAST_NAME', 'KILNMARK_PERSON_GROUPS', 'KILNMARK_INSTALL_ID', 'KILNMARK_RUN_DIR')
-foreach ($n in (@('KILNMARK_MODE', 'KILNMARK_STARTER', 'KILNMARK_ENV_FILE', 'KILNMARK_CERTS_DIR', 'KILNMARK_KEYCLOAK_BIND', 'KILNMARK_OIDC_VIEWER_GROUPS', 'KILNMARK_OIDC_STEWARD_GROUPS', 'KILNMARK_OIDC_DESIGNER_GROUPS', 'KILNMARK_OIDC_ADMIN_GROUPS', 'KILNMARK_OIDC_UNMASK_GROUPS') + $OneRun)) {
+foreach ($n in (@('KILNMARK_MODE', 'KILNMARK_STARTER', 'KILNMARK_ENV_FILE', 'KILNMARK_CERTS_DIR', 'KILNMARK_SECRETS_DIR', 'KILNMARK_KEYCLOAK_BIND', 'KILNMARK_OIDC_VIEWER_GROUPS', 'KILNMARK_OIDC_STEWARD_GROUPS', 'KILNMARK_OIDC_DESIGNER_GROUPS', 'KILNMARK_OIDC_ADMIN_GROUPS', 'KILNMARK_OIDC_UNMASK_GROUPS') + $OneRun)) {
     Remove-Item ('Env:' + $n) -ErrorAction SilentlyContinue
 }
 $Launchers = @('kilnmark.ps1', 'kilnmark.cmd', 'start-kilnmark.cmd', 'stop-kilnmark.cmd', 'create-shortcut.ps1', 'kilnmark.ico')
@@ -203,23 +203,44 @@ function Test-Elevated {
 
 # --- engine and compose ------------------------------------------------------------------------
 
+# The engine's program by its full path: KILNMARK_ENGINE (a path, or a program's name), else podman
+# or docker as PATH finds them. A program only, never a script of that name, and run by this path,
+# so what the hourly run's checks passed (Get-EngineProblem) is what runs. Empty when there is none.
+function Get-EnginePath {
+    $e = $env:KILNMARK_ENGINE
+    if ($e) {
+        if ([IO.Path]::IsPathRooted($e)) { return $e }
+        $c = Get-Command $e -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($c) { return $c.Source }
+        return ''
+    }
+    foreach ($n in @('podman', 'docker')) {
+        $c = Get-Command $n -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($c) { return $c.Source }
+    }
+    return ''
+}
+$script:EngineName = ''
 function Select-Engine {
     if ($script:Engine) { return }
-    if ($env:KILNMARK_ENGINE) { $script:Engine = $env:KILNMARK_ENGINE }
-    elseif (Get-Command podman -ErrorAction SilentlyContinue) { $script:Engine = 'podman' }
-    elseif (Get-Command docker -ErrorAction SilentlyContinue) { $script:Engine = 'docker' }
-    else { Fail 'Neither Podman nor Docker is installed. Install Podman Desktop or Docker Desktop first (INSTALL.md, "What to install first").' }
-    if ($script:Engine -eq 'podman') {
-        & podman info *> $null
+    $script:Engine = Get-EnginePath
+    if (-not $script:Engine) {
+        if ($env:KILNMARK_ENGINE) { Fail 'KILNMARK_ENGINE names no program on this machine: give the full path of podman.exe or docker.exe, or unset it.' }
+        Fail 'Neither Podman nor Docker is installed. Install Podman Desktop or Docker Desktop first (INSTALL.md, "What to install first").'
+    }
+    # its name, for the commands this script prints
+    $script:EngineName = [IO.Path]::GetFileNameWithoutExtension($script:Engine)
+    if ($script:EngineName -eq 'podman') {
+        & $script:Engine info *> $null
         if ($LASTEXITCODE -ne 0) {
             Write-Host 'Starting the Podman machine ...'
-            & podman machine start | Out-Host
-            & podman info *> $null
+            & $script:Engine machine start | Out-Host
+            & $script:Engine info *> $null
             if ($LASTEXITCODE -ne 0) { Fail 'The Podman machine could not start. If Podman has none yet, make one with: podman machine init' }
         }
     }
     & $script:Engine compose version *> $null
-    if ($LASTEXITCODE -ne 0) { Fail ("'" + $script:Engine + " compose' does not work: Podman needs a compose tool (winget install Docker.DockerCompose). Then run this again.") }
+    if ($LASTEXITCODE -ne 0) { Fail ("'" + $script:EngineName + " compose' does not work: Podman needs a compose tool (winget install Docker.DockerCompose). Then run this again.") }
 }
 
 # A setting from config\.env as compose reads it (an export in front too); empty when it is not set.
@@ -341,6 +362,9 @@ $TreeWrites = [long](0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -b
 # deleting what is in it, deleting it, permissions, ownership, and all.
 $AboveWrites = [long](0x40 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x10000000)
 $TrustedInstaller = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
+# Who else counts as you here: the operator, for the step UAC elevates, which may run as another
+# administrator (Invoke-InstallElevated, Invoke-PlaceVersion).
+$script:AlsoTrusted = @()
 # Who other than you, SYSTEM and the Administrators (above a root, TrustedInstaller too, which
 # holds C:\Program Files) holds any of $Mask's rights on $Path: their names, or nothing. An app
 # container's or a capability's SID (S-1-15-2-, S-1-15-3-) never counts: it only narrows what a
@@ -348,7 +372,7 @@ $TrustedInstaller = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478
 # counts, whatever it grants: what it grants hangs on more than who they are.
 function Get-OthersWriting([string]$Path, [long]$Mask = $TreeWrites, [switch]$Above) {
     $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    $ok = @($me, 'S-1-5-18', 'S-1-5-32-544', 'S-1-3-0'); if ($Above) { $ok += $TrustedInstaller }
+    $ok = @($me, 'S-1-5-18', 'S-1-5-32-544', 'S-1-3-0') + $script:AlsoTrusted; if ($Above) { $ok += $TrustedInstaller }
     $out = @()
     $acl = Get-Acl -LiteralPath $Path
     foreach ($ace in $acl.Access) {
@@ -376,7 +400,7 @@ function Test-OwnerOk([string]$Path, [switch]$Above) {
     $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $sid = ''
     try { $sid = (Get-Acl -LiteralPath $Path).GetOwner([Security.Principal.SecurityIdentifier]).Value } catch { $sid = '' }
-    $ok = @($me, 'S-1-5-18', 'S-1-5-32-544'); if ($Above) { $ok += $TrustedInstaller }
+    $ok = @($me, 'S-1-5-18', 'S-1-5-32-544') + $script:AlsoTrusted; if ($Above) { $ok += $TrustedInstaller }
     return ($ok -contains $sid)
 }
 
@@ -385,7 +409,7 @@ function Test-OwnerOk([string]$Path, [switch]$Above) {
 function Get-ItemProblem([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return ($Path + ' is not there') }
     $item = Get-Item -LiteralPath $Path -Force
-    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return ($Path + ' is a link or a junction, which an hourly run would follow') }
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return ($Path + ' is a link or a junction, which leads wherever someone made it lead') }
     if (-not (Test-OwnerOk $Path)) { return ($Path + ' is owned by someone other than you, SYSTEM or the Administrators, who may change it whenever they like') }
     $others = @(Get-OthersWriting $Path)
     if ($others.Count -gt 0) { return ($Path + ' may be changed by ' + (($others | Select-Object -Unique) -join ', ')) }
@@ -416,12 +440,113 @@ function Get-AboveProblem([string]$Top) {
     return ''
 }
 
+# Why someone other than you (the operator), SYSTEM, the Administrators or TrustedInstaller may have
+# changed a release, or nothing (ADR 0051, decision 17): install and upgrade run what is in it as an
+# administrator. $Path is a release folder or an archive. Every folder above it must pass
+# Get-AboveProblem, and it, and every file and folder in it, Get-ItemProblem: never a link or a
+# junction, which is not followed.
+function Get-ReleaseProblem([string]$Path) {
+    $full = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $why = Get-AboveProblem $full
+    if ($why) { return $why }
+    $todo = New-Object System.Collections.Stack
+    $todo.Push($full)
+    while ($todo.Count -gt 0) {
+        $p = $todo.Pop()
+        $why = Get-ItemProblem $p
+        if ($why) { return $why }
+        if (Test-Path -LiteralPath $p -PathType Container) {
+            try { $kids = @(Get-ChildItem -LiteralPath $p -Force -ErrorAction Stop) } catch { return ($p + ' could not be read') }
+            foreach ($c in $kids) { $todo.Push($c.FullName) }
+        }
+    }
+    return ''
+}
+# Refuses a release (folder or archive) someone else may have changed, before UAC is asked: with the
+# way to fix it.
+function Assert-ReleaseItsOwn([string]$Path, [string]$What) {
+    Write-Host ('Checking that nobody else may change ' + $Path + ' ...')
+    $why = Get-ReleaseProblem $Path
+    if (-not $why) { return }
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $fix = ' Unpack the release in your own Downloads folder (or another folder only you and the administrators may change), then run ' + $What + ' from there.'
+    if (-not (Get-AboveProblem ([IO.Path]::GetFullPath($Path).TrimEnd('\')))) {
+        $f = ''; if (Test-Path -LiteralPath $Path -PathType Container) { $f = '(OI)(CI)' }
+        $fix += ' Or take the others'' rights away: icacls "' + $Path + '" /inheritance:r /grant:r "' + $me + ':' + $f + 'F" *S-1-5-32-544:' + $f + 'F *S-1-5-18:' + $f + 'F'
+    }
+    Fail ($What + ' was refused, before asking for an administrator: ' + $why + '. Windows would run what is in it as an administrator, so nobody else may change it.' + $fix)
+}
+
+# Why someone other than you, SYSTEM, the Administrators or TrustedInstaller may change a program an
+# hourly run starts, or nothing (ADR 0051, decision 15, as the Linux edition's tools_problem): the
+# program itself (where it is a link, the link's own folders too, then what it leads to), owned by
+# one of them and writable by nobody else; the folder it is in, which nobody else may add to (a
+# library beside it would be loaded); and every folder above that, as Get-AboveProblem says.
+function Get-ToolProblem([string]$Path) {
+    $p = [IO.Path]::GetFullPath($Path)
+    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return ($p + ', a program an hourly run starts, is not there') }
+    $item = Get-Item -LiteralPath $p -Force
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        $why = Get-AboveProblem $p
+        if ($why) { return $why }
+        $to = @($item.Target) | Select-Object -First 1
+        if (-not $to) { return ($p + ' is a link whose target Windows does not say') }
+        if (-not [IO.Path]::IsPathRooted($to)) { $to = Join-Path (Split-Path $p -Parent) $to }
+        $p = [IO.Path]::GetFullPath($to)
+        if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return ($p + ', a program an hourly run starts, is not there') }
+        if (((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return ($p + ' is a link to a link') }
+    }
+    $dir = Split-Path $p -Parent
+    foreach ($one in @(@($p, ', a program an hourly run starts,'), @($dir, ', the folder of a program an hourly run starts,'))) {
+        if (-not (Test-OwnerOk $one[0] -Above)) { return ($one[0] + $one[1] + ' is owned by someone other than you, SYSTEM, the Administrators or TrustedInstaller') }
+        $others = @(Get-OthersWriting $one[0] $TreeWrites -Above)
+        if ($others.Count -gt 0) { return ($one[0] + $one[1] + ' may be changed by ' + (($others | Select-Object -Unique) -join ', ')) }
+    }
+    return (Get-AboveProblem $dir)
+}
+# The engine an hourly run uses (Get-EnginePath, the path Select-Engine then runs it by), and the
+# compose tool it may launch: with Podman, PODMAN_COMPOSE_PROVIDER, and docker-compose and
+# podman-compose as PATH finds them; with Docker, its compose plugin in each folder Docker looks in
+# (yours, ProgramData's, Program Files' and Docker Desktop's). Why one may be changed by someone
+# else, or nothing. A known limit: a compose tool in a folder that is not there yet, which someone
+# may make later (C:\ProgramData\Docker\cli-plugins, say), or one podman's containers.conf names.
+function Get-EngineProblem {
+    $e = Get-EnginePath
+    if (-not $e) { return '' }
+    $why = Get-ToolProblem $e
+    if ($why) { return $why }
+    $tools = @()
+    $name = [IO.Path]::GetFileNameWithoutExtension($e)
+    if ($name -eq 'docker') {
+        foreach ($d in @((Join-Path $env:USERPROFILE '.docker\cli-plugins'), (Join-Path $env:ProgramData 'Docker\cli-plugins'),
+            (Join-Path $env:ProgramFiles 'Docker\cli-plugins'), (Join-Path $env:ProgramFiles 'Docker\Docker\resources\cli-plugins'))) {
+            $f = Join-Path $d 'docker-compose.exe'
+            if (Test-Path -LiteralPath $f) { $tools += $f }
+        }
+    }
+    if ($name -ne 'podman' -and $tools.Count -eq 0) { return '' }
+    if ($name -eq 'podman') {
+        if ($env:PODMAN_COMPOSE_PROVIDER) { $tools += $env:PODMAN_COMPOSE_PROVIDER }
+        foreach ($n in @('docker-compose', 'podman-compose')) {
+            $c = Get-Command $n -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($c) { $tools += $c.Source }
+        }
+    }
+    foreach ($t in $tools) {
+        if (-not [IO.Path]::IsPathRooted($t)) { continue }
+        $why = Get-ToolProblem $t
+        if ($why) { return $why }
+    }
+    return ''
+}
+
 # Why someone other than you, SYSTEM or the Administrators may change what an hourly run uses, or
 # nothing (ADR 0051, decisions 15 and 17): the task runs kilnmark.ps1 from the program folder as
 # you, and that run reads current.txt, data-folder.txt, the current version's compose.yaml and
 # keycloak-setup's script there, and config\.env in the data folder, and writes to its logs\. Each,
 # and every folder from its root down to it, must pass Get-ItemProblem, and current.txt must name a
-# folder directly in versions\. Above each root, every folder must pass Get-AboveProblem.
+# folder directly in versions\. Above each root, every folder must pass Get-AboveProblem. And the
+# programs it starts, the engine and the compose tool Podman launches, Get-EngineProblem.
 function Get-TreeProblem {
     $top = [IO.Path]::GetFullPath($script:Root).TrimEnd('\')
     if (-not $script:Data) { return ((Join-Path $top 'data-folder.txt') + " does not name Kilnmark's data folder") }
@@ -447,7 +572,10 @@ function Get-TreeProblem {
     }
     $why = Get-AboveProblem $top
     if ($why) { return $why }
-    return (Get-AboveProblem $data)
+    $why = Get-AboveProblem $data
+    if ($why) { return $why }
+    # and the programs it starts: the engine, and the compose tool Podman launches
+    return (Get-EngineProblem)
 }
 
 # people expire runs as you every hour: never what someone else may have changed (ADR 0051, decision
@@ -523,7 +651,66 @@ function Get-ComposeArgs {
     }
     # The Starter Pack's database is made only on a Starter Pack install (ADR 0051).
     if (Test-SamplesAllowed) { $list += @('--profile', 'starter-pack') }
+    Write-ServiceSecrets $dir
     return $list
+}
+
+# A value both kinds of compose tool read alike in a file of settings: podman takes a line of it as
+# it is, Docker Compose reads quotes, # comments, $ and \ in it. So none of those, no space and no
+# control character.
+function Test-PlainValue([string]$Value) { return ($Value -and $Value -notmatch '[\s\p{Cc}"''#$`\\]') }
+
+# The secrets of the services that keep running (ADR 0051, decision 13): never in their environment,
+# which podman-compose puts on podman's command line, but in a file for each service that compose
+# hands podman as --env-file (env_file in compose.yaml). In config\run\services, yours alone (as
+# each run's folder), written afresh from config\.env before every compose command: Docker Compose
+# reads them for every command, down and ps too. They hold nothing config\.env does not. Never
+# written elevated: the folder would then be the administrator's alone.
+$script:ServiceSecretsFor = $null
+function Get-ServiceSecretLine([string]$Name, [string]$Setting) {
+    $v = Get-Setting $Setting
+    if ($v) { return ($Name + '=' + $v) }
+}
+function Write-ServiceSecrets([string]$VersionDir) {
+    $dir = Join-Path $script:Data 'config\run\services'
+    # relative to compose.yaml, on the same drive (some compose tools split a drive letter's colon)
+    $rel = Get-RelativePath $VersionDir $dir
+    if (-not $rel) { Fail 'The data folder is on another drive than the program folder, which compose cannot take: install Kilnmark afresh with both on one drive.' }
+    $env:KILNMARK_SECRETS_DIR = $rel
+    # elevated (check), the files you wrote, never written: compose still finds them
+    if (Test-Elevated) { return }
+    $text = [IO.File]::ReadAllText((Join-Path $script:Data 'config\.env'))
+    if ($script:ServiceSecretsFor -cne $text -or -not (Test-Path -LiteralPath $dir)) {
+        if (-not (Get-Setting 'KILNMARK_DB_PASSWORD')) { Fail ('KILNMARK_DB_PASSWORD is not set in ' + (Join-Path $script:Data 'config\.env') + ": Kilnmark's database has no password without it. Put back the line install wrote. Nothing was changed.") }
+        if (-not (Get-Setting 'KILNMARK_ADMIN_TOKEN')) { Fail ('KILNMARK_ADMIN_TOKEN is not set in ' + (Join-Path $script:Data 'config\.env') + ': Kilnmark has no admin token without it. Put back the line install wrote. Nothing was changed.') }
+        foreach ($s in @('KILNMARK_DB_PASSWORD', 'KILNMARK_ADMIN_TOKEN', 'KILNMARK_SAMPLES_DB_PASSWORD', 'KILNMARK_OIDC_CLIENT_SECRET', 'KILNMARK_KEYCLOAK_DB_PASSWORD', 'KILNMARK_KEYCLOAK_ADMIN_PASSWORD')) {
+            $v = Get-Setting $s
+            if ($v -and -not (Test-PlainValue $v)) { Fail ($s + ' in config\.env holds a space, a quote mark, #, $, ` or \, which compose tools do not all read alike: use one without them (install never makes one with them). Nothing was changed.') }
+        }
+        try {
+            $base = Join-Path $script:Data 'config\run'
+            if (-not (Test-Path -LiteralPath $base)) { New-Item -ItemType Directory $base -ErrorAction Stop | Out-Null }
+            if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory $dir -ErrorAction Stop | Out-Null }
+        } catch { Fail ('Could not make ' + $dir + ", yours alone, for the services' secrets. Nothing was started.") }
+        if ((Get-Item -LiteralPath $dir -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { Fail ($dir + ' is a link or a junction: remove it, then run this again. Nothing was started.') }
+        Protect-Folder $dir
+        $files = @{
+            'postgres.env' = @(Get-ServiceSecretLine 'POSTGRES_PASSWORD' 'KILNMARK_DB_PASSWORD')
+            'kilnmark.env' = @((Get-ServiceSecretLine 'QUARKUS_DATASOURCE_PASSWORD' 'KILNMARK_DB_PASSWORD'), (Get-ServiceSecretLine 'KILNMARK_ADMIN_TOKEN' 'KILNMARK_ADMIN_TOKEN'),
+                (Get-ServiceSecretLine 'KILNMARK_SAMPLES_DB_PASSWORD' 'KILNMARK_SAMPLES_DB_PASSWORD'), (Get-ServiceSecretLine 'QUARKUS_OIDC_CREDENTIALS_SECRET' 'KILNMARK_OIDC_CLIENT_SECRET'))
+            'keycloak-db.env' = @(Get-ServiceSecretLine 'POSTGRES_PASSWORD' 'KILNMARK_KEYCLOAK_DB_PASSWORD')
+            'keycloak.env' = @((Get-ServiceSecretLine 'KC_DB_PASSWORD' 'KILNMARK_KEYCLOAK_DB_PASSWORD'), (Get-ServiceSecretLine 'KC_BOOTSTRAP_ADMIN_PASSWORD' 'KILNMARK_KEYCLOAK_ADMIN_PASSWORD'))
+        }
+        try {
+            foreach ($f in $files.Keys) {
+                $lines = @($files[$f] | Where-Object { $_ })
+                $enc = New-Object System.Text.UTF8Encoding($false)
+                $body = ''; if ($lines.Count -gt 0) { $body = ($lines -join "`n") + "`n" }
+                [IO.File]::WriteAllText((Join-Path $dir $f), $body, $enc)
+            }
+        } catch { Fail ("Could not write the services' secrets in " + $dir + '. Nothing was started.') }
+        $script:ServiceSecretsFor = $text
+    }
 }
 
 # podman-compose 1.0.x prints each podman command it runs, with every setting of the container on
@@ -646,7 +833,7 @@ function Get-Images([string]$V) {
         $digest = (& $script:Engine image inspect --format '{{index .RepoDigests 0}}' $i | Out-String).Trim()
         if (-not $digest) { Fail ('Cannot tell the digest of ' + $i + ', so its signature cannot be checked.') }
         & $cosign verify --key (Get-PubKey) --insecure-ignore-tlog=true $digest *> $null
-        if ($LASTEXITCODE -ne 0) { Fail ($i + " does not carry Kilnmark's signature. Do not run it; remove it with: " + $script:Engine + ' rmi ' + $i) }
+        if ($LASTEXITCODE -ne 0) { Fail ($i + " does not carry Kilnmark's signature. Do not run it; remove it with: " + $script:EngineName + ' rmi ' + $i) }
         Write-Host ('Signature checked: ' + $i)
     }
 }
@@ -728,19 +915,16 @@ $WslFix = 'Invoke-WebRequest https://github.com/microsoft/WSL/releases/download/
 # disk, the tools, and (when nothing runs) free ports. -Running: Kilnmark answers; -Keycloak: it
 # has the bundled Keycloak (5 GB of memory, not 4). Never starts the Podman machine.
 function Test-Prerequisites([bool]$Running, [bool]$Keycloak = $false) {
-    $engine = $env:KILNMARK_ENGINE
-    if (-not $engine) {
-        if (Get-Command podman -ErrorAction SilentlyContinue) { $engine = 'podman' }
-        elseif (Get-Command docker -ErrorAction SilentlyContinue) { $engine = 'docker' }
-    }
+    # by the full path every other command runs it by (a program, never a script of its name)
+    $engine = Get-EnginePath
     if (-not $engine) {
         Add-Problem 'Neither Podman nor Docker is installed.' 'winget install RedHat.Podman-Desktop (then make its machine: podman machine init --rootful)'
     } else {
-        $docker = ($engine -like '*docker*')
+        $docker = ([IO.Path]::GetFileNameWithoutExtension($engine) -like '*docker*')
         & $engine compose version *> $null
-        if ($LASTEXITCODE -eq 0) { Add-Passed ($engine + ' compose works') }
-        elseif ($docker) { Add-Problem ("'" + $engine + " compose' does not work.") 'winget install Docker.DockerCompose' }
-        else { Add-Problem ("'" + $engine + " compose' does not work: Podman needs a compose tool.") 'winget install Docker.DockerCompose' }
+        if ($LASTEXITCODE -eq 0) { Add-Passed ([IO.Path]::GetFileNameWithoutExtension($engine) + ' compose works') }
+        elseif ($docker) { Add-Problem ("'" + [IO.Path]::GetFileNameWithoutExtension($engine) + " compose' does not work.") 'winget install Docker.DockerCompose' }
+        else { Add-Problem ("'" + [IO.Path]::GetFileNameWithoutExtension($engine) + " compose' does not work: Podman needs a compose tool.") 'winget install Docker.DockerCompose' }
         $info = $true
         & $engine info *> $null
         if ($LASTEXITCODE -ne 0) {
@@ -942,8 +1126,11 @@ function Write-UnixText([string]$Path, [string[]]$Lines) {
     [IO.File]::WriteAllText($Path, (($Lines -join "`n") + "`n"), $enc)
 }
 
-# Sets KEY=VALUE in the file: replaces a "KEY=" or "# KEY=" line, or adds one at the end.
+# Sets KEY=VALUE in the file: replaces a "KEY=" or "# KEY=" line, or adds one at the end. Never a
+# value with $ or a backtick: compose reads ${NAME} in config\.env as another setting's value, which
+# would hand that one (the admin token, say) to whatever reads this one.
 function Set-Line([string]$File, [string]$Key, [string]$Value) {
+    if ($Value -match '[$`]') { Fail ($Key + ' was not written to config\.env: its value holds $ or `, which compose would read as the start of another setting''s name.') }
     $lines = [IO.File]::ReadAllLines($File)
     $done = $false
     $out = foreach ($l in $lines) {
@@ -1087,6 +1274,9 @@ function Get-OperatorSid {
 # Why an answer cannot be taken, or nothing. Never the value itself.
 function Get-AnswerProblem([string]$Key, [string]$Value) {
     $v = $Value
+    # Compose reads ${NAME} in config\.env as another setting's value (the admin token, say), which
+    # the unauthenticated sign-in page would then show as the provider's name: no answer holds one.
+    if ($v -match '[$`]') { return ($Key + ' may not hold $ or `, which compose would read as the start of another setting''s name') }
     switch -CaseSensitive ($Key) {
         'mode' { if ($v -cnotmatch '^(production|starter-pack)$') { return 'mode is production or starter-pack' } }
         'identity' {
@@ -1295,10 +1485,17 @@ function Read-AllAnswers {
 # The secrets the answers need, asked before anything changes: the identity provider's client
 # secret (own), or the first admin's temporary password (bundled, with a first admin).
 $script:AdminPassword = ''
+# The identity provider's client secret, asked before anything changes. It goes into config\.env and
+# Kilnmark's own file of secrets (Write-ServiceSecrets), so it holds nothing compose would read as
+# more than itself.
+function Read-ClientSecret {
+    Read-SecretValue 'The client secret your identity provider gave Kilnmark'
+    if (-not $script:SecretValue) { Fail 'The client secret is needed for sign-in with your identity provider. Nothing was changed.' }
+    if (-not (Test-PlainValue $script:SecretValue)) { $script:SecretValue = ''; Fail 'The client secret holds a space, a quote mark, #, $, ` or \, which compose tools do not all read alike: ask your identity provider for another. Nothing was changed.' }
+}
 function Read-InstallSecrets {
     if ((Get-Answer 'identity') -ceq 'own') {
-        Read-SecretValue 'The client secret your identity provider gave Kilnmark'
-        if (-not $script:SecretValue) { Fail 'The client secret is needed for sign-in with your identity provider. Nothing was changed.' }
+        Read-ClientSecret
     } elseif (Get-Answer 'admin_email') {
         Read-SecretValue 'A temporary password for the first admin, 12 characters or more (they choose their own at their first sign-in)'
         $script:AdminPassword = $script:SecretValue; $script:SecretValue = ''
@@ -1664,6 +1861,8 @@ function Invoke-Install([string[]]$Options) {
     Start-Step 'Check the prerequisites'
     Test-Prerequisites $false ((Get-Answer 'identity') -ceq 'bundled')
     if (-not (Write-Checks)) { Fail 'Fix the problems above (each says how), then run install again.' }
+    # the release runs as an administrator next: nobody else may have changed it (ADR 0051, decision 17)
+    Assert-ReleaseItsOwn $Here 'install'
     Complete-Step
     $prog = Get-Answer 'program_dir'; $data = Get-Answer 'data_dir'
     if ($dry) {
@@ -1684,6 +1883,8 @@ function Invoke-Install([string[]]$Options) {
     $script:Root = $prog; $script:Data = $data; $script:Project = Get-Answer 'project'
     # your organisation's client secret, written by you (the operator may change config\.env)
     if ((Get-Answer 'identity') -ceq 'own' -and $script:SecretValue) { Set-Line (Join-Path $data 'config\.env') 'KILNMARK_OIDC_CLIENT_SECRET' $script:SecretValue; $script:SecretValue = '' }
+    # the certificate and its key, copied by you, with your own rights (never as an administrator)
+    Copy-Certs
     Complete-Step
     Start-Log 'install'
     Start-Step 'Get the images'
@@ -1734,8 +1935,16 @@ function Invoke-InstallElevated([string[]]$Options) {
         }
     }
     if (-not (Test-Elevated) -and -not (Test-TestHooks)) { Fail 'This part of install needs an administrator.' }
-    if ($operatorSid -cnotmatch '^S-1-[0-9-]+$') { Fail 'The operator was not named.' }
+    if ($operatorSid -cnotmatch '^S-1-(5-21|12-1)-[0-9-]+$') { Fail 'The operator was not named (a user''s SID).' }
+    # the release this runs from, checked again as an administrator before anything is copied
+    $script:AlsoTrusted = @($operatorSid)
+    $why = Get-ReleaseProblem $Here
+    if ($why) { Fail ('The release folder was refused: ' + $why + '. Nothing was changed.') }
     Read-Answers $file
+    # The certificate's files are never read here, as an administrator: the operator copies them
+    # with their own rights once the folders are made (Invoke-Install), so a file only an
+    # administrator may read never reaches the data folder.
+    $script:SkipKeys = @('tls_cert', 'tls_key')
     if (-not (Test-AllAnswers)) { Fail 'Some answers cannot be taken (above), so nothing was changed.' }
     $v = Get-VersionOf $Here
     $prog = Get-Answer 'program_dir'; $data = Get-Answer 'data_dir'
@@ -1758,7 +1967,6 @@ function Invoke-InstallElevated([string[]]$Options) {
     Copy-Item -LiteralPath (Join-Path $dest '.env.example') -Destination (Join-Path $data 'config\.env.example')
     Write-Env
     Write-Answers (Join-Path $data 'config\install.conf')
-    Copy-Certs
     Write-Host ('Wrote ' + (Join-Path $data 'config\.env') + " with new secrets (the operator's, SYSTEM's and the Administrators' alone) and config\install.conf (the answers).")
     Stop-Log
     [IO.File]::WriteAllText($script:ResultFile, 'OK')
@@ -1777,6 +1985,8 @@ function Invoke-Upgrade([string[]]$Options) {
     if (-not ($archive -and (Test-Path -LiteralPath $archive))) { Fail 'Say which release to upgrade to: kilnmark.cmd upgrade kilnmark-<version>.zip' }
     $archive = (Resolve-Path $archive).Path
     if (Test-Elevated) { Fail 'Run upgrade from a prompt that is not elevated: it asks Windows for an administrator (UAC) only for the step that needs one.' }
+    # the release runs as an administrator later: nobody else may have changed it (ADR 0051, decision 17)
+    Assert-ReleaseItsOwn $archive 'upgrade'
     $old = Get-CurrentVersion
     $total = 5; if ($backup) { $total = 6 }
     Set-Steps $total
@@ -1788,11 +1998,22 @@ function Invoke-Upgrade([string[]]$Options) {
     if (-not $recorded) { Fail "Kilnmark's database has no deployment mode recorded (or does not answer: start it with kilnmark.cmd up first). An install from before deployment modes (release 0.1.1 or earlier, a preview) cannot be upgraded: install Kilnmark afresh. Nothing was changed." }
     if ($recorded -cne (Get-Setting 'KILNMARK_MODE')) { Fail 'KILNMARK_MODE in config\.env differs from the mode Kilnmark recorded at its first start: set it back. Nothing was changed.' }
     Start-Log 'upgrade'
-    Test-FileSignature $archive
+    # The archive copied into a folder of yours alone first, with its signature: the copy is what is
+    # checked and what is unpacked, so nothing can be put in its place between the two.
     $work = New-WorkFolder
-    & tar.exe -xf $archive -C $work
-    if ($LASTEXITCODE -ne 0) { Remove-Item -LiteralPath $work -Recurse -Force; Fail ((Split-Path $archive -Leaf) + ' could not be unpacked.') }
-    $src = (Get-ChildItem -LiteralPath $work -Directory | Select-Object -First 1).FullName
+    $name = Split-Path $archive -Leaf
+    $copy = Join-Path $work $name
+    try {
+        Copy-Item -LiteralPath $archive -Destination $copy -ErrorAction Stop
+        if (Test-Path -LiteralPath ($archive + '.sigstore.json')) { Copy-Item -LiteralPath ($archive + '.sigstore.json') -Destination ($copy + '.sigstore.json') -ErrorAction Stop }
+    } catch { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue; Fail ($name + ' could not be copied into a folder of yours to check it.') }
+    $checked = $false
+    try { Test-FileSignature $copy; $checked = $true } finally { if (-not $checked) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue } }
+    $unpacked = Join-Path $work 'release'
+    New-Item -ItemType Directory $unpacked | Out-Null
+    & tar.exe -xf $copy -C $unpacked
+    if ($LASTEXITCODE -ne 0) { Remove-Item -LiteralPath $work -Recurse -Force; Fail ($name + ' could not be unpacked.') }
+    $src = (Get-ChildItem -LiteralPath $unpacked -Directory | Select-Object -First 1).FullName
     $new = Get-VersionOf $src
     if (-not $new) { Remove-Item -LiteralPath $work -Recurse -Force; Fail "Cannot tell the new release's version." }
     if ($new -eq $old) { Remove-Item -LiteralPath $work -Recurse -Force; Fail ('Kilnmark ' + $old + ' is already the running version.') }
@@ -1810,7 +2031,7 @@ function Invoke-Upgrade([string[]]$Options) {
         Start-Step ('Place Kilnmark ' + $new + ' and switch to it, as an administrator')
         Write-Host ('Windows now asks for an administrator (UAC): only administrators may write ' + $script:Root + '.')
         $result = Join-Path $work 'result.txt'
-        $code = Invoke-Elevated (Join-Path $src 'kilnmark.ps1') @('_place-version', '-Source', $src, '-ProgramDir', $script:Root, '-Keep', $old, '-Result', $result)
+        $code = Invoke-Elevated (Join-Path $src 'kilnmark.ps1') @('_place-version', '-Source', $src, '-ProgramDir', $script:Root, '-Keep', $old, '-OperatorSid', [Security.Principal.WindowsIdentity]::GetCurrent().User.Value, '-Result', $result)
         Read-ElevatedResult $result $code
         Complete-Step
     } finally { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
@@ -1836,17 +2057,23 @@ function Invoke-Upgrade([string[]]$Options) {
 # upgrade's part as an administrator: the new release copied into the program folder, the launchers
 # and current.txt switched to it, and the versions but the two newest removed.
 function Invoke-PlaceVersion([string[]]$Options) {
-    $src = $null; $keep = $null
+    $src = $null; $keep = $null; $operatorSid = $null
     for ($i = 0; $i -lt $Options.Count; $i++) {
         switch ($Options[$i]) {
             '-Source' { $i++; $src = $Options[$i] }
             '-ProgramDir' { $i++; $script:Root = $Options[$i] }
             '-Keep' { $i++; $keep = $Options[$i] }
+            '-OperatorSid' { $i++; $operatorSid = $Options[$i] }
             '-Result' { $i++; $script:ResultFile = $Options[$i] }
             default { Fail ('Unknown option ' + $Options[$i] + '.') }
         }
     }
     if (-not (Test-Elevated) -and -not (Test-TestHooks)) { Fail 'This part of upgrade needs an administrator.' }
+    if ($operatorSid -cnotmatch '^S-1-(5-21|12-1)-[0-9-]+$') { Fail 'The operator was not named (a user''s SID).' }
+    # the new release, checked again as an administrator before anything is copied
+    $script:AlsoTrusted = @($operatorSid)
+    $why = Get-ReleaseProblem $src
+    if ($why) { Fail ('The new release was refused: ' + $why + '. Nothing was changed.') }
     $new = Get-VersionOf $src
     if (-not $new -or $new -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$') { Fail "Cannot tell the new release's version." }
     $versions = Join-Path $script:Root 'versions'
@@ -1971,6 +2198,7 @@ function Invoke-Configure([string[]]$Options) {
         $k = $Matches[1]; $v = $Matches[2].Trim()
         if ($k -match '(password|secret|token)') { Fail ($k + ' is a secret: configure asks for one when an answer needs it, and none is given on a command line.') }
         if (-not (Test-KnownKey $k)) { Fail ($k + ' is not an answer install knows (install.conf.example lists them).') }
+        if ($v -match '[$`]') { Fail ($k + ' may not hold $ or `, which compose would read as the start of another setting''s name. Nothing was changed.') }
         if (($FixedKeys -ccontains $k) -and $v -cne (Get-Answer $k)) {
             if ($k -ceq 'mode') { Fail "An install's mode never changes (ADR 0051): for the other mode, install Kilnmark afresh. Nothing was changed." }
             Fail ($k + ' is fixed at install: changing it needs a new install. Nothing was changed.')
@@ -1991,10 +2219,7 @@ function Invoke-Configure([string[]]$Options) {
     # the first admin, made at install, is checked again only when the change is to them
     if (@($changed | Where-Object { $_.StartsWith('admin_') }).Count -eq 0) { $script:SkipKeys += @('admin_email', 'admin_first_name', 'admin_last_name') }
     if (-not (Test-AllAnswers)) { Fail 'Some answers cannot be taken (above), so nothing was changed.' }
-    if ((Get-Answer 'identity') -ceq 'own' -and ($identityWas -cne 'own' -or $changed -ccontains 'oidc_client_id')) {
-        Read-SecretValue 'The client secret your identity provider gave Kilnmark'
-        if (-not $script:SecretValue) { Fail 'The client secret is needed for sign-in with your identity provider. Nothing was changed.' }
-    }
+    if ((Get-Answer 'identity') -ceq 'own' -and ($identityWas -cne 'own' -or $changed -ccontains 'oidc_client_id')) { Read-ClientSecret }
     $restart = $false; $person = $false
     foreach ($k in $changed) {
         if ($k -ceq 'email_domain') { continue }
@@ -2803,11 +3028,11 @@ function Invoke-Restore([string[]]$Options) {
     Write-Host '  - revoke again any token revoked after that time, and check Settings > Access review;'
     if (-not $keys) { Write-Host "  - enter every stored password again (Sources; AI models' keys; the mail password);" }
     Write-Host '  - run again the scans and pipelines that ran after it, if their results are needed;'
-    Write-Host ('  - once all is well, drop the previous database: ' + $script:Engine + ' compose -p ' + $Project + ' exec postgres dropdb -U kilnmark ' + $before)
+    Write-Host ('  - once all is well, drop the previous database: ' + $script:EngineName + ' compose -p ' + $Project + ' exec postgres dropdb -U kilnmark ' + $before)
     if ($restoreKeycloak) {
         Write-Host '  - Keycloak is back to the backup too: people added or changed since then are gone, and anyone'
         Write-Host '    removed since is back (remove them again). Then drop its previous database:'
-        Write-Host ('    ' + $script:Engine + ' compose -p ' + $Project + ' exec keycloak-db dropdb -U keycloak ' + $kcBefore)
+        Write-Host ('    ' + $script:EngineName + ' compose -p ' + $Project + ' exec keycloak-db dropdb -U keycloak ' + $kcBefore)
     }
 }
 

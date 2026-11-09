@@ -27,7 +27,7 @@ project="${KILNMARK_PROJECT:-}"
 # config/.env says, as this script reads them (ADR 0051), so a value exported here never counts.
 unset KILNMARK_MODE KILNMARK_STARTER KILNMARK_STARTER_PEOPLE_ACTION \
   KILNMARK_PEOPLE_ACTION KILNMARK_PERSON_EMAIL KILNMARK_PERSON_FIRST_NAME KILNMARK_PERSON_LAST_NAME \
-  KILNMARK_PERSON_GROUPS KILNMARK_INSTALL_ID KILNMARK_RUN_DIR KILNMARK_ENV_FILE \
+  KILNMARK_PERSON_GROUPS KILNMARK_INSTALL_ID KILNMARK_RUN_DIR KILNMARK_SECRETS_DIR KILNMARK_ENV_FILE \
   KILNMARK_OIDC_VIEWER_GROUPS KILNMARK_OIDC_STEWARD_GROUPS KILNMARK_OIDC_DESIGNER_GROUPS \
   KILNMARK_OIDC_ADMIN_GROUPS KILNMARK_OIDC_UNMASK_GROUPS KILNMARK_KEYCLOAK_BIND
 
@@ -256,6 +256,58 @@ set_compose() {
   for p in "${list[@]:-}"; do [ -z "$p" ] || compose+=(--profile "$p"); done
   # The Starter Pack's database is made only on a Starter Pack install (ADR 0051).
   ! samples_allowed || compose+=(--profile starter-pack)
+  write_service_secrets
+}
+
+# A value both kinds of compose tool read alike in a file of settings: podman takes a line of it as
+# it is, Docker Compose reads quotes, # comments, $ and \ in it. So none of those, no space and no
+# control character.
+# (A regular expression held in a variable: bash versions read a backslash in a bracket pattern
+# differently.)
+plain_value() { local re='[[:space:][:cntrl:]"'"'"'#$`\\]'; [[ -n "$1" && ! "$1" =~ $re ]]; }
+# The secrets of the services that keep running (ADR 0051, decision 13): never in their environment,
+# which podman-compose puts on podman's command line, where other users of the machine can read it,
+# but in a file for each service that compose hands podman as --env-file (env_file in compose.yaml).
+# In config/run/services, this account's alone (700, each file 600), written afresh from config/.env
+# before every compose command: Docker Compose reads them for every command, down and ps too. They
+# hold nothing config/.env does not, kept the same way. Never written as root (check may run so).
+service_secret_line() {
+  local v; v="$(setting "$2")"
+  [ -z "$v" ] || printf '%s=%s\n' "$1" "$v"
+}
+service_secrets_for=""
+write_service_secrets() {
+  local dir="$data/config/run/services" sig f tmp s v
+  # as root (check), the files the account wrote, never written: compose still finds them
+  [ "$(my_uid)" -ne 0 ] || { export KILNMARK_SECRETS_DIR="$dir"; return 0; }
+  sig="$(cksum < "$data/config/.env")"
+  if [ "$sig" = "$service_secrets_for" ] && [ -d "$dir" ]; then export KILNMARK_SECRETS_DIR="$dir"; return 0; fi
+  [ -n "$(setting KILNMARK_DB_PASSWORD)" ] || die "KILNMARK_DB_PASSWORD is not set in $data/config/.env: Kilnmark's database has no password without it. Put back the line install wrote. Nothing was changed."
+  [ -n "$(setting KILNMARK_ADMIN_TOKEN)" ] || die "KILNMARK_ADMIN_TOKEN is not set in $data/config/.env: Kilnmark has no admin token without it. Put back the line install wrote. Nothing was changed."
+  for s in KILNMARK_DB_PASSWORD KILNMARK_ADMIN_TOKEN KILNMARK_SAMPLES_DB_PASSWORD KILNMARK_OIDC_CLIENT_SECRET \
+    KILNMARK_KEYCLOAK_DB_PASSWORD KILNMARK_KEYCLOAK_ADMIN_PASSWORD; do
+    v="$(setting "$s")"
+    [ -z "$v" ] || plain_value "$v" \
+      || die "$s in config/.env holds a space, a quote mark, #, \$, \` or \\, which compose tools do not all read alike: use one without them (install never makes one with them). Nothing was changed."
+  done
+  mkdir -p "$dir" && chmod 700 "$data/config/run" "$dir" && [ ! -L "$dir" ] \
+    || die "Could not make $dir, this account's alone, for the services' secrets. Nothing was started."
+  for f in postgres kilnmark keycloak-db keycloak; do
+    tmp="$(mktemp "$dir/.$f.XXXXXX")" || die "Could not write the services' secrets in $dir. Nothing was started."
+    case "$f" in
+      postgres) service_secret_line POSTGRES_PASSWORD KILNMARK_DB_PASSWORD ;;
+      kilnmark) service_secret_line QUARKUS_DATASOURCE_PASSWORD KILNMARK_DB_PASSWORD
+        service_secret_line KILNMARK_ADMIN_TOKEN KILNMARK_ADMIN_TOKEN
+        service_secret_line KILNMARK_SAMPLES_DB_PASSWORD KILNMARK_SAMPLES_DB_PASSWORD
+        service_secret_line QUARKUS_OIDC_CREDENTIALS_SECRET KILNMARK_OIDC_CLIENT_SECRET ;;
+      keycloak-db) service_secret_line POSTGRES_PASSWORD KILNMARK_KEYCLOAK_DB_PASSWORD ;;
+      keycloak) service_secret_line KC_DB_PASSWORD KILNMARK_KEYCLOAK_DB_PASSWORD
+        service_secret_line KC_BOOTSTRAP_ADMIN_PASSWORD KILNMARK_KEYCLOAK_ADMIN_PASSWORD ;;
+    esac > "$tmp" || { rm -f "$tmp"; exit 1; }
+    chmod 600 "$tmp" && mv -f "$tmp" "$dir/$f.env" || die "Could not write the services' secrets in $dir. Nothing was started."
+  done
+  service_secrets_for="$sig"
+  export KILNMARK_SECRETS_DIR="$dir"
 }
 
 image_names() { echo "$registry/kilnmark-server:$1 $registry/kilnmark-postgres:$1"; }
@@ -514,8 +566,8 @@ hide_compose_commands() { grep --line-buffered -v -E "$compose_command_line|^[0-
 
 start_log() {
   [ -n "$data" ] && [ -d "$data/logs" ] && [ ! -L "$data/logs" ] || return 0
-  # what the scripts said, this account's only
-  chmod 700 "$data/logs" 2> /dev/null || true
+  # what the scripts said, this account's only (install, as root, made it so)
+  [ "$(my_uid)" -eq 0 ] || chmod 700 "$data/logs" 2> /dev/null || true
   local log; log="$data/logs/$1-$(date -u +%Y%m%dT%H%M%SZ).log"
   # the hourly expiry keeps one log a day, not one a run
   [ "${2:-}" != daily ] || log="$data/logs/$1-$(date -u +%Y%m%d).log"
@@ -524,7 +576,13 @@ start_log() {
     die "$log is not a plain file, so nothing was logged or done: remove it, then run this again."
   fi
   log_path="$log"
-  exec > >(hide_compose_commands | tee -a "$log") 2>&1
+  # As root (install, once the data folder is the account's), the log is written by the account,
+  # with its own rights: root never writes through a path in the account's folder.
+  if [ "$(my_uid)" -eq 0 ] && [ -n "$ins_user" ]; then
+    exec > >(hide_compose_commands | as_account tee -a -- "$log") 2>&1
+  else
+    exec > >(hide_compose_commands | tee -a "$log") 2>&1
+  fi
 }
 log_path=""
 
@@ -869,9 +927,12 @@ new_settings() {
 
 random_value() { head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n'; }
 
-# Sets KEY=VALUE in the file: replaces a "KEY=" or "# KEY=" line, or adds one at the end.
+# Sets KEY=VALUE in the file: replaces a "KEY=" or "# KEY=" line, or adds one at the end. Never a
+# value with $ or a backtick: compose reads ${NAME} in config/.env as another setting's value, which
+# would hand that one (the admin token, say) to whatever reads this one.
 set_line() {
   local file="$1" key="$2" value="$3" tmp
+  [[ "$value" != *[\$\`]* ]] || die "$key was not written to config/.env: its value holds \$ or \`, which compose would read as the start of another setting's name."
   tmp="$(mktemp "$file.XXXX")"
   # The value goes through the environment, never the command line, where other users could read it.
   KM_VALUE="$value" awk -v k="$key" '
@@ -1106,6 +1167,9 @@ local_host() { [[ "$1" == localhost || "$1" == 127.0.0.1 ]]; }
 # Why an answer cannot be taken, or nothing. Never the value itself.
 answer_problem() {
   local k="$1" v="$2" d
+  # Compose reads ${NAME} in config/.env as another setting's value (the admin token, say), which
+  # the unauthenticated sign-in page would then show as the provider's name: no answer holds one.
+  if [[ "$v" == *[\$\`]* ]]; then echo "$k may not hold \$ or \`, which compose would read as the start of another setting's name"; return 0; fi
   case "$k" in
     mode) [[ "$v" =~ ^(production|starter-pack)$ ]] || echo "mode is production or starter-pack" ;;
     identity)
@@ -1250,6 +1314,15 @@ read_secret() {
   [[ "$secret_value" != *[[:cntrl:]]* ]] || { secret_value=""; die "It holds a control character (a tab, say), which it may not. Nothing was changed."; }
 }
 
+# The identity provider's client secret, asked before anything changes. It goes into config/.env and
+# Kilnmark's own file of secrets (write_service_secrets), so it holds nothing compose would read as
+# more than itself.
+read_client_secret() {
+  read_secret "The client secret your identity provider gave Kilnmark"
+  [ -n "$secret_value" ] || die "The client secret is needed for sign-in with your identity provider. Nothing was changed."
+  plain_value "$secret_value" || { secret_value=""; die "The client secret holds a space, a quote mark, #, \$, \` or \\, which compose tools do not all read alike: ask your identity provider for another. Nothing was changed."; }
+}
+
 # The questions, each with its default and checked as it is answered.
 ask_answers() {
   echo "Answer each question, or press Enter for the default in [brackets]."
@@ -1299,8 +1372,7 @@ show_answers() {
 person_password=""
 ask_install_secrets() {
   if [ "$(answer_of identity)" = own ]; then
-    read_secret "The client secret your identity provider gave Kilnmark"
-    [ -n "$secret_value" ] || die "The client secret is needed for sign-in with your identity provider. Nothing was changed."
+    read_client_secret
   elif [ -n "$(answer_of admin_email)" ]; then
     if [ -t 0 ]; then
       read_secret "A temporary password for the first admin, 12 characters or more (they choose their own at their first sign-in)"
@@ -1398,7 +1470,10 @@ write_env() {
   secret_value=""
 }
 # The certificate and key for tls=on, into certs/https: readable inside the container (the folder
-# above, certs, keeps everyone else on this machine out).
+# above, certs, keeps everyone else on this machine out). At install this runs as root, reading
+# the files the answers name with root's rights: whoever runs sudo install is root already, so
+# naming a file of root's gains them nothing (unlike Windows, where the elevated step never reads
+# them). It runs before the data folder becomes the account's. configure runs it as the account.
 place_certs() {
   [ "$(answer_of tls)" = on ] || return 0
   cp "$(answer_of tls_cert)" "$data/certs/https/server.crt" && cp "$(answer_of tls_key)" "$data/certs/https/server.key" \
@@ -1420,7 +1495,9 @@ need_root() {
 not_root() {
   [ "$(my_uid)" -ne 0 ] && return 0
   local user=""
-  [ -z "$data" ] || [ ! -f "$data/config/install.conf" ] || user="$(sed -n 's/^user=//p' "$data/config/install.conf" | tail -n 1)"
+  # the data folder's owner, as upgrade takes it: root reads nothing the account may write
+  [ -z "$data" ] || [ ! -d "$data" ] || [ -L "$data" ] || user="$(stat -c %U "$data" 2> /dev/null || true)"
+  [ "$user" != root ] && [ "$user" != UNKNOWN ] || user=""
   die "$1 runs as the account that runs Kilnmark, never as root: sudo -iu ${user:-kilnmark} \"$root/kilnmark.sh\" $1"
 }
 # Runs a command as the account that runs Kilnmark ($ins_user), with its own session (rootless Podman).
@@ -1631,14 +1708,13 @@ cmd_install() {
   write_env
   write_answers "$data/config/install.conf"
   place_certs
-  chown -R "$ins_user:$(id -gn "$ins_user")" "$data" || die "$data could not be made $ins_user's."
+  # Until here the data folder is root's alone; from here it is the account's, and root writes
+  # nothing more in it: the account writes the log (start_log) and everything else.
+  chown -R -h "$ins_user:$(id -gn "$ins_user")" "$data" || die "$data could not be made $ins_user's."
   echo "Wrote $data/config/.env with new secrets ($ins_user's alone) and $data/config/install.conf (the answers)."
   step_ok
-  # what install says from here, in the data folder's logs (the account's, once install ends)
+  # what install says from here, in the data folder's logs, written by the account
   start_log install
-  local log_file="$log_path"
-  [ -z "$log_file" ] || touch "$log_file"
-  [ -z "$log_file" ] || chown "$ins_user:$(id -gn "$ins_user")" "$log_file" 2> /dev/null || true
   step "Get the images"
   if [ -n "${offline:-}" ]; then
     verify_file "$offline"
@@ -1664,7 +1740,6 @@ cmd_install() {
     fi
   fi
   person_password=""
-  [ -z "$log_file" ] || chown "$ins_user:$(id -gn "$ins_user")" "$log_file" 2> /dev/null || true
   cat <<EOF
 
 Kilnmark $v is installed: the program in $root, its data in $data, run by the account $ins_user.
@@ -1680,11 +1755,21 @@ EOF
   fi
 }
 
-# The install's account, from its answers.
+# The install's account, as root takes it for upgrade and uninstall: the data folder's owner, never
+# what the account itself may write (install.conf is the account's), and refused when install.conf
+# names another. Root then runs the account's parts as that account only.
 installed_user() {
+  local named
+  [ -n "$data" ] && [ -d "$data" ] && [ ! -L "$data" ] \
+    || die "$data, the data folder data-folder.txt names, is not a folder (or is a link): install Kilnmark afresh. Nothing was changed."
+  ins_user="$(stat -c %U "$data" 2> /dev/null || true)"
+  if [ -z "$ins_user" ] || [ "$ins_user" = root ] || [ "$ins_user" = UNKNOWN ] || ! id "$ins_user" > /dev/null 2>&1; then
+    die "$data is not owned by an account of this machine other than root, as install leaves it: make it the account's that runs Kilnmark (sudo chown -R ACCOUNT: \"$data\"), then run this again. Nothing was changed."
+  fi
   load_installed_answers || die "$data/config/install.conf, the install's answers, is missing: Kilnmark was not installed by this release's install."
-  ins_user="$(answer_of user)"
-  id "$ins_user" > /dev/null 2>&1 || die "The account $ins_user, which runs Kilnmark, is not on this machine."
+  named="$(answer_of user)"
+  [ "$named" = "$ins_user" ] \
+    || die "$data/config/install.conf names another account than $ins_user, who owns $data: Kilnmark runs as the data folder's owner. Set user=$ins_user there, or make $data the other account's, then run this again. Nothing was changed."
 }
 
 cmd_upgrade() {
@@ -1713,9 +1798,16 @@ cmd_upgrade() {
   [ -n "$recorded" ] || die "Kilnmark's database has no deployment mode recorded (or does not answer: start it first). An install from before deployment modes (release 0.1.1 or earlier, a preview) cannot be upgraded: install Kilnmark afresh. Nothing was changed."
   [ "$recorded" = "$(setting KILNMARK_MODE)" ] \
     || die "KILNMARK_MODE in config/.env differs from the mode Kilnmark recorded at its first start: set it back. Nothing was changed."
-  verify_file "$archive"
+  # The archive copied into a folder of root's first, with its signature: the copy is what is
+  # checked and what is unpacked, so nothing can be put in its place between the two.
   tmp="$(mktemp -d "$root/versions/.unpack.XXXX")"
-  tar -xzf "$archive" -C "$tmp" || { rm -rf "$tmp"; die "$(basename "$archive") could not be unpacked."; }
+  local copy; copy="$tmp/$(basename "$archive")"
+  cp -- "$archive" "$copy" || { rm -rf "$tmp"; die "$(basename "$archive") could not be copied to check it."; }
+  [ ! -f "$archive.sigstore.json" ] || cp -- "$archive.sigstore.json" "$copy.sigstore.json" \
+    || { rm -rf "$tmp"; die "$(basename "$archive").sigstore.json could not be copied to check it."; }
+  ( verify_file "$copy" ) || { rm -rf "$tmp"; exit 1; }
+  tar -xzf "$copy" -C "$tmp" || { rm -rf "$tmp"; die "$(basename "$archive") could not be unpacked."; }
+  rm -f "$copy" "$copy.sigstore.json"
   src="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
   new="$(version_of "$src")"
   [ -n "$new" ] || { rm -rf "$tmp"; die "Cannot tell the new release's version."; }
@@ -1739,7 +1831,10 @@ cmd_upgrade() {
   step_ok
   step "Switch to Kilnmark $new"
   local added; added="$(new_settings "$root/versions/$new/.env.example")"
-  cp "$root/versions/$new/.env.example" "$data/config/.env.example" && chown "$ins_user" "$data/config/.env.example"
+  # by the account, with its own rights: root never writes through a path in the account's folder,
+  # where a link could lead anywhere
+  as_account cp -- "$root/versions/$new/.env.example" "$data/config/.env.example" < /dev/null \
+    || die "$data/config/.env.example could not be written by $ins_user."
   use_version "$new"
   step_ok
   step "Start Kilnmark $new"
@@ -1783,6 +1878,8 @@ cmd_uninstall() {
   step_ok
   if $purge; then
     step "Remove the data folder $data"
+    # rm takes a link as a link, never following it, here and inside
+    [ ! -L "$data" ] || die "$data is a link: nothing more was removed."
     rm -rf "${data:?}" || die "$data could not be removed."
     step_ok
     echo "Kilnmark is uninstalled, and its data deleted. The account $ins_user is kept; remove it with: sudo userdel -r $ins_user"
@@ -1838,6 +1935,7 @@ cmd_configure() {
     k="${BASH_REMATCH[1]}" v="$(trim "${BASH_REMATCH[2]}")"
     [[ ! "$k" =~ (password|secret|token) ]] || die "$k is a secret: configure asks for one when an answer needs it, and none is given on a command line."
     known_key "$k" || die "$k is not an answer install knows (install.conf.example lists them)."
+    [[ "$v" != *[\$\`]* ]] || die "$k may not hold \$ or \`, which compose would read as the start of another setting's name. Nothing was changed."
     if [[ "$fixed_keys" == *" $k "* ]] && [ "$v" != "$(answer_of "$k")" ]; then
       case "$k" in
         mode) die "An install's mode never changes (ADR 0051): for the other mode, install Kilnmark afresh. Nothing was changed." ;;
@@ -1864,8 +1962,7 @@ cmd_configure() {
   validate_answers || die "Some answers cannot be taken (above), so nothing was changed."
   # what a change needs before anything is written: a client secret for your own identity provider
   if [ "$(answer_of identity)" = own ] && { [ "$identity_was" != own ] || [[ " ${changed[*]} " == *" oidc_client_id "* ]]; }; then
-    read_secret "The client secret your identity provider gave Kilnmark"
-    [ -n "$secret_value" ] || die "The client secret is needed for sign-in with your identity provider. Nothing was changed."
+    read_client_secret
   fi
   for k in "${changed[@]}"; do
     case "$k" in

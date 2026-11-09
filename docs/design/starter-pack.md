@@ -102,6 +102,13 @@ podman-compose 1.0.x prints each podman command it runs, every container setting
 with spaces or as a Python list; those lines never reach the screen or `logs`: both editions drop
 them from all they pass on from compose, whether or not they are logging.
 
+No secret is a container setting either (ADR 0051, decision 13). The one-offs read theirs from a
+file mounted for one run; Kilnmark, its database, Keycloak and Keycloak's database from a file each
+(`env_file`, which podman-compose passes as `--env-file`), which the control scripts write in
+`config/run/services` from `config/.env` before every compose command, never as root or elevated.
+Each line is `KEY=value` with no quotes, read alike by podman and Docker Compose, so a secret with
+a space, a quote mark, `#`, `$`, a backtick or a backslash is refused by its name.
+
 `setup.sh` checks the same rules itself, before anything else, and refuses to add people otherwise.
 It finds groups by their path (`group-by-path`), never by search, which also answers with the parent
 of a subgroup of that name. The pack's group carries the attribute `kilnmark_starter_pack`, set only

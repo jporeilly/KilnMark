@@ -95,7 +95,9 @@ fixes it. It ends with a failure code when there is a problem.
 | HTTPS from other machines | `kilnmark.sh configure tls=on ...` or `tls=proxy` |
 | A backup from the last day | `kilnmark.sh backup` |
 
-Before install, run `check` from the unpacked release: it checks the machine only.
+Before install, run `check` from the unpacked release: it checks the machine only. Unpack it in your
+own Downloads folder, or another folder only you may change ([INSTALL.md](../../../INSTALL.md#install)
+says why).
 
 ## Where things are, and who may change them
 
@@ -117,7 +119,11 @@ turns on its `podman-restart` service.
 A compose command run by hand, as the operator, from the program folder:
 `podman compose -p kilnmark --env-file /var/opt/kilnmark/config/.env -f current/compose.yaml` (or
 `docker compose`), which is what the control script runs. Start it through the control script
-rather than by hand: it writes the one-offs' secrets for each run and removes them after.
+rather than by hand: it writes the one-offs' secrets for each run and removes them after, and,
+before every compose command, each long-running service's secrets into a file of its own in
+`config/run/services` (yours alone), which compose hands to Podman as a file. No secret is in a
+container's settings in `compose.yaml`: podman-compose puts those on Podman's command line, where
+any account on the machine can read them. By hand, set `KILNMARK_SECRETS_DIR` to that folder.
 
 ## Who may change what a run uses
 

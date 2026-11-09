@@ -3,12 +3,19 @@
 # file (INSTALL.md, "A. Install a release"):
 #   ./kilnmark.sh install        (Windows: kilnmark.cmd install)
 # which gets the images (loaded from the offline images file, pulled, or built), makes .env with new
-# secrets, and starts everything. By hand, from this folder with a .env beside it:
+# secrets, and starts everything. Before every compose command it also writes each service's
+# secrets into a file of that service's own (env_file, below; KILNMARK_SECRETS_DIR, config/run/
+# services in the data folder), so no secret is in a container's environment here: podman-compose
+# puts every environment setting on podman's command line, where other users of the machine can
+# read it. By hand, from this folder with a .env beside it, write those files first, as the
+# control script does (each KEY=value with no quotes: postgres.env, kilnmark.env, keycloak-db.env,
+# keycloak.env, in ../../config/run/services), then:
 #   podman compose up -d          (or: docker compose up -d)
 # The images are ghcr.io/jporeilly/kilnmark-server and -postgres, tag @VERSION@: pulled, loaded from
 # kilnmark-@VERSION@-images.tar.gz, or built from containers/ (podman compose build).
 #
-# Nothing here has a default password or token: compose stops with a message naming a missing one.
+# Nothing here has a default password or token: the control script stops with a message naming a
+# missing one.
 #   KILNMARK_DB_PASSWORD   required: password of Kilnmark's database, and of its PostgreSQL owner
 #   KILNMARK_ADMIN_TOKEN   required: Kilnmark's admin API token
 #   KILNMARK_PORT          optional: the port Kilnmark is published on (8780)
@@ -34,8 +41,10 @@ services:
     environment:
       POSTGRES_DB: kilnmark
       POSTGRES_USER: kilnmark
-      # The kilnmark user owns the database and is its PostgreSQL superuser: no default password.
-      POSTGRES_PASSWORD: ${KILNMARK_DB_PASSWORD:?Set KILNMARK_DB_PASSWORD to a strong password before starting Kilnmark (see .env.example)}
+    # The kilnmark user owns the database and is its PostgreSQL superuser: no default password.
+    # POSTGRES_PASSWORD (KILNMARK_DB_PASSWORD) from the file the control script writes, never here.
+    env_file:
+      - ${KILNMARK_SECRETS_DIR:-../../config/run/services}/postgres.env
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:
@@ -88,16 +97,10 @@ services:
       KILNMARK_ROLES: api,scheduler,worker
       QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/kilnmark?sslmode=require
       QUARKUS_DATASOURCE_USERNAME: kilnmark
-      QUARKUS_DATASOURCE_PASSWORD: ${KILNMARK_DB_PASSWORD:?Set KILNMARK_DB_PASSWORD to a strong password before starting Kilnmark (see .env.example)}
-      # The admin API token: km_ followed by 43 or more letters, digits, - or _ (see .env.example).
-      KILNMARK_ADMIN_TOKEN: ${KILNMARK_ADMIN_TOKEN:?Set KILNMARK_ADMIN_TOKEN to a new admin token before starting Kilnmark (see .env.example)}
       # The folders file sources may use: /srv/files, Kilnmark's own (the files volume), which they
       # may write with Allow writing on, and /srv/share, your own folder (KILNMARK_FILES_DIR),
       # read-only (see volumes below).
       KILNMARK_FILES_ROOTS: /srv/files,/srv/share
-      # The Starter Pack (ADR 0051; Settings, Starter Pack): the samples' database login, made by
-      # samples-db above. No default, as for every secret.
-      KILNMARK_SAMPLES_DB_PASSWORD: ${KILNMARK_SAMPLES_DB_PASSWORD}
       # The deployment mode (ADR 0051): production, or starter-pack for training and development,
       # written at install and recorded in Kilnmark's database at the first start. The server does
       # not start without it, or with one that differs from the record. Kilnmark holds no Keycloak
@@ -121,8 +124,6 @@ services:
       QUARKUS_OIDC_TENANT_ENABLED: ${KILNMARK_OIDC_ENABLED:-false}
       QUARKUS_OIDC_AUTH_SERVER_URL: ${KILNMARK_OIDC_ISSUER:-}
       QUARKUS_OIDC_CLIENT_ID: ${KILNMARK_OIDC_CLIENT_ID:-}
-      # No default, as for every secret (ADR 0024): unset, compose notes it and sign-in with the provider stays off
-      QUARKUS_OIDC_CREDENTIALS_SECRET: ${KILNMARK_OIDC_CLIENT_SECRET}
       # true behind a proxy that ends TLS, so the redirect URI the provider sees is https://
       QUARKUS_OIDC_AUTHENTICATION_FORCE_REDIRECT_HTTPS_SCHEME: ${KILNMARK_OIDC_BEHIND_TLS_PROXY:-false}
       # Scopes asked for beside openid: offline_access where the provider issues a refresh token only
@@ -141,6 +142,15 @@ services:
       KILNMARK_AUTH_TOKEN_MAX_LIFETIME: ${KILNMARK_TOKEN_MAX_LIFETIME:-}
       # true: a second admin approves a designer token seeing sensitive values (ADR 0038)
       KILNMARK_AUTH_UNMASK_APPROVAL: ${KILNMARK_UNMASK_APPROVAL:-false}
+    # Its secrets, from the file the control script writes for it alone, never here (ADR 0051,
+    # decision 13), and none of anyone else's: the database's password (QUARKUS_DATASOURCE_PASSWORD,
+    # KILNMARK_DB_PASSWORD), the admin API token (KILNMARK_ADMIN_TOKEN: km_ followed by 43 or more
+    # letters, digits, - or _), the Starter Pack's database login (KILNMARK_SAMPLES_DB_PASSWORD,
+    # made by samples-db above; Settings, Starter Pack) and the identity provider's client secret
+    # (QUARKUS_OIDC_CREDENTIALS_SECRET, KILNMARK_OIDC_CLIENT_SECRET). No default for any of them:
+    # unset, the line is left out of the file (the last two then stay off).
+    env_file:
+      - ${KILNMARK_SECRETS_DIR:-../../config/run/services}/kilnmark.env
     extra_hosts:
       - "host.docker.internal:host-gateway"   # reach databases on this machine (Podman also has host.containers.internal)
     volumes:
@@ -188,7 +198,7 @@ services:
   # Run it again after changing KILNMARK_URL or the client secret with the control script
   # (kilnmark.sh restart), which writes its two secrets in a file for that run alone.
   # Its secrets have no defaults: while one is missing, keycloak-db or keycloak-setup stops and says
-  # which. They are optional to compose itself, so Kilnmark starts the same without this profile.
+  # which. Each service reads its own from the file the control script writes for it (env_file).
   keycloak-db:
     image: ghcr.io/jporeilly/kilnmark-postgres:@VERSION@
     restart: always   # back after a reboot (down removes the containers, so a stop stays a stop)
@@ -196,7 +206,9 @@ services:
     environment:
       POSTGRES_DB: keycloak
       POSTGRES_USER: keycloak
-      POSTGRES_PASSWORD: ${KILNMARK_KEYCLOAK_DB_PASSWORD}
+    # POSTGRES_PASSWORD (KILNMARK_KEYCLOAK_DB_PASSWORD) from the file the control script writes
+    env_file:
+      - ${KILNMARK_SECRETS_DIR:-../../config/run/services}/keycloak-db.env
     volumes:
       - keycloak-pgdata:/var/lib/postgresql
     healthcheck:
@@ -213,7 +225,6 @@ services:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak?sslmode=require
       KC_DB_USERNAME: keycloak
-      KC_DB_PASSWORD: ${KILNMARK_KEYCLOAK_DB_PASSWORD}
       # The address browsers reach Keycloak at. Kilnmark reaches it inside this stack
       # (http://keycloak:8080), so its calls behind the scenes use that address instead.
       KC_HOSTNAME: ${KILNMARK_KEYCLOAK_URL:-http://localhost:8180}
@@ -227,7 +238,10 @@ services:
       KC_HEALTH_ENABLED: "true"
       # Keycloak's first admin, for its console (KILNMARK_KEYCLOAK_URL/admin) and keycloak-setup.
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KILNMARK_KEYCLOAK_ADMIN:-admin}
-      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KILNMARK_KEYCLOAK_ADMIN_PASSWORD}
+    # Its database's password (KC_DB_PASSWORD) and its first admin's (KC_BOOTSTRAP_ADMIN_PASSWORD,
+    # KILNMARK_KEYCLOAK_ADMIN_PASSWORD), from the file the control script writes, never here.
+    env_file:
+      - ${KILNMARK_SECRETS_DIR:-../../config/run/services}/keycloak.env
     volumes:
       - ./containers/keycloak/themes/kilnmark:/opt/keycloak/themes/kilnmark:ro,Z
     depends_on:

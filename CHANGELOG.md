@@ -225,6 +225,30 @@ details.
     answer. The OIDC group mappings and Keycloak's published address
     (`KILNMARK_KEYCLOAK_BIND`, `0.0.0.0` for a host other than `localhost`, which then needs
     `tls=proxy` with the bundled Keycloak) come from `config/.env` only.
+- **Security: the control scripts keep secrets off command lines, and run as root or an
+  administrator only what nobody else may change** (ADR 0051, decisions 13, 15 and 17), from a
+  second review of 0.1.2:
+  - No answer, and no `configure` value, may hold `$` or a backtick (refused by its key, never its
+    value): compose reads `${NAME}` in `config/.env` as another setting, so a provider name of
+    `${KILNMARK_ADMIN_TOKEN}` would have shown the admin token on the sign-in page. The scripts
+    refuse to write such a value into `config/.env` for any key.
+  - Kilnmark, its database, Keycloak and Keycloak's database no longer take their secrets from
+    their environment in `compose.yaml`, which podman-compose put on Podman's command line, where
+    any account on the machine could read them. Each reads its own from a file the control script
+    writes before every compose command, in `config/run/services` (yours alone), named by
+    `KILNMARK_SECRETS_DIR`. A secret with a space, a quote mark, `#`, `$`, a backtick or a
+    backslash is refused, as compose tools read those differently; install never makes one.
+  - Linux: once the data folder is the account's, root writes nothing in it: the account copies
+    upgrade's `.env.example` and writes install's log. Upgrade and uninstall take the account from
+    the data folder's owner, and refuse when `install.conf` names another. Upgrade checks and
+    unpacks a copy of the archive in a folder of root's.
+  - Windows: the step that runs as an administrator no longer reads the certificate and its key;
+    you copy them, with your own rights, after it. Install and upgrade refuse a release folder or
+    archive that anyone else may change (one unpacked under `C:\` is), before asking for an
+    administrator, and say how to fix it; upgrade checks and unpacks a copy of its own, and the
+    elevated step checks the release again. The hourly run checks the engine it starts and its
+    compose tool by their full paths, and runs the engine by that path, never a script of its name.
+    Unpack a release in your own Downloads folder.
 - **Security: keycloak-setup reads what a person wrote as JSON** (ADR 0051, decisions 10 and 16).
   The expiry of unused temporary passwords read each person's credentials as kcadm's CSV, where a
   one-time code's label holding a line break (Keycloak 26.8's form for setting up the code keeps a

@@ -1,8 +1,12 @@
 # Upgrading
 
 `upgrade` moves an install to a later release, keeping its answers, settings and data. Download the
-release (and, without internet access, its images file), check them
-([Checking a release](checking-a-release.md)), then:
+release (and, without internet access, its images file) into your own Downloads folder, or another
+folder only you (and root or the administrators) may change, and check them
+([Checking a release](checking-a-release.md)): `upgrade` places what is in the archive as root or
+an administrator, so nobody else may be able to change it. On Windows, `upgrade` refuses an archive
+someone else may change before it asks for an administrator, and says how to fix it; it then copies
+the archive into a folder of yours alone, and checks and unpacks that copy. Then:
 
 | | Linux | Windows |
 | --- | --- | --- |

@@ -251,6 +251,22 @@ class ControlScriptInstallTest {
         }
         assertFalse(bad.contains("Bad_Host") || bad.contains("Bank.Example") || bad.contains("My Project"), "never the value: " + bad);
         assertFalse(bad.contains("[2/2]"), "nothing after the answers: " + bad);
+        // $ or ` in any answer: compose would read ${NAME} in config/.env as another setting's value,
+        // and the sign-in page shows the provider's name to anyone, so the admin token would be shown
+        String own = "mode=production\nidentity=own\nhost=localhost\ntls=off\nport=" + ports.get(0) + "\nhttps_port=" + ports.get(1)
+            + "\ndb_port=" + ports.get(2) + "\noidc_issuer=https://login.bank.example/realms/${KILNMARK_ADMIN_TOKEN}\noidc_client_id=kilnmark\n"
+            + "oidc_provider_name=${KILNMARK_ADMIN_TOKEN}\noidc_admin_groups=admins`id`\noidc_designer_groups=d\noidc_steward_groups=s\n"
+            + "oidc_viewer_groups=v\noidc_unmask_groups=u$X\nproject=kmtest\n";
+        String dollar = run(e, release.resolve(script), dry.apply(answersFile(own)), none, engine, env, "");
+        for (String said : List.of("oidc_issuer (line 8): oidc_issuer may not hold $ or `", "oidc_provider_name (line 10): oidc_provider_name may not hold $",
+            "oidc_admin_groups (line 11): oidc_admin_groups may not hold $ or `", "oidc_unmask_groups (line 15): oidc_unmask_groups may not hold $",
+            "[1/2] FAILED")) {
+            assertTrue(dollar.contains(said), said + ": " + dollar);
+        }
+        assertFalse(dollar.contains("KILNMARK_ADMIN_TOKEN}") || dollar.contains("`id`") || dollar.contains("u$X"), "never the value: " + dollar);
+        String names = run(e, release.resolve(script), dry.apply(answersFile(good.replace("admin_first_name=Ada", "admin_first_name=${KILNMARK_DB_PASSWORD}"))),
+            none, engine, env, "");
+        assertTrue(names.contains("admin_first_name (line 11): admin_first_name may not hold $") && !names.contains("KILNMARK_DB_PASSWORD}"), names);
         // answers that do not go together
         String clash = run(e, release.resolve(script), dry.apply(answersFile("mode=starter-pack\nidentity=own\nhost=kilnmark.bank.example\ntls=off\n"
             + "port=" + ports.get(0) + "\nhttps_port=" + ports.get(1) + "\ndb_port=" + ports.get(0) + "\n")), none, engine, env, "");
@@ -342,6 +358,13 @@ class ControlScriptInstallTest {
         String bad = run(e, launcher(e), List.of("configure", "host=Not A Host"), root, engine, Map.of(), "");
         assertTrue(bad.contains("host is a host name in lower case") && !bad.contains("Not A Host"), bad);
         assertTrue(run(e, launcher(e), List.of("configure", "tls=on"), root, engine, Map.of(), "").contains("tls_cert"));
+        // never $ or ` in a value: compose would read ${NAME} in config/.env as another setting's value
+        for (String v : List.of("email_domain=${KILNMARK_ADMIN_TOKEN}", "host=a`id`", "admin_first_name=$X")) {
+            String refused = run(e, launcher(e), List.of("configure", v), root, engine, Map.of(), "");
+            String k = v.substring(0, v.indexOf('='));
+            assertTrue(refused.contains(k + " may not hold $ or `") && refused.contains("[1/3] FAILED")
+                && !refused.contains(v.substring(v.indexOf('=') + 1)), v + ": " + refused);
+        }
         // a port in use is refused, with one that is free
         try (ServerSocket busy = new ServerSocket()) {
             busy.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0));
@@ -521,6 +544,188 @@ class ControlScriptInstallTest {
         assertFalse(Files.exists(prog) || Files.exists(data), gone);
     }
 
+    /**
+     * Windows: the step UAC elevates never reads the certificate or its key (an operator who may not
+     * read a file could otherwise have an administrator copy it into the data folder, by a junction
+     * swapped in while UAC asks); the operator copies them, with their own rights, once the folders
+     * are made.
+     */
+    @Test
+    void theWindowsEditionCopiesTheCertificateAsTheOperator() throws Exception {
+        Edition e = windowsEdition();
+        Path release = e.release();
+        Path engine = ControlScriptStarterTest.fakeEngine(true, true);
+        Path base = Files.createTempDirectory("kilnmark tls");
+        Path prog = base.resolve("Program Files").resolve("Kilnmark");
+        Path data = base.resolve("ProgramData").resolve("Kilnmark");
+        Path cert = base.resolve("server.crt");
+        Files.writeString(cert, "-----BEGIN CERTIFICATE-----\nMIIBkilnmarktest\n-----END CERTIFICATE-----\n");
+        Path key = base.resolve("server.key");
+        Files.writeString(key, "-----BEGIN PRIVATE KEY-----\nMIIEkilnmarktest\n-----END PRIVATE KEY-----\n");
+        List<String> ports = fourPorts();
+        String answers = goodAnswers(ports).replace("tls=off\n", "tls=on\n") + "tls_cert=" + cert + "\ntls_key=" + key + "\n"
+            + "program_dir=" + prog + "\ndata_dir=" + data + "\n";
+        // the elevated part alone, given files that are not there: it neither checks nor copies them
+        Path work = Files.createTempDirectory("kilnmark-work");
+        Path conf = work.resolve("answers.conf");
+        Files.writeString(conf, answers.replace("tls_cert=" + cert, "tls_cert=" + base.resolve("missing.crt"))
+            .replace("tls_key=" + key, "tls_key=" + base.resolve("missing.key")));
+        Path result = work.resolve("result.txt");
+        String elevated = run(e, release.resolve("kilnmark.ps1"), List.of("_install-elevated", "-Answers", conf.toString(), "-OperatorSid", mySid(),
+            "-Result", result.toString()), prog, engine, Map.of(), "");
+        assertEquals("OK", Files.readString(result).strip(), elevated);
+        try (var copied = Files.list(data.resolve("certs/https"))) {
+            assertEquals(List.of(), copied.toList(), "the elevated part copied nothing");
+        }
+        deleteTree(base.resolve("Program Files"));
+        deleteTree(base.resolve("ProgramData"));
+        // the whole install: the operator's part copies them
+        Path images = Files.createTempFile("kilnmark-images", ".tar.gz");
+        List<String> install = List.of("install", "-Answers", answersFile(answers).toString(), "-NoStart", "-Offline", images.toString(), "-SkipVerify");
+        String out = run(e, release.resolve("kilnmark.ps1"), install, prog, engine, checkEnv(e, "2.7.11.0", Map.of()), ControlScriptStarterTest.PERSON_PASSWORD);
+        assertTrue(out.contains("[3/4] OK") && out.contains("is installed"), out);
+        assertEquals(Files.readString(cert), Files.readString(data.resolve("certs/https/server.crt")), out);
+        assertEquals(Files.readString(key), Files.readString(data.resolve("certs/https/server.key")), out);
+        assertFalse(out.contains("MIIEkilnmarktest"), "the key was shown");
+        // and the elevated part's code: no copy, and the two answers skipped
+        String ps = Files.readString(LAUNCH.resolve("kilnmark.ps1")).replace("\r\n", "\n");
+        String part = ps.substring(ps.indexOf("function Invoke-InstallElevated("), ps.indexOf("function Invoke-Upgrade("));
+        assertFalse(part.contains("Copy-Certs"), "the elevated part copies no certificate");
+        assertTrue(part.contains("$script:SkipKeys = @('tls_cert', 'tls_key')"), "nor reads one to check it");
+    }
+
+    /**
+     * Windows: install and upgrade run what is in the release as an administrator, so before asking
+     * for one they refuse a release folder (every file and folder in it, and every folder above it)
+     * or an archive that anyone but you, SYSTEM, the Administrators and TrustedInstaller may change,
+     * as one unpacked under C:\ is (Authenticated Users, Modify), saying how to fix it; and the
+     * elevated step checks the folder again itself.
+     */
+    @Test
+    void theWindowsEditionRefusesAReleaseSomeoneElseMayChange() throws Exception {
+        Edition e = windowsEdition();
+        Path release = e.release();
+        Path engine = ControlScriptStarterTest.fakeEngine(true, true);
+        Path none = Files.createTempDirectory("kilnmark-none");
+        Map<String, String> env = checkEnv(e, "2.7.11.0", Map.of());
+        List<String> ports = fourPorts();
+        Path base = Files.createTempDirectory("kilnmark refused");
+        Path prog = base.resolve("Program Files").resolve("Kilnmark");
+        Path data = base.resolve("ProgramData").resolve("Kilnmark");
+        String answers = goodAnswers(ports) + "program_dir=" + prog + "\ndata_dir=" + data + "\n";
+        List<String> dry = List.of("install", "-Answers", answersFile(answers).toString(), "-DryRun");
+        // as unpacked in your own folder: it passes
+        String ok = run(e, release.resolve("kilnmark.ps1"), dry, none, engine, env, "");
+        assertTrue(ok.contains("[2/2] OK") && ok.contains("Nothing was changed (-DryRun)"), ok);
+        // a file in it others may change (as unpacked under C:\): refused, saying how to fix it
+        ControlScriptStarterTest.icacls(release.resolve("compose.yaml"), "/grant", "*S-1-5-11:(M)");
+        String refused = run(e, release.resolve("kilnmark.ps1"), dry, none, engine, env, "");
+        assertTrue(refused.contains("[2/2] FAILED") && refused.contains("install was refused, before asking for an administrator")
+            && refused.contains("compose.yaml may be changed by") && refused.contains("your own Downloads folder")
+            && refused.contains("icacls \"" + release + "\" /inheritance:r"), refused);
+        // for real: refused before UAC is asked, and nothing made
+        Path images = Files.createTempFile("kilnmark-images", ".tar.gz");
+        String real = run(e, release.resolve("kilnmark.ps1"), List.of("install", "-Answers", answersFile(answers).toString(), "-NoStart",
+            "-Offline", images.toString(), "-SkipVerify"), prog, engine, env, ControlScriptStarterTest.PERSON_PASSWORD);
+        assertTrue(real.contains("install was refused") && !real.contains("Windows now asks for an administrator"), real);
+        assertFalse(Files.exists(prog) || Files.exists(data), real);
+        // the elevated step checks it again itself, before it copies anything
+        Path work = Files.createTempDirectory("kilnmark-work");
+        Path conf = work.resolve("answers.conf");
+        Files.writeString(conf, answers);
+        Path result = work.resolve("result.txt");
+        String elevated = run(e, release.resolve("kilnmark.ps1"), List.of("_install-elevated", "-Answers", conf.toString(), "-OperatorSid", mySid(),
+            "-Result", result.toString()), prog, engine, Map.of(), "");
+        assertTrue(Files.readString(result).startsWith("FAILED The release folder was refused: ") && Files.readString(result).contains("compose.yaml"),
+            elevated);
+        assertFalse(Files.exists(prog) || Files.exists(data), elevated);
+        // a folder above it that lets others delete what is in it: unpack it elsewhere (no icacls of it helps)
+        Path above = Files.createTempDirectory("kilnmark-above");
+        Path moved = Files.move(e.release(), above.resolve("kilnmark-9.9.9"));
+        ControlScriptStarterTest.icacls(above, "/grant", "*S-1-5-11:(DC)");
+        String up = run(e, moved.resolve("kilnmark.ps1"), dry, none, engine, env, "");
+        assertTrue(up.contains("install was refused") && up.contains(", a folder above ") && up.contains("your own Downloads folder")
+            && !up.contains("/inheritance:r"), up);
+        // upgrade: an archive others may change is refused before anything, its own or a folder above it
+        Path root = ControlScriptStarterTest.installRoot(true);
+        Path archive = Files.createTempDirectory("kilnmark-download").resolve("kilnmark-9.9.10.zip");
+        Files.writeString(archive, "not really an archive");
+        ControlScriptStarterTest.icacls(archive, "/grant", "*S-1-5-11:(M)");
+        String upgrade = run(e, launcher(e), List.of("upgrade", archive.toString()), root, engine, Map.of(), "");
+        assertTrue(upgrade.contains("upgrade was refused, before asking for an administrator") && upgrade.contains("kilnmark-9.9.10.zip may be changed by")
+            && upgrade.contains("icacls \"" + archive + "\" /inheritance:r /grant:r ") && !upgrade.contains("(OI)(CI)"), upgrade);
+        // and the copy is what is checked and unpacked: upgrade copies the archive into a folder of its own first
+        String ps = Files.readString(LAUNCH.resolve("kilnmark.ps1")).replace("\r\n", "\n");
+        String part = ps.substring(ps.indexOf("function Invoke-Upgrade("), ps.indexOf("function Invoke-PlaceVersion("));
+        assertTrue(part.contains("Copy-Item -LiteralPath $archive -Destination $copy") && part.contains("Test-FileSignature $copy")
+            && part.contains("& tar.exe -xf $copy -C $unpacked") && !part.contains("Test-FileSignature $archive")
+            && !part.contains("tar.exe -xf $archive"), "the copy is checked and unpacked");
+        String place = ps.substring(ps.indexOf("function Invoke-PlaceVersion("), ps.indexOf("function Invoke-UseVersion("));
+        assertTrue(place.indexOf("Get-ReleaseProblem $src") > 0 && place.indexOf("Get-ReleaseProblem $src") < place.indexOf("Copy-Item"),
+            "the elevated part checks the new release before it copies it");
+    }
+
+    /** Your own SID, as Windows names it (whoami). */
+    static String mySid() throws Exception {
+        Process p = new ProcessBuilder("whoami.exe", "/user", "/fo", "csv", "/nh").redirectErrorStream(true).start();
+        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertEquals(0, p.waitFor(), out);
+        Matcher m = Pattern.compile("(S-1-[0-9-]+)").matcher(out);
+        assertTrue(m.find(), out);
+        return m.group(1);
+    }
+
+    /** Deletes a folder and everything in it (folders the tests made, the tests' own to remove). */
+    static void deleteTree(Path dir) throws IOException {
+        if (!Files.exists(dir)) {
+            return;
+        }
+        try (var all = Files.walk(dir)) {
+            for (Path p : all.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                Files.delete(p);
+            }
+        }
+    }
+
+    /**
+     * Linux: upgrade and uninstall run as root, and take the account they run the account's parts as
+     * from the data folder's owner, never from install.conf, which that account may write: an
+     * install.conf naming another account, or a data folder that is a link, is refused before
+     * anything changes.
+     */
+    @Test
+    void theLinuxEditionTakesTheAccountFromTheDataFolder() throws Exception {
+        Edition e = linux();
+        Path engine = ControlScriptStarterTest.fakeEngine(false, true);
+        Path root = installed(e, fourPorts(), Map.of());
+        Path archive = Files.createTempFile("kilnmark-9.9.10", ".tar.gz");
+        Map<String, String> asRoot = Map.of("KILNMARK_TEST_UID", "0");
+        for (List<String> args : List.of(List.of("upgrade", archive.toString()), List.of("uninstall"))) {
+            String out = run(e, launcher(e), args, root, engine, asRoot, "");
+            // install.conf says kmtest-nobody; the folder is the tests' account's (or root's, in CI's containers)
+            assertTrue(out.contains("Nothing was changed") && (out.contains("names another account than")
+                || out.contains("is not owned by an account of this machine other than root")), args + ": " + out);
+            assertFalse(out.contains("[1/"), "no step began: " + out);
+            assertTrue(Files.exists(root.resolve("versions/9.9.9/compose.yaml")) && Files.exists(root.resolve("config/.env")), "nothing removed");
+        }
+        // the data folder data-folder.txt names, a link: refused
+        Path link = Files.createTempDirectory("kilnmark-link-parent").resolve("data");
+        ControlScriptStarterTest.link(link, root);
+        Files.writeString(root.resolve("data-folder.txt"), link + "\n");
+        String linked = run(e, launcher(e), List.of("upgrade", archive.toString()), root, engine, asRoot, "");
+        assertTrue(linked.contains("is not a folder (or is a link)") && linked.contains("Nothing was changed"), linked);
+        // and root writes nothing in the data folder itself: the account copies .env.example and writes
+        // install's log; every chown there leaves links as links
+        String sh = Files.readString(LAUNCH.resolve("kilnmark.sh"));
+        String upgrade = sh.substring(sh.indexOf("\ncmd_upgrade() {"), sh.indexOf("\ncmd_uninstall() {"));
+        assertTrue(upgrade.contains("as_account cp -- \"$root/versions/$new/.env.example\" \"$data/config/.env.example\"")
+            && !upgrade.contains("chown \"$ins_user\""), "upgrade");
+        String install = sh.substring(sh.indexOf("\ncmd_install() {"), sh.indexOf("\ninstalled_user() {"));
+        assertFalse(install.contains("touch \"$log_file\"") || install.contains("chown \"$ins_user:$(id -gn \"$ins_user\")\" \"$log_file\""), "install");
+        assertTrue(install.contains("chown -R -h \"$ins_user:"), "install");
+        assertTrue(sh.contains("exec > >(hide_compose_commands | as_account tee -a -- \"$log\") 2>&1"), "the log, as the account");
+    }
+
     /** Who besides {@code allowed} (names, or the end of one) may change {@code p}. */
     static Set<String> writers(Path p, Set<String> allowed) throws IOException {
         Set<String> out = new java.util.TreeSet<>();
@@ -551,6 +756,24 @@ class ControlScriptInstallTest {
             }
         }
         return out;
+    }
+
+    /**
+     * The line writers refuse a value with $ or ` for any key, whatever checked it before: compose
+     * reads ${NAME} in config/.env as another setting's value. A second line of defence behind the
+     * answers' own checks, which the tests above exercise; and the client secret, the one secret
+     * read in, is refused with them too.
+     */
+    @Test
+    void neitherEditionWritesADollarIntoTheSettings() throws IOException {
+        String sh = Files.readString(LAUNCH.resolve("kilnmark.sh"));
+        assertTrue(sh.contains("set_line() {\n  local file=\"$1\" key=\"$2\" value=\"$3\" tmp\n"
+            + "  [[ \"$value\" != *[\\$\\`]* ]] || die \"$key was not written to config/.env: its value holds"), "set_line refuses it first");
+        String ps = Files.readString(LAUNCH.resolve("kilnmark.ps1")).replace("\r\n", "\n");
+        assertTrue(ps.contains("function Set-Line([string]$File, [string]$Key, [string]$Value) {\n"
+            + "    if ($Value -match '[$`]') { Fail ($Key + ' was not written to config\\.env: its value holds $ or `"), "Set-Line refuses it first");
+        assertTrue(sh.contains("plain_value \"$secret_value\" || { secret_value=\"\"; die \"The client secret holds a space, a quote mark"));
+        assertTrue(ps.contains("if (-not (Test-PlainValue $script:SecretValue)) { $script:SecretValue = ''; Fail 'The client secret holds a space, a quote mark"));
     }
 
     /** The test file is ASCII-clean and keeps its own words: nothing here names a real secret. */
