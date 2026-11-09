@@ -28,8 +28,8 @@ nodes:
   - id: tell
     type: notify
     severity: medium
-    title: "Customers: ${check.quarantined_share} set aside, more than ${limit_share}"
-    message: The order totals did not run.
+    title: "Too many customers set aside: see customers_aside.csv"
+    message: More of the customers were set aside than the flow's limit_share allows, so the order totals did not run.
 
   - id: halt
     type: stop

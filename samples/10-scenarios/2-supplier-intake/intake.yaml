@@ -36,10 +36,10 @@ nodes:
   - id: review
     type: notify
     severity: medium
-    title: "Supplier feed held for review: up to ${check.quarantined_share} of rows set aside"
+    title: "Supplier feed held for review: see quarantined_rows.csv and price_review.csv"
     message: >-
       Unknown products, costs that are missing or not positive, or costs that moved by more than 20% were set
-      aside. Nothing was loaded. Review the quarantined and price review files, then run
+      aside. Nothing was loaded. Review quarantined_rows.csv and price_review.csv, then run
       sample-supplier-load to load what was accepted.
 
   - id: load

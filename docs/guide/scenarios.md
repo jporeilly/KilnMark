@@ -83,7 +83,8 @@ schedule](schedules.md)).
    `sample-onboarding-nightly` a schedule, if it is to run each night.
 3. **Sam runs the flow.** On the flow's page, **Run now**. The run's diagram shows which way it went:
    on the sample data a little over 1% of the rows are set aside, under the 5% limit, so it goes on
-   to the analytics copy and the load record, and the notice says how much was set aside.
+   to the analytics copy and the load record. Its notice names the file to review,
+   `quarantined_customers.csv`.
 4. **Sam reviews the rows that failed.** From the flow's run, Sam opens the merge's pipeline run.
    Its log says what the gate set aside and why, by rule ("has an email", "email looks like one").
    Under **What it wrote**, `quarantined_customers.csv` opens in the catalogue, and its **Quality**
@@ -140,8 +141,8 @@ review: a gate's share set aside is what the flow reads to decide whether to loa
 
 1. **Sam runs the flow** (or a schedule does). On the sample data the check sets rows aside: two
    unknown products, two costs that are not positive, and five costs that moved by more than 20%.
-   So the flow sends its notice for the reviewers, and the load does not run. Sam reads the notice
-   on the flow's run.
+   So the flow sends its notice for the reviewers, naming the files to open, `quarantined_rows.csv`
+   and `price_review.csv`, and the load does not run. Sam reads the notice on the flow's run.
 2. **Sam reviews what was held.** From the flow's run, Sam opens the check's pipeline run: its log
    gives each gate's verdict and each rule's count. Under **What it wrote**, `quarantined_rows.csv`
    and `price_review.csv` open in the catalogue, with their rows on the **Quality** tab:

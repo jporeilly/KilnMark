@@ -45,7 +45,7 @@ nodes:
   - id: tell
     type: notify                # in the app and by email, to whoever follows flow notices
     severity: medium            # info (the default), low, medium or high
-    title: "Clean set aside ${clean.quarantined_share} of the customers"
+    title: "Too many customers set aside: see the clean pipeline's run"
     message: The spend report did not run.
   - id: later
     type: wait
