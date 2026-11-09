@@ -26,7 +26,7 @@ $Project = ''; if ($env:KILNMARK_PROJECT) { $Project = $env:KILNMARK_PROJECT }
 # Compose fills ${NAME} from this process's environment before config\.env. These must mean what
 # config\.env says, as this script reads them (ADR 0051), so a value set outside never counts.
 $OneRun = @('KILNMARK_STARTER_PEOPLE_ACTION', 'KILNMARK_PEOPLE_ACTION', 'KILNMARK_PERSON_EMAIL', 'KILNMARK_PERSON_FIRST_NAME', 'KILNMARK_PERSON_LAST_NAME', 'KILNMARK_PERSON_GROUPS', 'KILNMARK_INSTALL_ID', 'KILNMARK_RUN_DIR')
-foreach ($n in (@('KILNMARK_MODE', 'KILNMARK_STARTER', 'KILNMARK_ENV_FILE', 'KILNMARK_CERTS_DIR', 'KILNMARK_SECRETS_DIR', 'KILNMARK_KEYCLOAK_BIND', 'KILNMARK_OIDC_VIEWER_GROUPS', 'KILNMARK_OIDC_STEWARD_GROUPS', 'KILNMARK_OIDC_DESIGNER_GROUPS', 'KILNMARK_OIDC_ADMIN_GROUPS', 'KILNMARK_OIDC_UNMASK_GROUPS') + $OneRun)) {
+foreach ($n in (@('KILNMARK_MODE', 'KILNMARK_STARTER', 'KILNMARK_ENV_FILE', 'KILNMARK_CERTS_DIR', 'KILNMARK_SECRETS_DIR', 'KILNMARK_HOST_ADDRESS', 'KILNMARK_KEYCLOAK_BIND', 'KILNMARK_OIDC_VIEWER_GROUPS', 'KILNMARK_OIDC_STEWARD_GROUPS', 'KILNMARK_OIDC_DESIGNER_GROUPS', 'KILNMARK_OIDC_ADMIN_GROUPS', 'KILNMARK_OIDC_UNMASK_GROUPS') + $OneRun)) {
     Remove-Item ('Env:' + $n) -ErrorAction SilentlyContinue
 }
 $Launchers = @('kilnmark.ps1', 'kilnmark.cmd', 'start-kilnmark.cmd', 'stop-kilnmark.cmd', 'create-shortcut.ps1', 'kilnmark.ico')
@@ -316,6 +316,10 @@ function Test-StarterMode { return ((Get-Setting 'KILNMARK_MODE') -ceq 'starter-
 # Kept apart from the example people (Test-StarterMode), which only a Starter Pack install has.
 function Test-SamplesAllowed { return (Test-StarterMode) }
 
+# How a message names this script so it can be pasted into PowerShell: & and the path in quotes
+# (C:\Program Files has a space). In Command Prompt, leave out the "& ".
+function Get-SelfCall([string]$Folder) { return ('& "' + (Join-Path $Folder 'kilnmark.cmd') + '"') }
+
 # The deployment mode Kilnmark recorded in its own database at its first start (ADR 0051), read with
 # the database's own tools: what decides, not config\.env alone. Empty when nothing is recorded, or
 # the database does not answer.
@@ -324,7 +328,12 @@ function Get-RecordedMode { return (Get-RecordedSetting 'deployment_mode') }
 # id, made at its first start); empty when there is none, or the database does not answer.
 function Get-RecordedSetting([string]$Key) {
     $base = Get-ComposeArgs
-    # never this script's standard input, which a person's lines may be waiting on
+    # Asks first whether the table is there: on a fresh database, before Kilnmark's first start
+    # makes it, the answer is then empty rather than an error, which Windows PowerShell's transcript
+    # (the install log) keeps even when it is sent to $null.
+    # Never this script's standard input, which a person's lines may be waiting on.
+    $have = ($null | & $script:Engine @base exec -T postgres psql -U kilnmark -d kilnmark -X -q -At -c "SELECT to_regclass('kilnmark.server_setting') IS NOT NULL" 2> $null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $have -ne 't') { return '' }
     $out = ($null | & $script:Engine @base exec -T postgres psql -U kilnmark -d kilnmark -X -q -At -c ("SELECT value FROM kilnmark.server_setting WHERE key = '" + $Key + "'") 2> $null | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { return '' }
     return $out
@@ -337,7 +346,7 @@ $script:PeopleMode = ''
 function Get-PeopleModeProblem {
     $script:PeopleMode = ''
     $recorded = Get-RecordedMode
-    if (-not $recorded) { return ("Kilnmark's database does not answer, or has no deployment mode recorded, so nobody was made or changed. Start Kilnmark with " + (Join-Path $script:Root 'kilnmark.cmd') + ' up, then try again.') }
+    if (-not $recorded) { return ("Kilnmark's database does not answer, or has no deployment mode recorded, so nobody was made or changed. Start Kilnmark with " + (Get-SelfCall $script:Root) + ' up, then try again.') }
     if ($recorded -cne (Get-Setting 'KILNMARK_MODE')) { return 'KILNMARK_MODE in config\.env differs from the mode Kilnmark recorded at its first start, so nobody was made or changed: set it back.' }
     $script:PeopleMode = $recorded
     return ''
@@ -665,7 +674,7 @@ function Set-ExpiryTask {
     if (Invoke-Schtasks /Create /SC HOURLY /TN (Get-ExpiryTaskName) /TR $run /F) {
         if (-not $had) { Write-Host ('Set up the hourly expiry of unused temporary passwords: the scheduled task "' + (Get-ExpiryTaskName) + '" (it runs while you are signed in to Windows).') }
     } else {
-        Write-Host ('Warning: the hourly expiry of unused temporary passwords could not be set up (Task Scheduler). Run ' + (Join-Path $script:Root 'kilnmark.cmd') + ' people expire every hour yourself; each start expires them too.') -ForegroundColor Yellow
+        Write-Host ('Warning: the hourly expiry of unused temporary passwords could not be set up (Task Scheduler). Run ' + (Get-SelfCall $script:Root) + ' people expire every hour yourself; each start expires them too.') -ForegroundColor Yellow
     }
 }
 function Remove-ExpiryTask {
@@ -732,6 +741,57 @@ function Test-PlainValue([string]$Value) { return ($Value -and $Value -notmatch 
 # holding $ or a backtick is refused by its name, as set_line refuses one.
 $script:ServiceSecretsFor = $null
 $script:ComposeEnv = $null
+
+# The address Kilnmark's container reaches this computer at, for databases and model servers on it
+# (compose.yaml, extra_hosts: host.containers.internal and host.docker.internal). config\.env's
+# KILNMARK_HOST_ADDRESS when it is set (compose reads it there). Else, under WSL's mirrored
+# networking, where the engine's host-gateway is the Podman machine rather than Windows, this
+# computer's own network address, found again before every compose command because it can change.
+# Else nothing: compose.yaml's default, host-gateway.
+# A setting of %USERPROFILE%\.wslconfig, read only in its own [section] as WSL reads it; empty
+# when it is not there.
+function Get-WslSetting([string]$Section, [string]$Key) {
+    $f = Join-Path $env:USERPROFILE '.wslconfig'
+    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return '' }
+    $in = ''
+    foreach ($l in @(Get-Content -LiteralPath $f -ErrorAction SilentlyContinue)) {
+        if ($l -match '^\s*\[([^\]]+)\]') { $in = $Matches[1].Trim(); continue }
+        if ($in -eq $Section -and $l -match ('^\s*' + [regex]::Escape($Key) + '\s*=\s*([^#;]*)')) { return $Matches[1].Trim() }
+    }
+    return ''
+}
+function Test-WslMirrored { return ((Get-WslSetting 'wsl2' 'networkingMode') -eq 'mirrored') }
+function Test-WslHostLoopback { return ((Get-WslSetting 'experimental' 'hostAddressLoopback') -eq 'true') }
+# The IPv4 address of the interface Windows sends to other networks through (the default route
+# with the lowest metric), never a link-local one. Empty when there is none.
+function Get-NetworkAddress {
+    try {
+        $best = ''; $bestMetric = [int]::MaxValue
+        foreach ($r in @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop)) {
+            $ips = @(Get-NetIPAddress -InterfaceIndex $r.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notmatch '^(169\.254\.|127\.)' })
+            if ($ips.Count -eq 0) { continue }
+            $ifMetric = (Get-NetIPInterface -InterfaceIndex $r.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).InterfaceMetric
+            $m = [int]$r.RouteMetric + [int]$ifMetric
+            if ($m -lt $bestMetric) { $bestMetric = $m; $best = $ips[0].IPAddress }
+        }
+        return $best
+    } catch { return '' }
+}
+function Get-HostAddress {
+    $set = Get-Setting 'KILNMARK_HOST_ADDRESS'
+    if ($set) { return $set }
+    if (Test-WslMirrored) { return (Get-NetworkAddress) }
+    return ''
+}
+# Found once a run (it takes a second or two), however many compose commands the run makes.
+$script:FoundNetworkAddress = $null
+function Set-HostAddress {
+    Remove-Item Env:KILNMARK_HOST_ADDRESS -ErrorAction SilentlyContinue
+    if (Get-Setting 'KILNMARK_HOST_ADDRESS') { return }
+    if (-not (Test-WslMirrored)) { return }
+    if ($null -eq $script:FoundNetworkAddress) { $script:FoundNetworkAddress = Get-NetworkAddress }
+    if ($script:FoundNetworkAddress) { $env:KILNMARK_HOST_ADDRESS = $script:FoundNetworkAddress }
+}
 function Get-ServiceSecretLine([string]$Name, [string]$Setting) {
     $v = Get-Setting $Setting
     if ($v) { return ($Name + '=' + $v) }
@@ -742,6 +802,7 @@ function Write-ServiceSecrets([string]$VersionDir) {
     $rel = Get-RelativePath $VersionDir $dir
     if (-not $rel) { Fail 'The data folder is on another drive than the program folder, which compose cannot take: install Kilnmark afresh with both on one drive.' }
     $env:KILNMARK_SECRETS_DIR = $rel
+    Set-HostAddress
     $envFile = Join-Path $script:Data 'config\.env'
     $composeEnv = Join-Path $dir 'compose.env'
     # elevated (check), the files you wrote, never written: compose still finds them
@@ -1004,7 +1065,7 @@ function Get-PortFix([int]$Port) {
     if ($Port -eq (Get-Port 'KILNMARK_DB_PORT' 5442 'db_port')) { $key = 'db_port' }
     if ($Port -eq (Get-Port 'KILNMARK_KEYCLOAK_PORT' 8180 'keycloak_port')) { $key = 'keycloak_port' }
     $alt = Get-FreePort $Port
-    if ($script:Data -and (Test-Path -LiteralPath (Join-Path $script:Data 'config\install.conf'))) { return ((Join-Path $script:Root 'kilnmark.cmd') + ' configure ' + $key + '=' + $alt) }
+    if ($script:Data -and (Test-Path -LiteralPath (Join-Path $script:Data 'config\install.conf'))) { return ((Get-SelfCall $script:Root) + ' configure ' + $key + '=' + $alt) }
     return ('answer ' + $alt + ' for ' + $key + ' (in an answers file: ' + $key + '=' + $alt + ')')
 }
 
@@ -1113,7 +1174,7 @@ function Get-FolderProblem([string]$Dir, [string[]]$Allowed, [string[]]$Owners) 
 # The install itself, by its mode (ADR 0051): who runs this, who owns the folders, what is running.
 function Test-Install([bool]$Running) {
     $mode = Get-Setting 'KILNMARK_MODE'
-    $kc = Join-Path $script:Root 'kilnmark.cmd'
+    $kc = Get-SelfCall $script:Root
     if ($mode -ceq 'production' -or $mode -ceq 'starter-pack') { Add-Passed ('a ' + $mode + ' install') }
     else { Add-Problem 'KILNMARK_MODE in config\.env is not production or starter-pack: Kilnmark does not start.' ('set KILNMARK_MODE back to the mode it was installed with in ' + (Join-Path $script:Data 'config\.env')) }
     $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -1167,7 +1228,13 @@ function Test-Install([bool]$Running) {
         if ($expiry -eq 'not set up') { Add-Warning 'The hourly expiry of unused temporary passwords is not set up.' ($kc + ' up') }
     }
     $last = Get-ChildItem (Join-Path $script:Data 'backups') -Directory -Filter 'kilnmark-*' -ErrorAction SilentlyContinue | Sort-Object Name | Select-Object -Last 1
-    if (-not $last) { Add-Warning ('There is no backup in ' + (Join-Path $script:Data 'backups') + '.') ($kc + ' backup') }
+    if (Test-WslMirrored) {
+        $hostAddress = Get-HostAddress
+        if (-not $hostAddress) { Add-Warning "WSL's networking is mirrored and this computer's network address was not found, so Kilnmark's container cannot reach databases or model servers (Ollama, LM Studio) on this computer." ('set KILNMARK_HOST_ADDRESS in ' + $envFile + " to this computer's address, then " + $kc + ' restart') }
+        elseif (-not (Test-WslHostLoopback)) { Add-Warning "WSL's networking is mirrored without hostAddressLoopback=true, so Kilnmark's container cannot reach databases or model servers (Ollama, LM Studio) on this computer." ('add hostAddressLoopback=true under [experimental] in ' + (Join-Path $env:USERPROFILE '.wslconfig') + ', run wsl --shutdown, then ' + $kc + ' up') }
+        else { Add-Passed ("Kilnmark's container reaches this computer at " + $hostAddress + ' (host.containers.internal)') }
+    }
+    if (-not $last) { Add-Warning ('There is no backup in '+ (Join-Path $script:Data 'backups') + '.') ($kc + ' backup') }
     elseif ($last.LastWriteTime -lt (Get-Date).AddHours(-26)) { Add-Warning 'The last backup is more than a day old.' ($kc + ' backup (every day, from Task Scheduler)') }
     else { Add-Passed 'a backup from the last day' }
 }
@@ -2037,15 +2104,15 @@ function Invoke-Install([string[]]$Options) {
         }
     }
     $script:AdminPassword = ''
-    $kc = Join-Path $prog 'kilnmark.cmd'
+    $kc = Get-SelfCall $prog
     Write-Host ''
     Write-Host ('Kilnmark ' + $v + ' is installed: the program in ' + $prog + ', its data in ' + $data + ', run by ' + (Get-Answer 'operator') + '.')
     Write-Host ('  Sign in with the admin token, KILNMARK_ADMIN_TOKEN in ' + (Join-Path $data 'config\.env') + '; then make a token of your own under API tokens, and keep it safe.')
-    Write-Host ('  Every day, from a prompt that is not elevated: "' + $kc + '" up | down | status | check | backup | help')
-    Write-Host ('  Change an answer later: "' + $kc + '" configure KEY=VALUE')
+    Write-Host ('  Every day, from a prompt that is not elevated: ' + $kc + ' up | down | status | check | backup | help')
+    Write-Host ('  Change an answer later: ' + $kc + ' configure KEY=VALUE')
     Write-Host ('  Shortcuts on the desktop and in the Start menu: powershell -ExecutionPolicy Bypass -File "' + (Join-Path $prog 'create-shortcut.ps1') + '"')
     Write-Host '  Back it up every day, for example from Task Scheduler: kilnmark.cmd backup'
-    if ((Get-Answer 'mode') -ceq 'starter-pack') { Write-Host ('  Add the example people, with a password you type: "' + $kc + '" starter people') }
+    if ((Get-Answer 'mode') -ceq 'starter-pack') { Write-Host ('  Add the example people, with a password you type: ' + $kc + ' starter people') }
     if ((Get-Answer 'identity') -ceq 'own') { Write-Host ('  Register Kilnmark in your identity provider with the redirect URI ' + (Get-Setting 'KILNMARK_URL') + '/api/v1/auth/login.') }
     Stop-Log
 }
@@ -2310,7 +2377,7 @@ function Invoke-UninstallElevated([string[]]$Options) {
 function Invoke-Configure([string[]]$Options) {
     [void](Get-CurrentVersion)
     if (-not (Read-InstalledAnswers)) { Fail ((Join-Path $script:Data 'config\install.conf') + ", the install's answers, is missing, so configure cannot tell what install chose. Nothing was changed.") }
-    $kc = Join-Path $script:Root 'kilnmark.cmd'
+    $kc = Get-SelfCall $script:Root
     if ($Options.Count -eq 0) {
         Write-Host ("This install's answers (" + (Join-Path $script:Data 'config\install.conf') + '):')
         Show-Answers
@@ -2461,10 +2528,12 @@ function Invoke-PeopleAfterUp {
 function Get-ListenerProblem([int]$Port) {
     $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $found = @()
-    try { $found = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop) }
-    catch {
-        # none listening is ObjectNotFound; any other error leaves who listens untold
-        if ($_.CategoryInfo.Category -ne [Management.Automation.ErrorCategory]::ObjectNotFound) {
+    # Silently, not -ErrorAction Stop: Windows PowerShell's transcript (the log) keeps a caught
+    # error, and none listening is one (ObjectNotFound); any other error leaves who listens untold.
+    $lookupErrors = $null
+    $found = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue -ErrorVariable lookupErrors)
+    foreach ($e in @($lookupErrors)) {
+        if ($e -and $e.CategoryInfo.Category -ne [Management.Automation.ErrorCategory]::ObjectNotFound) {
             return ('who listens on port ' + $Port + ' cannot be told here (Windows did not answer)')
         }
     }
@@ -2620,7 +2689,7 @@ $script:PeopleSoft = $false
 # Nobody made: the people command stops; install (PeopleSoft) says so and goes on.
 function Write-NoPerson([string]$Message) {
     if ($script:PeopleSoft) {
-        Write-Host ($Message + ' Add them later with: ' + (Join-Path $script:Root 'kilnmark.cmd') + ' people add') -ForegroundColor Yellow
+        Write-Host ($Message + ' Add them later with: ' + (Get-SelfCall $script:Root) + ' people add') -ForegroundColor Yellow
     } else {
         Fail $Message
     }
@@ -2648,7 +2717,7 @@ function Read-Person([string]$Groups) {
     $email = ($email -replace '\s', '').ToLowerInvariant()
     if (-not $email) {
         if ($Groups) {
-            Write-Host ('No first admin was made. Add people later with ' + (Join-Path $script:Root 'kilnmark.cmd') + ' people add (or people import, or Keycloak''s console: docs/guide/install/production-bundled-keycloak.md).')
+            Write-Host ('No first admin was made. Add people later with ' + (Get-SelfCall $script:Root) + ' people add (or people import, or Keycloak''s console: docs/guide/install/production-bundled-keycloak.md).')
         } else {
             Write-NoPerson 'No email was given. Nobody was made.'
         }
@@ -2848,7 +2917,7 @@ function Invoke-People([string[]]$Options) {
             if ($script:PeopleMode -ceq 'starter-pack') {
                 Write-Host 'Each person made signs in with that password, then chooses their own and sets up a one-time code.'
             } else {
-                Write-Host ('Each person made waits, disabled, until you give them a temporary password of their own: ' + (Join-Path $script:Root 'kilnmark.cmd') + ' people activate EMAIL')
+                Write-Host ('Each person made waits, disabled, until you give them a temporary password of their own: ' + (Get-SelfCall $script:Root) + ' people activate EMAIL')
             }
         }
         'activate' {
@@ -3158,11 +3227,11 @@ function Invoke-Restore([string[]]$Options) {
     Write-Host '  - revoke again any token revoked after that time, and check Settings > Access review;'
     if (-not $keys) { Write-Host "  - enter every stored password again (Sources; AI models' keys; the mail password);" }
     Write-Host '  - run again the scans and pipelines that ran after it, if their results are needed;'
-    Write-Host ('  - once all is well, drop the previous database: ' + (Join-Path $script:Root 'kilnmark.cmd') + ' compose exec postgres dropdb -U kilnmark ' + $before)
+    Write-Host ('  - once all is well, drop the previous database: ' + (Get-SelfCall $script:Root) + ' compose exec postgres dropdb -U kilnmark ' + $before)
     if ($restoreKeycloak) {
         Write-Host '  - Keycloak is back to the backup too: people added or changed since then are gone, and anyone'
         Write-Host '    removed since is back (remove them again). Then drop its previous database:'
-        Write-Host ('    ' + (Join-Path $script:Root 'kilnmark.cmd') + ' compose exec keycloak-db dropdb -U keycloak ' + $kcBefore)
+        Write-Host ('    ' + (Get-SelfCall $script:Root) + ' compose exec keycloak-db dropdb -U keycloak ' + $kcBefore)
     }
 }
 

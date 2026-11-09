@@ -728,6 +728,26 @@ details.
 
 ### Fixed
 
+- **The Windows install log no longer shows a database error on a fresh install.** Before
+  Kilnmark's first start has made its settings table, the control script's look for the recorded
+  mode and install id now asks whether the table is there, rather than leaving
+  `relation "kilnmark.server_setting" does not exist` in the log. Nothing else changes: the
+  answer was, and is, "nothing recorded yet".
+- **Windows commands in messages and guides can be pasted into PowerShell.** The control script's
+  messages and the install guides wrote `"C:\Program Files\Kilnmark\kilnmark.cmd" starter people`,
+  which PowerShell refuses ("Unexpected token"), and some messages left the path unquoted, which
+  breaks at its space. They now write `& "C:\Program Files\Kilnmark\kilnmark.cmd" ...`; in Command
+  Prompt, leave out the `& `.
+- **Ollama, LM Studio or a database on the same Windows computer can be reached under WSL's
+  mirrored networking.** There, the engine's route to "this computer" reaches the Podman machine,
+  so `http://host.containers.internal:11434/v1` was refused however Ollama listened. The Windows
+  control script now points `host.containers.internal` and `host.docker.internal` at the
+  computer's network address before every compose command, `check` says which address it uses
+  (and warns when `.wslconfig` lacks `hostAddressLoopback=true`), and `KILNMARK_HOST_ADDRESS` in
+  `config/.env` chooses the address yourself on either system. A new guide page,
+  [A model server or database on this computer](docs/guide/install/models-on-this-computer.md),
+  covers this and Ollama's own `OLLAMA_HOST`, on Windows and Linux.
+
 From walking a 0.1.2 Starter Pack install, in the web UI:
 
 - **Schedules tables keep every column in view.** A long sign-in name no longer widens the table on

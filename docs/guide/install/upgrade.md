@@ -10,7 +10,7 @@ the archive into a folder of yours alone, and checks and unpacks that copy. Then
 
 | | Linux | Windows |
 | --- | --- | --- |
-| Online | `sudo /opt/kilnmark/kilnmark.sh upgrade kilnmark-<version>.tar.gz` | `"C:\Program Files\Kilnmark\kilnmark.cmd" upgrade kilnmark-<version>.zip`, from a prompt that is not elevated |
+| Online | `sudo /opt/kilnmark/kilnmark.sh upgrade kilnmark-<version>.tar.gz` | `& "C:\Program Files\Kilnmark\kilnmark.cmd" upgrade kilnmark-<version>.zip`, from a prompt that is not elevated |
 | Offline | add `--offline kilnmark-<version>-images.tar.gz` | add `-Offline kilnmark-<version>-images.tar.gz` |
 
 On Linux, `upgrade` runs as root, and first refuses a program or data folder with a folder above it

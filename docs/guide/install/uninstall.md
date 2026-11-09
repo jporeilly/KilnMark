@@ -2,8 +2,8 @@
 
 | | Linux | Windows |
 | --- | --- | --- |
-| Remove the program, keep the data | `sudo /opt/kilnmark/kilnmark.sh uninstall` | `"C:\Program Files\Kilnmark\kilnmark.cmd" uninstall`, from a prompt that is not elevated |
-| Remove everything | `sudo /opt/kilnmark/kilnmark.sh uninstall --purge` | `"C:\Program Files\Kilnmark\kilnmark.cmd" uninstall -Purge` |
+| Remove the program, keep the data | `sudo /opt/kilnmark/kilnmark.sh uninstall` | `& "C:\Program Files\Kilnmark\kilnmark.cmd" uninstall`, from a prompt that is not elevated |
+| Remove everything | `sudo /opt/kilnmark/kilnmark.sh uninstall --purge` | `& "C:\Program Files\Kilnmark\kilnmark.cmd" uninstall -Purge` |
 
 `uninstall`, in steps that are each OK or FAILED:
 

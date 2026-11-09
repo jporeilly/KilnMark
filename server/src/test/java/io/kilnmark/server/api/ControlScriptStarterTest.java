@@ -118,6 +118,29 @@ class ControlScriptStarterTest {
     }
 
     /**
+     * Kilnmark's container reaches the computer it runs on by both names, at KILNMARK_HOST_ADDRESS
+     * or else the engine's own route; both control scripts drop a value set outside them, and the
+     * Windows edition fills it in under WSL's mirrored networking, where host-gateway is the Podman
+     * machine (docs/guide/install/models-on-this-computer.md).
+     */
+    @Test
+    void kilnmarkReachesThisComputerAtTheHostAddress() throws IOException {
+        String c = Files.readString(COMPOSE);
+        String kilnmark = c.substring(c.indexOf("\n  kilnmark:\n"), c.indexOf("\n  keycloak-db:\n"));
+        assertTrue(kilnmark.contains("    extra_hosts:\n      - \"host.docker.internal:${KILNMARK_HOST_ADDRESS:-host-gateway}\"\n"
+            + "      - \"host.containers.internal:${KILNMARK_HOST_ADDRESS:-host-gateway}\"\n"), "both names, one address");
+        String sh = Files.readString(LAUNCH.resolve("kilnmark.sh"));
+        String unset = sh.substring(sh.indexOf("\nunset KILNMARK_MODE "), sh.indexOf('\n', sh.indexOf("KILNMARK_OIDC_ADMIN_GROUPS KILNMARK_OIDC_UNMASK_GROUPS")));
+        assertTrue(unset.contains(" KILNMARK_HOST_ADDRESS"), "Linux drops a host address set outside the script");
+        String ps = Files.readString(LAUNCH.resolve("kilnmark.ps1")).replace("\r\n", "\n");
+        assertTrue(ps.contains("'KILNMARK_SECRETS_DIR', 'KILNMARK_HOST_ADDRESS', 'KILNMARK_KEYCLOAK_BIND'"), "Windows drops one set outside the script");
+        String set = ps.substring(ps.indexOf("function Set-HostAddress {"), ps.indexOf("\n}\n", ps.indexOf("function Set-HostAddress {")));
+        assertTrue(set.contains("if (Get-Setting 'KILNMARK_HOST_ADDRESS') { return }"), "config\\.env's own address wins");
+        assertTrue(set.contains("if (-not (Test-WslMirrored)) { return }"), "only under mirrored networking");
+        assertTrue(ps.contains("    $env:KILNMARK_SECRETS_DIR = $rel\n    Set-HostAddress\n"), "before every compose command");
+    }
+
+    /**
      * No Keycloak credential reaches the kilnmark container, whatever config/.env says: its service
      * names no Keycloak setting and no password or secret at all, takes no env_file, and the one file
      * of secrets mounted into it is the one the control script writes for it alone, holding only its
