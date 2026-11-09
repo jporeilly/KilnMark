@@ -728,6 +728,12 @@ details.
 
 ### Fixed
 
+- **The Windows install log no longer shows a database error on a fresh install.** Before
+  Kilnmark's first start has made its settings table, the control script's look for the recorded
+  mode and install id now asks whether the table is there, rather than leaving
+  `relation "kilnmark.server_setting" does not exist` in the log. Nothing else changes: the
+  answer was, and is, "nothing recorded yet".
+
 From walking a 0.1.2 Starter Pack install, in the web UI:
 
 - **Schedules tables keep every column in view.** A long sign-in name no longer widens the table on

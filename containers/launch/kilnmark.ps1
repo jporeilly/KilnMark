@@ -324,7 +324,12 @@ function Get-RecordedMode { return (Get-RecordedSetting 'deployment_mode') }
 # id, made at its first start); empty when there is none, or the database does not answer.
 function Get-RecordedSetting([string]$Key) {
     $base = Get-ComposeArgs
-    # never this script's standard input, which a person's lines may be waiting on
+    # Asks first whether the table is there: on a fresh database, before Kilnmark's first start
+    # makes it, the answer is then empty rather than an error, which Windows PowerShell's transcript
+    # (the install log) keeps even when it is sent to $null.
+    # Never this script's standard input, which a person's lines may be waiting on.
+    $have = ($null | & $script:Engine @base exec -T postgres psql -U kilnmark -d kilnmark -X -q -At -c "SELECT to_regclass('kilnmark.server_setting') IS NOT NULL" 2> $null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $have -ne 't') { return '' }
     $out = ($null | & $script:Engine @base exec -T postgres psql -U kilnmark -d kilnmark -X -q -At -c ("SELECT value FROM kilnmark.server_setting WHERE key = '" + $Key + "'") 2> $null | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { return '' }
     return $out
