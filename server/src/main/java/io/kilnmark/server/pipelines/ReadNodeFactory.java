@@ -27,6 +27,7 @@ import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
+import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.kiln.nodes.ReadShaping;
 import io.kilnmark.kiln.nodes.expr.ExprException;
 import io.kilnmark.kiln.nodes.expr.PushDown;
@@ -372,6 +373,136 @@ public final class ReadNodeFactory implements NodeFactory {
         }
     }
 
+    /**
+     * What the connector is asked to read of {@code asset}: only the columns needed and the rows
+     * meeting as much of {@code where} as it can apply, within the row limit when that stays exact.
+     * Shared by {@link #create} and {@link #statement}, so the SQL shown is the SQL that runs.
+     */
+    private static Connector.ReadOptions readOptions(Connector connector, SourceConfig source, AssetInfo asset,
+                                                     String urn, Map<String, Object> config) throws ExprException {
+        List<String> columns = columns(config);
+        String where = where(config);
+        long limit = Math.max(0, rowLimit(config));
+        if (columns.isEmpty() && where == null) {
+            return new Connector.ReadOptions(urn, limit, BATCH_ROWS);
+        }
+        Schema all = ArrowKinds.schemaOf(asset.fields());
+        ReadShaping.outputSchema(all, columns, where); // the asset may have changed since the check
+        PushDown.Split split = where == null || !connector.narrowsReads(source, asset) ? null
+            : PushDown.split(where, all, compared(connector, asset));
+        // With a condition, the source's limit would count rows Kilnmark may still drop, unless the
+        // source keeps exactly what Kilnmark keeps: otherwise the read node counts them, and stops
+        // the read when it has enough.
+        long sourceLimit = where == null || (split != null && split.keepsExactly()) ? limit : 0;
+        return new Connector.ReadOptions(urn, sourceLimit, BATCH_ROWS, ReadShaping.needed(all, columns, where),
+            split == null ? null : split.filter());
+    }
+
+    /**
+     * The SQL a read sends to its database, as configured, for the canvas to show: {@code sql} with
+     * {@code ?} for each of the {@code values} bound from {@code where}, or null with {@code note}
+     * saying why it cannot be shown. A {@code note} beside a statement adds what else may run.
+     */
+    public record SqlShown(String sql, int values, String note) {
+        static SqlShown none(String why) {
+            return new SqlShown(null, 0, why);
+        }
+    }
+
+    /**
+     * The SQL this read runs, worked out without connecting: the same options and the same reader as
+     * {@link #create}, given the table as the catalogue last recorded it. A query read shows the
+     * query as it is sent (wrapped when there is a row limit). Nothing here holds a secret: the source
+     * is described without one, and only the statement is kept.
+     */
+    public SqlShown statement(Map<String, Object> config) {
+        String name = PipelineSources.text(config, "source");
+        if (name == null) {
+            return SqlShown.none("Choose a source to see the SQL this read runs.");
+        }
+        Optional<Records.Source> s = sources.source(name);
+        if (s.isEmpty()) {
+            return SqlShown.none("There is no saved source by that name.");
+        }
+        Optional<Connector> c = sources.connector(s.get().kind());
+        if (c.isEmpty()) {
+            return SqlShown.none("This server has no connector for the source's kind, so it cannot read it.");
+        }
+        if (!(c.get() instanceof JdbcConnector jdbc)) {
+            return SqlShown.none("Kilnmark reads this source itself, without SQL.");
+        }
+        SourceConfig described = new SourceConfig(s.get().name(), s.get().kind(), s.get().settings(), null);
+        try {
+            if (isQuery(config)) {
+                String q = query(config);
+                if (q == null || config.get("asset") != null || queryProblem(s.get(), jdbc) != null) {
+                    return SqlShown.none("Fix the problems shown with the query to see what runs.");
+                }
+                String sent = jdbc.queryReader(described, checkQuery(q), "query", Math.max(0, rowLimit(config)),
+                    BATCH_ROWS).settings().get("query");
+                return new SqlShown(sent, 0, null);
+            }
+            if (jdbc instanceof io.kilnmark.kiln.plugins.jdbc.GenericJdbcConnector) {
+                return SqlShown.none("Kilnmark writes the SQL for this kind of source once it has connected, so it "
+                    + "is known only when the read runs.");
+            }
+            String path = PipelineSources.text(config, "asset");
+            if (path == null) {
+                return SqlShown.none("Choose a table to see the SQL this read runs.");
+            }
+            Records.AssetDetail detail = assetDetail(name, path);
+            if (detail == null) {
+                return SqlShown.none("Shown once the table has been scanned: the SQL names its columns.");
+            }
+            if (detail.container() == null || detail.name() == null) {
+                return SqlShown.none("The catalogue does not record this table's schema, so its SQL is known only "
+                    + "when the read runs.");
+            }
+            AssetInfo asset = catalogued(detail);
+            String urn = PipelineSources.urn(name, asset.path());
+            Map<String, String> settings = jdbc.reader(described, asset, readOptions(jdbc, described, asset, urn,
+                config)).settings();
+            int values = 0;
+            while (settings.containsKey(io.kilnmark.kiln.plugins.jdbc.JdbcTableInput.VALUE_PREFIX + (values + 1))) {
+                values++;
+            }
+            String above = settings.get(io.kilnmark.kiln.plugins.jdbc.JdbcTableInput.SAMPLE_ABOVE);
+            return new SqlShown(settings.get("query"), values, above == null ? null
+                : "When the database estimates the table holds more than " + above + " rows, Kilnmark reads a "
+                    + "sample of it instead, as the source is set to.");
+        } catch (ExprException | IllegalArgumentException e) {
+            return SqlShown.none("Fix the problems shown in this node's settings to see the SQL it runs.");
+        } catch (RuntimeException e) {
+            return SqlShown.none("The SQL cannot be worked out until the source's settings are complete.");
+        }
+    }
+
+    /** The asset as the catalogue last recorded it, found as {@link #assetFields} finds it; null if not scanned. */
+    private Records.AssetDetail assetDetail(String source, String asset) {
+        for (String path : List.of(asset, escapedFilePath(asset))) {
+            String urn = PipelineSources.urn(source, path);
+            Optional<Records.AssetDetail> a = urn == null ? Optional.empty()
+                : sources.asset(urn).filter(d -> !d.fields().isEmpty());
+            if (a.isPresent()) {
+                return a.get();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * A database table or view as its connector describes it when a read runs, rebuilt from the
+     * catalogue: the same columns, schema and table, and a view counted as bounded as the connector
+     * counts it (so it is never sampled).
+     */
+    static AssetInfo catalogued(Records.AssetDetail a) {
+        List<AssetInfo.FieldInfo> fields = a.fields().stream().map(f -> new AssetInfo.FieldInfo(f.name(),
+            f.position(), f.sourceType(), f.kind(), f.nullable(), f.description())).toList();
+        boolean table = "table".equals(a.kind()) || "partitioned table".equals(a.kind());
+        return new AssetInfo(io.kilnmark.graph.Urn.parse(a.urn()).path(), a.kind(), a.container(), a.name(),
+            a.description(), fields, a.primaryKey(), !table, true, Map.of("schema", a.container(), "table", a.name()));
+    }
+
     /** The columns of {@code asset} the source compares as Kilnmark reads them. */
     private static java.util.function.Predicate<String> compared(Connector connector, AssetInfo asset) {
         Set<String> names = new HashSet<>();
@@ -455,23 +586,12 @@ public final class ReadNodeFactory implements NodeFactory {
         List<String> columns = columns(config);
         String where = where(config);
         long limit = Math.max(0, rowLimit(config));
-        Connector.ReadOptions options = new Connector.ReadOptions(urn, limit, BATCH_ROWS);
-        if (!columns.isEmpty() || where != null) {
-            Schema all = ArrowKinds.schemaOf(asset.fields());
-            try {
-                ReadShaping.outputSchema(all, columns, where); // the asset may have changed since the check
-                PushDown.Split split = where == null || !r.connector().narrowsReads(r.config(), asset) ? null
-                    : PushDown.split(where, all, compared(r.connector(), asset));
-                // With a condition, the source's limit would count rows Kilnmark may still drop, unless the
-                // source keeps exactly what Kilnmark keeps: otherwise the read node counts them, and stops
-                // the read when it has enough.
-                long sourceLimit = where == null || (split != null && split.keepsExactly()) ? limit : 0;
-                options = new Connector.ReadOptions(urn, sourceLimit, BATCH_ROWS,
-                    ReadShaping.needed(all, columns, where), split == null ? null : split.filter());
-            } catch (ExprException e) {
-                String m = e.getMessage();
-                throw new NodeException((m.startsWith("columns:") ? "" : "where: ") + m, e);
-            }
+        Connector.ReadOptions options;
+        try {
+            options = readOptions(r.connector(), r.config(), asset, urn, config);
+        } catch (ExprException e) {
+            String m = e.getMessage();
+            throw new NodeException((m.startsWith("columns:") ? "" : "where: ") + m, e);
         }
         NodeSpec spec;
         try {

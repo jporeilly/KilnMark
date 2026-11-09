@@ -139,7 +139,8 @@ layout:
 ### Settings
 
 Select a node to see its settings. Each has its help and, where there is one, its default; a
-setting left at its default is left out of the YAML.
+setting left at its default is left out of the YAML. Designers and admins change a pipeline;
+viewers and stewards see its canvas and settings read-only.
 
 - On and off settings are switches; numbers, choices and text are fields and lists.
 - **Source** lists your saved sources; for a write, those that do not allow writing say so.
@@ -148,6 +149,24 @@ setting left at its default is left out of the YAML.
   you choose rather than type. Before the columns are known you can type names.
 - Expressions (a filter's condition, computed columns, aggregate values, routes) have the arriving
   columns as buttons below them: choosing one puts its name where the cursor is.
+- A filter's condition, a read's **Where**, a route's conditions and a compute's columns also have
+  the operators as buttons, in groups (**Compare**, **Test**, **Combine**, **Arithmetic**), which
+  go in where the cursor is, and **How to write it**: the operators, how to nest a test in brackets
+  (`and` binds tighter than `or`), worked examples, and a link to
+  [Expressions](expressions.md#operators). It starts open when a condition the node needs is still empty, and folded otherwise.
+- A `read` node shows **SQL Kilnmark runs** under its **Query** box, read-only: the statement it
+  sends to the database for the table, columns, **Where** and row limit chosen, with a `?` for each
+  value of **Where**, bound as it runs. The server works it out as a run sets the read up, from the
+  table as last scanned, so it is the SQL that runs, with the pipeline's parameters at their
+  defaults (a run given other values may read another table). A file, a table not yet scanned, or a
+  generic JDBC source, which writes its SQL once connected, says why there is none. The **Query**
+  box itself, for SQL of your own ([Reading with a query](#reading-with-a-query)), can be changed
+  only by a designer whose token may see unmasked values; everyone else sees it read-only, with
+  why. A designer who may not write a query cannot save or preview a pipeline while a read has one,
+  and can choose **Remove the query** to read a table instead.
+- **Columns leaving this node**, beside the settings, lists each output (out, and rejected or
+  errors where the node has them) with its columns and their types. An output with more than ten
+  columns starts folded: choose its name to open it.
 - A write node shows the settings of its source's writer, such as **Commit every N rows** for a
   database or **Overwrite** for files, once you choose the source.
 - **Node id** renames the node, and the nodes reading from it follow.
@@ -355,7 +374,8 @@ On a PostgreSQL source with **Allow SQL** on, a read can run one `SELECT` in pla
 - Parameters (`${name}`) are not filled in a query yet; write the value in the SQL.
 - Its columns are known only when it runs, so the nodes after it are checked against them then.
 - Only a designer who may see unmasked values saves or previews a pipeline with a query, since a
-  query can read any column the login can. Others, admins included, can run it.
+  query can read any column the login can. Others, admins included, can run it. On the canvas, the
+  **Query** box is read-only for them, and says why.
 - Every column the query returns is treated as marked sensitive, since a query can read any table
   its login can: masked for everyone else, and marked on what a write writes from it. A run's error
   messages are held back the same way. Once someone has checked that what was written holds nothing

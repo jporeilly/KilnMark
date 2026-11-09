@@ -52,10 +52,13 @@ Each pipeline and each flow has **owners**: the people, or team addresses, who a
 are told when its run fails after its last try, when it runs again successfully after a failure
 that was told, and when a run takes longer than its `run: warn_after`.
 
-- The pipeline's or flow's page shows them under **Owners**. Designers and admins choose **Change
-  owners** and give up to 10 sign-in names (as Kilnmark shows who did something) or team
-  addresses, one a line. A team address must be one an admin added under **Settings**, **Email**
-  ([Team addresses](#team-addresses)). Others see a team address as "A team address".
+- The pipeline's or flow's page shows them under **Owners**, one a line, each saying whether it is
+  a person or a team address: a token by its name, and someone who signs in through your identity
+  provider by their `sso:` name, with the full record on hover. Designers and admins choose
+  **Change owners** and give up to 10 sign-in names (as Kilnmark records who did something, such as
+  `token 1 (KILNMARK_ADMIN_TOKEN)`) or team addresses, one a line. A team address must be one an
+  admin added under **Settings**, **Email** ([Team addresses](#team-addresses)). Others see a team
+  address as "A team address".
 - **By default the owner is whoever first saved it.** Owners are kept apart from the YAML, so
   changing them makes no new version. Each change is in the [audit log](audit-log.md).
 - **Owners are always told**: its **run failed**, **run recovered** and **taking longer than

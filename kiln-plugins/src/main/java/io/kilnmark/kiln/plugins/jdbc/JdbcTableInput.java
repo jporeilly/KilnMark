@@ -139,7 +139,7 @@ public final class JdbcTableInput implements Node {
      * Settings: the values of a narrowed read's {@code ?}s, as {@code value.1}, {@code value.2}, ...
      * each {@code type:value} with type one of long, decimal, double, boolean, text, date.
      */
-    static final String VALUE_PREFIX = "value.";
+    public static final String VALUE_PREFIX = "value.";
 
     /** Puts each value of a narrowed read into {@code settings}, in order. */
     static void putValues(Map<String, String> settings, List<Object> values) {

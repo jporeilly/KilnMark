@@ -1,7 +1,9 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import type { PipelineColumn, Source, NodeTypeSetting } from "../../api";
+import { allows, type AccessRole, type PipelineColumn, type Source, type NodeTypeSetting } from "../../api";
 import { Switch } from "../../components/ui";
+import { useRole, useUnmask } from "../../components/role";
 import { defaultText } from "./insight";
+import { ExpressionReference, OperatorButtons } from "./ExpressionHelp";
 import type { Value } from "./model";
 
 /** What a control needs besides its setting: the columns it can offer, sources, and assets. */
@@ -160,30 +162,65 @@ function TextControl(p: ControlProps & { listId?: string; mono?: boolean }) {
   );
 }
 
-/** A read's query (ADR 0028): SQL over several lines, in a monospace box. */
+/** Who may write SQL of their own in a read (ADR 0028), as the server checks it when the pipeline is saved. */
+export const mayWriteQuery = (role: AccessRole, unmask: boolean) => allows(role, "designer") && unmask;
+
+/**
+ * A read's query (ADR 0028): SQL over several lines, in a monospace box. A query can read any column
+ * of its source, so the server saves one only from a designer whose token may see unmasked values;
+ * everyone else sees the box read-only, with why.
+ */
 function SqlControl(p: ControlProps) {
   const outside = asText(p.value, p.text);
   const { draft, setDraft, focusProps } = useDraft(outside);
+  const may = mayWriteQuery(useRole(), useUnmask());
+  const readOnly = p.readOnly || !may;
+  const has = outside.trim() !== "";
+  // Why the box is read-only, when the rest of the canvas does not already say so. A designer who may
+  // not write a query also may not save or preview a pipeline holding one (the server refuses the
+  // whole pipeline), so they are told, and may take the query out to read a table instead.
+  const why = may
+    ? null
+    : has && !p.readOnly
+      ? "Only a designer whose token may see unmasked values writes or changes a query, as a query can read any column of the source. While this read has one, only they can save or preview the pipeline: remove the query to read a table instead."
+      : has
+        ? "Read-only: only a designer whose token may see unmasked values writes or changes a query, as a query can read any column of the source."
+        : !p.readOnly
+          ? "Only a designer whose token may see unmasked values writes a query here, as a query can read any column of the source."
+          : null;
   return (
     <Field spec={p.spec} id={p.id} problems={p.problems} wide>
       {(describedBy, invalid) => (
-        <textarea
-          id={p.id}
-          className="mono cv-sql"
-          rows={5}
-          value={draft}
-          readOnly={p.readOnly}
-          spellCheck={false}
-          autoComplete="off"
-          placeholder="SELECT ... FROM schema.table"
-          aria-describedby={describedBy}
-          aria-invalid={invalid || undefined}
-          {...focusProps}
-          onChange={(e) => {
-            setDraft(e.target.value);
-            p.onChange(e.target.value.trim() === "" ? undefined : e.target.value);
-          }}
-        />
+        <>
+          <textarea
+            id={p.id}
+            className="mono cv-sql"
+            rows={5}
+            value={draft}
+            readOnly={readOnly}
+            spellCheck={false}
+            autoComplete="off"
+            placeholder={readOnly ? undefined : "SELECT ... FROM schema.table, in place of a table"}
+            aria-describedby={why ? `${p.id}-who ${describedBy}` : describedBy}
+            aria-invalid={invalid || undefined}
+            {...focusProps}
+            onChange={(e) => {
+              if (readOnly) return;
+              setDraft(e.target.value);
+              p.onChange(e.target.value.trim() === "" ? undefined : e.target.value);
+            }}
+          />
+          {why && (
+            <p className="small muted" id={`${p.id}-who`}>
+              {why}
+            </p>
+          )}
+          {!may && has && !p.readOnly && (
+            <button type="button" className="cv-mini" onClick={() => p.onChange(undefined)}>
+              Remove the query
+            </button>
+          )}
+        </>
       )}
     </Field>
   );
@@ -366,7 +403,7 @@ function insertAt(el: HTMLTextAreaElement | HTMLInputElement | null, current: st
   const start = el?.selectionStart ?? current.length;
   const end = el?.selectionEnd ?? current.length;
   const before = current.slice(0, start);
-  const pad = before && !/\s$/.test(before) && !/[(,]$/.test(before) ? " " : "";
+  const pad = before && !/\s$/.test(before) && !/[(,]$/.test(before) && !/^[),]/.test(word) ? " " : "";
   const text = before + pad + word + current.slice(end);
   return { text, caret: (before + pad + word).length };
 }
@@ -409,8 +446,11 @@ function ExpressionControl(p: ControlProps) {
             <>
               <ColumnButtons columns={cols} label={`Insert a column into ${p.spec.label}`} onPick={(name) => insert(quoteColumn(name))} />
               <ParameterButtons names={p.context.parameters ?? []} label={`Insert a parameter into ${p.spec.label}`} onPick={insert} />
+              <OperatorButtons label={`Insert an operator into ${p.spec.label}`} onPick={insert} />
             </>
           )}
+          {/* Open at first only for a condition the node needs and lacks; an optional one (a read's where) starts folded. */}
+          <ExpressionReference id={`${p.id}-ref`} startOpen={outside.trim() === "" && p.spec.required} condition />
         </>
       )}
     </Field>
@@ -834,6 +874,21 @@ function PairsControl(p: ControlProps & { kind: PairKind }) {
   const problems = dupes.size ? [`Each ${left.toLowerCase()} appears once: ${[...dupes].join(", ")} is repeated.`, ...p.problems] : p.problems;
   const exprRefs = useRef<(HTMLTextAreaElement | null)[]>([]);
   const lastFocused = useRef<number>(-1);
+  // A route's conditions and a compute's columns are written in the expression language: the
+  // operators and examples go beside them. Aggregates, windows and casts take functions or types.
+  const withReference = p.kind === "conditions" || (p.kind === "expressions" && p.context.nodeType === "compute");
+  /** Puts `word` at the caret of the last expression box used, or the last one. */
+  const insertIntoRow = (word: string) => {
+    const i = lastFocused.current >= 0 && lastFocused.current < rows.length ? lastFocused.current : rows.length - 1;
+    if (i < 0) return;
+    const el = exprRefs.current[i];
+    const { text, caret } = insertAt(el, rows[i][1], word);
+    commit(rows.map((r, j) => (j === i ? [r[0], text] : r)));
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(caret, caret);
+    });
+  };
   return (
     <Field spec={p.spec} id={p.id} problems={problems} group wide>
       {(describedBy, invalid) => (
@@ -942,17 +997,14 @@ function PairsControl(p: ControlProps & { kind: PairKind }) {
             <ColumnButtons
               columns={p.context.columns.main}
               label={`Insert a column into the last ${right.toLowerCase()} you were in`}
-              onPick={(name) => {
-                const i = lastFocused.current >= 0 && lastFocused.current < rows.length ? lastFocused.current : rows.length - 1;
-                const el = exprRefs.current[i];
-                const { text, caret } = insertAt(el, rows[i][1], quoteColumn(name));
-                commit(rows.map((r, j) => (j === i ? [r[0], text] : r)));
-                requestAnimationFrame(() => {
-                  el?.focus();
-                  el?.setSelectionRange(caret, caret);
-                });
-              }}
+              onPick={(name) => insertIntoRow(quoteColumn(name))}
             />
+          )}
+          {!p.readOnly && withReference && rows.length > 0 && (
+            <OperatorButtons label={`Insert an operator into the last ${right.toLowerCase()} you were in`} onPick={insertIntoRow} />
+          )}
+          {withReference && (
+            <ExpressionReference id={`${p.id}-ref`} startOpen={rows.every((r) => r[1].trim() === "")} condition={p.kind === "conditions"} />
           )}
         </>
       )}

@@ -720,7 +720,7 @@ export function PipelinePage({
                     ? "Tab indents by two spaces; press Escape, then Tab, to move on. Problems are listed below with their lines."
                     : viewing
                       ? "A saved version, shown as it was saved."
-                      : "Your role can read this pipeline. Stewards edit it."}
+                      : "Your role can read this pipeline. Designers and admins edit it."}
                 </p>
                 <YamlEditor
                   ref={editor}

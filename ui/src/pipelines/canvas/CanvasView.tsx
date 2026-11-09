@@ -1092,6 +1092,7 @@ function Canvas(props: CanvasProps) {
           predicted={predicted.get(selectedNode.id) ?? null}
           metrics={metricsOf(selectedNode.id)}
           parameters={graph?.parameters ?? []}
+          yaml={yaml}
           onSetting={(key, value, kind) => setOne(selectedNode.id, key, value, kind)}
           onRename={(to) => rename(selectedNode.id, to)}
           onDisconnect={unlink}
