@@ -365,7 +365,9 @@ converted: Production or Starter Pack.
     the samples login's password and the client secret, nothing of Keycloak's), `keycloak-db.env`
     and `keycloak.env`, in `config/run/services` (a folder the account's alone, `700`; each file
     `644`, readable inside its container whichever user that runs as, as the one-offs' files are;
-    Windows, the same permissions as a run's folder), named by `KILNMARK_SECRETS_DIR`. Compose runs
+    Windows, the same permissions as a run's folder), named by `KILNMARK_SECRETS_DIR`, which has no
+    default (`${KILNMARK_SECRETS_DIR:?...}`, as the release check asks of any name holding SECRET):
+    the control scripts always set it, and compose run by hand without it stops. Compose runs
     `containers/kilnmark-env.sh` in place of each image's entrypoint, with that entrypoint and its
     command after it: it reads the file, `NAME=value` a line, each value taken as it is, puts them
     in the environment of that process and the program it then runs, and runs it; a file that is
@@ -379,6 +381,10 @@ converted: Production or Starter Pack.
     character but a line break; only the identity provider's client secret, which `set_line`
     writes into `config/.env` as it is, is refused, when typed or piped in, with a space, a quote
     mark, `#`, `$`, a backtick or a backslash, which `config/.env` would not read back the same.
+    A known limit, as before: with Docker run as root (rootful), an account on the machine whose
+    uid is a container's own user's (999 for PostgreSQL, 1000 for Keycloak, 1001 for Kilnmark) can
+    read that container's processes' environment and files; rootless Podman's containers run under
+    the account's own subordinate ids, which no one else has, which is one reason it is preferred.
     Checked with podman-compose itself: `--dry-run up` with every profile prints no secret's value
     or name (the release's tests do this where `KILNMARK_TEST_PODMAN_COMPOSE` names it, and show
     the same check finding them in an `environment` and an `env_file`).
@@ -452,8 +458,12 @@ converted: Production or Starter Pack.
       must let nobody else put one there: a plugin there passes as above; a folder that is not there
       must be one nobody else may make, so the nearest folder above it that is there must take
       nothing from anyone else (`C:\ProgramData` lets Users make folders: the message says how to
-      make it as an administrator, closed to everyone else). A known limit: plugin folders that
-      Docker's `config.json` adds (`cliPluginsExtraDirs`) are not checked.
+      make it as an administrator, closed to everyone else); so are the folders Docker's
+      `config.json` adds (`cliPluginsExtraDirs`), and a `config.json` that does not read is
+      refused. A known limit: only the compose tool's own program is checked, not what it loads in
+      turn (podman-compose is a Python launcher, which runs a Python and its modules found
+      elsewhere; a `.cmd` shim runs whatever it names), so `docker-compose`, one program, is the
+      one to install (`winget install Docker.DockerCompose`).
     - The admin token goes only to a listener of the account's own. Before any call to Kilnmark's
       API (`people` commands, the hourly run's records), the control script checks who listens on
       Kilnmark's port, on the loopback or all addresses, and connects to `127.0.0.1`: on Linux

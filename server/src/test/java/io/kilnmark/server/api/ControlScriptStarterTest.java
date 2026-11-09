@@ -129,7 +129,7 @@ class ControlScriptStarterTest {
         String kilnmark = c.substring(c.indexOf("\n  kilnmark:\n"), c.indexOf("\n  keycloak-db:\n"));
         assertFalse(kilnmark.contains("env_file:"), "no env_file: podman-compose puts its lines on podman's command line");
         assertEquals(1, kilnmark.split(":/run/kilnmark/env:", -1).length - 1, "one file of secrets");
-        assertTrue(kilnmark.contains("      - ${KILNMARK_SECRETS_DIR:-../../config/run/services}/kilnmark.env:/run/kilnmark/env:ro,z\n"),
+        assertTrue(kilnmark.contains("      - ${KILNMARK_SECRETS_DIR:?Start Kilnmark with its control script, which writes each service secrets file and sets KILNMARK_SECRETS_DIR}/kilnmark.env:/run/kilnmark/env:ro,z\n"),
             "only the file the control script writes for Kilnmark");
         String sh = Files.readString(LAUNCH.resolve("kilnmark.sh"));
         assertTrue(sh.contains("      kilnmark) service_secret_line QUARKUS_DATASOURCE_PASSWORD KILNMARK_DB_PASSWORD\n"
@@ -222,7 +222,7 @@ class ControlScriptStarterTest {
         assertTrue(postgres.contains("ENTRYPOINT [\"kilnmark-tls.sh\"]\nCMD [\"postgres\"]\n"), "the database image's own");
         for (String service : List.of("postgres", "kilnmark", "keycloak-db", "keycloak")) {
             String block = serviceBlock(c, service);
-            assertTrue(block.contains("      - ${KILNMARK_SECRETS_DIR:-../../config/run/services}/" + service + ".env:/run/kilnmark/env:ro,z\n"),
+            assertTrue(block.contains("      - ${KILNMARK_SECRETS_DIR:?Start Kilnmark with its control script, which writes each service secrets file and sets KILNMARK_SECRETS_DIR}/" + service + ".env:/run/kilnmark/env:ro,z\n"),
                 service + " reads its secrets from its own file, mounted");
             assertTrue(block.contains("      - ./containers/kilnmark-env.sh:/run/kilnmark/start.sh:ro,z\n"), service + ": kilnmark-env.sh");
             assertTrue(block.contains("    entrypoint: [\"/bin/bash\", \"/run/kilnmark/start.sh\", " + own.get(service)),
@@ -296,7 +296,7 @@ class ControlScriptStarterTest {
         String before = now.substring(0, now.indexOf("\nservices:\n")) + "\nservices:\n  postgres:\n"
             + "    image: ghcr.io/jporeilly/kilnmark-postgres:@VERSION@\n    environment:\n      POSTGRES_PASSWORD: ${KILNMARK_DB_PASSWORD}\n"
             + "  kilnmark:\n    image: ghcr.io/jporeilly/kilnmark-server:@VERSION@\n"
-            + "    env_file:\n      - ${KILNMARK_SECRETS_DIR:-../../config/run/services}/kilnmark.env\n";
+            + "    env_file:\n      - ${KILNMARK_SECRETS_DIR:?Start Kilnmark with its control script, which writes each service secrets file and sets KILNMARK_SECRETS_DIR}/kilnmark.env\n";
         assertTrue(podmanComposeLeaks(pc, before).containsAll(List.of("value of KILNMARK_DB_PASSWORD", "value of KILNMARK_ADMIN_TOKEN",
             "name POSTGRES_PASSWORD", "name KILNMARK_ADMIN_TOKEN")), "the check sees an environment's secret, and an env_file's");
     }
@@ -1102,7 +1102,7 @@ class ControlScriptStarterTest {
             Map<String, String> path = new LinkedHashMap<>(recordedAsEnv(WITH_KEYCLOAK, Map.of()));
             path.put("PATH", dc.getParent() + ";" + system + "\\System32;" + system + ";" + system + "\\System32\\WindowsPowerShell\\v1.0");
             // (whatever PODMAN_COMPOSE_PROVIDER says outside the tests)
-            path.put("PODMAN_COMPOSE_PROVIDER", "");
+            path.put("PODMAN_COMPOSE_PROVIDER", null);
             Path provider = Files.createTempFile("kilnmark-provider", ".log");
             path.put("FAKE_PROVIDER_LOG", provider.toString());
             String clean = run(expire, tools, podman.toString(), path);
@@ -1150,6 +1150,18 @@ class ControlScriptStarterTest {
             Files.delete(plugin);
             String dockerClean = run(expire, tools, dockerBin.resolve("docker.cmd").toString(), docker);
             assertFalse(dockerClean.contains("people expire was refused"), dockerClean);
+            // a folder config.json adds (cliPluginsExtraDirs) that others may add to; and one that does not read
+            Path extra = Files.createTempDirectory("kilnmark-extra-plugins");
+            icacls(extra, "/grant", "*S-1-5-11:(AD)");
+            Path config = home.resolve(".docker/config.json");
+            Files.writeString(config, "{\"cliPluginsExtraDirs\": [\"" + extra.toString().replace("\\", "\\\\") + "\"]}");
+            String extraOut = run(expire, tools, dockerBin.resolve("docker.cmd").toString(), docker);
+            assertTrue(extraOut.contains("people expire was refused") && extraOut.contains(extra + ", a folder Docker runs its compose plugin from, may be changed by"),
+                extraOut);
+            Files.writeString(config, "{ not json");
+            String unread = run(expire, tools, dockerBin.resolve("docker.cmd").toString(), docker);
+            assertTrue(unread.contains("people expire was refused") && unread.contains("could not be read"), unread);
+            Files.delete(config);
             // a plugin folder that is not there, where others may make it (as C:\ProgramData lets Users)
             icacls(programData, "/grant", "*S-1-5-11:(AD)");
             String missing = run(expire, tools, dockerBin.resolve("docker.cmd").toString(), docker);
@@ -1805,7 +1817,14 @@ class ControlScriptStarterTest {
             .contains("win") ? "schtasks.log" : "systemctl.log").toString());
         pb.environment().put("FAKE_RMI_LOG", root.resolve("rmi.log").toString());
         pb.environment().put("FAKE_UP_LOG", root.resolve("up.log").toString());
-        pb.environment().putAll(outside);
+        // a null removes a setting the tests' own environment has
+        outside.forEach((k, val) -> {
+            if (val == null) {
+                pb.environment().remove(k);
+            } else {
+                pb.environment().put(k, val);
+            }
+        });
         Process p = pb.start();
         try (var in = p.getOutputStream()) {
             in.write((stdin + "\n").getBytes(StandardCharsets.UTF_8));

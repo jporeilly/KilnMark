@@ -231,7 +231,7 @@ function Get-Tools {
     if ($script:Tools) { return $script:Tools }
     $e = Get-EnginePath
     $name = ''; if ($e) { $name = [IO.Path]::GetFileNameWithoutExtension($e) }
-    $compose = ''; $plugins = @()
+    $compose = ''; $plugins = @(); $unread = ''
     if ($name -eq 'podman') {
         $want = $env:PODMAN_COMPOSE_PROVIDER
         if ($want) {
@@ -248,8 +248,14 @@ function Get-Tools {
         $config = $env:DOCKER_CONFIG; if (-not $config) { $config = Join-Path $env:USERPROFILE '.docker' }
         $plugins = @((Join-Path $config 'cli-plugins'), (Join-Path $env:ProgramData 'Docker\cli-plugins'),
             (Join-Path $env:ProgramFiles 'Docker\cli-plugins'), (Join-Path $env:ProgramFiles 'Docker\Docker\resources\cli-plugins'))
+        # and the folders config.json adds (cliPluginsExtraDirs); one that cannot be read is refused
+        $json = Join-Path $config 'config.json'
+        if (Test-Path -LiteralPath $json -PathType Leaf) {
+            try { foreach ($x in @((Get-Content -LiteralPath $json -Raw | ConvertFrom-Json).cliPluginsExtraDirs)) { if ($x) { $plugins += [string]$x } } }
+            catch { $unread = $json }
+        }
     }
-    $script:Tools = @{ Engine = $e; Compose = $compose; PluginDirs = $plugins }
+    $script:Tools = @{ Engine = $e; Compose = $compose; PluginDirs = $plugins; Unread = $unread }
     return $script:Tools
 }
 $script:EngineName = ''
@@ -560,6 +566,7 @@ function Get-EngineProblem {
     if ($why) { return $why }
     if ($t.Compose) { $why = Get-ToolProblem $t.Compose; if ($why) { return $why } }
     elseif ([IO.Path]::GetFileNameWithoutExtension($t.Engine) -eq 'podman') { return ('the compose tool Podman would launch (PODMAN_COMPOSE_PROVIDER, else docker-compose or podman-compose on PATH) is not a program PATH finds, so it cannot be checked: install one (winget install Docker.DockerCompose), or set PODMAN_COMPOSE_PROVIDER to its full path') }
+    if ($t.Unread) { return ($t.Unread + ', which may name more folders Docker runs its compose plugin from, could not be read') }
     foreach ($d in $t.PluginDirs) {
         $f = Join-Path $d 'docker-compose.exe'
         if (Test-Path -LiteralPath $f) { $why = Get-ToolProblem $f; if ($why) { return $why }; continue }

@@ -124,7 +124,8 @@ before every compose command, each long-running service's secrets into a file of
 `config/run/services` (yours alone), which compose mounts read-only into that service alone. No
 secret is a container's setting in `compose.yaml`, nor in an `env_file`: podman-compose puts both
 on Podman's command line, where any account on the machine can read them. By hand, set
-`KILNMARK_SECRETS_DIR` to that folder.
+`KILNMARK_SECRETS_DIR` to that folder. A secret changed by hand in `config/.env` reaches its service at the next
+`restart` (a stop, then `up`), which `configure` runs itself.
 
 ## Who may change what a run uses
 

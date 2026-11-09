@@ -11,7 +11,8 @@
 # in an env_file: compose tools put those on podman's command line (podman-compose puts env_file's
 # there too), where other users of the machine can read them. By hand, from this folder with a .env
 # beside it, write those files first, as the control script does (NAME=value a line:
-# postgres.env, kilnmark.env, keycloak-db.env, keycloak.env, in ../../config/run/services), then:
+# postgres.env, kilnmark.env, keycloak-db.env, keycloak.env), and set KILNMARK_SECRETS_DIR to their
+# folder (there is no default: unset, compose stops and says so), then:
 #   podman compose up -d          (or: docker compose up -d)
 # The images are ghcr.io/jporeilly/kilnmark-server and -postgres, tag @VERSION@: pulled, loaded from
 # kilnmark-@VERSION@-images.tar.gz, or built from containers/ (podman compose build).
@@ -51,7 +52,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql
       - ./containers/kilnmark-env.sh:/run/kilnmark/start.sh:ro,z
-      - ${KILNMARK_SECRETS_DIR:-../../config/run/services}/postgres.env:/run/kilnmark/env:ro,z
+      - ${KILNMARK_SECRETS_DIR:?Start Kilnmark with its control script, which writes each service secrets file and sets KILNMARK_SECRETS_DIR}/postgres.env:/run/kilnmark/env:ro,z
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U kilnmark -d kilnmark"]
       interval: 5s
@@ -175,7 +176,7 @@ services:
       # HTTP; it reads them only when KILNMARK_TLS_CERT_FILE and KILNMARK_TLS_KEY_FILE are set.
       - ${KILNMARK_CERTS_DIR:-./tls}:/etc/kilnmark/tls:ro,Z
       - ./containers/kilnmark-env.sh:/run/kilnmark/start.sh:ro,z
-      - ${KILNMARK_SECRETS_DIR:-../../config/run/services}/kilnmark.env:/run/kilnmark/env:ro,z
+      - ${KILNMARK_SECRETS_DIR:?Start Kilnmark with its control script, which writes each service secrets file and sets KILNMARK_SECRETS_DIR}/kilnmark.env:/run/kilnmark/env:ro,z
     depends_on:
       postgres:
         condition: service_healthy
@@ -221,7 +222,7 @@ services:
     volumes:
       - keycloak-pgdata:/var/lib/postgresql
       - ./containers/kilnmark-env.sh:/run/kilnmark/start.sh:ro,z
-      - ${KILNMARK_SECRETS_DIR:-../../config/run/services}/keycloak-db.env:/run/kilnmark/env:ro,z
+      - ${KILNMARK_SECRETS_DIR:?Start Kilnmark with its control script, which writes each service secrets file and sets KILNMARK_SECRETS_DIR}/keycloak-db.env:/run/kilnmark/env:ro,z
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
       interval: 5s
@@ -256,7 +257,7 @@ services:
     volumes:
       - ./containers/keycloak/themes/kilnmark:/opt/keycloak/themes/kilnmark:ro,Z
       - ./containers/kilnmark-env.sh:/run/kilnmark/start.sh:ro,z
-      - ${KILNMARK_SECRETS_DIR:-../../config/run/services}/keycloak.env:/run/kilnmark/env:ro,z
+      - ${KILNMARK_SECRETS_DIR:?Start Kilnmark with its control script, which writes each service secrets file and sets KILNMARK_SECRETS_DIR}/keycloak.env:/run/kilnmark/env:ro,z
     depends_on:
       keycloak-db:
         condition: service_healthy
