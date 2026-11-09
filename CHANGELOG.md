@@ -804,6 +804,10 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
   on a flow's node is wider, so long names are not cut off, and no longer offers `sample-tables`,
   which Kilnmark keeps to copy the sample data; a `stop` node has its own icon (a raised hand) in a
   flow run's timeline, as on the diagram, not a tick.
+- **Uninstalling on Windows ends cleanly.** `kilnmark.cmd uninstall` removed everything, then said
+  "The system cannot find the path specified" and returned 1: Command Prompt reads a batch file
+  line by line as it runs it, and uninstall had just deleted it. It now ends with no error and
+  returns 0 once the program folder is gone, and the Command Prompt window stays open.
 
 ## 0.1.1 (6 November 2026)
 
