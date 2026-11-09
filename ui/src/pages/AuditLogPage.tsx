@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { auditApi, formatTime, type AuditEvent, plural } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
+import { formatBytes } from "../pipelines/RunStatus";
 import { Card, DataTable, EmptyState, PageHeader, StatusChip, type Tone } from "../components/ui";
 
 /** The audit log's actions, in words, for the filter and the table. */
@@ -38,6 +39,8 @@ export const ACTIONS: { value: string; label: string; tone: Tone }[] = [
   { value: "starter.removed", label: "Starter Pack turned off", tone: "neutral" },
   { value: "samples.refused", label: "Samples refused", tone: "bad" },
   { value: "starter.people", label: "Starter Pack people changed", tone: "warn" },
+  { value: "file.downloaded", label: "File downloaded", tone: "warn" },
+  { value: "file.download_refused", label: "File download refused", tone: "bad" },
   { value: "api.request", label: "Request", tone: "neutral" },
   { value: "api.refused", label: "Request refused", tone: "bad" },
 ];
@@ -126,6 +129,13 @@ export function describe(e: AuditEvent): string {
     const steps = (d.steps ?? {}) as Record<string, string>;
     const failed = Object.entries(steps).filter(([, v]) => v === "failed").map(([k]) => k);
     return failed.length ? `Not every step worked: ${failed.join(", ")}` : "Every step worked";
+  }
+  if (e.action === "file.downloaded" || e.action === "file.download_refused") {
+    const what = d.path ? `${String(d.path)} in ${String(d.source ?? "")}` : "A file";
+    const size = typeof d.bytes === "number" ? `, ${formatBytes(d.bytes)}` : "";
+    if (e.action === "file.downloaded") return `${what}${size}${d.unrecorded ? ", size not recorded by its run" : ""}`;
+    const more = d.notKeptBefore ? `, ${String(d.notKeptBefore)} more not kept before this` : "";
+    return `${what}${size}: refused, ${String(d.refused ?? "")} (${String(d.status ?? "")})${more}`;
   }
   if (e.action === "api.request" || e.action === "api.refused") {
     const call = `${String(d.method ?? "")} ${String(d.status ?? "")}`.trim();

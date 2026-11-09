@@ -134,6 +134,32 @@ class LocalFileStoreTest {
         files.test(new SourceConfig("f", "files", Map.of("path", share.toString()), null));
     }
 
+    /**
+     * A written file handed back (ADR 0055): only a .csv or .parquet path a write could have had,
+     * reached through no link at all, a regular file, spelt as on disk; a missing one is told apart.
+     */
+    @Test
+    void aWrittenFileIsFoundOnlyExactlyWhereAWriteWouldPutIt() throws Exception {
+        FilesConnector files = TestFiles.files(tmp);
+        SourceConfig source = new SourceConfig("f", "files", Map.of("path", share.toString()), null);
+        FilesConnector.LocalFile found = files.writtenFile(source, "exports/2025/orders.csv");
+        assertEquals(share.toRealPath().resolve("exports/2025/orders.csv"), found.path());
+        assertEquals(Files.size(share.resolve("exports/2025/orders.csv")), found.size());
+        assertThrows(java.nio.file.NoSuchFileException.class, () -> files.writtenFile(source, "exports/gone.csv"));
+        for (String refused : List.of("../secret/passwords.csv", "/etc/passwd.csv", "C:/x.csv", "exports/../top.csv",
+            "exports//2025/orders.csv", "./top.csv", ".hidden.csv", "exports/notes.md", "escape.csv",
+            "escape-dir/passwords.csv", "inside-link.csv", "exports", "", "exports\\2025\\orders.csv")) {
+            IOException e = assertThrows(IOException.class, () -> files.writtenFile(source, refused), refused);
+            assertFalse(e instanceof java.nio.file.NoSuchFileException, refused);
+            assertFalse(String.valueOf(e.getMessage()).contains("hunter2"));
+        }
+        Files.createDirectories(share.resolve("folder.csv"));
+        assertThrows(IOException.class, () -> files.writtenFile(source, "folder.csv"), "a folder is not a file");
+        // A source outside the allowed roots finds nothing, whatever the path.
+        FilesConnector none = new FilesConnector();
+        assertThrows(IOException.class, () -> none.writtenFile(source, "top.csv"));
+    }
+
     @Test
     void validationNamesTheSettingAtFault() {
         FilesConnector files = TestFiles.files(tmp);

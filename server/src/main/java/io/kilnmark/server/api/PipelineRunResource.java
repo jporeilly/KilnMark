@@ -143,6 +143,63 @@ public class PipelineRunResource {
             .build();
     }
 
+    /** The files runs wrote, and handing them back (ADR 0055). */
+    @jakarta.inject.Inject
+    io.kilnmark.server.pipelines.WrittenFiles writtenFiles;
+
+    @GET
+    @Path("{id}/files")
+    @Operation(summary = "The files a pipeline run wrote", description = "Each file its write nodes wrote to a source "
+        + "of files, by its index in the run's record (what the download takes): the node, source, path in the "
+        + "source, format, rows, and the size and time the write recorded. state says whether it is still there as "
+        + "the run wrote it (ready; unrecorded when the run recorded no size, so it may have changed; changed; "
+        + "deleted; unavailable), downloadable whether the caller may download it now, and reason why not. Empty "
+        + "while the run goes (finished false). Role: viewer.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "The files", content = @Content(
+            mediaType = MediaType.APPLICATION_JSON,
+            schema = @Schema(implementation = io.kilnmark.server.pipelines.WrittenFiles.Listing.class))),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "404", description = "No such run")})
+    public io.kilnmark.server.pipelines.WrittenFiles.Listing files(@PathParam("id") long id) {
+        return writtenFiles.list(id, sights);
+    }
+
+    @GET
+    @Path("{id}/files/{index}")
+    @Produces(MediaType.WILDCARD)
+    @Operation(summary = "Download a file a pipeline run wrote", description = "The file at index in the run's list "
+        + "of files (GET .../files), streamed from the source's folder on this server where its write put it, "
+        + "and only while it is still the file the run wrote (its place, size and time as the write recorded "
+        + "them). No path is taken from the caller. A file holding a column marked sensitive, or whose columns are "
+        + "not in the catalogue, is only for a designer with the unmask grant (ADR 0027, 0038); other files for "
+        + "stewards and above, who may see values. Every download and every refusal is in the audit log "
+        + "(file.downloaded, file.download_refused). A browser signed in with the identity provider can follow a "
+        + "plain link: GET changes nothing. Role: viewer to ask; see above for who gets the file.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "The file, as an attachment (text/csv or "
+            + "application/vnd.apache.parquet)"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "403", description = "Not for this caller: it holds sensitive columns (or "
+            + "unknown ones) and the caller may not see sensitive values unmasked, or the caller is a viewer"),
+        @APIResponse(responseCode = "404", description = "No such run, or the run wrote no file at that index"),
+        @APIResponse(responseCode = "409", description = "The run has not finished, the file has changed since the "
+            + "run wrote it, or it cannot be reached (not in a folder on this server, or the way to it changed)"),
+        @APIResponse(responseCode = "410", description = "The file, or the source it was written to, has been "
+            + "deleted")})
+    public Response file(@PathParam("id") long id, @PathParam("index") String index) {
+        io.kilnmark.server.pipelines.WrittenFiles.Download d = writtenFiles.download(id, index, sights,
+            io.kilnmark.server.audit.AuditLog.actor(identity));
+        jakarta.ws.rs.core.StreamingOutput body = out -> io.kilnmark.server.pipelines.WrittenFiles.copy(d.file(), out);
+        return Response.ok(body, d.contentType())
+            .header("Content-Disposition", "attachment; filename=\"" + d.filename() + "\"")
+            .header("Content-Length", d.file().size())
+            .header("X-Content-Type-Options", "nosniff")
+            .header("Cache-Control", "no-store")
+            .header("Cross-Origin-Resource-Policy", "same-origin")
+            .build();
+    }
+
     @POST
     @Path("{id}/cancel")
     @RolesAllowed(AccessRole.STEWARD_ROLE)

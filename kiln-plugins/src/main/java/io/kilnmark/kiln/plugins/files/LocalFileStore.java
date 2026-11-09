@@ -165,6 +165,38 @@ public final class LocalFileStore implements FileStore {
         return real;
     }
 
+    /**
+     * The file at {@code path} exactly: a path relative to the folder with no empty, {@code .} or
+     * {@code ..} part, that leads to a regular file through no link at all and is spelt as it is
+     * on disk. For handing back a file Kilnmark wrote, where a link swapped in since must not lead
+     * to another file, even one inside the folder.
+     *
+     * @throws java.nio.file.NoSuchFileException when nothing is there
+     * @throws IOException                         when the path, a link or what is there is refused
+     */
+    public Path exact(String path) throws IOException {
+        if (path == null || path.isBlank() || path.startsWith("/") || path.contains("\\") || path.contains("\0")) {
+            throw new IOException("not a path relative to the folder");
+        }
+        for (String part : path.split("/", -1)) {
+            if (part.isEmpty() || part.equals(".") || part.equals("..")) {
+                throw new IOException("not a path relative to the folder");
+            }
+        }
+        Path p = root.resolve(path).normalize();
+        if (!p.startsWith(root) || p.equals(root)) {
+            throw new IOException("outside the folder");
+        }
+        Path real = p.toRealPath(); // NoSuchFileException when it is not there
+        if (!real.equals(p)) {
+            throw new IOException("reached through a link, or spelt otherwise on disk");
+        }
+        if (!Files.isRegularFile(real, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("not a file");
+        }
+        return real;
+    }
+
     /** One file, by the listing's rules: inside the folder, not hidden, at the top unless recursive. */
     @Override
     public Entry entry(String path) throws IOException {
