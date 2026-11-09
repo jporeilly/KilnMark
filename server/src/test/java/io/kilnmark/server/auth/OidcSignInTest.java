@@ -5,6 +5,8 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
@@ -265,8 +267,28 @@ class OidcSignInTest {
         Map<String, String> s = signIn(idToken("ada", List.of("km-admins"), List.of("mfa"), Instant.now()));
         Response out = given().cookies(s).header(SessionRequests.HEADER, SessionRequests.VALUE)
             .post("/api/v1/auth/sign-out");
-        assertEquals(204, out.statusCode(), out.asString());
+        assertEquals(200, out.statusCode(), out.asString());
         assertTrue(out.getDetailedCookies().asList().stream().anyMatch(c -> c.getName().startsWith("q_session")
             && (c.getMaxAge() == 0 || c.getValue().isEmpty())), "the session cookie is cleared");
+        // and the browser is sent on to end the provider's own session, or a new sign-in would be let
+        // straight back in as ada: the provider's end-session endpoint, with this session's ID token as
+        // the hint, Kilnmark's client id, and Kilnmark's own address to come back to
+        String end = out.jsonPath().getString("endSession");
+        assertNotNull(end, out.asString());
+        String endpoint = given().get(provider.baseUrl() + "/auth/realms/quarkus/.well-known/openid-configuration")
+            .jsonPath().getString("end_session_endpoint");
+        assertTrue(end.startsWith(endpoint + "?"), end);
+        assertTrue(end.contains("&id_token_hint=ey"), "the ID token is the hint");
+        assertTrue(end.contains("post_logout_redirect_uri=http%3A%2F%2Flocalhost%3A"), "back to Kilnmark");
+        assertTrue(end.matches(".*post_logout_redirect_uri=http%3A%2F%2Flocalhost%3A[0-9]+%2F&.*"), "to its root");
+        assertTrue(end.contains("&client_id="), "with the client id");
+    }
+
+    /** An API token signs out with nothing for the provider to end. */
+    @Test
+    void anApiTokenSignsOutWithNoProviderSession() {
+        Response out = given().header("Authorization", "Bearer " + io.kilnmark.server.Tokens.ADMIN).post("/api/v1/auth/sign-out");
+        assertEquals(200, out.statusCode(), out.asString());
+        assertNull(out.jsonPath().getString("endSession"));
     }
 }

@@ -378,7 +378,7 @@ class OidcRenewalTest {
             Instant.now().plus(Duration.ofMinutes(5))), "rt-otto");
         Response out = given().cookies(s).header(SessionRequests.HEADER, SessionRequests.VALUE)
             .post("/api/v1/auth/sign-out");
-        assertEquals(204, out.statusCode(), out.asString());
+        assertEquals(200, out.statusCode(), out.asString());
         assertTrue(sessionCleared(out), "the session cookie is cleared");
         assertEquals(1, provider.findAll(WireMock.postRequestedFor(WireMock.urlPathEqualTo("/auth" + REVOKE))
             .withFormParam("token", WireMock.equalTo("rt-otto"))).size(), "the refresh token is revoked");
@@ -394,7 +394,7 @@ class OidcRenewalTest {
             Instant.now().plus(Duration.ofMinutes(5))), "rt-ulla");
         Response out = given().cookies(s).header(SessionRequests.HEADER, SessionRequests.VALUE)
             .post("/api/v1/auth/sign-out");
-        assertEquals(204, out.statusCode(), out.asString());
+        assertEquals(200, out.statusCode(), out.asString());
         assertTrue(sessionCleared(out), "the session cookie is cleared");
         assertEquals(1, count(AuditLog.SIGN_OUT, "sso:ulla"));
     }

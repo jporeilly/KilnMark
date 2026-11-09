@@ -13,6 +13,10 @@ In the provider, register Kilnmark as a web application:
 
 - its redirect URI is `https://<host>/api/v1/auth/login` (with `tls=on` and another HTTPS port,
   `https://<host>:<https_port>/api/v1/auth/login`);
+- its post-logout redirect URI (where its sign-out page sends the browser back) is
+  `https://<host>/` (or `https://<host>:<https_port>/`): signing out of Kilnmark takes the browser
+  to the provider's sign-out page so the provider's session ends too, and a provider that does not
+  know this address shows an error there instead of returning to Kilnmark;
 - have the provider put the person's groups in the ID token's `groups` claim;
 - require a second factor for the application, and let it issue refresh tokens.
 

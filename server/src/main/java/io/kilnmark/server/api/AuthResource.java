@@ -51,6 +51,13 @@ public class AuthResource {
     @Inject
     jakarta.enterprise.inject.Instance<OidcSession> session;
 
+    /** The provider's metadata: its end-session endpoint, where signing out sends the browser. */
+    @Inject
+    jakarta.enterprise.inject.Instance<io.quarkus.oidc.OidcConfigurationMetadata> providerMetadata;
+
+    @jakarta.ws.rs.core.Context
+    jakarta.ws.rs.core.UriInfo uriInfo;
+
     /** The session's refresh token, which signing out asks the provider to revoke. */
     @Inject
     jakarta.enterprise.inject.Instance<RefreshToken> refreshToken;
@@ -101,19 +108,71 @@ public class AuthResource {
         return Response.seeOther(URI.create("/")).build();
     }
 
+    /**
+     * What signing out returns: where the browser goes next to end the identity provider's own
+     * session (its end-session endpoint, OpenID Connect RP-initiated logout), or null when there is
+     * none to end (an API token) or the provider names no such endpoint.
+     */
+    public record SignedOut(String endSession) {
+    }
+
     @POST
     @Path("sign-out")
     @Authenticated
-    @Operation(summary = "Sign out", description = "Ends this browser's session with Kilnmark. The identity "
-        + "provider's own session is the provider's: sign out there too on a shared computer.")
-    @APIResponses({@APIResponse(responseCode = "204", description = "Signed out")})
+    @Operation(summary = "Sign out", description = "Ends this browser's session with Kilnmark. For a sign-in "
+        + "with the identity provider, endSession is the provider's own sign-out page, with this session's ID "
+        + "token as its hint: the browser goes there so the provider's session ends too, and the provider "
+        + "sends it back to Kilnmark. Without it, a new sign-in would be let straight in as the same person.")
+    @APIResponses({@APIResponse(responseCode = "200", description = "Signed out")})
     public Response signOut() {
+        String endSession = null;
         if (OidcIdentityAugmentor.fromProvider(identity) && session.isResolvable()) {
             audit.record(AuditLog.actor(identity), AuditLog.SIGN_OUT, "session", Map.of());
+            // read before the session ends: its ID token is the provider's hint
+            endSession = endSessionUrl();
             revokeRefreshToken();
             session.get().logout().await().indefinitely();
         }
-        return Response.noContent().build();
+        return Response.ok(new SignedOut(endSession)).build();
+    }
+
+    /**
+     * The provider's end-session URL for this session: its end_session_endpoint with the ID token
+     * as id_token_hint, Kilnmark's client id, and Kilnmark's own address (as this request reached
+     * it, https when Kilnmark sits behind a proxy that ends TLS, as for the sign-in's redirect) to
+     * come back to, which the provider must accept (keycloak-setup registers it; for your own
+     * provider, register it: docs/guide/people-and-access.md). Null when the provider names no
+     * end-session endpoint, or it cannot be read: signing out of Kilnmark never waits on it.
+     */
+    private String endSessionUrl() {
+        try {
+            String end = providerMetadata.isResolvable() ? providerMetadata.get().getEndSessionUri() : null;
+            if (end == null || end.isBlank()) {
+                return null;
+            }
+            var settings = org.eclipse.microprofile.config.ConfigProvider.getConfig();
+            URI base = uriInfo.getBaseUri();
+            boolean https = settings.getOptionalValue("quarkus.oidc.authentication.force-redirect-https-scheme",
+                Boolean.class).orElse(false);
+            String back = (https ? "https" : base.getScheme()) + ":/" + "/" + base.getRawAuthority() + "/";
+            StringBuilder url = new StringBuilder(end).append(end.contains("?") ? '&' : '?')
+                .append("post_logout_redirect_uri=").append(encode(back));
+            var idToken = session.get().getIdToken();
+            if (idToken != null && idToken.getRawToken() != null) {
+                url.append("&id_token_hint=").append(encode(idToken.getRawToken()));
+            }
+            settings.getOptionalValue("quarkus.oidc.client-id", String.class)
+                .ifPresent(id -> url.append("&client_id=").append(encode(id)));
+            return url.toString();
+        } catch (RuntimeException e) {
+            LOG.warnf("Could not make the identity provider's sign-out address (%s): its own session stays until "
+                + "it ends", e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    private static String encode(String s) {
+        return java.net.URLEncoder.encode(s, java.nio.charset.StandardCharsets.UTF_8);
     }
 
     /** One person keycloak-setup made: their email, and their groups, ;-separated. */

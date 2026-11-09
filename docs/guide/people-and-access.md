@@ -184,7 +184,12 @@ of that group.
   from would, because sessions are not stored on the server. Signing out asks the provider to stop
   the copy renewing (where the provider allows it, as Keycloak does), so a copy then lasts until
   its token expires. Storing sessions would let signing out end every copy at once.
-- **The provider's own session**: signing out of Kilnmark ends Kilnmark's session. With the Keycloak
-  that comes with Kilnmark it ends Keycloak's too (Kilnmark revokes its refresh token, and Keycloak
-  then ends a session no other application uses), so signing in again asks for the password and
-  code. Other providers' sessions are theirs: sign out there too on a shared computer.
+- **The provider's own session**: signing out of Kilnmark ends Kilnmark's session, then takes the
+  browser to the provider's own sign-out page (its end-session endpoint, with the session's ID token
+  as the hint), which ends the provider's session too and sends the browser back to Kilnmark. So
+  signing in again asks for the password and code, rather than letting the same person straight
+  back in. The provider must accept Kilnmark's address as where to send the browser back: the
+  bundled Keycloak does; for your own provider, register it
+  ([Production with your own identity provider](install/production-own-identity-provider.md)).
+  A provider that names no end-session endpoint keeps its session: sign out there too on a shared
+  computer.

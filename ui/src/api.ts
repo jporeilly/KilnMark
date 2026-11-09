@@ -612,8 +612,11 @@ export type DriverRegistration = {
 export const api = {
   me: () => call<Me>("/api/v1/me"),
   authStatus: () => call<AuthStatus>("/api/v1/auth/status"),
-  /** Ends this browser's session with the identity provider's sign-in. */
-  signOutProvider: () => call<void>("/api/v1/auth/sign-out", { method: "POST" }),
+  /**
+   * Ends this browser's session with the identity provider's sign-in. endSession, when there is
+   * one, is the provider's own sign-out page: going there ends the provider's session too.
+   */
+  signOutProvider: () => call<{ endSession?: string | null }>("/api/v1/auth/sign-out", { method: "POST" }),
   signIn: async (token: string) => {
     const me = await checkToken(token);
     session.save(token);
