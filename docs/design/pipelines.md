@@ -1070,7 +1070,11 @@ asset's previous profile.
   a pipeline wrote after the scan began. Lineage links each written asset to every read asset
   upstream of it (`GET /api/v1/lineage?urn=`), each under the URN its read node resolved and the
   catalogue records (a file's `#` and `%` escaped, as its asset path), which is also what the run's
-  read list and its assets for Sights hold.
+  read list and its assets for Sights hold. The UI draws lineage with one component
+  (`ui/src/lineage`), on a run's page from the run's pairs and on an asset's Overview from
+  `GET /api/v1/lineage`: a box per asset, named from its URN (a path with a folder, or ending in a
+  file's extension, is a file; anything else a table), and a line per recorded pair only, laid
+  out left to right with dagre.
 - **Each node's outcome** is recorded as the engine reports it (finished, ended early, stopped by the
   engine, failed), so a writer the engine stopped never looks like a clean finish.
 - **Write permission stays with admins.** Only admins change `allow_writing`, and while it is on

@@ -1,0 +1,229 @@
+/* Lineage drawn left to right (LineageGraph.tsx): boxes are links, lines are an SVG behind them. */
+.lg {
+  margin: 8px 0 0;
+  min-width: 0;
+}
+
+/* The drawing scrolls inside its frame, never the page, at any width. */
+.lg-frame {
+  max-width: 100%;
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid var(--km-border);
+  border-radius: var(--km-radius-inner);
+  background: var(--km-ground);
+  overscroll-behavior-x: contain;
+}
+
+.lg-canvas {
+  position: relative;
+  margin: 0 auto;
+}
+
+/* The run's pipeline: the gap between inputs and outputs, named at its top. */
+.lg-band {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  background: var(--km-surface-2);
+  border: 1px dashed var(--km-border-control);
+  border-radius: var(--km-radius-sm);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  box-sizing: border-box;
+}
+
+.lg-band-label {
+  margin-top: 4px;
+  max-width: calc(100% - 8px);
+  padding: 2px 8px;
+  background: var(--km-surface);
+  color: var(--km-ink);
+  border: 1px solid var(--km-border-control);
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  overflow-wrap: anywhere;
+  box-sizing: border-box;
+}
+
+/* The pipeline's name on a line of its own, under the word Pipeline. */
+.lg-band-name {
+  display: block;
+}
+
+.lg-heading {
+  position: absolute;
+  top: 10px;
+  color: var(--km-muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.lg-lines {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+
+.lg-line {
+  fill: none;
+  stroke: var(--km-muted);
+  stroke-width: 1.75;
+  transition: opacity 120ms var(--km-ease), stroke-width 120ms var(--km-ease);
+}
+
+.lg-line.is-near {
+  stroke: var(--km-ink);
+  stroke-width: 3;
+}
+
+.lg-line.is-faded,
+.lg-edge-label.is-faded {
+  opacity: 0.18;
+}
+
+.lg-arrow {
+  fill: var(--km-muted);
+}
+
+.lg-edge-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  max-width: 180px;
+  padding: 1px 8px;
+  background: var(--km-surface);
+  color: var(--km-ink);
+  border: 1px solid var(--km-border-control);
+  border-radius: var(--km-radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.lg-box {
+  position: absolute;
+  display: grid;
+  align-content: center;
+  gap: 1px;
+  padding: 6px 10px 6px 12px;
+  background: var(--km-surface);
+  color: var(--km-ink);
+  border: 1px solid var(--km-border-control);
+  border-left-width: 4px;
+  border-radius: 10px;
+  box-shadow: var(--km-shadow-card);
+  box-sizing: border-box;
+  text-decoration: none;
+  overflow: hidden;
+}
+
+.lg-box.is-input {
+  border-left-color: var(--km-fill-sky);
+}
+
+.lg-box.is-output {
+  border-left-color: var(--km-fill-green);
+}
+
+.lg-box.is-centre {
+  border: 2px solid var(--km-accent);
+  border-left-width: 4px;
+}
+
+.lg-box:hover .lg-name-text {
+  text-decoration: underline;
+}
+
+.lg-box:focus-visible {
+  outline: 3px solid var(--km-focus);
+  outline-offset: 2px;
+}
+
+.lg-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--km-link);
+}
+
+.lg-icon {
+  flex: none;
+  color: var(--km-ink-soft);
+}
+
+.lg-name-text,
+.lg-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.lg-meta {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--km-muted);
+}
+
+.lg-folder {
+  font-family: var(--km-mono);
+}
+
+.lg-self {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  color: var(--km-muted);
+  font-size: 13px;
+}
+
+.lg-caption {
+  margin: 6px 0 0;
+}
+
+.lg-list {
+  margin-top: 8px;
+}
+
+.lg-list ul {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lg-line {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .lg-line {
+    stroke: CanvasText;
+  }
+
+  .lg-arrow {
+    fill: CanvasText;
+  }
+
+  .lg-box,
+  .lg-band,
+  .lg-band-label,
+  .lg-edge-label {
+    border-color: CanvasText;
+  }
+
+  .lg-name {
+    color: LinkText;
+  }
+}

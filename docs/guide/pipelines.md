@@ -681,7 +681,13 @@ status changes.
   was held back. A run keeps up to 10,000 events; the log says if it was cut short.
 - **What it wrote:** each table or file a write node wrote, with its mode and rows. Choose one to
   open it in the catalogue.
-- **Lineage:** which assets each written asset came from.
+- **Lineage:** a graph of which assets each written asset came from. The inputs are on the left,
+  the outputs on the right, and the band between them names the pipeline. A line joins an input to
+  an output only where the run recorded that the output came from it, so an output made from some
+  of the inputs shows just those. Each box gives the table's or file's name, its folder and its
+  source, with its full identifier when you point at it; choose a box to open it in the catalogue.
+  Pointing at or focusing a box picks out its lines. On a phone the graph scrolls sideways inside
+  its frame. **Show the lineage as a list** gives the same as sentences.
 
 ## What Kilnmark records about what you write
 
@@ -695,7 +701,9 @@ could not be made, the write still counts and the run says so.
 
 Kilnmark also records the lineage: the written asset came from the assets the pipeline read. It is
 kept even if the pipeline is later deleted, so the next pipeline that reads the written table
-starts from what is known about it.
+starts from what is known about it. An asset's page shows its lineage under **Lineage** on its
+**Overview** tab, as a graph: what it came from on the left, what was made from it on the right,
+each line naming the pipelines that recorded it.
 
 **Marks follow the data.** A column the run writes from a column marked sensitive is marked
 sensitive where it is written too, whoever ran it and however the run ended: a column passed on

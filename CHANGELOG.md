@@ -7,6 +7,13 @@ details.
 
 ### What's new
 
+- **Lineage as a graph**: a run's page draws its lineage left to right, the inputs, a band naming
+  the pipeline, then the outputs, with a line only where the run recorded that an output came
+  from an input. Each box shows a readable name (`public.shop_orders`, or `orders_named.csv` with
+  its folder dimmed), its source and a table or file icon, with the full identifier on hover, and
+  opens the asset in the catalogue. An asset's **Overview** now has a **Lineage** section drawn the
+  same way: what it came from, what was made from it, and the pipelines between. The graph scrolls
+  inside its frame on a phone, and **Show the lineage as a list** keeps the pairs as sentences.
 - **A guided install, into the folders the operating system keeps for a program and its data**:
   `sudo ./kilnmark.sh install` (Linux) or `kilnmark.cmd install` (Windows) asks the questions (the
   mode, how people sign in, the email domain, the host name, the ports, TLS, the first admin), each
