@@ -1,0 +1,81 @@
+# Flow: a partner's file arrives (a Kilnmark sample).
+# Runs the supplier intake scenario. The supplier's feed is delivered to the incoming folder, and the
+# flow waits until the file is there. Then it checks the file. If the check set any row aside, an
+# unknown product, a cost that is missing or not positive, or a cost that moved by more than 20%, it
+# sends a notice for the reviewers and loads nothing. If nothing was set aside, it loads the accepted costs and says so.
+# Why it matters: A partner's file is typically trusted only once it has been checked, and a person
+# decides what happens to what the check would not accept. Holding the whole load until a steward
+# has looked keeps one wrong price from reaching a bill or a valuation.
+# Look for: the wait-for node waiting for a file, the two conditions on check.quarantined_share
+# (the largest share any of the check's gates set aside), and the notice. On the sample data the
+# check sets rows aside, so the flow tells the reviewers and the load does not run: the steward
+# reviews the quarantined and price review files, then runs sample-supplier-load. In real work the
+# delivery is the supplier's: the flow starts at the wait-for node, and the delivered node goes.
+# Needs: sample-supplier-feed-arrives, sample-supplier-check and sample-supplier-load, so shop-db and
+# files. Running it needs a steward or above.
+kilnmark: flow/v1
+name: sample-supplier-intake
+description: Wait for the supplier's file, check it, and load it only if nothing needs review.
+
+nodes:
+  - id: delivered
+    type: run-pipeline
+    pipeline: sample-supplier-feed-arrives
+
+  - id: arrived
+    type: wait-for
+    source: files
+    file: samples/scenarios/supplier-intake/incoming/supplier_feed*.csv
+    every: 30s
+    timeout: 30m
+
+  - id: check
+    type: run-pipeline
+    pipeline: sample-supplier-check
+
+  - id: review
+    type: notify
+    severity: medium
+    title: "Supplier feed held for review: up to ${check.quarantined_share} of rows set aside"
+    message: >-
+      Unknown products, costs that are missing or not positive, or costs that moved by more than 20% were set
+      aside. Nothing was loaded. Review the quarantined and price review files, then run
+      sample-supplier-load to load what was accepted.
+
+  - id: load
+    type: run-pipeline
+    pipeline: sample-supplier-load
+
+  - id: loaded
+    type: notify
+    title: "Supplier costs loaded: ${load.rows_written} products in the cost list"
+
+  - id: late
+    type: notify
+    severity: high
+    title: "No supplier file after ${arrived.waited_s} seconds"
+    message: Nothing was checked or loaded.
+
+  - id: failed
+    type: notify
+    severity: high
+    title: The supplier intake failed
+    message: Open the flow's run for the pipeline run that failed and why. Nothing more was loaded.
+
+  - id: halt
+    type: stop
+    status: failed
+    message: The supplier intake stopped before it finished
+
+connections:
+  - { from: delivered, to: arrived }
+  - { from: delivered, to: failed, when: failure }
+  - { from: arrived, to: check }
+  - { from: arrived, to: late, when: failure }
+  - { from: check, to: review, when: "check.quarantined_share > 0" }
+  - { from: check, to: load, when: "check.quarantined_share = 0" }
+  - { from: check, to: failed, when: failure }
+  - { from: load, to: loaded }
+  - { from: load, to: failed, when: failure }
+  - { from: late, to: halt }
+  - { from: failed, to: halt }

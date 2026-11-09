@@ -41,14 +41,24 @@ final class FakeSources implements PipelineSources {
     }
 
     FakeSources asset(String urn, String... columns) {
+        assets.put(urn, detail(urn, columns));
+        return this;
+    }
+
+    /** An asset for every URN {@code urn} matches, as {@link #asset} makes one. */
+    FakeSources assetMatching(java.util.regex.Pattern urn, String... columns) {
+        assetPatterns.put(urn, detail(urn.pattern(), columns));
+        return this;
+    }
+
+    private static Records.AssetDetail detail(String urn, String... columns) {
         List<Records.FieldDetail> fields = new java.util.ArrayList<>();
         for (int i = 0; i < columns.length; i++) {
             String[] nameKind = columns[i].split(":");
             fields.add(new Records.FieldDetail(nameKind[0], i + 1, nameKind[1], nameKind[1], true, null, null, null));
         }
-        assets.put(urn, new Records.AssetDetail(urn, "lab-db", "table", "crm", urn, null, List.of(), null, null,
-            Instant.now(), Instant.now(), null, fields));
-        return this;
+        return new Records.AssetDetail(urn, "lab-db", "table", "crm", urn, null, List.of(), null, null,
+            Instant.now(), Instant.now(), null, fields);
     }
 
     @Override
@@ -66,9 +76,20 @@ final class FakeSources implements PipelineSources {
         return secrets.get(source.name());
     }
 
+    /**
+     * Assets whose URN matches a pattern: what a write whose path a parameter fills writes, one asset
+     * for each value ({@code exceptions_${region}.parquet}).
+     */
+    final Map<java.util.regex.Pattern, Records.AssetDetail> assetPatterns = new java.util.LinkedHashMap<>();
+
     @Override
     public Optional<Records.AssetDetail> asset(String urn) {
-        return Optional.ofNullable(assets.get(urn));
+        Records.AssetDetail a = assets.get(urn);
+        if (a == null && urn != null) {
+            a = assetPatterns.entrySet().stream().filter(e -> e.getKey().matcher(urn).matches())
+                .map(Map.Entry::getValue).findFirst().orElse(null);
+        }
+        return Optional.ofNullable(a);
     }
 
     @Override

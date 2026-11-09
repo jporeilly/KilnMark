@@ -33,9 +33,10 @@ class SampleDataConnectorTest {
     @Test
     void everyTableIsThereInItsGroup() throws Exception {
         List<AssetInfo> assets = connector.catalog(source);
-        assertEquals(List.of("billing/invoices.csv", "billing/transactions.csv", "crm/accounts.csv",
-            "crm/customers.csv", "crm/customers_archive_2023.csv", "shop/customers.csv", "shop/order_lines.csv",
-            "shop/orders.csv", "stock/products.csv", "stock/supplier_feed.csv", "volume/sales.csv"),
+        assertEquals(List.of("billing/invoices.csv", "billing/periods.csv", "billing/transactions.csv",
+            "crm/accounts.csv", "crm/customers.csv", "crm/customers_archive_2023.csv", "shop/customers.csv",
+            "shop/order_lines.csv", "shop/orders.csv", "stock/product_costs.csv", "stock/products.csv",
+            "stock/supplier_feed.csv", "volume/sales.csv"),
             assets.stream().map(AssetInfo::path).sorted().toList());
         assertEquals(List.of("billing", "crm", "shop", "stock", "volume"),
             connector.containers(source).stream().map(Connector.ContainerInfo::name).sorted().toList());
@@ -62,6 +63,12 @@ class SampleDataConnectorTest {
         assertEquals("boolean", kinds(byPath.get("shop/customers.csv")).get("is_active"));
         assertTrue(kinds(byPath.get("stock/products.csv")).get("list_price").startsWith("decimal"));
         assertEquals("date", kinds(byPath.get("stock/supplier_feed.csv")).get("received_on"));
+        // what the business scenarios read: a cost to compare with, and a month that is open or closed
+        assertTrue(kinds(byPath.get("stock/product_costs.csv")).get("agreed_cost").startsWith("decimal"));
+        Map<String, String> periods = kinds(byPath.get("billing/periods.csv"));
+        assertEquals("text", periods.get("period"));
+        assertEquals("boolean", periods.get("invoices_issued"));
+        assertEquals("date", periods.get("first_day"));
     }
 
     @Test

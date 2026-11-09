@@ -97,6 +97,106 @@ class SampleTablesApiTest {
         admin().contentType(ContentType.JSON).body(body).post("/api/v1/sources").then().statusCode(201);
     }
 
+    private long query(String sql) throws Exception {
+        try (Connection c = db.getConnection(); Statement s = c.createStatement(); ResultSet r = s.executeQuery(sql)) {
+            r.next();
+            return r.getLong(1);
+        }
+    }
+
+    private static JsonPath runPipeline(String token, String name, Map<String, Object> parameters)
+        throws InterruptedException {
+        return waitForRun(token, as(token).body(parameters.isEmpty() ? Map.of() : Map.of("parameters", parameters))
+            .post("/api/v1/pipelines/" + name + "/runs").then().statusCode(202).extract().jsonPath().getLong("id"));
+    }
+
+    /**
+     * The business scenarios (samples/10-scenarios) on the sample tables: customer onboarding end to end
+     * through its flow; the supplier intake's flow holding the feed for review, then the steward's load;
+     * and the month-end reconciliation of every region, then its summary. The month-end flow runs SQL,
+     * which e2e-db does not allow, so its pipelines are run one by one, as its for-each node runs them,
+     * and its query and statement, as Add samples points them at the sample tables, are run here.
+     */
+    private void scenarios(String designer, Path out) throws Exception {
+        // Onboarding: every customer row read is golden, set aside for the steward, or folded into a golden one.
+        JsonPath onboarding = waitForFlowRun(designer, as(designer).body(Map.of())
+            .post("/api/v1/flows/sample-onboarding-nightly/runs").then().statusCode(202).extract().jsonPath()
+            .getLong("id"));
+        assertEquals("succeeded", onboarding.getString("run.status"), onboarding.prettify());
+        assertEquals(List.of("succeeded"), onboarding.getList("nodes.findAll { it.node in ['crm_ready', 'shop_ready', "
+            + "'merge', 'pseudonymise', 'record', 'done'] }.status").stream().distinct().toList(), onboarding.prettify());
+        Path onboarded = out.resolve("samples/scenarios/onboarding");
+        List<String> quarantined = Files.readAllLines(onboarded.resolve("quarantined_customers.csv"));
+        List<String> folded = Files.readAllLines(onboarded.resolve("merged_records.csv"));
+        List<String> record = Files.readAllLines(onboarded.resolve("load_record.csv"));
+        assertTrue(record.get(0).startsWith("came_from,customers,loaded_at"), record.toString());
+        long golden = record.stream().skip(1).mapToLong(l -> Long.parseLong(l.split(",")[1])).sum();
+        long read = count(Samples.tableIn(SCHEMA, "crm.customers")) + count(Samples.tableIn(SCHEMA,
+            "crm.customers_archive_2023")) + count(Samples.tableIn(SCHEMA, "shop.customers"));
+        assertTrue(quarantined.size() > 1 && folded.size() > 1, quarantined + "\n" + folded);
+        assertEquals(read, golden + quarantined.size() - 1 + folded.size() - 1, "every customer row is accounted for");
+        assertTrue(Files.exists(onboarded.resolve("golden_customers.parquet")));
+        assertTrue(Files.exists(onboarded.resolve("analytics_customers.parquet")));
+
+        // Supplier intake: the feed is held for review, so the load does not run; the steward then runs it.
+        JsonPath intake = waitForFlowRun(designer, as(designer).body(Map.of())
+            .post("/api/v1/flows/sample-supplier-intake/runs").then().statusCode(202).extract().jsonPath().getLong("id"));
+        assertEquals("succeeded", intake.getString("run.status"), intake.prettify());
+        assertEquals("succeeded", intake.getString("nodes.find { it.node == 'review' }.status"), intake.prettify());
+        assertEquals("skipped", intake.getString("nodes.find { it.node == 'load' }.status"), intake.prettify());
+        Path supplier = out.resolve("samples/scenarios/supplier-intake");
+        assertTrue(Files.exists(supplier.resolve("incoming/supplier_feed.csv")));
+        // Two unknown SKUs and two costs that are not positive; five costs moved by more than 20%;
+        // two SKUs delivered twice, whose earlier deliveries are superseded.
+        assertEquals(5, Files.readAllLines(supplier.resolve("quarantined_rows.csv")).size());
+        assertEquals(6, Files.readAllLines(supplier.resolve("price_review.csv")).size());
+        assertEquals(3, Files.readAllLines(supplier.resolve("superseded_rows.csv")).size());
+        JsonPath load = runPipeline(designer, "sample-supplier-load", Map.of());
+        assertEquals("succeeded", load.getString("run.status"), load.prettify());
+        List<String> costs = Files.readAllLines(supplier.resolve("agreed_costs.csv"));
+        assertEquals(count(Samples.tableIn(SCHEMA, "stock.product_costs")) + 1, costs.size(), "every product");
+        assertEquals(count(Samples.tableIn(SCHEMA, "stock.supplier_feed")) - 2 - 4 - 5,
+            costs.stream().skip(1).filter(l -> l.endsWith(",true")).count(), String.join("\n", costs));
+
+        // Month-end: every customer with an invoice or a payment is reconciled once, in one region.
+        long written = 0;
+        for (String region : List.of("London", "North", "South", "Scotland")) {
+            JsonPath r = runPipeline(designer, "sample-close-reconcile", Map.of("region", region));
+            assertEquals("succeeded", r.getString("run.status"), r.prettify());
+            written += r.getLong("run.rowsWritten");
+        }
+        assertEquals(query("SELECT count(*) FROM (SELECT CAST(split_part(cust_ref, '-', 2) AS bigint) FROM "
+            + Samples.tableIn(SCHEMA, "billing.invoices") + " UNION SELECT customer_id FROM "
+            + Samples.tableIn(SCHEMA, "billing.transactions") + ") c"), written);
+        JsonPath summary = runPipeline(designer, "sample-close-summary", Map.of());
+        assertEquals("succeeded", summary.getString("run.status"), summary.prettify());
+        Path monthEnd = out.resolve("samples/scenarios/month-end");
+        List<String> worklist = Files.readAllLines(monthEnd.resolve("exceptions_worklist.csv"));
+        List<String> totals = Files.readAllLines(monthEnd.resolve("exceptions_summary.csv"));
+        assertTrue(worklist.size() > 1 && worklist.size() - 1 < written, worklist.size() + " of " + written);
+        int customers = List.of(totals.get(0).split(",")).indexOf("customers");
+        assertEquals(worklist.size() - 1, totals.stream().skip(1).mapToLong(l -> Long.parseLong(l.split(",")[customers]))
+            .sum(), "the summary adds up to the worklist");
+
+        // The close's wait-for query and sql statement: ready at first, the open month closed once, then not ready.
+        String close = Samples.withTables(Samples.bundled().stream().filter(x -> x.name().equals("sample-close-month-end"))
+            .findFirst().orElseThrow().yaml(), SCHEMA);
+        java.util.regex.Matcher ready = java.util.regex.Pattern.compile("(?m)^\\s*query: \"(.*)\"$").matcher(close);
+        java.util.regex.Matcher update = java.util.regex.Pattern.compile("(?m)^\\s*- (UPDATE .*)$").matcher(close);
+        assertTrue(ready.find() && update.find(), close);
+        String table = Samples.tableIn(SCHEMA, "billing.periods");
+        assertTrue(ready.group(1).contains(table) && update.group(1).contains(table), close);
+        try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
+            try (ResultSet r = s.executeQuery(ready.group(1))) {
+                assertTrue(r.next() && r.getBoolean(1), "September is ready to close");
+            }
+            assertEquals(1, s.executeUpdate(update.group(1)), "one month closed");
+            try (ResultSet r = s.executeQuery(ready.group(1))) {
+                assertTrue(r.next() && !r.getBoolean(1), "no month is ready once September is closed");
+            }
+        }
+    }
+
     @Test
     void theSamplesRunOnTheSampleTables() throws Exception {
         sql("CREATE SCHEMA IF NOT EXISTS " + SCHEMA);
@@ -150,16 +250,24 @@ class SampleTablesApiTest {
         JsonPath added = as(designer).body(Map.of("sources", Map.of("crm-db", "e2e-db", "shop-db", "e2e-db",
             "files", "e2e-files"), "schema", SCHEMA)).post("/api/v1/samples").then().statusCode(200)
             .extract().jsonPath();
-        // 25 pipelines (all but the one reading with a query), then the sample flows that run them (ADR
-        // 0043). The one with sql nodes needs a source with Allow SQL on, which e2e-db does not have:
-        // skipped, saying so, never a draft. The one that checks a source and waits for a file needs none.
-        assertEquals(30, added.getInt("added"), added.prettify());
+        // 33 pipelines (all but the one reading with a query), then the sample flows that run them (ADR
+        // 0043). The two with sql nodes, or a wait-for query, need a source with Allow SQL on, which e2e-db
+        // does not have: skipped, saying so, never a draft. Those that check a source and wait for a file
+        // need none.
+        assertEquals(40, added.getInt("added"), added.prettify());
         assertEquals(List.of("sample-checks-and-waits", "sample-for-each-region", "sample-passing-values",
                 "sample-quality-decides", "sample-retries"),
             added.getList("samples.findAll { it.outcome == 'added' && it.file.startsWith('08-flows/') }.name"),
             added.prettify());
         assertEquals("it runs SQL: choose a PostgreSQL source with Allow SQL on for shop-db",
             added.getString("samples.find { it.name == 'sample-sql-before-and-after' }.reason"), added.prettify());
+        // The business scenarios: their eight pipelines, and the two flows that run no SQL.
+        List<String> scenarios = added.getList("samples.findAll { it.outcome == 'added' && it.file.startsWith("
+            + "'10-scenarios/') }.name");
+        assertEquals(10, scenarios.size(), added.prettify());
+        assertTrue(scenarios.containsAll(List.of("sample-onboarding-nightly", "sample-supplier-intake")), added.prettify());
+        assertEquals("it runs SQL: choose a PostgreSQL source with Allow SQL on for crm-db",
+            added.getString("samples.find { it.name == 'sample-close-month-end' }.reason"), added.prettify());
         JsonPath flows = as(designer).get("/api/v1/flows").then().statusCode(200).extract().jsonPath();
         assertEquals(List.of("sample"), flows.getList("findAll { it.name.startsWith('sample-') }.library").stream()
             .distinct().toList(), flows.prettify());
@@ -264,6 +372,8 @@ class SampleTablesApiTest {
         // The feed lists KIT-1005 twice: 16.68, then a later delivery at 18.35, which wins.
         assertTrue(prices.stream().anyMatch(l -> l.contains(",KIT-1005,") && l.contains(",18.35,")),
             String.join("\n", prices));
+
+        scenarios(designer, out);
 
         // The flows that check a source and wait for a file, and that try again: both run through.
         JsonPath checks = waitForFlowRun(designer, as(designer).body(Map.of())

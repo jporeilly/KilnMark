@@ -362,6 +362,7 @@ integers, `ENUM`, `SET`, `JSON`, `YEAR`, `TINYINT(1)`, `DATETIME(3)`, `BLOB`).
 | `stock.stock_levels` | 480 | Two-column key, foreign keys to products and warehouses |
 | `stock.stock_movements` | 3,000 | Receipts, picks, transfers and adjustments, with signed quantities |
 | `stock.supplier_feed` | 123 | A heap with no primary key, loaded from a supplier |
+| `stock.product_costs` | 120 | The cost agreed for each product; every tenth a quarter below the feed's |
 
 The database `warehouse` is empty, for pipelines to write to with the `kiln_writer` login.
 

@@ -59,3 +59,6 @@ customer_id,first_name,last_name,email,phone,date_of_birth,postcode,ni_number,se
 5058,Fay,Evans,fay.evans.58@example.org,07608 220425,1963-03-09,LS15 5FJ,QQ713706C,Student,false,2020-05-03T20:33:55+00:00
 5059,Vik,Fox,vik.fox.59@example.org,07398 726480,1996-05-09,OX16 5PY,QQ512334A,Student,false,2018-07-05T14:59:14+00:00
 5060,Vik,Shaw,vik.shaw.60@example.org,07144 336943,1951-06-18,BS5 2JN,QQ566659C,Premier,true,2023-03-15T19:44:36+00:00
+5061,Sara,Sutton,Sara.Sutton2@Example.Com,07288 149919,1998-06-02,BS11 2BU,QQ453701D,Business,false,2019-02-06T10:00:00+00:00
+5062,Priya,Evans,Priya.Evans3@Example.Com,07601 404242,1963-10-31,NE6 1TD,QQ289419C,Student,true,2019-03-07T10:00:00+00:00
+5063,Sara,Sutton,Sara.Sutton9@Example.Com,07733 244739,1963-06-08,M6 2BR,QQ137490A,Student,true,2019-04-08T10:00:00+00:00

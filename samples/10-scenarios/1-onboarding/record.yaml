@@ -1,0 +1,41 @@
+# Customer onboarding: a record of the load (a Kilnmark sample).
+# The last step of the onboarding scenario. Counts the golden customers by the system each record
+# came from, and writes the counts with the time of the load to a small load record, which the
+# steward and the team that reads the golden file can check.
+# Why it matters: Downstream teams, and auditors, typically ask how many records a nightly load
+# produced and when, without reading the data itself. A record of each load, beside the run history
+# Kilnmark keeps, answers that and makes a short or empty load easy to spot.
+# Look for: aggregate counts no column's values, so the record carries no sensitive marks and every
+# role that may see data can read it. now() is the time the node started, the same on every row.
+# The run's page and the flow's history keep every earlier load, with who or what started it.
+# Needs: files, and a run of sample-onboarding-merge first, which writes the golden file it reads.
+kilnmark: pipeline/v1
+name: sample-onboarding-record
+description: How many golden customers the load wrote, from each system, and when.
+
+nodes:
+  - id: golden
+    type: read
+    source: files
+    asset: samples/scenarios/onboarding/golden_customers.parquet
+    columns: [came_from]
+
+  - id: by_system
+    type: aggregate
+    input: golden
+    group_by: [came_from]
+    values:
+      customers: "count(*)"
+
+  - id: stamped
+    type: compute
+    input: by_system
+    columns:
+      loaded_at: "now()"
+
+  - id: out
+    type: write
+    input: stamped
+    source: files
+    path: samples/scenarios/onboarding/load_record.csv
+    mode: replace

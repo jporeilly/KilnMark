@@ -85,6 +85,7 @@ class LabPipelinesTest {
             "discontinued:boolean");
         s.asset("urn:kilnmark:lab-mariadb:stock.supplier_feed", "sku:text", "supplier:text", "cost_price:decimal",
             "lead_time_days:int16", "in_stock:boolean", "received_on:date");
+        s.asset("urn:kilnmark:lab-mariadb:stock.product_costs", "sku:text", "agreed_cost:decimal", "agreed_on:date");
         // Kilnmark's own sample data, which the volume sample reads directly, wherever it runs.
         s.connectors.put("sample-data", all.get("sample-data").orElseThrow());
         s.add(Samples.SAMPLE_DATA, "sample-data", Map.of(), null);
@@ -122,6 +123,15 @@ class LabPipelinesTest {
         NodeFactories nodes = NodeFactories.discover().register(new ReadNodeFactory(sources))
             .register(new WriteNodeFactory(sources)).register(new GateNodeFactory(sources));
         Map<String, PipelineDefinition> out = new HashMap<>();
+        // First what each pipeline writes, for those that read what another writes (the scenarios).
+        for (int pass = 0; pass < 3; pass++) {
+            for (Path file : yaml(dir)) {
+                if (!isFlow(file)) {
+                    String text = Samples.withSources(Files.readString(file), mapping);
+                    recordWrites(sources, text, new KilnPipelineCompiler().check(text, nodes, Map.of(), vars));
+                }
+            }
+        }
         for (Path file : yaml(dir)) {
             if (isFlow(file)) {
                 continue;
@@ -142,6 +152,40 @@ class LabPipelinesTest {
         }
         assertFalse(out.isEmpty(), dir + " has pipelines");
         return out;
+    }
+
+    /**
+     * Records, as assets of {@code sources}, the files and tables the checked pipeline {@code c} writes
+     * by path, with the columns it writes them with, as the catalogue records them after a run. So a
+     * sample that reads what another sample writes (the scenarios in samples/10-scenarios) is checked
+     * against those columns. A part of the path a parameter fills matches any value.
+     */
+    static void recordWrites(FakeSources sources, String yaml, PipelineCompilerPort.Compilation c) {
+        String param = "PARAMETERVALUE";
+        PipelineDefinition written = PipelineDefinition.parse(yaml).definition();
+        for (PipelineCompilerPort.NodeOutline node : c.nodes()) {
+            // the path as written, before a parameter fills it in
+            Map<String, Object> config = written == null ? Map.of() : written.nodes().stream()
+                .filter(n -> n.id().equals(node.id())).findFirst().map(n -> n.config()).orElse(Map.of());
+            if (!"sink".equals(node.kind()) || !(config.get("source") instanceof String source)
+                || !(config.get("path") instanceof String path)) {
+                continue;
+            }
+            List<PipelineCompilerPort.Column> columns = c.edges().stream().filter(e -> e.toNode().equals(node.id()))
+                .findFirst().flatMap(e -> c.nodes().stream().filter(n -> n.id().equals(e.fromNode())).findFirst()
+                    .map(n -> n.columns() == null ? null : n.columns().get(e.fromPort()))).orElse(null);
+            String urn = PipelineSources.urn(source, path.replaceAll("\\$\\{[^}]+\\}", param));
+            if (columns == null || urn == null) {
+                continue;
+            }
+            String[] kinds = columns.stream().map(x -> x.name() + ":" + x.type()).toArray(String[]::new);
+            if (urn.contains(param)) {
+                sources.assetMatching(java.util.regex.Pattern.compile(java.util.regex.Pattern.quote(urn)
+                    .replace(param, "\\E[A-Za-z0-9_-]+\\Q")), kinds);
+            } else {
+                sources.asset(urn, kinds);
+            }
+        }
     }
 
     /**

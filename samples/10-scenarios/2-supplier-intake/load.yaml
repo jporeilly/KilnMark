@@ -1,0 +1,56 @@
+# Supplier intake: load the accepted costs (a Kilnmark sample).
+# The last step of the supplier intake scenario. Takes every product's agreed cost and, where the
+# checked feed accepted a new cost for it, puts the new cost and its date in its place. Rows the
+# check quarantined or sent for price review are not in the accepted file, so they never reach the
+# cost list. It writes the cost list as a file here; in real work it would be your products table.
+# Why it matters: Only checked data should change the prices a business relies on. Loading from the
+# accepted rows alone means a wrong or unknown price waits for the steward, while the rest of the
+# feed is not held up.
+# Look for: the lookup that keeps every product (unmatched: keep), coalesce, which keeps the agreed
+# cost where nothing new was accepted, and changed, which says which costs this load changed.
+# sample-supplier-intake runs it only when nothing was held for review; otherwise a steward runs it
+# after reviewing what was held.
+# Needs: shop-db (the stock schema), files, and a run of sample-supplier-check first, which writes the
+# accepted file it reads.
+kilnmark: pipeline/v1
+name: sample-supplier-load
+description: The agreed cost of every product, with the accepted new costs in place.
+
+nodes:
+  - id: costs
+    type: read
+    source: shop-db
+    asset: stock.product_costs
+
+  - id: accepted
+    type: read
+    source: files
+    asset: samples/scenarios/supplier-intake/accepted.parquet
+    columns: [sku, supplier, cost_price, received_on]
+
+  - id: with_new
+    type: lookup
+    inputs: { main: costs, lookup: accepted }
+    on: { sku: sku }
+    keep: [supplier, cost_price, received_on]
+    unmatched: keep                  # a product with no accepted new cost keeps its agreed one
+
+  - id: updated
+    type: compute
+    input: with_new
+    columns:
+      changed: "cost_price is not null"
+      agreed_cost: "coalesce(cost_price, agreed_cost)"
+      agreed_on: "coalesce(received_on, agreed_on)"
+
+  - id: cost_list
+    type: select
+    input: updated
+    keep: [sku, agreed_cost, agreed_on, supplier, changed]
+
+  - id: out
+    type: write
+    input: cost_list
+    source: files
+    path: samples/scenarios/supplier-intake/agreed_costs.csv
+    mode: replace

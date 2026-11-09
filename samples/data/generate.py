@@ -213,10 +213,76 @@ def lines(orders, products):
     write("shop", "order_lines", ["order_id", "line_no", "product_id", "quantity", "unit_price"], out)
 
 
+def read(schema, table):
+    with open(os.path.join(HERE, schema, table + ".csv"), encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def scenarios():
+    """What the business scenarios (samples/10-scenarios) need besides the others.
+
+    Made last, from the files already written and with a random generator of their own: two tables
+    of their own, and a few rows appended to the archive and to the shop's customers, so every row
+    above stays exactly as it was.
+    """
+    r = random.Random(20261109)
+    # The same person in more than one system, for onboarding's merge: three CRM customers also in the
+    # 2023 archive (an older record, the email in other capitals) and two also shop customers (a newer
+    # record). Appended, so every row already in those tables stays as it was.
+    crm_people = {row["customer_id"]: row for row in read("crm", "customers")}
+    archive = read("crm", "customers_archive_2023")
+    for n, cid in enumerate(["2", "3", "9"], start=len(archive) + 1):
+        p = crm_people[cid]
+        archive.append(dict(p, customer_id=str(5000 + n), email=p["email"].title(), phone=f"07{r.randrange(100, 999)} {r.randrange(100000, 999999)}",
+                            created_at=tz(dt.datetime(2019, 1 + n % 12, 1 + n % 28, 10, 0, 0))))
+    write("crm", "customers_archive_2023", list(archive[0].keys()), [list(a.values()) for a in archive])
+    shop_people = read("shop", "customers")
+    for n, cid in enumerate(["3", "21"], start=len(shop_people) + 1):
+        p = crm_people[cid]
+        shop_people.append({"customer_id": str(n), "customer_code": f"S-{n:05d}", "first_name": p["first_name"],
+                            "last_name": p["last_name"], "email": " " + p["email"] + " ",
+                            "phone": f"07{r.randrange(100, 999)} {r.randrange(100000, 999999)}",
+                            "date_of_birth": p["date_of_birth"], "postcode": p["postcode"], "is_active": "true",
+                            "marketing_opt_in": "false", "loyalty_tier": "bronze",
+                            "created_at": f"2026-08-{10 + n % 10:02d} 09:30:00"})
+    write("shop", "customers", list(shop_people[0].keys()), [list(s.values()) for s in shop_people])
+
+    # The cost agreed with the supplier for each product, before the latest feed. Most of the feed's
+    # latest costs are within a few percent of it; a few have moved by more than 20%, for the steward
+    # to review before they are trusted.
+    latest = {}
+    for row in read("stock", "supplier_feed"):
+        if row["sku"] not in latest or row["received_on"] > latest[row["sku"]]["received_on"]:
+            latest[row["sku"]] = row
+    big = {"KIT-1004": 0.35, "GAR-1014": -0.28, "OFF-1023": 0.42, "OUT-1032": 0.25, "LIG-1046": -0.31}
+    costs = []
+    for p in read("stock", "products"):
+        feed = latest.get(p["sku"])
+        if feed is None or float(feed["cost_price"]) <= 0:
+            agreed = float(p["list_price"]) * 0.4
+        else:
+            change = big.get(p["sku"], r.uniform(-0.08, 0.08))
+            agreed = float(feed["cost_price"]) / (1 + change)
+        agreed_on = dt.date(2026, 3, 1) + dt.timedelta(days=r.randrange(122))
+        costs.append([p["sku"], f"{max(agreed, 0.5):.2f}", agreed_on.isoformat()])
+    write("stock", "product_costs", ["sku", "agreed_cost", "agreed_on"], costs)
+
+    # The billing periods: one a month, as the month-end close reads and closes them. September is
+    # open, its invoices all issued, so the close can run; the months before are closed.
+    periods = []
+    for month in range(1, 10):
+        first = dt.date(2026, month, 1)
+        last = dt.date(2026, month + 1, 1) - dt.timedelta(days=1)
+        periods.append([first.strftime("%Y-%m"), first.isoformat(), last.isoformat(), "true",
+                        "open" if month == 9 else "closed"])
+    write("billing", "periods", ["period", "first_day", "last_day", "invoices_issued", "status"], periods)
+
+
 if __name__ == "__main__":
     accounts = crm()
     billing(accounts)
     orders = shop()
     products = stock()
     lines(orders, products)
+    scenarios()
     print("Wrote the sample data under", HERE)

@@ -23,8 +23,8 @@ export const DOC_GROUPS: DocGroup[] = [
   {
     id: "get-started",
     title: "Get started",
-    about: "Signing in, the samples, a first pipeline, and asking Kilnmark for help.",
-    pages: ["signing-in", "library", "first-pipeline", "assistant"],
+    about: "Signing in, the samples and business scenarios, a first pipeline, and asking Kilnmark for help.",
+    pages: ["signing-in", "library", "scenarios", "first-pipeline", "assistant"],
   },
   {
     id: "build",

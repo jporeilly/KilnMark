@@ -240,5 +240,20 @@ INSERT INTO stock.supplier_feed (sku, supplier, cost_price, lead_time_days, in_s
 SELECT sku, supplier, cost_price + 0.10, lead_time_days, in_stock, DATE_ADD(received_on, INTERVAL 1 DAY)
 FROM stock.supplier_feed WHERE sku IN ('SKU-00040', 'SKU-00080', 'SKU-00120');
 
+-- The cost agreed with the supplier for each product, which a new feed's costs are compared with.
+-- Every tenth product's agreed cost is a quarter below the feed's, so the change is over 20%.
+CREATE TABLE stock.product_costs (
+    sku             VARCHAR(12) NOT NULL,
+    agreed_cost     DECIMAL(9,2) NOT NULL,
+    agreed_on       DATE NOT NULL,
+    PRIMARY KEY (sku)
+) ENGINE=InnoDB COMMENT='The cost agreed with the supplier for each product';
+
+INSERT INTO stock.product_costs (sku, agreed_cost, agreed_on)
+SELECT CONCAT('SKU-', LPAD(n, 5, '0')),
+       ROUND((1.5 + n * 1.05) * IF(n % 10 = 0, 0.75, 1 - (n % 5) / 100), 2),
+       DATE_ADD('2025-01-01', INTERVAL n % 60 DAY)
+FROM (SELECT CAST(seq AS SIGNED) AS n FROM seq_1_to_120) AS s;
+
 ANALYZE TABLE shop.customers, shop.orders, shop.order_lines, stock.warehouses, stock.products, stock.stock_levels,
-    stock.stock_movements, stock.supplier_feed;
+    stock.stock_movements, stock.supplier_feed, stock.product_costs;
