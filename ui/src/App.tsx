@@ -68,7 +68,8 @@ export function App() {
     try {
       if (window.sessionStorage.getItem(SIGNED_OUT_AT_PROVIDER)) {
         window.sessionStorage.removeItem(SIGNED_OUT_AT_PROVIDER);
-        return { kind: "info", text: "You have signed out, of Kilnmark and of your identity provider." };
+        // Kilnmark knows only that it asked: a provider that refused shows its own error instead
+        return { kind: "info", text: "You have signed out of Kilnmark, and your identity provider was asked to end its session too." };
       }
     } catch {
       // no storage
