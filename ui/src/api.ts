@@ -1408,7 +1408,8 @@ export type PipelineDetail = {
   latest: PipelineVersion | null;
   lastRun: PipelineRun | null;
   /** "sample": added from the samples, listed in the Library, not on the Pipelines or Flows page (ADR 0043). Older servers send none. */
-  library?: "sample" | null;  /** For one added from the samples: what its sample explains. Null otherwise; older servers send none. */
+  library?: "sample" | null;
+  /** For one added from the samples: what its sample explains. Null otherwise; older servers send none. */
   sample?: SampleAbout | null;
 };
 /** ports: rows per input and output port; null where the engine did not count a port on its own. */
@@ -1868,7 +1869,8 @@ export type FlowDetail = {
   latest: FlowVersion | null;
   lastRun: FlowRun | null;
   /** "sample": added from the samples, listed in the Library, not on the Pipelines or Flows page (ADR 0043). Older servers send none. */
-  library?: "sample" | null;  /** For one added from the samples: what its sample explains. Null otherwise; older servers send none. */
+  library?: "sample" | null;
+  /** For one added from the samples: what its sample explains. Null otherwise; older servers send none. */
   sample?: SampleAbout | null;
 };
 export type FlowNodeStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";

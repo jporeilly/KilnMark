@@ -43,6 +43,11 @@ function valueProblem(kind: "text" | "number" | "boolean", v: string): string | 
     if (!NUMBER.test(v)) return "a number, such as 0, 12 or 0.02";
     const [whole, part = ""] = v.replace("-", "").split(".");
     if (whole.length > 15 || whole.length + part.length > 30) return "a number of at most 15 digits before the point and 30 in all";
+    // Written as a number, it must read back as typed: more digits than a number holds would be rounded.
+    const significant = (whole + part).replace(/^0+/, "").replace(/0+$/, "");
+    if (significant.length > 15) {
+      return "a number of at most 15 significant digits, so it is written as typed";
+    }
     return null;
   }
   return v === "true" || v === "false" ? null : "true or false";
@@ -56,13 +61,26 @@ const listItems = (text: string) =>
     .filter((s) => s !== "");
 
 /**
- * What is wrong with a parameter as typed in the form, by field; empty when nothing is. `others`
- * are the names of the pipeline's other parameters. As the server reads `parameters:`: a name of a
- * small letter then small letters, digits and _ (at most 64), not a word conditions use and not
- * taken; a kind it knows; a default (a pipeline also runs on its own) that fits the kind, or a
- * server variable written as `${vars.name}`.
+ * Whether a changed parameter's default was left as it was declared (same text, same kind): it is
+ * then written back exactly as it was, not read again from the field, which cannot hold everything
+ * a default can (a list value with a comma, an empty text, spaces around a text).
  */
-export function parameterProblems(d: ParameterDraft, others: string[]): Partial<Record<DraftField, string>> {
+export const defaultKept = (d: ParameterDraft, was: DeclaredParameter | null | undefined): was is DeclaredParameter =>
+  !!was && d.defaultText === was.defaultText && parameterKind(d.kind) === was.kind && was.kind != null;
+
+/**
+ * What is wrong with a parameter as typed in the form, by field; empty when nothing is. `others`
+ * are the names of the pipeline's other parameters; `was` the parameter being changed, if any. As
+ * the server reads `parameters:`: a name of a small letter then small letters, digits and _ (at most
+ * 64), not a word conditions use and not taken; a kind it knows; a default (a pipeline also runs on
+ * its own) that fits the kind, or a server variable written as `${vars.name}`. A default left as it
+ * was declared is not checked again: the server read it already.
+ */
+export function parameterProblems(
+  d: ParameterDraft,
+  others: string[],
+  was?: DeclaredParameter | null,
+): Partial<Record<DraftField, string>> {
   const out: Partial<Record<DraftField, string>> = {};
   const name = d.name.trim();
   if (name === "") out.name = "Give the parameter a name, such as region.";
@@ -74,7 +92,9 @@ export function parameterProblems(d: ParameterDraft, others: string[]): Partial<
   if (!kind) out.kind = `Choose its type: ${PARAMETER_KINDS.join(", ")}.`;
   const def = d.defaultText.trim();
   const variable = VARIABLE.exec(def);
-  if (def === "") out.defaultText = "Give a default, so the pipeline also runs on its own.";
+  if (defaultKept(d, was)) {
+    // As declared: written back unchanged.
+  } else if (def === "") out.defaultText = "Give a default, so the pipeline also runs on its own.";
   else if (variable) {
     if (!PARAMETER_NAME.test(variable[1])) out.defaultText = `${variable[1] || "That"} is not a server variable's name: small letters, digits and _.`;
   } else if (kind) {
@@ -94,13 +114,24 @@ export function parameterProblems(d: ParameterDraft, others: string[]): Partial<
   return out;
 }
 
-/** The parameter as written to the YAML, from a draft with no problems. */
-export function specOf(d: ParameterDraft): ParameterSpec {
+/**
+ * The parameter as written to the YAML, from a draft with no problems; a default left as `was`
+ * declared it stays exactly as it was. A text default keeps the spaces typed around it.
+ */
+export function specOf(d: ParameterDraft, was?: DeclaredParameter | null): ParameterSpec {
   const kind = parameterKind(d.kind) as ParameterKind;
   const def = d.defaultText.trim();
   const one = kind.replace(" list", "");
   const typed = (v: string): Value => (one === "number" ? Number(v) : one === "boolean" ? v === "true" : v);
-  const defaultValue: Value = VARIABLE.test(def) ? def : kind.endsWith(" list") ? listItems(def).map(typed) : typed(def);
+  const defaultValue: Value = defaultKept(d, was)
+    ? was.defaultValue
+    : VARIABLE.test(def)
+      ? def
+      : kind.endsWith(" list")
+        ? listItems(def).map(typed)
+        : kind === "text"
+          ? d.defaultText
+          : typed(def);
   const description = d.description.trim();
   return { name: d.name.trim(), kind, defaultValue, description: description === "" ? null : description };
 }

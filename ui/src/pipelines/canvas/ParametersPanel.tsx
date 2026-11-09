@@ -22,6 +22,7 @@ export function ParametersPanel({
   declared,
   nodes,
   readOnly,
+  readOnlyWhy = "Designers and admins change them.",
   onSave,
   onRemove,
 }: {
@@ -29,6 +30,8 @@ export function ParametersPanel({
   declared: DeclaredParameter[];
   nodes: GraphNode[];
   readOnly: boolean;
+  /** Why they cannot be changed here, when read-only. */
+  readOnlyWhy?: string;
   /** Writes a new parameter (`was` null) or a changed one; returns why it could not, or null. */
   onSave: (was: string | null, spec: ParameterSpec) => string | null;
   /** Removes one; returns why it could not, or null. */
@@ -69,14 +72,15 @@ export function ParametersPanel({
     if (editing == null) return;
     const was = editing === "" ? null : editing;
     const others = declared.map((p) => p.name).filter((n) => n !== was);
-    const found = parameterProblems(draft, others);
+    const before = declared.find((p) => p.name === was) ?? null;
+    const found = parameterProblems(draft, others, before);
     setProblems(found);
     if (Object.keys(found).length > 0) {
       setRefused(null);
       document.getElementById(id(Object.keys(found)[0]))?.focus();
       return;
     }
-    const spec = specOf(draft);
+    const spec = specOf(draft, before);
     const why = onSave(was, spec);
     if (why) {
       setRefused(why);
@@ -121,7 +125,7 @@ export function ParametersPanel({
       <p className="hint">
         Values a run can be given, each with a default the pipeline runs with when none is given. A node puts one in as{" "}
         <span className="mono">{"${name}"}</span>; they are written in the YAML under <span className="mono">parameters:</span>.{" "}
-        {readOnly ? "Designers and admins change them. " : ""}
+        {readOnly ? `${readOnlyWhy} ` : ""}
         <a href={docHref("pipelines", "parameters-and-server-variables")}>How parameters work</a>.
       </p>
       {declared.length === 0 ? (

@@ -501,7 +501,8 @@ Designers and admins change them there:
   written as `${vars.name}`; lists are separated by commas.
 - Each change is written to the YAML as you would write it by hand: only that parameter's line
   changes, written on one line as the others are, and **Undo** takes it back. The first parameter
-  starts a `parameters:` block under the description; removing the last removes the block.
+  starts a `parameters:` block under the description; removing the last removes the block. A
+  default you leave as it is when you change a parameter is written back exactly as it was.
 - Renaming or removing a parameter does not change the nodes that put it in: the check then names
   them, and the panel says which.
 
@@ -513,7 +514,8 @@ On the pipeline's page, **Run now** on a pipeline with parameters opens the **Ru
 canvas, with a field for each parameter of the saved version, filled with its default. Change what
 you need and choose **Run with these values**: a field left as its default, or empty, runs with the
 default (for a default that is a server variable, the variable's value), and lists are separated by
-commas. Only the values you changed are sent. A value of the wrong kind is caught before anything
+commas. Only the values you changed are sent, with the version whose parameters were shown, so
+they never go to a version someone saved since. A value of the wrong kind is caught before anything
 is sent; anything the server refuses, such as a value that does not fit, is shown beside the fields.
 **Back to the defaults** fills them in again. On the Pipelines page, **Run now** runs with the
 defaults. Through the API, give values in the run's body:

@@ -1089,6 +1089,13 @@ function Canvas(props: CanvasProps) {
             declared={graph?.declared ?? []}
             nodes={graph?.nodes ?? []}
             readOnly={readOnly}
+            readOnlyWhy={
+              lockedByPage
+                ? "Designers and admins change them."
+                : broken
+                  ? "The YAML cannot be read: fix it in the YAML tab to change them. These are from the last pipeline that could be read."
+                  : "They can be changed once the canvas has loaded."
+            }
             onSave={saveParameter}
             onRemove={dropParameter}
           />

@@ -489,7 +489,9 @@ export function PipelinePage({
     setRunError(null);
     setStarting(true);
     try {
-      const run = await pipelinesApi.run(name, runParams.length > 0 ? values : undefined);
+      // Values typed for a version's parameters run that version, even if another has been saved since.
+      const run =
+        runParams.length > 0 ? await pipelinesApi.run(name, values, detail?.latestVersion) : await pipelinesApi.run(name);
       setNotice({ run: run.id, of: `version ${run.version}` });
       // Its progress is shown under the canvas, live.
       setStartedRun(run.id);

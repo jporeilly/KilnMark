@@ -498,7 +498,8 @@ describe("the pipeline's own settings and the values a run is given", () => {
     state.refuse = null;
     await act(async () => submit.click());
     await wait(10);
-    expect(state.runBodies.at(-1)).toEqual({ version: null, parameters: { statuses: ["shipped", "delivered"], min_fee: 5 } });
+    // The version whose parameters were asked for, so values never go to one saved since.
+    expect(state.runBodies.at(-1)).toEqual({ version: 3, parameters: { statuses: ["shipped", "delivered"], min_fee: 5 } });
     expect(panel().querySelector("h3")?.textContent).toContain("Values for the next run");
     expect(panel().textContent).toContain("Run 8 of version 3");
   });

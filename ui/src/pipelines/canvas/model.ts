@@ -810,10 +810,9 @@ export function setParameter(text: string, was: string | null, p: ParameterSpec)
       patch.put(block, p.name, undefined, { raw: oneLine(paddedFlow(text, items)) });
       return;
     }
+    // The others as they were written (a text default such as 007 stays 007), each on a line of its own.
     const lines = [
-      ...items.map(
-        (e) => `  ${scalarYaml(scalarText(e.key) ?? "")}: ${flowYaml((e.value as { toJSON?: () => unknown } | null)?.toJSON?.() ?? null, false, true)}`,
-      ),
+      ...items.map((e) => `  ${patch.text.slice((e.key as unknown as { range: [number, number, number] }).range[0], patch.valueEnd(e)).trim()}`),
       `  ${scalarYaml(p.name)}: ${oneLine(true)}`,
     ];
     if (pair) {
@@ -854,7 +853,12 @@ export function removeParameter(text: string, name: string): Change {
       return;
     }
     const keyStart = (pair.key as unknown as { range: [number, number, number] }).range[0];
-    const start = patch.lineStart(keyStart);
+    let start = patch.lineStart(keyStart);
+    // The comment lines just above it are about it: they go with it (but never the file's own
+    // comment at the top, which explains the whole pipeline).
+    let above = start;
+    while (above > 0 && patch.text.slice(patch.lineStart(above - 1), above).trim().startsWith("#")) above = patch.lineStart(above - 1);
+    if (above > 0) start = above;
     let end = patch.pairEnd(pair);
     // The blank line after it goes too when there is one before it, so no gap is left doubled.
     const before = start > 0 ? patch.text.slice(patch.lineStart(start - 1), start).trim() : "x";

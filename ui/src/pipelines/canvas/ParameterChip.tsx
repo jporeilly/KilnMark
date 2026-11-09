@@ -6,11 +6,16 @@ import { parameterSummary, variableSummary } from "./parameters";
 
 type VariableState = Parameters<typeof variableSummary>[1];
 
-/** Server variables' values, read once a page: a chip asks only for the ones the pipeline names. */
-const variableCache = new Map<string, Promise<VariableState>>();
+/**
+ * Server variables' values, kept a minute: a chip asks only for the ones the pipeline names, and a
+ * value changed meanwhile shows within a minute.
+ */
+const variableCache = new Map<string, { at: number; value: Promise<VariableState> }>();
+const VARIABLE_KEPT_MS = 60_000;
 
 function readVariable(name: string): Promise<VariableState> {
-  let p = variableCache.get(name);
+  const kept = variableCache.get(name);
+  let p = kept && Date.now() - kept.at < VARIABLE_KEPT_MS ? kept.value : undefined;
   if (!p) {
     p = variablesApi
       .get(name)
@@ -21,7 +26,7 @@ function readVariable(name: string): Promise<VariableState> {
         if (e instanceof ApiError && (e.status === 401 || e.status === 403)) return { state: "hidden" };
         return { state: "failed" };
       });
-    variableCache.set(name, p);
+    variableCache.set(name, { at: Date.now(), value: p });
   }
   return p;
 }

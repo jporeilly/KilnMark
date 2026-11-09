@@ -822,6 +822,16 @@ p.cv-field-problems {
   display: none;
 }
 
+/* Bridges the gap above the details, so the pointer can move onto them without hiding them. */
+.cv-tip::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -6px;
+  height: 6px;
+}
+
 .cv-param-used {
   align-items: center;
   margin-top: 4px;

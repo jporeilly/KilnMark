@@ -7,7 +7,7 @@ import { parseDocument } from "yaml";
 import type { NodeTypeSetting } from "../../api";
 import { RoleContext } from "../../components/role";
 import { readGraph, removeParameter, setParameter, type Change, type DeclaredParameter, type ParameterSpec } from "./model";
-import { namesIn, parameterProblems, parameterSummary, specOf, variableSummary } from "./parameters";
+import { draftOf, namesIn, parameterProblems, parameterSummary, specOf, variableSummary } from "./parameters";
 import { forgetVariables } from "./ParameterChip";
 import { ParametersPanel } from "./ParametersPanel";
 import { SettingControl, type ControlContext } from "./SettingControls";
@@ -190,6 +190,39 @@ describe("the canvas writes parameters as a person would", () => {
     const text = "name: p\nparameters:\n  region:\n    type: text\n    default: EMEA # the usual\nnodes: []\n";
     const out = ok(setParameter(text, "region", spec({ defaultValue: "APAC", description: "Where" })));
     expect(out).toBe("name: p\nparameters:\n  region:\n    type: text\n    default: APAC # the usual\n    description: Where\nnodes: []\n");
+  });
+
+  test("a default left as it was is written back exactly as declared, whatever the field could hold", () => {
+    const text = 'name: p\nparameters:\n  region: { type: text list, default: ["EMEA, North", APAC] }\n  sep: { type: text, default: " | " }\n  blank: { type: text, default: "" }\nnodes: []\n';
+    for (const p of declared(text)) {
+      const d = { ...draftOf(p), description: "Changed" };
+      expect(parameterProblems(d, [], p)).toEqual({});
+      const out = ok(setParameter(text, p.name, specOf(d, p)));
+      expect(declared(out).find((x) => x.name === p.name)?.defaultValue).toEqual(p.defaultValue);
+    }
+    // Typed again, a text keeps the spaces around it.
+    const [, sep] = declared(text);
+    expect(specOf({ ...draftOf(sep), defaultText: " / " }, sep).defaultValue).toBe(" / ");
+  });
+
+  test("numbers are written as typed: more digits than a number holds are refused", () => {
+    const d = { name: "fee", kind: "number", defaultText: "123456789012345.123456789", description: "" };
+    expect(parameterProblems(d, []).defaultText).toContain("15 significant digits");
+    expect(parameterProblems({ ...d, defaultText: "0.0000001" }, [])).toEqual({});
+  });
+
+  test("adding to parameters written as { ... } keeps the others as written", () => {
+    const text = "name: p\nparameters: { code: { type: text, default: 007 } }\nnodes: []\n";
+    const out = ok(setParameter(text, null, spec({ description: null })));
+    expect(out).toBe("name: p\nparameters:\n  code: { type: text, default: 007 }\n  region: { type: text, default: EMEA }\nnodes: []\n");
+    expect(declared(out)[0].defaultText).toBe("007");
+  });
+
+  test("removing the last takes the comment above it, never the file's own", () => {
+    const text = "# The file's comment.\nname: p\n\n# Values a run takes\nparameters:\n  a: { type: text, default: x }\n\nnodes: []\n";
+    expect(ok(removeParameter(text, "a"))).toBe("# The file's comment.\nname: p\n\nnodes: []\n");
+    const top = "# The file's comment.\nparameters:\n  a: { type: text, default: x }\nnodes: []\n";
+    expect(ok(removeParameter(top, "a"))).toBe("# The file's comment.\nnodes: []\n");
   });
 
   test("removing one removes its line; removing the last removes the block", () => {
