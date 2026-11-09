@@ -738,6 +738,15 @@ details.
   which PowerShell refuses ("Unexpected token"), and some messages left the path unquoted, which
   breaks at its space. They now write `& "C:\Program Files\Kilnmark\kilnmark.cmd" ...`; in Command
   Prompt, leave out the `& `.
+- **Ollama, LM Studio or a database on the same Windows computer can be reached under WSL's
+  mirrored networking.** There, the engine's route to "this computer" reaches the Podman machine,
+  so `http://host.containers.internal:11434/v1` was refused however Ollama listened. The Windows
+  control script now points `host.containers.internal` and `host.docker.internal` at the
+  computer's network address before every compose command, `check` says which address it uses
+  (and warns when `.wslconfig` lacks `hostAddressLoopback=true`), and `KILNMARK_HOST_ADDRESS` in
+  `config/.env` chooses the address yourself on either system. A new guide page,
+  [A model server or database on this computer](docs/guide/install/models-on-this-computer.md),
+  covers this and Ollama's own `OLLAMA_HOST`, on Windows and Linux.
 
 From walking a 0.1.2 Starter Pack install, in the web UI:
 

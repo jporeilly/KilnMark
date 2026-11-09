@@ -26,7 +26,7 @@ $Project = ''; if ($env:KILNMARK_PROJECT) { $Project = $env:KILNMARK_PROJECT }
 # Compose fills ${NAME} from this process's environment before config\.env. These must mean what
 # config\.env says, as this script reads them (ADR 0051), so a value set outside never counts.
 $OneRun = @('KILNMARK_STARTER_PEOPLE_ACTION', 'KILNMARK_PEOPLE_ACTION', 'KILNMARK_PERSON_EMAIL', 'KILNMARK_PERSON_FIRST_NAME', 'KILNMARK_PERSON_LAST_NAME', 'KILNMARK_PERSON_GROUPS', 'KILNMARK_INSTALL_ID', 'KILNMARK_RUN_DIR')
-foreach ($n in (@('KILNMARK_MODE', 'KILNMARK_STARTER', 'KILNMARK_ENV_FILE', 'KILNMARK_CERTS_DIR', 'KILNMARK_SECRETS_DIR', 'KILNMARK_KEYCLOAK_BIND', 'KILNMARK_OIDC_VIEWER_GROUPS', 'KILNMARK_OIDC_STEWARD_GROUPS', 'KILNMARK_OIDC_DESIGNER_GROUPS', 'KILNMARK_OIDC_ADMIN_GROUPS', 'KILNMARK_OIDC_UNMASK_GROUPS') + $OneRun)) {
+foreach ($n in (@('KILNMARK_MODE', 'KILNMARK_STARTER', 'KILNMARK_ENV_FILE', 'KILNMARK_CERTS_DIR', 'KILNMARK_SECRETS_DIR', 'KILNMARK_HOST_ADDRESS', 'KILNMARK_KEYCLOAK_BIND', 'KILNMARK_OIDC_VIEWER_GROUPS', 'KILNMARK_OIDC_STEWARD_GROUPS', 'KILNMARK_OIDC_DESIGNER_GROUPS', 'KILNMARK_OIDC_ADMIN_GROUPS', 'KILNMARK_OIDC_UNMASK_GROUPS') + $OneRun)) {
     Remove-Item ('Env:' + $n) -ErrorAction SilentlyContinue
 }
 $Launchers = @('kilnmark.ps1', 'kilnmark.cmd', 'start-kilnmark.cmd', 'stop-kilnmark.cmd', 'create-shortcut.ps1', 'kilnmark.ico')
@@ -741,6 +741,53 @@ function Test-PlainValue([string]$Value) { return ($Value -and $Value -notmatch 
 # holding $ or a backtick is refused by its name, as set_line refuses one.
 $script:ServiceSecretsFor = $null
 $script:ComposeEnv = $null
+
+# The address Kilnmark's container reaches this computer at, for databases and model servers on it
+# (compose.yaml, extra_hosts: host.containers.internal and host.docker.internal). config\.env's
+# KILNMARK_HOST_ADDRESS when it is set (compose reads it there). Else, under WSL's mirrored
+# networking, where the engine's host-gateway is the Podman machine rather than Windows, this
+# computer's own network address, found again before every compose command because it can change.
+# Else nothing: compose.yaml's default, host-gateway.
+function Test-WslMirrored {
+    $f = Join-Path $env:USERPROFILE '.wslconfig'
+    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $false }
+    return [bool](@(Get-Content -LiteralPath $f -ErrorAction SilentlyContinue) -match '^\s*networkingMode\s*=\s*mirrored\s*$')
+}
+function Test-WslHostLoopback {
+    $f = Join-Path $env:USERPROFILE '.wslconfig'
+    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $false }
+    return [bool](@(Get-Content -LiteralPath $f -ErrorAction SilentlyContinue) -match '^\s*hostAddressLoopback\s*=\s*true\s*$')
+}
+# The IPv4 address of the interface Windows sends to other networks through (the default route
+# with the lowest metric), never a link-local one. Empty when there is none.
+function Get-NetworkAddress {
+    try {
+        $best = ''; $bestMetric = [int]::MaxValue
+        foreach ($r in @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop)) {
+            $ips = @(Get-NetIPAddress -InterfaceIndex $r.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notmatch '^(169\.254\.|127\.)' })
+            if ($ips.Count -eq 0) { continue }
+            $ifMetric = (Get-NetIPInterface -InterfaceIndex $r.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).InterfaceMetric
+            $m = [int]$r.RouteMetric + [int]$ifMetric
+            if ($m -lt $bestMetric) { $bestMetric = $m; $best = $ips[0].IPAddress }
+        }
+        return $best
+    } catch { return '' }
+}
+function Get-HostAddress {
+    $set = Get-Setting 'KILNMARK_HOST_ADDRESS'
+    if ($set) { return $set }
+    if (Test-WslMirrored) { return (Get-NetworkAddress) }
+    return ''
+}
+# Found once a run (it takes a second or two), however many compose commands the run makes.
+$script:FoundNetworkAddress = $null
+function Set-HostAddress {
+    Remove-Item Env:KILNMARK_HOST_ADDRESS -ErrorAction SilentlyContinue
+    if (Get-Setting 'KILNMARK_HOST_ADDRESS') { return }
+    if (-not (Test-WslMirrored)) { return }
+    if ($null -eq $script:FoundNetworkAddress) { $script:FoundNetworkAddress = Get-NetworkAddress }
+    if ($script:FoundNetworkAddress) { $env:KILNMARK_HOST_ADDRESS = $script:FoundNetworkAddress }
+}
 function Get-ServiceSecretLine([string]$Name, [string]$Setting) {
     $v = Get-Setting $Setting
     if ($v) { return ($Name + '=' + $v) }
@@ -751,6 +798,7 @@ function Write-ServiceSecrets([string]$VersionDir) {
     $rel = Get-RelativePath $VersionDir $dir
     if (-not $rel) { Fail 'The data folder is on another drive than the program folder, which compose cannot take: install Kilnmark afresh with both on one drive.' }
     $env:KILNMARK_SECRETS_DIR = $rel
+    Set-HostAddress
     $envFile = Join-Path $script:Data 'config\.env'
     $composeEnv = Join-Path $dir 'compose.env'
     # elevated (check), the files you wrote, never written: compose still finds them
@@ -1176,7 +1224,13 @@ function Test-Install([bool]$Running) {
         if ($expiry -eq 'not set up') { Add-Warning 'The hourly expiry of unused temporary passwords is not set up.' ($kc + ' up') }
     }
     $last = Get-ChildItem (Join-Path $script:Data 'backups') -Directory -Filter 'kilnmark-*' -ErrorAction SilentlyContinue | Sort-Object Name | Select-Object -Last 1
-    if (-not $last) { Add-Warning ('There is no backup in ' + (Join-Path $script:Data 'backups') + '.') ($kc + ' backup') }
+    if (Test-WslMirrored) {
+        $hostAddress = Get-HostAddress
+        if (-not $hostAddress) { Add-Warning "WSL's networking is mirrored and this computer's network address was not found, so Kilnmark's container cannot reach databases or model servers (Ollama, LM Studio) on this computer." ('set KILNMARK_HOST_ADDRESS in ' + $envFile + " to this computer's address, then " + $kc + ' restart') }
+        elseif (-not (Test-WslHostLoopback)) { Add-Warning "WSL's networking is mirrored without hostAddressLoopback=true, so Kilnmark's container cannot reach databases or model servers (Ollama, LM Studio) on this computer." ('add hostAddressLoopback=true under [wsl2] in ' + (Join-Path $env:USERPROFILE '.wslconfig') + ', run wsl --shutdown, then ' + $kc + ' up') }
+        else { Add-Passed ("Kilnmark's container reaches this computer at " + $hostAddress + ' (host.containers.internal)') }
+    }
+    if (-not $last) { Add-Warning ('There is no backup in '+ (Join-Path $script:Data 'backups') + '.') ($kc + ' backup') }
     elseif ($last.LastWriteTime -lt (Get-Date).AddHours(-26)) { Add-Warning 'The last backup is more than a day old.' ($kc + ' backup (every day, from Task Scheduler)') }
     else { Add-Passed 'a backup from the last day' }
 }
@@ -2470,10 +2524,12 @@ function Invoke-PeopleAfterUp {
 function Get-ListenerProblem([int]$Port) {
     $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $found = @()
-    try { $found = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop) }
-    catch {
-        # none listening is ObjectNotFound; any other error leaves who listens untold
-        if ($_.CategoryInfo.Category -ne [Management.Automation.ErrorCategory]::ObjectNotFound) {
+    # Silently, not -ErrorAction Stop: Windows PowerShell's transcript (the log) keeps a caught
+    # error, and none listening is one (ObjectNotFound); any other error leaves who listens untold.
+    $lookupErrors = $null
+    $found = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue -ErrorVariable lookupErrors)
+    foreach ($e in @($lookupErrors)) {
+        if ($e -and $e.CategoryInfo.Category -ne [Management.Automation.ErrorCategory]::ObjectNotFound) {
             return ('who listens on port ' + $Port + ' cannot be told here (Windows did not answer)')
         }
     }
