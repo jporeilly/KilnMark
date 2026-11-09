@@ -9,13 +9,13 @@
 # containers/kilnmark-env.sh, which compose runs in place of the image's entrypoint and which puts
 # them in that program's environment only. So no secret is ever a setting of a container, here or
 # in an env_file: compose tools put those on podman's command line (podman-compose puts env_file's
-# there too), where other users of the machine can read them. By hand, from this folder with a .env
-# beside it, write those files first, as the control script does (NAME=value a line:
-# postgres.env, kilnmark.env, keycloak-db.env, keycloak.env), and set KILNMARK_SECRETS_DIR to their
-# folder (there is no default: unset, compose stops and says so), then:
-#   podman compose up -d          (or: docker compose up -d)
+# there too), where other users of the machine can read them. So run it through the control
+# script, never with a plain podman compose or docker compose, which lack those files and its
+# settings (KILNMARK_SECRETS_DIR has no default: unset, compose stops and says so). For a compose
+# command of your own, the control script runs it as it runs its own:
+#   kilnmark.sh compose ps        (Windows: kilnmark.cmd compose ps)
 # The images are ghcr.io/jporeilly/kilnmark-server and -postgres, tag @VERSION@: pulled, loaded from
-# kilnmark-@VERSION@-images.tar.gz, or built from containers/ (podman compose build).
+# kilnmark-@VERSION@-images.tar.gz, or built from containers/ (kilnmark.sh build).
 #
 # Nothing here has a default password or token: the control script stops with a message naming a
 # missing one.

@@ -146,14 +146,16 @@ change record too.
 ## Going back, and tidying up
 
 Until you remove them, the database and keys the restore replaced are kept. To go back to them
-(with `<time>` from the restore's last lines), run compose through the control script, which runs
-it with the install's project, settings, secrets and profiles: `kilnmark.sh compose ...` on Linux,
-as the account that runs Kilnmark (`sudo -iu kilnmark /opt/kilnmark/kilnmark.sh compose ...`), or
-`"C:\Program Files\Kilnmark\kilnmark.cmd" compose ...` on Windows. A plain `podman compose` or
+(with `<time>` from the restore's last lines), stop Kilnmark with the control script, start only
+its database, and run compose through the control script, which runs it with the install's
+project, settings, secrets and profiles: `kilnmark.sh ...` on Linux, as the account that runs
+Kilnmark (`sudo -iu kilnmark /opt/kilnmark/kilnmark.sh ...`), or
+`"C:\Program Files\Kilnmark\kilnmark.cmd" ...` on Windows. A plain `podman compose` or
 `docker compose` lacks them, and stops:
 
 ```
-kilnmark.sh compose stop kilnmark
+kilnmark.sh down
+kilnmark.sh compose up -d postgres
 kilnmark.sh compose exec postgres psql -U kilnmark -d postgres -c "ALTER DATABASE kilnmark RENAME TO kilnmark_restored" -c "ALTER DATABASE kilnmark_before_<time> RENAME TO kilnmark"
 kilnmark.sh compose run --rm --no-deps --entrypoint sh kilnmark -c "cd /var/lib/kilnmark && rm -rf drivers drivers.loaded secret.key && mv before-restore-<time>/* ."
 kilnmark.sh up --no-browser
@@ -170,9 +172,9 @@ kilnmark.sh compose exec kilnmark rm -rf /var/lib/kilnmark/before-restore-<time>
 A restore with `--without-keys` keeps the keys volume as it was.
 
 With the bundled Keycloak restored too, Keycloak's previous database is kept the same way. To go
-back to it, `kilnmark.sh compose stop keycloak`, then rename `keycloak` to `keycloak_restored` and
-`keycloak_before_<time>` to `keycloak` with `kilnmark.sh compose exec keycloak-db psql -U keycloak
--d postgres -c "..."`, and `kilnmark.sh up --no-browser`. To remove it:
+back to it, `kilnmark.sh down` and `kilnmark.sh compose up -d keycloak-db`, then rename `keycloak`
+to `keycloak_restored` and `keycloak_before_<time>` to `keycloak` with `kilnmark.sh compose exec
+keycloak-db psql -U keycloak -d postgres -c "..."`, and `kilnmark.sh up --no-browser`. To remove it:
 `kilnmark.sh compose exec keycloak-db dropdb -U keycloak keycloak_before_<time>`.
 
 ## Test a restore
