@@ -37,10 +37,12 @@ import {
   type PipelineNodeQuality,
   type PipelineNodeRun,
   type PipelineValidation,
+  type SampleAbout as SampleAboutInfo,
   type Source,
   type NodeType,
   plural,
 } from "../../api";
+import { SampleAbout } from "../../library/Explanation";
 import { useColourScheme } from "../../theme/appearance";
 import { columnsText } from "../outline";
 import { nodeQualityWords } from "../quality";
@@ -62,16 +64,20 @@ import {
   readGraph,
   refText,
   removeNode,
+  removeParameter,
   renameNode,
+  setParameter,
   setPositions,
   setSetting,
   type Catalogue,
   type Change,
   type Graph,
   type GraphEdge,
+  type ParameterSpec,
   type Point,
   type Value,
 } from "./model";
+import { ParametersPanel } from "./ParametersPanel";
 import { Palette, rememberUsed } from "./Palette";
 import { SettingsPanel } from "./SettingsPanel";
 import { NodeMenu, type NodeMenuItem } from "./NodeMenu";
@@ -113,6 +119,8 @@ export type CanvasProps = {
   memory: { lastGood?: Graph | null };
   /** The panel under the canvas: the canvas shows its Settings, Preview and Suggestions tabs there. */
   dock: DockControl;
+  /** For a pipeline added from the samples: what its sample explains, shown in the pipeline's settings. */
+  sample?: SampleAboutInfo | null;
 };
 
 let catalogueLoad: Promise<NodeType[]> | null = null;
@@ -540,6 +548,24 @@ function Canvas(props: CanvasProps) {
     flush();
     apply(disconnect(yamlRef.current, e, catalogue), `Disconnected ${edgeWords(e)}.`, { pin: true });
     setSelectedEdge(null);
+  };
+
+  /** Adds or changes a parameter (one undo step); says why not, or null. */
+  const saveParameter = (was: string | null, spec: ParameterSpec): string | null => {
+    if (readOnly) return "The canvas cannot change this pipeline now.";
+    flush();
+    const c = setParameter(yamlRef.current, was, spec);
+    if ("error" in c) return c.error;
+    apply(c, was == null ? `Added parameter ${spec.name}.` : `Changed parameter ${spec.name}.`);
+    return null;
+  };
+  const dropParameter = (name: string): string | null => {
+    if (readOnly) return "The canvas cannot change this pipeline now.";
+    flush();
+    const c = removeParameter(yamlRef.current, name);
+    if ("error" in c) return c.error;
+    apply(c, `Removed parameter ${name}.`);
+    return null;
   };
 
   const setOne = (id: string, key: string, value: Value | undefined, kind: string) => {
@@ -1049,6 +1075,25 @@ function Canvas(props: CanvasProps) {
       ) : (
         <p className="hint cv-dock-none">Suggestions appear here once the pipeline has nodes.</p>
       );
+    } else if (!selectedNode && dock.tab === "settings") {
+      // No node selected: the pipeline's own settings. What its sample explains, if it came from one,
+      // then its parameters.
+      body = (
+        <div className="cv-pipeline-settings">
+          <p className="hint">
+            The pipeline&apos;s own settings. Select a node to see its settings instead.
+          </p>
+          <SampleAbout about={props.sample} kind="pipeline" id="cv-sample-about" level={3} />
+          <ParametersPanel
+            idBase="cv-params"
+            declared={graph?.declared ?? []}
+            nodes={graph?.nodes ?? []}
+            readOnly={readOnly}
+            onSave={saveParameter}
+            onRemove={dropParameter}
+          />
+        </div>
+      );
     } else if (!selectedNode) {
       body = (
         <p className="hint cv-dock-none">
@@ -1092,6 +1137,7 @@ function Canvas(props: CanvasProps) {
           predicted={predicted.get(selectedNode.id) ?? null}
           metrics={metricsOf(selectedNode.id)}
           parameters={graph?.parameters ?? []}
+          declared={graph?.declared ?? []}
           yaml={yaml}
           onSetting={(key, value, kind) => setOne(selectedNode.id, key, value, kind)}
           onRename={(to) => rename(selectedNode.id, to)}

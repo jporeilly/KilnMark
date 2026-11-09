@@ -777,9 +777,12 @@ public class FlowService {
     public FlowViews.FlowDetail detail(String name, boolean values) {
         FlowStore.Flow f = flow(name);
         List<FlowStore.Run> last = store.runs(name, 1);
+        FlowViews.VersionDetail latest = versionDetail(name, f.latestVersion());
         return new FlowViews.FlowDetail(f.name(), f.displayName(), f.description(), f.latestVersion(), f.createdBy(),
-            f.createdAt(), f.updatedBy(), f.updatedAt(), versionDetail(name, f.latestVersion()),
-            last.isEmpty() ? null : view(last.get(0), values), f.library());
+            f.createdAt(), f.updatedBy(), f.updatedAt(), latest,
+            last.isEmpty() ? null : view(last.get(0), values), f.library(),
+            io.kilnmark.server.pipelines.Samples.about(f.library(), f.name(), "flow", f.latestVersion(), latest.yaml(),
+                () -> store.version(name, 1).map(FlowStore.Version::yaml).orElse(null)));
     }
 
     /** Every version of a flow, newest first; 404 when there is no such flow. */
@@ -1031,15 +1034,7 @@ public class FlowService {
 
     /** The parameters a flow declares, as the API shows them; none when the YAML could not be read. */
     static List<FlowViews.Parameter> parameters(FlowDefinition def) {
-        if (def == null) {
-            return List.of();
-        }
-        return def.parameters().stream().map(p -> {
-            String variable = p.defaultValue() instanceof Parameters.VarRef v ? v.variable() : null;
-            Object value = variable == null ? p.defaultValue() : null;
-            return new FlowViews.Parameter(p.name(), p.kind(), value, variable, value == null && variable == null,
-                p.description());
-        }).toList();
+        return FlowViews.parameters(def == null ? null : def.parameters());
     }
 
     /** Asks a run to stop: a queued run is cancelled at once, a running one within a moment. */

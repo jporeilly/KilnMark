@@ -47,6 +47,30 @@ export type Graph = {
   positions: Record<string, Point>;
   /** The names of the parameters the pipeline declares, for `${name}` in its settings. */
   parameters: string[];
+  /** The parameters the pipeline declares, each as written: for the Parameters panel and `${name}`'s details. */
+  declared: DeclaredParameter[];
+};
+
+/** The kinds a parameter can be, as `type:` names them. */
+export const PARAMETER_KINDS = ["text", "number", "boolean", "text list", "number list"] as const;
+export type ParameterKind = (typeof PARAMETER_KINDS)[number];
+
+/**
+ * A parameter as the pipeline's YAML declares it (`parameters: { statuses: { type: text list,
+ * default: [delivered], description: ... } }`). `kind` is its type read as the server reads it
+ * (case and spaces aside), or null when it is not one Kilnmark knows; `typeText` the type as written.
+ * `defaultText` is the default as a field holds it: a list's values separated by commas, a server
+ * variable as `${vars.name}`; `defaultVariable` names that variable.
+ */
+export type DeclaredParameter = {
+  name: string;
+  kind: ParameterKind | null;
+  typeText: string | null;
+  defaultValue: Value;
+  defaultText: string;
+  defaultVariable: string | null;
+  description: string | null;
+  line: number;
 };
 
 export type ReadResult = { ok: true; graph: Graph } | { ok: false; error: string; line: number };
@@ -207,10 +231,58 @@ export function readGraph(text: string, catalogue: Catalogue = new Map()): ReadR
       if (Number.isFinite(x) && Number.isFinite(y)) positions[id] = { x, y };
     }
   }
-  const declared = doc.get("parameters", true);
-  const parameters = isMap(declared) ? declared.items.map((p) => scalarText(p.key)).filter((k): k is string => !!k) : [];
+  const declaredMap = doc.get("parameters", true);
+  const parameters = isMap(declaredMap) ? declaredMap.items.map((p) => scalarText(p.key)).filter((k): k is string => !!k) : [];
+  const declared = isMap(declaredMap) ? readParameters(declaredMap, lines) : [];
   const top = (k: string) => scalarText(doc.get(k, true));
-  return { ok: true, graph: { name: top("name"), description: top("description"), nodes, edges, positions, parameters } };
+  return { ok: true, graph: { name: top("name"), description: top("description"), nodes, edges, positions, parameters, declared } };
+}
+
+/** `${vars.name}` as a whole value: the server variable a default is. */
+const VARIABLE_DEFAULT = /^\$\{\s*vars\.([a-z][a-z0-9_]{0,63})\s*\}$/;
+
+/** A parameter's type in words as the server reads it ("Text  List" is text list), or null. */
+export function parameterKind(typeText: string | null): ParameterKind | null {
+  const words = (typeText ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  return (PARAMETER_KINDS as readonly string[]).includes(words) ? (words as ParameterKind) : null;
+}
+
+function readParameters(map: YAMLMap, lines: LineCounter): DeclaredParameter[] {
+  const out: DeclaredParameter[] = [];
+  for (const pair of map.items) {
+    const name = scalarText(pair.key);
+    if (!name) continue;
+    const spec = pair.value;
+    const get = (k: string) => (isMap(spec) ? spec.get(k, true) : undefined);
+    const typeText = scalarText(get("type"));
+    const kind = parameterKind(typeText);
+    const def = get("default");
+    // Text keeps its text as written (007 stays 007), as the server reads a text default.
+    const itemText = (n: unknown) => scalarText(n) ?? "";
+    let defaultText = "";
+    let defaultValue: Value = null;
+    if (isSeq(def)) {
+      defaultText = def.items.map(itemText).join(", ");
+      defaultValue = def.toJSON() as Value;
+    } else if (isScalar(def) && def.value != null) {
+      defaultText = itemText(def);
+      defaultValue = def.toJSON() as Value;
+    } else if (def != null) {
+      defaultValue = (def as { toJSON: () => Value }).toJSON();
+    }
+    const variable = VARIABLE_DEFAULT.exec(defaultText.trim())?.[1] ?? null;
+    out.push({
+      name,
+      kind,
+      typeText,
+      defaultValue,
+      defaultText,
+      defaultVariable: isScalar(def) ? variable : null,
+      description: scalarText(get("description")),
+      line: lineOf(lines, pair.key as Scalar),
+    });
+  }
+  return out;
 }
 
 // ---- checks ----
@@ -670,5 +742,124 @@ export function setPositions(text: string, positions: Record<string, Point>): Ch
     const layout = topPair(ctx.doc, LAYOUT)?.value;
     // Stale entries are dropped only when they can be: keys in a block layout.
     writeLayout(ctx, keep, isBlockMap(layout) ? stale : []);
+  });
+}
+
+// ---- parameters ----
+
+/** Most parameters one pipeline declares (the server's limit). */
+export const MAX_PARAMETERS = 50;
+
+/** A parameter as the Parameters panel writes it: its name, kind, default (already of its kind) and description. */
+export type ParameterSpec = { name: string; kind: ParameterKind; defaultValue: Value; description: string | null };
+
+/** Keys as the guides write a parameter: type, default, then description when there is one. */
+function specObject(p: ParameterSpec): Record<string, Value> {
+  const o: Record<string, Value> = { type: p.kind, default: p.defaultValue };
+  if (p.description != null && p.description.trim() !== "") o.description = p.description.trim();
+  return o;
+}
+
+/** Whether the first one-line parameter among `items` is written with spaces inside its braces (`{ type: text }`). */
+function paddedFlow(text: string, items: Pair[]): boolean {
+  for (const e of items) {
+    const v = e.value as { range?: [number, number, number] } | null;
+    if (isMap(e.value) && e.value.flow && v?.range) return /^\{\s/.test(text.slice(v.range[0], v.range[1]));
+  }
+  return true;
+}
+
+/**
+ * Adds a parameter (`was` null) or changes one (`was` its name now), as a person would by hand:
+ * only its own line changes. A parameter written on one line (`label: { type: text, default: x }`)
+ * is written again on one line, spaced as it was; one written over several lines keeps them, each
+ * key changed in place. A new one goes after the others, written as they are; the first one starts
+ * a `parameters:` block after the description. Checking the values is for the caller
+ * (parameterProblems); a name already taken is refused here too.
+ */
+export function setParameter(text: string, was: string | null, p: ParameterSpec): Change {
+  return change(text, new Map(), (ctx) => {
+    const { doc, p: patch } = ctx;
+    const pair = topPair(doc, "parameters");
+    const block = pair?.value;
+    const items = isMap(block) ? (block.items as Pair[]) : [];
+    const named = (n: string) => items.find((e) => scalarText(e.key) === n) ?? null;
+    if ((was == null || p.name !== was) && named(p.name)) throw new Error(`There is already a parameter called ${p.name}.`);
+    const spec = specObject(p);
+    const oneLine = (padded: boolean) => flowYaml(spec, false, padded);
+    if (was != null) {
+      const at = named(was);
+      if (!at || !isMap(block)) throw new Error(`There is no parameter ${was} any more.`);
+      const v = at.value;
+      if (isBlockMap(v) && v.items.length > 0) {
+        // Written over several lines: each key in place, the description added or removed.
+        patch.put(v, "type", p.kind);
+        patch.put(v, "default", p.defaultValue, { after: ["type"] });
+        if (spec.description != null) patch.put(v, "description", spec.description, { after: ["type", "default"] });
+        else patch.remove(v, "description");
+        if (p.name !== was) patch.scalar(at.key as Scalar, scalarYaml(p.name));
+        return;
+      }
+      const padded = paddedFlow(text, isMap(v) ? [at] : items);
+      const keyStart = (at.key as unknown as { range: [number, number, number] }).range[0];
+      patch.replace(keyStart, patch.valueEnd(at), `${scalarYaml(p.name)}: ${oneLine(padded)}`);
+      return;
+    }
+    if (items.length >= MAX_PARAMETERS) throw new Error(`A pipeline has at most ${MAX_PARAMETERS} parameters.`);
+    if (isBlockMap(block) && items.length > 0) {
+      patch.put(block, p.name, undefined, { raw: oneLine(paddedFlow(text, items)) });
+      return;
+    }
+    const lines = [
+      ...items.map(
+        (e) => `  ${scalarYaml(scalarText(e.key) ?? "")}: ${flowYaml((e.value as { toJSON?: () => unknown } | null)?.toJSON?.() ?? null, false, true)}`,
+      ),
+      `  ${scalarYaml(p.name)}: ${oneLine(true)}`,
+    ];
+    if (pair) {
+      // `parameters:` with nothing under it, or written as { ... }: written out as a block.
+      const start = (pair.key as unknown as { range: [number, number, number] }).range[0];
+      patch.replace(start, patch.valueEnd(pair), `parameters:${patch.eol}${lines.join(patch.eol)}`);
+      return;
+    }
+    const top = doc.contents as YAMLMap;
+    const anchor = ["description", "name", "kilnmark"].map((k) => topPair(doc, k)).find((x) => x != null) ?? null;
+    if (!anchor) {
+      const start = (top.items[0]?.key as unknown as { range?: [number, number, number] } | undefined)?.range?.[0] ?? 0;
+      patch.insert(start, `parameters:${patch.eol}${lines.join(patch.eol)}${patch.eol}${patch.eol}`);
+      return;
+    }
+    const end = patch.pairEnd(anchor);
+    const lead = end > 0 && patch.text[end - 1] !== "\n" ? patch.eol : "";
+    // A blank line before it, and one after it unless one is there already.
+    const blankAfter = end >= patch.text.length || /^\r?\n/.test(patch.text.slice(end)) ? "" : patch.eol;
+    patch.insert(end, `${lead}${patch.eol}parameters:${patch.eol}${lines.join(patch.eol)}${patch.eol}${blankAfter}`);
+  });
+}
+
+/**
+ * Removes a parameter's declaration (settings that name it are left as they are: the check then
+ * names them). Removing the last one removes the `parameters:` block with it.
+ */
+export function removeParameter(text: string, name: string): Change {
+  return change(text, new Map(), (ctx) => {
+    const { doc, p: patch } = ctx;
+    const pair = topPair(doc, "parameters");
+    const block = pair?.value;
+    if (!pair || !isMap(block) || !(block.items as Pair[]).some((e) => scalarText(e.key) === name)) {
+      throw new Error(`There is no parameter ${name} any more.`);
+    }
+    if (block.items.length > 1) {
+      patch.remove(block, name);
+      return;
+    }
+    const keyStart = (pair.key as unknown as { range: [number, number, number] }).range[0];
+    const start = patch.lineStart(keyStart);
+    let end = patch.pairEnd(pair);
+    // The blank line after it goes too when there is one before it, so no gap is left doubled.
+    const before = start > 0 ? patch.text.slice(patch.lineStart(start - 1), start).trim() : "x";
+    const after = /^\r?\n/.exec(patch.text.slice(end));
+    if (before === "" && after) end += after[0].length;
+    patch.replace(start, end, "");
   });
 }

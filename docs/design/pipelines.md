@@ -332,6 +332,16 @@ Built with flows' F2 (CHANGELOG; the guide's "Parameters and server variables" i
   compiles with, however the variables change before it starts. Queueing resolves and checks the
   values first: a wrong value is a 400, a version that does not check with them a 409.
 - **SQL**, when nodes take SQL of their own: a value goes in as a bound parameter, never as text.
+- **In the UI.** A pipeline version's API view lists its `parameters` (`FlowViews.parameters`, the
+  same view a flow's version has: a variable default by its name only, never its value). The Run
+  tab asks for values from that list (the saved version's, not the canvas's unsaved text) and sends
+  only those changed from their defaults, as the flow's Run now dialog does. The canvas reads and
+  writes `parameters:` in the YAML model (`model.ts`, `setParameter` and `removeParameter`), so a
+  change is a text splice like any other canvas change: one parameter's line, its style kept, one
+  undo step. Its checks (`canvas/parameters.ts`) are the server's (`Parameters.read`), so the panel
+  refuses only what saving would report anyway; the server's check stays the authority. A
+  `${vars.name}` chip asks `GET /api/v1/variables/{name}` only for stewards and above, the roles that
+  endpoint allows; others are told who sees it.
 
 ### The read node's columns and where (decisions)
 

@@ -1387,7 +1387,15 @@ export type PipelineVersion = {
   createdAt: string;
   valid: boolean;
   problems: PipelineProblem[];
+  /** The parameters this version declares (absent from older servers). */
+  parameters?: FlowParameter[];
 };
+/**
+ * What a pipeline or flow added from the samples says about itself, from the sample's bundled file:
+ * its file under samples/, its explanation, and whether it has been changed since it was added
+ * (a later version whose YAML, but for where the nodes are drawn, differs).
+ */
+export type SampleAbout = { file: string; explanation: SampleExplanation | null; changed: boolean };
 export type PipelineDetail = {
   name: string;
   displayName: string;
@@ -1400,7 +1408,8 @@ export type PipelineDetail = {
   latest: PipelineVersion | null;
   lastRun: PipelineRun | null;
   /** "sample": added from the samples, listed in the Library, not on the Pipelines or Flows page (ADR 0043). Older servers send none. */
-  library?: "sample" | null;
+  library?: "sample" | null;  /** For one added from the samples: what its sample explains. Null otherwise; older servers send none. */
+  sample?: SampleAbout | null;
 };
 /** ports: rows per input and output port; null where the engine did not count a port on its own. */
 export type PipelineNodeRun = {
@@ -1703,6 +1712,20 @@ export const starterPackApi = {
 
 const pipe = (name: string) => `/api/v1/pipelines/${encodeURIComponent(name)}`;
 
+/** A server variable, read as ${vars.name} by every pipeline and flow on the server; stewards and above see them. */
+export type ServerVariable = {
+  name: string;
+  type: "text" | "number" | "boolean";
+  value: string | number | boolean;
+  description: string | null;
+  updatedBy: string;
+  updatedAt: string;
+};
+/** Server variables (GET /api/v1/variables/{name}): for stewards and above. */
+export const variablesApi = {
+  get: (name: string) => call<ServerVariable>(`/api/v1/variables/${encodeURIComponent(name)}`),
+};
+
 export const pipelinesApi = {
   list: () => call<PipelineSummary[]>("/api/v1/pipelines"),
   get: (name: string) => call<PipelineDetail>(pipe(name)),
@@ -1723,8 +1746,17 @@ export const pipelinesApi = {
     }),
   versions: (name: string) => call<PipelineVersionSummary[]>(`${pipe(name)}/versions`),
   version: (name: string, n: number) => call<PipelineVersion>(`${pipe(name)}/versions/${n}`),
-  run: (name: string, version?: number) =>
-    call<PipelineRun>(`${pipe(name)}/runs`, { method: "POST", body: JSON.stringify({ version: version ?? null }) }),
+  /**
+   * Queues a run of the latest version (or `version`). `parameters`: values for the parameters it
+   * declares, sent as given; those left out take their defaults. None, or none given, sends none.
+   */
+  run: (name: string, parameters?: Record<string, unknown>, version?: number) =>
+    call<PipelineRun>(`${pipe(name)}/runs`, {
+      method: "POST",
+      body: JSON.stringify(
+        parameters && Object.keys(parameters).length > 0 ? { version: version ?? null, parameters } : { version: version ?? null },
+      ),
+    }),
   runs: (name: string) => call<PipelineRun[]>(`${pipe(name)}/runs?limit=50`),
   runDetail: (id: number) => call<PipelineRunDetail>(`/api/v1/pipeline-runs/${id}`),
   cancel: (id: number) => call<PipelineRun>(`/api/v1/pipeline-runs/${id}/cancel`, { method: "POST" }),
@@ -1836,7 +1868,8 @@ export type FlowDetail = {
   latest: FlowVersion | null;
   lastRun: FlowRun | null;
   /** "sample": added from the samples, listed in the Library, not on the Pipelines or Flows page (ADR 0043). Older servers send none. */
-  library?: "sample" | null;
+  library?: "sample" | null;  /** For one added from the samples: what its sample explains. Null otherwise; older servers send none. */
+  sample?: SampleAbout | null;
 };
 export type FlowNodeStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
 /** One node's part in a flow run; pipelineRunId is the pipeline run a run-pipeline node started. */

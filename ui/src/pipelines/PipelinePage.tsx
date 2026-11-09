@@ -36,6 +36,9 @@ import { ScheduledNext, useSchedules } from "../schedules/SchedulesTable";
 import "./pipelines.css";
 import { Who } from "../components/Who";
 import { noticeText, statusIn, type Notice } from "../components/runNotice";
+import { ParameterFields } from "../flows/ParameterFields";
+import { defaultText, runValues } from "../flows/parameters";
+import { SampleAbout } from "../library/Explanation";
 
 // The graph library is large, so the graph and the canvas load when the page first shows one.
 const PipelineDiagram = lazy(() => import("./PipelineDiagram"));
@@ -296,11 +299,13 @@ export function PipelinePage({
   );
 
   // The panel under the canvas, one tab at a time: the nodes first (choosing one there, or on the
-  // canvas, opens its settings), the selected node's settings and preview (only while a node is
-  // selected), then the pipeline's run, suggestions, runs and versions.
+  // canvas, opens its settings), the settings (the selected node's, or with none selected the
+  // pipeline's own: about its sample, its parameters), the selected node's preview (only while a
+  // node is selected), then the pipeline's run, suggestions, runs and versions.
   const dockTabs: DockTab[] = [
     "nodes",
-    ...(selected != null ? (["settings", "preview"] as const) : []),
+    "settings",
+    ...(selected != null ? (["preview"] as const) : []),
     ...(isNew ? [] : (["run"] as const)),
     "suggestions",
     ...(isNew ? [] : (["runs", "schedules", "versions"] as const)),
@@ -309,7 +314,14 @@ export function PipelinePage({
   // it was the last of the pipeline's tabs shown, else Nodes.
   const lastPipelineTab = useRef<DockTab | null>(null);
   const fallback: DockTab = !isNew && (runLook.unfinished || lastPipelineTab.current === "run") ? "run" : "nodes";
-  const dockTab = dockTabs.includes(dock.tab) ? dock.tab : fallback;
+  // Settings with no node selected shows the pipeline's own only when chosen so; when the node whose
+  // settings were shown is deselected, the panel goes back as it does for Preview.
+  const pipelineSettings = useRef(false);
+  useEffect(() => {
+    if (selected != null) pipelineSettings.current = false;
+  }, [selected]);
+  const nodeTabGone = dock.tab === "settings" && selected == null && !pipelineSettings.current;
+  const dockTab = dockTabs.includes(dock.tab) && !nodeTabGone ? dock.tab : fallback;
   const { setTab: setDockTab } = dock;
   useEffect(() => {
     if (dockTab !== dock.tab) setDockTab(dockTab);
@@ -429,25 +441,68 @@ export function PipelinePage({
     }
   };
 
-  const runNow = async () => {
+  // The parameters the saved version declares: Run now asks for their values in the Run tab, filled
+  // with the defaults, and sends what was changed (as the flow's Run now dialog does).
+  const runParams = useMemo(() => (viewing ? [] : (detail?.latest?.parameters ?? [])), [viewing, detail?.latest?.parameters]);
+  const [typedValues, setTypedValues] = useState<Record<string, string>>({});
+  const [valueProblems, setValueProblems] = useState<Record<string, string>>({});
+  const [runError, setRunError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const fillDefaults = useCallback(() => {
+    setTypedValues(Object.fromEntries(runParams.map((p) => [p.name, defaultText(p)])));
+    setValueProblems({});
+    setRunError(null);
+  }, [runParams]);
+  // Filled again only when another version is saved: values typed stay while runs come and go.
+  const paramsOf = `${detail?.latestVersion ?? 0}:${runParams.map((p) => p.name).join(",")}`;
+  useEffect(() => {
+    fillDefaults();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paramsOf]);
+  const focusValues = () =>
+    window.setTimeout(() => document.querySelector<HTMLElement>(".pl-run-values input, .pl-run-values select")?.focus(), 0);
+
+  const runNow = async (withValues = false) => {
     if (!name) return;
+    // A pipeline that takes values: Run now opens the Run tab, where they are asked for.
+    if (runParams.length > 0 && !withValues && !confirmRun) {
+      dock.show("run");
+      focusValues();
+      return;
+    }
     // From the text as it is now: a setting typed a moment ago may not have been drawn yet.
     const unsaved = savedYaml != null && withoutLayout(yamlNow.current) !== withoutLayout(savedYaml);
     if (unsaved && !confirmRun) {
       setConfirmRun(true);
       return;
     }
+    const { values, problems: found } = runValues(runParams, typedValues);
+    setValueProblems(found);
+    if (Object.keys(found).length > 0) {
+      setConfirmRun(false);
+      dock.show("run");
+      focusValues();
+      return;
+    }
     setConfirmRun(false);
     setError(null);
+    setRunError(null);
+    setStarting(true);
     try {
-      const run = await pipelinesApi.run(name);
+      const run = await pipelinesApi.run(name, runParams.length > 0 ? values : undefined);
       setNotice({ run: run.id, of: `version ${run.version}` });
       // Its progress is shown under the canvas, live.
       setStartedRun(run.id);
       dock.show("run");
       loadLists();
     } catch (err) {
-      fail(err);
+      // With values, the server's answer (a value of the wrong kind, say) goes beside them.
+      if (runParams.length > 0) {
+        setRunError((err as Error).message);
+        dock.show("run");
+      } else fail(err);
+    } finally {
+      setStarting(false);
     }
   };
 
@@ -538,7 +593,7 @@ export function PipelinePage({
             <button
               type="button"
               className="primary"
-              onClick={runNow}
+              onClick={() => void runNow()}
               disabled={!detail?.latest?.valid}
               aria-describedby={contentDirty ? "pl-run-hint" : undefined}
             >
@@ -566,7 +621,7 @@ export function PipelinePage({
             Save first to run your changes.
           </p>
           <div className="buttons">
-            <button type="button" className="primary" onClick={runNow}>
+            <button type="button" className="primary" onClick={() => void runNow(true)}>
               Run version {detail?.latestVersion}
             </button>
             <button type="button" onClick={() => setConfirmRun(false)}>
@@ -576,6 +631,7 @@ export function PipelinePage({
         </div>
       )}
       {detail?.description && <p className="lead">{detail.description}</p>}
+      {!viewing && <SampleAbout about={detail?.sample} kind="pipeline" id="pl-sample-about" />}
       {isNew && (
         <div className="lead pl-start">
           <p>
@@ -710,6 +766,7 @@ export function PipelinePage({
                 title={title ?? "the pipeline"}
                 memory={canvasMemory.current}
                 dock={dockControl}
+                sample={viewing ? null : detail?.sample}
               />
             </Suspense>
           ) : (
@@ -747,13 +804,23 @@ export function PipelinePage({
           )}
         </TabPanel>
 
-        <PipelineDock idBase={dockId} tabs={dockTabs} tab={dockTab} open={dock.open} onTab={dock.show} onOpen={dock.setOpen}>
+        <PipelineDock
+          idBase={dockId}
+          tabs={dockTabs}
+          tab={dockTab}
+          open={dock.open}
+          onTab={(t) => {
+            pipelineSettings.current = t === "settings" && selected == null;
+            dock.show(t);
+          }}
+          onOpen={dock.setOpen}
+        >
           {/* The canvas draws the Settings, Preview and Suggestions tabs here; kept while the canvas
               is shown, so it is there as soon as one of them is chosen. */}
           {view === "canvas" && <div ref={setDockHost} className="pl-dock-host" hidden={!CANVAS_TABS.has(dockTab)} />}
           {view !== "canvas" && CANVAS_TABS.has(dockTab) && (
             <p className="hint pl-dock-none">
-              {dockTab === "settings" ? "A node's settings" : dockTab === "preview" ? "Previews of a node's rows" : "Suggestions"} are shown
+              {dockTab === "settings" ? (selected == null ? "The pipeline's settings and parameters" : "A node's settings") : dockTab === "preview" ? "Previews of a node's rows" : "Suggestions"} are shown
               with the canvas.{" "}
               <button type="button" className="link-button" onClick={() => setView("canvas")}>
                 Show the canvas
@@ -762,6 +829,45 @@ export function PipelinePage({
           )}
           {dockTab === "run" && (
             <>
+              {steward && runParams.length > 0 && (
+                <form
+                  className="pl-run-values"
+                  noValidate
+                  aria-labelledby="pl-run-values-h"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void runNow(true);
+                  }}
+                >
+                  <h3 id="pl-run-values-h" className="cv-side-title">
+                    Values for the next run
+                  </h3>
+                  <p className="hint">
+                    The parameters of version {detail?.latestVersion}, filled with their defaults. A field left as its default, or
+                    empty, runs with the default; lists are separated by commas.
+                  </p>
+                  <ParameterFields
+                    idBase="pl-run-values"
+                    params={runParams}
+                    typed={typedValues}
+                    problems={valueProblems}
+                    onChange={(p, v) => setTypedValues((t) => ({ ...t, [p]: v }))}
+                  />
+                  {runError && (
+                    <p role="alert" className="error">
+                      {runError}
+                    </p>
+                  )}
+                  <div className="buttons">
+                    <button type="submit" className="primary" disabled={!detail?.latest?.valid || starting}>
+                      {starting ? "Queueing…" : "Run with these values"}
+                    </button>
+                    <button type="button" onClick={fillDefaults}>
+                      Back to the defaults
+                    </button>
+                  </div>
+                </form>
+              )}
               {runShown ? (
                 <div className="pl-dock-run">
                   <div className="pl-dock-run-head">
@@ -795,7 +901,10 @@ export function PipelinePage({
               ) : runs === null || runId != null ? (
                 <p role="status">Loading…</p>
               ) : (
-                <p>Not run yet.{steward ? " Run now runs the saved version, and its progress is shown here." : ""}</p>
+                <p>
+                  Not run yet.
+                  {steward ? (runParams.length > 0 ? " A run's progress is shown here." : " Run now runs the saved version, and its progress is shown here.") : ""}
+                </p>
               )}
             </>
           )}
