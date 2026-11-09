@@ -38,8 +38,9 @@ import io.restassured.path.json.JsonPath;
 /**
  * The Starter Pack end to end (ADR 0051), on a database kilnmark_samples with a login of its own on
  * the test's PostgreSQL server, as samples-db makes them: turned on, everything is there and runs,
- * the banner's state says so for every role, and it is in the audit log; turned on again, nothing
- * is added twice; turned off (only once DELETE is typed), everything it added is gone and the
+ * the banner's state says so for every role, and it is in the audit log; its example schedule runs
+ * one sample, set and recorded as any schedule is; turned on again, nothing is added twice (the
+ * example schedule included); turned off (only once DELETE is typed), everything it added is gone and the
  * database stays, empty. The pack's guard refuses any database but its own.
  */
 @QuarkusTest
@@ -159,7 +160,8 @@ class StarterPackApiTest {
         int added = events(AuditLog.STARTER_PACK_ADDED);
         JsonPath r = admin().post("/api/v1/starter-pack").then().statusCode(200).extract().jsonPath();
         assertTrue(r.getBoolean("on"), r.prettify());
-        for (String step : List.of("database", "database source", "files source", "sample tables", "samples")) {
+        for (String step : List.of("database", "database source", "files source", "sample tables", "samples",
+            StarterPack.EXAMPLE_STEP)) {
             assertEquals("done", r.getString("steps.find { it.step == '" + step + "' }.outcome"), step + ": " + r.prettify());
         }
         assertEquals(null, r.getString("steps.find { it.step == 'example people' }"), "Kilnmark makes no people");
@@ -187,17 +189,116 @@ class StarterPackApiTest {
         assertTrue(Files.exists(folder().resolve("samples/filter-and-route/first_transactions.csv")));
     }
 
+    /** The schedules on the example schedule's sample. */
+    static List<Map<String, Object>> exampleSchedules() {
+        return admin().get("/api/v1/schedules?pipeline=" + StarterPack.EXAMPLE_PIPELINE).then().statusCode(200)
+            .extract().jsonPath().getList("$");
+    }
+
+    /** Makes schedule {@code id} due a minute ago, by the database's clock, and fires what is due. */
+    private void fireNow(long id) throws Exception {
+        try (Connection c = db.getConnection(); java.sql.PreparedStatement ps = c.prepareStatement(
+            "UPDATE kilnmark.schedule SET next_at = clock_timestamp() - interval '1 minute' WHERE id = ?")) {
+            ps.setLong(1, id);
+            assertEquals(1, ps.executeUpdate());
+        }
+        // the scheduler's loop waits a day in tests: fire what is due here, as ScheduleApiTest does
+        java.lang.reflect.Method tick = io.kilnmark.server.schedules.Scheduler.class.getDeclaredMethod("tick");
+        tick.setAccessible(true);
+        tick.invoke(io.quarkus.arc.ClientProxy.unwrap(scheduler));
+    }
+
+    @jakarta.inject.Inject
+    io.kilnmark.server.schedules.Scheduler scheduler;
+
+    /**
+     * Holds every pipeline job queued from now on in the queue, as when no worker is running (true),
+     * or stops holding them (false): a trigger keeps their run_after a day ahead, even when a freed
+     * place makes waiting jobs due.
+     */
+    private void holdPipelineJobs(boolean hold) throws Exception {
+        try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
+            if (hold) {
+                s.execute("CREATE OR REPLACE FUNCTION kilnmark.test_hold_pipeline_jobs() RETURNS trigger LANGUAGE "
+                    + "plpgsql AS $$ BEGIN IF NEW.kind = '"
+                    + io.kilnmark.server.pipelines.PipelineStore.JOB_KIND + "' AND NEW.status = 'queued' THEN "
+                    + "NEW.run_after := now() + interval '1 day'; END IF; RETURN NEW; END $$");
+                s.execute("CREATE TRIGGER test_hold_pipeline_jobs BEFORE INSERT OR UPDATE ON kilnmark.job FOR EACH ROW "
+                    + "EXECUTE FUNCTION kilnmark.test_hold_pipeline_jobs()");
+            } else {
+                s.execute("DROP TRIGGER IF EXISTS test_hold_pipeline_jobs ON kilnmark.job");
+                s.execute("DROP FUNCTION IF EXISTS kilnmark.test_hold_pipeline_jobs()");
+            }
+        }
+    }
+
     @Test
     @Order(3)
+    void theExampleScheduleRunsOneSampleEveryHourAndRunningItAgainIsHarmless() throws Exception {
+        List<Map<String, Object>> there = exampleSchedules();
+        assertEquals(1, there.size(), there.toString());
+        long id = ((Number) there.get(0).get("id")).longValue();
+        JsonPath s = admin().get("/api/v1/schedules/" + id).then().statusCode(200).extract().jsonPath();
+        assertEquals(StarterPack.EXAMPLE_CRON, s.getString("cron"));
+        assertEquals("UTC", s.getString("zone"));
+        assertEquals("steward", s.getString("runAs"), "never as an admin");
+        assertTrue(s.getBoolean("enabled"));
+        assertTrue(s.getString("description").startsWith("The Starter Pack's example schedule"), s.prettify());
+        java.time.Instant next = java.time.Instant.parse(s.getString("nextAt"));
+        assertTrue(next.isBefore(java.time.Instant.now().plus(Duration.ofMinutes(61))), "within the hour: " + next);
+        // recorded as any schedule set is, saying the pack set it
+        String event = "events.find { it.target == 'schedule " + id + "' }";
+        JsonPath set = null;
+        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (System.nanoTime() < deadline) {
+            set = admin().get("/api/v1/audit?action=" + AuditLog.SCHEDULE_SET + "&limit=50").then().statusCode(200)
+                .extract().jsonPath();
+            if (set.get(event) != null) {
+                break;
+            }
+            Thread.sleep(100);
+        }
+        assertEquals("starter pack", set.getString(event + ".detail.via"), set.prettify());
+        assertEquals(StarterPack.EXAMPLE_PIPELINE, set.getString(event + ".detail.pipeline"), set.prettify());
+        assertEquals(StarterPack.EXAMPLE_CRON, set.getString(event + ".detail.cron"), set.prettify());
+
+        // it fires as the schedule, and firing it again only replaces the one file it writes
+        Path written = folder().resolve("samples/read-and-write");
+        long filesBefore = -1;
+        for (int i = 0; i < 2; i++) {
+            fireNow(id);
+            JsonPath fired = admin().get("/api/v1/schedules/" + id).then().statusCode(200).extract().jsonPath();
+            assertEquals(io.kilnmark.server.schedules.Scheduler.STARTED, fired.getString("lastOutcome"), fired.prettify());
+            JsonPath run = waitForRun(fired.getLong("lastPipelineRun"));
+            assertEquals("succeeded", run.getString("run.status"), run.prettify());
+            assertTrue(run.getString("run.requestedBy").startsWith("schedule " + id + " (set by "), run.prettify());
+            assertTrue(Files.isRegularFile(written.resolve("accounts.csv")));
+            try (var files = Files.list(written)) {
+                long n = files.count();
+                if (filesBefore >= 0) {
+                    assertEquals(filesBefore, n, "the same file, replaced: nothing grows");
+                }
+                filesBefore = n;
+            }
+        }
+    }
+
+    @Test
+    @Order(4)
     void turnedOnAgainNothingIsAddedTwice() {
         JsonPath r = admin().post("/api/v1/starter-pack").then().statusCode(200).extract().jsonPath();
         assertTrue(r.getString("steps.find { it.step == 'sample tables' }.detail").startsWith("already there"), r.prettify());
         assertTrue(r.getString("steps.find { it.step == 'samples' }.detail").contains("already there"), r.prettify());
         assertFalse(r.getString("steps.find { it.step == 'samples' }.detail").matches("(?s).*[0-9]+ added.*"), r.prettify());
+        assertEquals("done", r.getString("steps.find { it.step == '" + StarterPack.EXAMPLE_STEP + "' }.outcome"),
+            r.prettify());
+        assertTrue(r.getString("steps.find { it.step == '" + StarterPack.EXAMPLE_STEP + "' }.detail")
+            .startsWith("already there"), r.prettify());
+        assertEquals(1, exampleSchedules().size(), "no second schedule");
     }
 
     @Test
-    @Order(4)
+    @Order(5)
     void theGuardRefusesAnyDatabaseButThePacksOwn() throws Exception {
         // Kilnmark's own database, as Kilnmark's own login: refused, so it is never emptied by mistake.
         try (Connection c = db.getConnection()) {
@@ -214,7 +315,7 @@ class StarterPackApiTest {
     }
 
     @Test
-    @Order(5)
+    @Order(6)
     void turnedOffEverythingItAddedIsGoneAndTheDatabaseStaysEmpty() throws Exception {
         assertTrue(tables() >= Samples.TABLES.size());
         // A flow of the team's own, outside the Library, still reads Kilnmark's sample data: kept.
@@ -240,24 +341,49 @@ class StarterPackApiTest {
         }
         admin().contentType(ContentType.JSON).body(Map.of("field", field, "sensitive", true))
             .put("/api/v1/quality/asset/sensitive?urn=" + urn).then().statusCode(204);
-        // a schedule on a sample: deleted with it, and recorded as a pipeline's own delete records it
+        // a schedule on a sample: deleted before it, and recorded as any schedule's delete is
         long schedule = admin().contentType(ContentType.JSON).body(Map.of("pipeline", "sample-limit", "cron", "0 6 * * *"))
             .post("/api/v1/schedules").then().statusCode(201).extract().jsonPath().getLong("id");
+        // and the pack's example schedule, whose run is queued when the pack is turned off: held in
+        // the queue, as it is when no worker is running, so its sample cannot be deleted until it is
+        // cancelled
+        long example = ((Number) exampleSchedules().get(0).get("id")).longValue();
         int removed = events(AuditLog.STARTER_PACK_REMOVED);
         int schedulesDeleted = events(AuditLog.SCHEDULE_DELETED);
-        JsonPath r = admin().contentType(ContentType.JSON).body(Map.of("confirm", "DELETE")).delete("/api/v1/starter-pack")
-            .then().statusCode(200).extract().jsonPath();
+        JsonPath r;
+        long queued;
+        holdPipelineJobs(true);
+        try {
+            fireNow(example);
+            queued = admin().get("/api/v1/schedules/" + example).then().statusCode(200).extract().jsonPath()
+                .getLong("lastPipelineRun");
+            admin().get("/api/v1/pipeline-runs/" + queued).then().statusCode(200).body("run.status", equalTo("queued"));
+            r = admin().contentType(ContentType.JSON).body(Map.of("confirm", "DELETE")).delete("/api/v1/starter-pack")
+                .then().statusCode(200).extract().jsonPath();
+        } finally {
+            holdPipelineJobs(false);
+        }
         assertFalse(r.getBoolean("on"), r.prettify());
         assertEquals(List.of(), r.getList("steps.findAll { it.outcome == 'failed' }"), r.prettify());
+        assertEquals("1 queued or running, cancelled", r.getString("steps.find { it.step == 'sample runs' }.detail"),
+            r.prettify());
         eventually(AuditLog.STARTER_PACK_REMOVED, removed + 1);
-        eventually(AuditLog.SCHEDULE_DELETED, schedulesDeleted + 1);
-        JsonPath gone = admin().get("/api/v1/audit?action=" + AuditLog.SCHEDULE_DELETED + "&limit=1").then().statusCode(200)
+        eventually(AuditLog.SCHEDULE_DELETED, schedulesDeleted + 2);
+        JsonPath gone = admin().get("/api/v1/audit?action=" + AuditLog.SCHEDULE_DELETED + "&limit=2").then().statusCode(200)
             .extract().jsonPath();
-        assertEquals("schedule " + schedule, gone.getString("events[0].target"), gone.prettify());
-        assertEquals("sample-limit", gone.getString("events[0].detail.pipeline"), gone.prettify());
-        // starter.removed names what went
+        String limitGone = "events.find { it.target == 'schedule " + schedule + "' }";
+        assertEquals("sample-limit", gone.getString(limitGone + ".detail.pipeline"), gone.prettify());
+        assertEquals("starter pack", gone.getString(limitGone + ".detail.via"), gone.prettify());
+        String exampleGone = "events.find { it.target == 'schedule " + example + "' }";
+        assertEquals(StarterPack.EXAMPLE_PIPELINE, gone.getString(exampleGone + ".detail.pipeline"), gone.prettify());
+        assertEquals("starter pack", gone.getString(exampleGone + ".detail.via"), gone.prettify());
+        assertEquals(List.of(), exampleSchedules(), "the example schedule is gone");
+        // starter.removed names what went, the cancelled run included
         JsonPath ev = admin().get("/api/v1/audit?action=" + AuditLog.STARTER_PACK_REMOVED + "&limit=1").then().statusCode(200)
             .extract().jsonPath();
+        assertTrue(ev.getList("events[0].detail.pipelineRunsCancelled").contains((int) queued), ev.prettify());
+        assertTrue(ev.getList("events[0].detail.pipelines").contains(StarterPack.EXAMPLE_PIPELINE), ev.prettify());
+        assertEquals(2, ev.getList("events[0].detail.schedules").size(), ev.prettify());
         assertTrue(ev.getList("events[0].detail.pipelines").contains("sample-limit"), ev.prettify());
         assertTrue(ev.getList("events[0].detail.pipelines").contains(Samples.SETUP), ev.prettify());
         assertFalse(ev.getList("events[0].detail.flows").isEmpty(), ev.prettify());
@@ -289,7 +415,7 @@ class StarterPackApiTest {
     }
 
     @Test
-    @Order(6)
+    @Order(7)
     void aSourceOfThePacksNameThatIsNotThePacksIsNeverChangedOrDeleted() throws Exception {
         Path mine = Files.createDirectories(Path.of(roots.split(",")[0].strip()).resolve("mine"));
         admin().contentType(ContentType.JSON).body(Map.of("name", StarterPack.FILES_SOURCE, "kind", "files", "settings",
@@ -310,7 +436,7 @@ class StarterPackApiTest {
     }
 
     @Test
-    @Order(7)
+    @Order(8)
     void aFolderOfThePacksNameThatIsNotThePacksIsNeverAdoptedOrDeleted() throws Exception {
         // KILNMARK_FILES_DIR can be a real share: a site's own folder starter-pack is left alone
         Path own = Files.createDirectories(folder());
@@ -327,7 +453,7 @@ class StarterPackApiTest {
     }
 
     @Test
-    @Order(8)
+    @Order(9)
     void whatTheControlScriptDidToTheExamplePeopleIsInTheAuditLog() throws Exception {
         int before = events(AuditLog.STARTER_PEOPLE);
         admin().contentType(ContentType.JSON).body(Map.of("action", "remove", "people",
