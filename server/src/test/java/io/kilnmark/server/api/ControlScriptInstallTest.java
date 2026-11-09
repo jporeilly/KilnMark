@@ -442,7 +442,8 @@ class ControlScriptInstallTest {
             String fix = fixFor(wsl, "Port " + ports.get(0) + " is in use.");
             Matcher m = Pattern.compile("configure port=([0-9]+)$").matcher(fix);
             assertTrue(m.find(), wsl);
-            assertTrue(fix.contains(e.windows() ? "kilnmark.cmd configure port=" : "kilnmark.sh configure port="), fix);
+            // Windows: the launcher's path quoted, to paste into PowerShell (& "...\kilnmark.cmd" configure ...)
+            assertTrue(fix.contains(e.windows() ? "kilnmark.cmd\" configure port=" : "kilnmark.sh configure port="), fix);
             // a production install with the Starter Pack's setting in config/.env
             assertTrue(fixFor(wsl, "KILNMARK_STARTER is set on a production install").contains("delete the line KILNMARK_STARTER"), wsl);
             // no backup yet
