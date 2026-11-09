@@ -750,6 +750,15 @@ details.
 
 From walking a 0.1.2 Starter Pack install, in the web UI:
 
+- **Signing out ends the identity provider's session too.** Signing out of Kilnmark ended only
+  Kilnmark's own session, so signing in again went straight back in as the same person, without a
+  password: revoking the refresh token does not end Keycloak's session. Kilnmark now takes the
+  browser on to the provider's own sign-out page (its end-session endpoint, with the session's ID
+  token as the hint), which ends that session and sends the browser back to Kilnmark's sign-in
+  page. `POST /api/v1/auth/sign-out` answers 200 with `endSession`, the page to go to, in place of
+  204. With your own identity provider, register `https://<host>/` as its post-logout redirect URI
+  ([Production with your own identity provider](docs/guide/install/production-own-identity-provider.md)).
+
 - **Schedules tables keep every column in view.** A long sign-in name no longer widens the table on
   the Schedules page and a pipeline's or flow's Schedules tab, so **Last time it was due** and
   **Edit**, **Pause** and **Delete** show at 1240px. Names wrap, and a person who signs in through
