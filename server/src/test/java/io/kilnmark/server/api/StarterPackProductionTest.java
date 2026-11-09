@@ -125,6 +125,9 @@ class StarterPackProductionTest {
         assertEquals("production", admin().get("/api/v1/audit?action=" + AuditLog.STARTER_PACK_ADDED + "&limit=1").then()
             .statusCode(200).extract().jsonPath().getString("events[0].detail.refused"), "the refusal is recorded");
         admin().get("/api/v1/sources/" + StarterPack.DATABASE_SOURCE).then().statusCode(404);
+        // nor the example schedule
+        admin().get("/api/v1/schedules?pipeline=" + StarterPack.EXAMPLE_PIPELINE).then().statusCode(200)
+            .body("size()", equalTo(0));
         // and no example people to record
         admin().contentType(ContentType.JSON).body(Map.of("action", "add", "people", List.of("vera.lane@kilnmark.com")))
             .post("/api/v1/starter-pack/people").then().statusCode(409);

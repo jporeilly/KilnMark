@@ -282,6 +282,23 @@ outlive any one person, use a team's designer API token.
 A run started by a schedule shows `schedule <id> (set by <name>)` as who asked for it, on its run
 page and in the History tab.
 
+## The example schedule on a Starter Pack install
+
+On a Starter Pack install, turning the Starter Pack on sets one schedule, so this page has
+something to show from the start: it runs the sample `sample-read-write-csv` every hour, on the
+hour, in UTC, and its description says it is the Starter Pack's example schedule. Each run reads
+the example CRM accounts and replaces one CSV file in the pack's own folder, so running it again
+and again is harmless: the file does not grow, though the run history gains one short run an
+hour until you pause or delete the schedule. It is set by the admin who turned the pack on, acts as steward, and is in
+the audit log as **Schedule set**, with `via: starter pack`.
+
+It is a schedule like any other: **Pause** or **Delete** it here or in the sample's **Schedules**
+tab ([Changing, pausing and deleting](#changing-pausing-and-deleting)). Turning the pack on again
+adds it back only if the sample has no schedule, so there is never a second one. Turning the pack
+off deletes it (`via: starter pack`), and cancels a run of it still queued or running, before
+removing the samples. A production install never has it
+([A Starter Pack install](install/starter-pack.md#the-example-schedule)).
+
 ## With the API
 
 Scripts set and read schedules at `/api/v1/schedules`. The requests below use an API token in

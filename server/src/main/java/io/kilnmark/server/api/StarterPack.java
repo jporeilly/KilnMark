@@ -39,11 +39,13 @@ import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.flows.FlowService;
 import io.kilnmark.server.flows.FlowStore;
 import io.kilnmark.server.pipelines.PipelineService;
+import io.kilnmark.server.pipelines.PipelineStore;
 import io.kilnmark.server.pipelines.PipelineViews;
 import io.kilnmark.server.pipelines.Samples;
 import io.kilnmark.server.quality.Sights;
 import io.kilnmark.server.schedules.ScheduleService;
 import io.kilnmark.server.schedules.ScheduleStore;
+import io.kilnmark.server.schedules.ScheduleViews;
 import io.kilnmark.server.sources.HostPolicy;
 import io.kilnmark.server.starter.ExampleAccounts;
 import io.kilnmark.server.variables.VariableService;
@@ -59,8 +61,10 @@ import jakarta.ws.rs.core.Response;
  * <li>on: a database source on {@code kilnmark_samples} (the empty database every install has on
  * Kilnmark's own PostgreSQL server, reached with its own login, which can connect to that database
  * only) and a files source on a folder of its own in the files folder, both with Allow writing on;
- * the sample tables and the samples in the Library reading them; then the banner;</li>
- * <li>off, once the admin has typed DELETE: the samples, those sources, the tables in
+ * the sample tables and the samples in the Library reading them; one example schedule, on
+ * {@value #EXAMPLE_PIPELINE}; then the banner;</li>
+ * <li>off, once the admin has typed DELETE: the samples' schedules, their runs still going (cancelled),
+ * the samples, those sources, the tables in
  * kilnmark_samples (the database stays, empty) and the files in the pack's folder.</li>
  * </ul>
  *
@@ -93,6 +97,19 @@ public class StarterPack {
     public static final String SCHEMA = "public";
     /** What the admin types to turn the pack off. */
     public static final String CONFIRM = "DELETE";
+
+    /**
+     * The sample the pack schedules, so a new install shows a schedule and its runs: one read and one
+     * write, the CRM accounts into one CSV file in the pack's own folder, replaced on each run.
+     */
+    public static final String EXAMPLE_PIPELINE = "sample-read-write-csv";
+    /** When the example schedule runs: every hour, on the hour. */
+    public static final String EXAMPLE_CRON = "0 * * * *";
+    /** The example schedule's zone. */
+    public static final String EXAMPLE_ZONE = "UTC";
+    /** The example schedule's description, which says whose it is. */
+    public static final String EXAMPLE_DESCRIPTION = "The Starter Pack's example schedule: runs "
+        + EXAMPLE_PIPELINE + " every hour. Pause or delete it as you like.";
 
     /** One step of turning the pack on or off: what, how it went (done, skipped, failed), and what happened. */
     public record Step(String step, String outcome, String detail) {
@@ -136,12 +153,15 @@ public class StarterPack {
     private final FlowService flows;
     private final FlowStore flowStore;
     private final VariableService variables;
+    private final ScheduleService schedules;
+    private final PipelineStore pipelineStore;
     private final AuditLog audit;
     private final Object lock = new Object();
 
     public StarterPack(KilnmarkConfig config, ServerSettings settings, GraphStore store, SecretBox secrets,
                        SourceService sources, Samples samples, PipelineService pipelines, FlowService flows,
-                       FlowStore flowStore, VariableService variables, AuditLog audit) {
+                       FlowStore flowStore, VariableService variables, ScheduleService schedules,
+                       PipelineStore pipelineStore, AuditLog audit) {
         this.config = config;
         this.settings = settings;
         this.store = store;
@@ -152,6 +172,8 @@ public class StarterPack {
         this.flows = flows;
         this.flowStore = flowStore;
         this.variables = variables;
+        this.schedules = schedules;
+        this.pipelineStore = pipelineStore;
         this.audit = audit;
     }
 
@@ -296,10 +318,12 @@ public class StarterPack {
     // ---- turning it on ----
 
     /**
-     * Turns the pack on: the two sources, the sample tables and the samples. Refused (409) on a
-     * production install, always: only a Starter Pack install has it (ADR 0051).
+     * Turns the pack on: the two sources, the sample tables, the samples and the example schedule,
+     * set by {@code setter} as a schedule the API adds is. Refused (409) on a production install,
+     * always: only a Starter Pack install has it (ADR 0051).
      */
-    public Result turnOn(String by, AccessRole role, Sights sights, AuditLog.Actor actor) {
+    public Result turnOn(String by, ScheduleStore.Setter setter, AccessRole role, Sights sights,
+                         AuditLog.Actor actor) {
         if (!io.kilnmark.server.starter.ModeCheck.samplesAllowed(config)) {
             throw refused(actor, "production", "This is a production install: the Starter Pack, for training and "
                 + "development only, is never turned on here. Nothing was changed. For a trial, install a separate "
@@ -361,6 +385,7 @@ public class StarterPack {
                     }
                     return String.join(", ", words) + ", in the Library";
                 });
+                exampleSchedule(steps, setter, role, sights, actor);
             }
             audit.record(actor, AuditLog.STARTER_PACK_ADDED, "starter pack", Map.of("steps", outcomes(steps)));
             LOG.infof("Starter Pack turned on by %s", by);
@@ -372,6 +397,40 @@ public class StarterPack {
     private WebApplicationException refused(AuditLog.Actor actor, String why, String message) {
         audit.record(actor, AuditLog.STARTER_PACK_ADDED, "starter pack", Map.of("refused", why));
         return ApiError.of(Response.Status.CONFLICT, message);
+    }
+
+    /** The step that sets the example schedule. */
+    static final String EXAMPLE_STEP = "example schedule";
+
+    /**
+     * Sets the example schedule on {@value #EXAMPLE_PIPELINE} as {@code POST /api/v1/schedules} does,
+     * and records it as {@code schedule.set} with {@code via: starter pack} (ADR 0029, ADR 0046). Only
+     * on the pack's own sample in the Library, and only while it has no schedule: turning the pack on
+     * again never adds a second. Turning the pack off deletes it before the samples.
+     */
+    private void exampleSchedule(List<Step> steps, ScheduleStore.Setter setter, AccessRole role, Sights sights,
+                                 AuditLog.Actor actor) {
+        boolean ours = pipelines.list(sights).stream().anyMatch(p -> EXAMPLE_PIPELINE.equals(p.name())
+            && Samples.LIBRARY.equals(p.library()));
+        if (!ours) {
+            steps.add(new Step(EXAMPLE_STEP, "skipped", EXAMPLE_PIPELINE + " is not a sample in the Library, so no "
+                + "schedule was set on it"));
+            return;
+        }
+        run(steps, EXAMPLE_STEP, () -> {
+            List<ScheduleViews.Schedule> there = schedules.list(EXAMPLE_PIPELINE, null, false);
+            if (!there.isEmpty()) {
+                return "already there: " + EXAMPLE_PIPELINE + " has a schedule (schedule " + there.get(0).id()
+                    + "), so no second one was added";
+            }
+            ScheduleStore.Schedule s = schedules.create(new ScheduleViews.ScheduleChange(EXAMPLE_PIPELINE, null,
+                EXAMPLE_CRON, EXAMPLE_ZONE, Map.of(), null, true, EXAMPLE_DESCRIPTION), setter, role);
+            Map<String, Object> detail = ScheduleService.auditDetail(s);
+            detail.put("via", "starter pack");
+            audit.record(actor, AuditLog.SCHEDULE_SET, "schedule " + s.id(), detail);
+            return "schedule " + s.id() + " runs " + EXAMPLE_PIPELINE + " every hour, on the hour (UTC), on the "
+                + "Schedules page";
+        });
     }
 
     private static Map<String, String> outcomes(List<Step> steps) {
@@ -585,7 +644,10 @@ public class StarterPack {
 
     /**
      * Turns the pack off, once the admin has typed {@value #CONFIRM}: everything it added, and nothing
-     * else. The pack is off only when every step worked; the example people are the control script's.
+     * else. The samples' schedules go first and their queued or running runs are cancelled, so a run
+     * the example schedule started never stops the samples going; a sample still busy after that is
+     * named and the others go on. The pack is off only when every step worked; the example people
+     * are the control script's.
      */
     public Result turnOff(String confirm, String by, AccessRole role, Sights sights, AuditLog.Actor actor) {
         if (!CONFIRM.equals(confirm)) {
@@ -593,33 +655,84 @@ public class StarterPack {
         }
         synchronized (lock) {
             List<Step> steps = new ArrayList<>();
-            // what went, named in starter.removed; each schedule deleted with a sample is recorded as a
-            // pipeline's or flow's own delete records it (ADR 0029, ADR 0046)
+            // what went, named in starter.removed. The samples' schedules go first, each recorded as
+            // schedule.deleted (ADR 0029, ADR 0046), so no sample starts again; then their runs still
+            // queued or running are cancelled, so a sample can be deleted. A schedule added meanwhile
+            // goes with its sample, recorded as that delete records it.
             List<String> flowsGone = new ArrayList<>();
             List<String> pipelinesGone = new ArrayList<>();
             List<String> sourcesGone = new ArrayList<>();
             List<String> variablesGone = new ArrayList<>();
+            List<String> schedulesGone = new ArrayList<>();
+            List<Long> flowRunsCancelled = new ArrayList<>();
+            List<Long> pipelineRunsCancelled = new ArrayList<>();
             boolean ok = true;
+            ok &= run(steps, "sample schedules", () -> {
+                List<ScheduleViews.Schedule> set = new ArrayList<>();
+                libraryFlows().forEach(f -> set.addAll(schedules.list(null, f, false)));
+                libraryPipelines(sights).forEach(p -> set.addAll(schedules.list(p, null, false)));
+                for (ScheduleViews.Schedule s : set) {
+                    try {
+                        ScheduleStore.Schedule gone = schedules.delete(s.id(), by, role);
+                        Map<String, Object> detail = ScheduleService.auditDetail(gone);
+                        detail.put("via", "starter pack");
+                        audit.record(actor, AuditLog.SCHEDULE_DELETED, "schedule " + gone.id(), detail);
+                        schedulesGone.add("schedule " + gone.id());
+                    } catch (WebApplicationException e) {
+                        if (e.getResponse().getStatus() != Response.Status.NOT_FOUND.getStatusCode()) {
+                            throw e;
+                        }
+                        // deleted meanwhile: gone either way
+                    }
+                }
+                return schedulesGone.isEmpty() ? "none was set" : schedulesGone.size() + " deleted, so no sample "
+                    + "starts again";
+            });
+            ok &= run(steps, "sample runs", () -> {
+                for (String f : libraryFlows()) {
+                    for (FlowStore.Run r : flowStore.runs(f, ACTIVE_RUNS)) {
+                        if (!r.finished() && cancelled(() -> flows.cancel(r.id(), by, role))) {
+                            flowRunsCancelled.add(r.id());
+                        }
+                    }
+                }
+                for (String p : libraryPipelines(sights)) {
+                    for (PipelineStore.Run r : pipelineStore.runs(p, ACTIVE_RUNS)) {
+                        if (!r.finished() && cancelled(() -> pipelines.cancel(r.id(), by))) {
+                            pipelineRunsCancelled.add(r.id());
+                        }
+                    }
+                }
+                awaitFinished(flowRunsCancelled, pipelineRunsCancelled);
+                int n = flowRunsCancelled.size() + pipelineRunsCancelled.size();
+                return n == 0 ? "none was queued or running" : n + " queued or running, cancelled";
+            });
             ok &= run(steps, "sample flows", () -> {
-                for (FlowStore.Summary f : flowStore.summaries()) {
-                    if (Samples.LIBRARY.equals(f.flow().library())) {
-                        String name = f.flow().name();
+                List<String> left = new ArrayList<>();
+                for (String name : libraryFlows()) {
+                    try {
                         ScheduleService.recordDeletedWith(audit, actor, ScheduleStore.Target.FLOW, name,
                             flows.delete(name, by, role));
                         flowsGone.add(name);
+                    } catch (WebApplicationException e) {
+                        leftUnlessGone(e, name, left); // the others go on
                     }
                 }
-                return flowsGone.size() + " removed from the Library";
+                return removedOrLeft(flowsGone.size() + " removed from the Library", left);
             });
             ok &= run(steps, "sample pipelines", () -> {
-                for (PipelineViews.PipelineSummary ps : pipelines.list(sights)) {
-                    if (Samples.LIBRARY.equals(ps.library())) {
-                        ScheduleService.recordDeletedWith(audit, actor, ScheduleStore.Target.PIPELINE, ps.name(),
-                            pipelines.deleteWithSchedules(ps.name(), by));
-                        pipelinesGone.add(ps.name());
+                List<String> left = new ArrayList<>();
+                for (String name : libraryPipelines(sights)) {
+                    try {
+                        ScheduleService.recordDeletedWith(audit, actor, ScheduleStore.Target.PIPELINE, name,
+                            pipelines.deleteWithSchedules(name, by));
+                        pipelinesGone.add(name);
+                    } catch (WebApplicationException e) {
+                        leftUnlessGone(e, name, left); // the others go on
                     }
                 }
-                return pipelinesGone.size() + " removed from the Library, " + Samples.SETUP + " among them";
+                return removedOrLeft(pipelinesGone.size() + " removed from the Library"
+                    + (pipelinesGone.contains(Samples.SETUP) ? ", " + Samples.SETUP + " among them" : ""), left);
             });
             ok &= run(steps, "sources", () -> {
                 List<String> gone = sourcesGone;
@@ -667,9 +780,84 @@ public class StarterPack {
                 save(false, by, ownSources());
             }
             audit.record(actor, AuditLog.STARTER_PACK_REMOVED, "starter pack", Map.of("steps", outcomes(steps),
-                "flows", flowsGone, "pipelines", pipelinesGone, "sources", sourcesGone, "variables", variablesGone));
+                "flows", flowsGone, "pipelines", pipelinesGone, "sources", sourcesGone, "variables", variablesGone,
+                "schedules", schedulesGone, "flowRunsCancelled", flowRunsCancelled, "pipelineRunsCancelled",
+                pipelineRunsCancelled));
             LOG.infof("Starter Pack turned off by %s%s", by, ok ? "" : ", in part");
             return new Result(!ok, steps, null);
+        }
+    }
+
+    /** How many of a sample's latest runs are looked at for one still queued or running. */
+    static final int ACTIVE_RUNS = 200;
+    /** How long turning the pack off waits for the runs it cancelled to stop. */
+    static final java.time.Duration RUNS_STOP_WITHIN = java.time.Duration.ofSeconds(30);
+
+    /** The names of the sample flows in the Library. */
+    private List<String> libraryFlows() {
+        return flowStore.summaries().stream().filter(f -> Samples.LIBRARY.equals(f.flow().library()))
+            .map(f -> f.flow().name()).toList();
+    }
+
+    /** The names of the sample pipelines in the Library, sample-tables among them. */
+    private List<String> libraryPipelines(Sights sights) {
+        return pipelines.list(sights).stream().filter(p -> Samples.LIBRARY.equals(p.library()))
+            .map(PipelineViews.PipelineSummary::name).toList();
+    }
+
+    /** Cancels a run through its service's own cancel; false when it finished meanwhile (409). */
+    private static boolean cancelled(Runnable cancel) {
+        try {
+            cancel.run();
+            return true;
+        } catch (WebApplicationException e) {
+            if (e.getResponse().getStatus() == Response.Status.CONFLICT.getStatusCode()
+                || e.getResponse().getStatus() == Response.Status.NOT_FOUND.getStatusCode()) {
+                return false;
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Waits, up to {@link #RUNS_STOP_WITHIN}, for the runs just cancelled to finish: a queued one is
+     * cancelled at once, a running one stops within a few seconds. One still going after that is
+     * named by the step that cannot delete its sample.
+     */
+    private void awaitFinished(List<Long> flowRuns, List<Long> pipelineRuns) {
+        long deadline = System.nanoTime() + RUNS_STOP_WITHIN.toNanos();
+        while (System.nanoTime() < deadline) {
+            boolean going = flowRuns.stream().anyMatch(id -> flowStore.run(id).map(r -> !r.finished()).orElse(false))
+                || pipelineRuns.stream().anyMatch(id -> pipelineStore.run(id).map(r -> !r.finished()).orElse(false));
+            if (!going) {
+                return;
+            }
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException stop) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
+    /**
+     * What a step removed; a failure naming what it left when a sample could not be deleted, with
+     * its schedules already gone, so nothing of the pack's starts again.
+     */
+    private static String removedOrLeft(String removed, List<String> left) {
+        if (left.isEmpty()) {
+            return removed;
+        }
+        throw new Problem(removed + "; left for now, as a run of each is still stopping or it was busy: "
+            + String.join(", ", left) + ". Their schedules are gone. Turn the pack off again in a minute");
+    }
+
+    /** A sample whose delete was refused is left, named; one deleted meanwhile (404) is gone. */
+    private static void leftUnlessGone(WebApplicationException e, String name, List<String> left) {
+        if (e.getResponse().getStatus() != Response.Status.NOT_FOUND.getStatusCode()) {
+            LOG.infof("Starter Pack: %s was not deleted (HTTP %d)", name, e.getResponse().getStatus());
+            left.add(name);
         }
     }
 

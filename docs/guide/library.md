@@ -60,8 +60,10 @@ On a **Starter Pack install**, for training, demonstrations and development, an 
 **Starter Pack** under **Settings** (INSTALL.md, "Try Kilnmark with the Starter Pack"; install turns
 it on itself). Kilnmark then creates the sample tables in a database of their own,
 `kilnmark_samples`, adds a database source and a files source that allow writing, and adds every
-sample here, reading those tables: nothing to prepare, and every sample can run. Turning the pack
-off takes all of it out again. A production install never has the pack: its page under
+sample here, reading those tables: nothing to prepare, and every sample can run. It also sets one
+example schedule, running `sample-read-write-csv` every hour
+([The example schedule on a Starter Pack install](schedules.md#the-example-schedule-on-a-starter-pack-install)). Turning
+the pack off takes all of it out again. A production install never has the pack: its page under
 **Settings** says so and offers nothing. The templates are here on every install.
 
 ![Settings, Starter Pack, on: what the pack holds, the run that created the sample tables, the control script's commands for the example people, and which example accounts have signed in](images/starter-pack-settings.png)
