@@ -115,6 +115,13 @@ function expectClear(placed: LineageLayout) {
       expect(e.label.x - w).toBeGreaterThanOrEqual(0);
       expect(e.label.x + w).toBeLessThanOrEqual(placed.width);
     }
+    // Nor behind another line's label, whose background would hide it.
+    for (const o of placed.edges) {
+      if (o === e || !o.label) continue;
+      const w = labelWidth(edgeLabel(o)) / 2;
+      const behind = points.find((q) => Math.abs(q.x - o.label!.x) < w - 1 && Math.abs(q.y - o.label!.y) < 11 - 1);
+      expect(behind, `the line ${e.from} to ${e.to} passes behind the label of ${o.from} to ${o.to}`).toBeUndefined();
+    }
   }
   for (const p of placed.at.values()) {
     expect(p.x).toBeGreaterThanOrEqual(0);
@@ -122,6 +129,12 @@ function expectClear(placed: LineageLayout) {
     expect(p.x + BOX_WIDTH).toBeLessThanOrEqual(placed.width);
     expect(p.y + BOX_HEIGHT).toBeLessThanOrEqual(placed.height);
   }
+}
+
+/** A label sits on its own line: the line runs level through it. */
+function expectOnLine(e: LineageLayout["edges"][number]) {
+  const nearest = Math.min(...along(e.curves).map((p) => Math.hypot(p.x - e.label!.x, p.y - e.label!.y)));
+  expect(nearest).toBeLessThan(2);
 }
 
 describe("the lineage graph", () => {
@@ -182,6 +195,24 @@ describe("the lineage graph", () => {
     expectClear(placed);
   });
 
+  test("an asset that only came from itself goes with the outputs, not before the inputs", () => {
+    const [t0, t1, t2, t3, t4, t5, t7, t8, t9] = ["t0", "t1", "t2", "t3", "t4", "t5", "t7", "t8", "t9"].map(t);
+    const pairs: [string, string][] = [
+      [t2, t2],
+      [t4, t5],
+      [t1, t5],
+      [t1, t9],
+      [t0, t7],
+      [t1, t8],
+      [t3, t4],
+    ];
+    const placed = layoutLineage(lineageModel(pairs.map(([input, output]) => ({ input, output }))));
+    const col = (u: string) => placed.at.get(u)!.x;
+    for (const input of [t0, t1, t3]) expect(col(input)).toBe(placed.columns!.first);
+    for (const output of [t2, t5, t7, t8, t9]) expect(col(output)).toBe(placed.columns!.last);
+    expectClear(placed);
+  });
+
   test("a line that skips a column passes between its boxes, never behind one", () => {
     const [t1, t2, t3, t4, t5, t6, t7] = ["t1", "t2", "t3", "t4", "t5", "t6", "t7"].map(t);
     const pairs: [string, string][] = [
@@ -224,10 +255,7 @@ describe("the lineage graph", () => {
       expect(Math.abs(half(back.curves).y - half(forward.curves).y)).toBeGreaterThan(20);
       // Nor do they meet at the boxes' sides.
       expect(back.curves[0][0].y).not.toBe(forward.curves[forward.curves.length - 1][3].y);
-      if (labels) {
-        const ends = back.curves.flatMap((k) => [k[0], k[3]]);
-        expect(ends).toContainEqual(back.label);
-      }
+      if (labels) expectOnLine(back);
     }
   });
 
@@ -241,7 +269,19 @@ describe("the lineage graph", () => {
     const placed = layoutLineage(model, { labels: true });
     const e = placed.edges[0];
     expect(e.label).not.toBeNull();
-    expect(e.curves.flatMap((k) => [k[0], k[3]])).toContainEqual(e.label);
+    expectOnLine(e);
+    expectClear(placed);
+  });
+
+  test("an asset's lines fan out without passing behind each other's labels", () => {
+    const c = t("c");
+    const fan = ["orders-nightly", "orders-combine", "totals", "report-weekly", "archive"];
+    const model = lineageModel([
+      ...fan.map((p, i) => ({ input: c, output: t(`d${i}`), pipeline: p })),
+      ...fan.map((p, i) => ({ input: t(`u${i}`), output: c, pipeline: p })),
+    ]);
+    const placed = layoutLineage(model, { labels: true });
+    for (const e of placed.edges) expectOnLine(e);
     expectClear(placed);
   });
 });

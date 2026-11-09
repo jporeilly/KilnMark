@@ -183,7 +183,7 @@ const LAST = "\u0000last";
 export function layoutLineage(model: LineageModel, options: { labels?: boolean } = {}): LineageLayout {
   const labels = options.labels === true;
   const g = new Graph();
-  g.setGraph({ rankdir: "LR", nodesep: 22, edgesep: 30, ranksep: labels ? 70 : 190, marginx: 0, marginy: 0 });
+  g.setGraph({ rankdir: "LR", nodesep: 22, edgesep: 30, ranksep: labels ? 140 : 190, marginx: 0, marginy: 0 });
   g.setDefaultEdgeLabel(() => ({}));
   for (const a of model.assets) g.setNode(a.urn, { width: BOX_WIDTH, height: BOX_HEIGHT });
   for (const e of model.edges) {
@@ -195,7 +195,11 @@ export function layoutLineage(model: LineageModel, options: { labels?: boolean }
   const fed = new Set(model.edges.map((e) => e.to));
   const feeding = new Set(model.edges.map((e) => e.from));
   const inputs = model.assets.filter((a) => feeding.has(a.urn) && !fed.has(a.urn));
-  const outputs = model.assets.filter((a) => fed.has(a.urn) && !feeding.has(a.urn));
+  // An asset recorded only as coming from itself was written: it goes with the outputs, never alone
+  // in a column of its own before the inputs.
+  const outputs = model.assets.filter(
+    (a) => !feeding.has(a.urn) && (fed.has(a.urn) || model.fromItself.includes(a.urn)),
+  );
   if (inputs.length > 1) {
     g.setNode(FIRST, { width: 0, height: 0 });
     for (const a of inputs) g.setEdge(FIRST, a.urn, { weight: 1000 });
@@ -224,6 +228,17 @@ export function layoutLineage(model: LineageModel, options: { labels?: boolean }
     const label = labels && edgeLabel(e) && drawn.x != null && drawn.y != null ? { x: drawn.x, y: drawn.y } : null;
     const skips = Math.abs(column(e.to) - column(e.from)) > 1;
     let inner = skips ? (drawn.points ?? []).slice(1, -1) : label ? [label] : [];
+    // Level through the whole of its label, so its bends fall outside the column of labels and never
+    // behind another line's label.
+    if (label) {
+      const w = labelWidth(edgeLabel(e)) / 2;
+      const s = back ? -1 : 1;
+      inner = inner.flatMap((p) =>
+        Math.abs(p.x - label.x) < 0.5 && Math.abs(p.y - label.y) < 0.5
+          ? [{ x: label.x - s * w, y: label.y }, { x: label.x + s * w, y: label.y }]
+          : [p],
+      );
+    }
     // A line back between neighbouring columns would lie on the line forward: bow it below both boxes.
     if (back && inner.length === 0) inner = [{ x: (start.x + end.x) / 2, y: Math.max(f.y, t.y) + BOX_HEIGHT / 2 + BOW }];
     return { e, back, curves: cubics([start, ...inner, end]), label };
