@@ -373,6 +373,15 @@ The guide's "Reading" is the user's view.
   Kilnmark counts the rows it keeps and stops the read when it has enough.
 - **Notes.** `NodeFactory.notes` lets a node add notes to a check; the read node says whether the
   database applies `where`, applies part of it (and what it leaves), or not at all.
+- **The SQL shown.** `POST /api/v1/pipelines/read-sql` {yaml, node} (any role) gives the statement
+  a read node sends, for the canvas to show under **Query**: `ReadNodeFactory.statement` builds the
+  read's options with the same `readOptions` as `create` and asks the connector's own `reader` for
+  its `query` setting, given the table as the catalogue last recorded it (`catalogued`: the same
+  schema, table and columns, a view bounded as the connector counts it) and the source's settings
+  without its secret, without connecting. It says how many values are bound (`?`) but never what
+  they are, and when a source samples large tables. A query read gives the query as
+  `queryReader` sends it. None for a file, a generic JDBC source (which writes its SQL once
+  connected) or a table not yet scanned; the browser never builds SQL itself.
 
 ### The read node's query (decisions, ADR 0028)
 
@@ -1391,7 +1400,11 @@ its run ends, and a retried start never to run the work twice.
   toolbar.
 - **Settings panels** come from `GET /api/v1/node-types`: one control per `SettingSpec` kind; column
   pickers use the columns validation worked out for the node's inputs; a write shows the writer
-  settings its source's kind takes (`writerSettings`).
+  settings its source's kind takes (`writerSettings`). A read's **Query** is editable only for a
+  designer whose token may unmask (`Me.unmask`, `UnmaskContext`), as the server checks on saving.
+  Conditions and computed columns have operator buttons and a short reference whose worked examples
+  live in `ui/src/pipelines/canvas/expression-help.json`, which `ExpressionHelpTest` parses and
+  checks on the server.
 - **Connections** are refused before they reach the YAML when the compiler would refuse them: a
   node reading from itself, loops, a single-input port fed twice, and the same edge twice (two
   ports of one node may both feed a port that takes many). References split at the last dot, as

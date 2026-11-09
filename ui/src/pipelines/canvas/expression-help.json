@@ -1,0 +1,36 @@
+{
+  "about": "The worked examples beside a condition on the canvas. ExpressionHelpTest (server) parses and checks each one against these columns, so every example shown works as written.",
+  "columns": {
+    "status": "utf8",
+    "amount": "decimal(12,2)",
+    "is_active": "boolean",
+    "loyalty_tier": "utf8",
+    "price": "decimal(10,2)",
+    "qty": "int64",
+    "country": "utf8",
+    "signed_up": "date",
+    "email": "utf8"
+  },
+  "examples": [
+    {
+      "text": "status = 'active' and amount > 0",
+      "says": "Both must be true."
+    },
+    {
+      "text": "is_active and (loyalty_tier = 'gold' or (loyalty_tier = 'silver' and amount >= 500))",
+      "says": "Nested: brackets group a test, and and binds tighter than or."
+    },
+    {
+      "text": "price * qty > 1000",
+      "says": "Arithmetic inside a comparison."
+    },
+    {
+      "text": "country in ('GB', 'IE') and signed_up between date '2024-01-01' and date '2024-12-31'",
+      "says": "One of a list, and a range with both ends included."
+    },
+    {
+      "text": "email like '%@example.com' and status is not null",
+      "says": "A text pattern (% is any run of characters), and a value that is not empty."
+    }
+  ]
+}

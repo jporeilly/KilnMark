@@ -147,3 +147,19 @@ describe("an on/off setting lines up with the settings beside it", () => {
     expect(out).toMatch(/^<div class="cv-field" data-setting="strict"><div class="km-switch-row">/);
   });
 });
+
+describe("the panel under the canvas fits a node's settings and leaves the canvas usable", () => {
+  // The owner, on 0.1.2: a read's Where, Row limit and the note under them needed scrolling to
+  // reach. Worked out at a laptop's 900 px from the rules themselves, so a change to either is seen.
+  const px = (css: string, re: RegExp) => (re.exec(css) ?? []).slice(1).map(Number);
+  test("taller by default, never squeezing the canvas below its least height, and to its content on a phone", () => {
+    const [lo, vh, hi] = px(dockCss, /--pl-dock-h: clamp\((\d+)px, (\d+)vh, (\d+)px\);/);
+    const dock = Math.min(hi, Math.max(lo, (900 * vh) / 100));
+    expect(dock).toBeGreaterThanOrEqual(340); // was 288 (32vh)
+    const [least] = px(canvasCss, /\.cv-stage \{[^}]*height: max\((\d+)px, calc\(100vh - var\(--km-topbar-h\) - 150px - var\(--cv-below, 0px\)\)\);/);
+    expect(least).toBeGreaterThanOrEqual(300);
+    // At 900 px with the 72 px top bar, the page is at most a little taller than the screen.
+    expect(72 + 150 + least + 56 + dock).toBeLessThanOrEqual(930);
+    expect(dockCss).toMatch(/@media \(max-width: 700px\) \{\s*\.pl-dock-panel \{\s*height: auto;\s*max-height: 70vh;/);
+  });
+});

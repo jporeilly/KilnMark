@@ -829,6 +829,41 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
   running, so a run never stops the samples going; a sample still busy is named, and the rest go
   on. A production install never has it
   ([A Starter Pack install](docs/guide/install/starter-pack.md#the-example-schedule)).
+- **A read shows the SQL it runs.** A `read` node's **Query** box showed only `SELECT ... FROM
+  schema.table`. Under it, **SQL Kilnmark runs** now shows, read-only, the statement the read sends
+  for the table, columns, `where` and row limit chosen (a `?` for each value of `where`, bound as
+  it runs), or a query as it is sent. The server works it out with the same code that sets the read
+  up when it runs, from the table as last scanned, without connecting
+  (`POST /api/v1/pipelines/read-sql`, any role), so what is shown is what runs; a file, a table not yet
+  scanned or settings with problems say why there is none. The **Query** box is editable only by a
+  designer whose token may see unmasked values, the only people the server lets save a query
+  (ADR 0028): everyone else, admins included, sees it read-only with why, and a designer who may
+  not write one can choose **Remove the query**, since the server saves no pipeline holding a query
+  from them. Viewers and stewards see
+  the whole canvas read-only, as before; the YAML tab now says designers and admins edit a
+  pipeline, not stewards ([Settings](docs/guide/pipelines.md#settings)).
+- **Change owners is laid out as a form.** On a pipeline's or flow's page the **Owners** card
+  lists each owner on a line by a readable name (a token by its name, `token 1 (KILNMARK_ADMIN_TOKEN)`
+  as `KILNMARK_ADMIN_TOKEN` with the full record on hover) and whether it is a person or a team
+  address. **Change owners** shows the label above a box across the card, the hint under it, then
+  the buttons, as the app's other forms do; it still takes one owner a line.
+- **Settings spaces the Samples card from the Administration tiles** by the same gap as the page's
+  other sections, in every theme, density and width.
+- **Conditions say how to write them.** Under a filter's condition, a read's `where`, a route's
+  conditions and a compute's columns, chips put operators in at the cursor as the column chips do
+  (compare, `in`, `between`, `like`, `is null`, `and`, `or`, `not`, brackets and arithmetic), and
+  **How to write it** gives the operators, how to nest (`and` binds tighter than `or`; brackets
+  group), worked examples such as `is_active and (loyalty_tier = 'gold' or (loyalty_tier =
+  'silver' and amount >= 500))` and `price * qty > 1000`, and a link to
+  [Expressions](docs/guide/expressions.md#operators). A server test parses and checks every
+  example shown. **Columns leaving this node** lists each output port (out, rejected, errors) with
+  its columns and their types, a long list folded, in place of one line of text.
+- **The panel under the canvas is taller**: 38% of the window's height (at least 260px, at most
+  540px) in place of 32%, so a node's settings, such as a read's **Where**, **Row limit** and the
+  note under them, need less scrolling; on a 900px laptop screen it is 342px, not 288px. The canvas
+  above it may now be as short as 300px, not 360px, so the page stays about the screen's height. A
+  read's **Where** reference starts folded, being optional. On a phone the panel still takes its
+  content's height, up to 70% of the screen.
 - **The sample flows' notices read well.** The onboarding, supplier intake and quality-decides
   flows put the share of rows set aside straight into their notices' titles, which showed as
   "0.011881188118811881 of rows set aside". A flow cannot format a number in text, so the titles

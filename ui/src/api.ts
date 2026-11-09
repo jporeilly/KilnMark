@@ -1751,7 +1751,16 @@ export const pipelinesApi = {
    */
   preview: (p: { yaml: string; node: string; port?: string | null; rows?: number }, signal?: AbortSignal) =>
     call<NodePreview>("/api/v1/pipelines/preview", { method: "POST", body: JSON.stringify(p), signal }),
+  /** The SQL one read node sends to its database as the YAML stands (saved or not), or why there is none. Any role. */
+  readSql: (yaml: string, node: string, signal?: AbortSignal) =>
+    call<ReadSql>("/api/v1/pipelines/read-sql", { method: "POST", body: JSON.stringify({ yaml, node }), signal }),
 };
+
+/**
+ * The SQL a read node sends to its database, worked out by the server as a run sets the read up:
+ * `sql` with `?` for each of `values` bound from its where, or null with `note` saying why.
+ */
+export type ReadSql = { node: string; sql: string | null; values: number; note: string | null };
 
 // ---- Flows (docs/design/flows.md) ----
 

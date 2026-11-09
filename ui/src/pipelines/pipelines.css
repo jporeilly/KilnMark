@@ -460,7 +460,7 @@ main:has(.pl-wide) {
 
 .pl-build {
   /* The panel's height when open; the canvas takes the screen's height less this and its tab bar. */
-  --pl-dock-h: clamp(220px, 32vh, 420px);
+  --pl-dock-h: clamp(260px, 38vh, 540px);
   --cv-below: 56px;
 }
 

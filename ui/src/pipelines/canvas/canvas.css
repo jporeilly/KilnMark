@@ -19,7 +19,7 @@
   /* One row the stage's height, so a long node list scrolls inside it rather than stretching it. */
   grid-template-rows: minmax(0, 1fr);
   gap: 8px;
-  height: max(360px, calc(100vh - var(--km-topbar-h) - 150px - var(--cv-below, 0px)));
+  height: max(300px, calc(100vh - var(--km-topbar-h) - 150px - var(--cv-below, 0px)));
 }
 
 .cv-side-title {
@@ -797,6 +797,105 @@ p.cv-field-problems {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+/* Operators to put into a condition, in labelled groups: Compare, Test, Combine, Arithmetic. */
+.cv-ops {
+  display: grid;
+  gap: 4px;
+}
+
+.cv-ops-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.cv-ops-label {
+  min-width: 9ch;
+}
+
+.cv-chip-op {
+  background: var(--km-tint-slate-bg);
+  color: var(--km-tint-slate-fg);
+}
+
+/* The short reference beside a condition: what to write, how to nest, worked examples. */
+.cv-expr-help {
+  border: 1px solid var(--km-border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: var(--km-text-sm);
+}
+
+.cv-expr-help > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.cv-expr-rules,
+.cv-expr-examples {
+  margin: 6px 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.cv-expr-examples code {
+  overflow-wrap: anywhere;
+}
+
+.cv-expr-help p {
+  margin: 4px 0;
+}
+
+.cv-expr-examples-title {
+  font-weight: 600;
+}
+
+/* A read's SQL as the server works it out: read-only, kept to its lines, scrolling when long. */
+.cv-sql-shown {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 12em;
+  overflow-y: auto;
+  background: var(--km-surface-2);
+  color: var(--km-ink);
+  border: 1px solid var(--km-border);
+  border-radius: 4px;
+}
+
+/* The columns leaving a node: one list per output port, each column with its type. */
+.cv-port-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.cv-port-cols p {
+  margin: 0;
+}
+
+.cv-port-cols summary {
+  cursor: pointer;
+}
+
+.cv-col-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0 0 0 12px;
+  display: grid;
+  gap: 2px;
+}
+
+.cv-col-name {
+  overflow-wrap: anywhere;
 }
 
 .cv-chip {
