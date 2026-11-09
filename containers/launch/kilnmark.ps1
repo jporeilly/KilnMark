@@ -1893,7 +1893,9 @@ function Show-Status {
 
 # Day-to-day commands run as the operator, from a prompt that is not elevated.
 function Assert-Operator([string]$What) {
-    if (Test-Elevated) { Fail ($What + ' runs as the operator, from a prompt that is not elevated: open one without "Run as administrator", then run it again.') }
+    # Windows Terminal runs every tab of a window opened as administrator elevated, a Command
+    # Prompt tab included, so a new tab is not enough: the hint says to open a new window.
+    if (Test-Elevated) { Fail ($What + ' runs as the operator, from a prompt that is not elevated. This one is elevated: open a new window from the Start menu (Command Prompt or Windows PowerShell, not "Run as administrator"), then run it again. In Windows Terminal, every tab of a window opened as administrator is elevated too, and a profile set to "Run this profile as Administrator" always opens one.') }
     if (-not $script:Data) { return }
     $f = Join-Path $script:Data 'config\install.conf'
     if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return }

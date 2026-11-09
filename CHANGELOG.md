@@ -804,6 +804,11 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
   on a flow's node is wider, so long names are not cut off, and no longer offers `sample-tables`,
   which Kilnmark keeps to copy the sample data; a `stop` node has its own icon (a raised hand) in a
   flow run's timeline, as on the diagram, not a tick.
+- **Windows says how to get a prompt that is not elevated.** A day-to-day command refused an
+  elevated prompt with only "open one without Run as administrator", but in Windows Terminal
+  every tab of a window opened as administrator is elevated too, Command Prompt tabs included,
+  and a profile set to Run this profile as Administrator always opens one. The message now says
+  to open a new window from the Start menu, and why.
 
 ## 0.1.1 (6 November 2026)
 
