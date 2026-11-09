@@ -90,6 +90,9 @@ class RunRetriesApiTest {
     @Inject
     Db db;
 
+    @Inject
+    io.kilnmark.server.audit.AuditLog audit;
+
     static String designer;
     static String steward;
     static String owner;
@@ -122,6 +125,12 @@ class RunRetriesApiTest {
             Thread.sleep(100);
         }
         throw new AssertionError("Timed out waiting for " + what + "; last seen: " + last);
+    }
+
+    /** A count of audit events, once those recorded so far are stored (a thread of their own stores them). */
+    private long audited(String query, Object... args) {
+        audit.awaitStored(5000);
+        return count(query, args);
     }
 
     private long count(String query, Object... args) {
@@ -493,7 +502,7 @@ class RunRetriesApiTest {
         List<RunTables.Try> tries = flowStore.tries(id);
         assertEquals("Run again from the failure", tries.get(0).next());
         assertEquals("rr-steward", tries.get(0).askedBy(), "recorded against the run: who asked");
-        assertEquals(1, count("SELECT count(*) FROM kilnmark.audit_event WHERE action = 'flow.run_again' AND target = ?",
+        assertEquals(1, audited("SELECT count(*) FROM kilnmark.audit_event WHERE action = 'flow.run_again' AND target = ?",
             String.valueOf(id)));
         as(steward).post("/api/v1/flow-runs/" + id + "/run-again").then().statusCode(409);
 
@@ -681,7 +690,7 @@ class RunRetriesApiTest {
             .then().statusCode(200);
         assertEquals(versions, count("SELECT latest_version FROM kilnmark.pipeline WHERE name = 'rr-plain'"),
             "owners are not part of the YAML: no new version");
-        assertEquals(1, count("SELECT count(*) FROM kilnmark.audit_event WHERE action = 'pipeline.owners_set' AND "
+        assertEquals(1, audited("SELECT count(*) FROM kilnmark.audit_event WHERE action = 'pipeline.owners_set' AND "
             + "target = 'rr-plain'"));
         // An owner who is a viewer still cannot run it, or change its owners.
         as(owner).body(Map.of()).post("/api/v1/pipelines/rr-plain/runs").then().statusCode(403);
