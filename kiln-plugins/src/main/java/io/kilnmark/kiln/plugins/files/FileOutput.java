@@ -167,8 +167,13 @@ final class FileOutput implements Node {
             if (!a.isRegularFile()) {
                 return Map.of();
             }
-            return Map.of(FilesConnector.WRITTEN_FILE, local.toString(), FilesConnector.WRITTEN_BYTES,
-                Long.toString(a.size()), FilesConnector.WRITTEN_MODIFIED, a.lastModifiedTime().toInstant().toString());
+            Map<String, String> out = new java.util.LinkedHashMap<>(Map.of(FilesConnector.WRITTEN_FILE,
+                local.toString(), FilesConnector.WRITTEN_BYTES, Long.toString(a.size()),
+                FilesConnector.WRITTEN_MODIFIED, a.lastModifiedTime().toInstant().toString()));
+            if (a.fileKey() != null) {
+                out.put(FilesConnector.WRITTEN_KEY, a.fileKey().toString());
+            }
+            return out;
         } catch (IOException | RuntimeException e) {
             return Map.of();
         }

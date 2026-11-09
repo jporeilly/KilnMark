@@ -208,6 +208,25 @@ class WrittenFilesApiTest {
 
     @Test
     @Order(3)
+    void anotherSitesPageCannotStartADownloadNorCanHead() throws Exception {
+        for (String site : List.of("cross-site", "same-site")) {
+            Tokens.as(steward).header("Sec-Fetch-Site", site).get("/api/v1/pipeline-runs/" + first + "/files/0")
+                .then().statusCode(403).body("error", equalTo(WrittenFiles.CROSS_SITE));
+        }
+        for (String site : List.of("same-origin", "none")) {
+            Tokens.as(steward).header("Sec-Fetch-Site", site).get("/api/v1/pipeline-runs/" + first + "/files/0")
+                .then().statusCode(200);
+        }
+        Tokens.as(steward).head("/api/v1/pipeline-runs/" + first + "/files/0").then().statusCode(405);
+        assertEquals(2, count("SELECT count(*) FROM kilnmark.audit_event WHERE action = 'file.download_refused' "
+            + "AND target = ? AND detail->>'refused' = 'cross_site'", "pipeline-run/" + first));
+        // The run recorded the file as the file system knows it, where it says (not shown by the API).
+        assertTrue(count("SELECT count(*) FROM kilnmark.pipeline_run WHERE id = ? "
+            + "AND (result->'written'->0->'file'->>'bytes') IS NOT NULL", first) == 1);
+    }
+
+    @Test
+    @Order(3)
     void aViewerSeesNoValues() throws Exception {
         JsonPath files = as(viewer).get("/api/v1/pipeline-runs/" + first + "/files").then().statusCode(200).extract()
             .jsonPath();

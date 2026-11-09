@@ -187,10 +187,25 @@ public class PipelineRunResource {
             + "run wrote it, or it cannot be reached (not in a folder on this server, or the way to it changed)"),
         @APIResponse(responseCode = "410", description = "The file, or the source it was written to, has been "
             + "deleted")})
-    public Response file(@PathParam("id") long id, @PathParam("index") String index) {
+    public Response file(@PathParam("id") long id, @PathParam("index") String index,
+                         @jakarta.ws.rs.HeaderParam("Sec-Fetch-Site") String fetchSite) {
+        // A page on another site can send the browser here with the session cookie (it is SameSite=Lax):
+        // it could not read the file, but would save it on the person's computer and in the audit log as
+        // theirs. Browsers say where a request came from (Kilnmark's own pages: same-origin; a typed
+        // address: none); scripts send nothing, and are signed in by their token.
+        boolean crossSite = fetchSite != null && !fetchSite.equalsIgnoreCase("same-origin")
+            && !fetchSite.equalsIgnoreCase("none");
         io.kilnmark.server.pipelines.WrittenFiles.Download d = writtenFiles.download(id, index, sights,
-            io.kilnmark.server.audit.AuditLog.actor(identity));
-        jakarta.ws.rs.core.StreamingOutput body = out -> io.kilnmark.server.pipelines.WrittenFiles.copy(d.file(), out);
+            io.kilnmark.server.audit.AuditLog.actor(identity), crossSite);
+        jakarta.ws.rs.core.StreamingOutput body = out -> {
+            try {
+                io.kilnmark.server.pipelines.WrittenFiles.copy(d.file(), out);
+            } catch (java.io.IOException e) {
+                org.jboss.logging.Logger.getLogger(PipelineRunResource.class).warnf("Pipeline run %d's file %s was "
+                    + "not sent whole: %s", id, index, e.getMessage());
+                throw e;
+            }
+        };
         return Response.ok(body, d.contentType())
             .header("Content-Disposition", "attachment; filename=\"" + d.filename() + "\"")
             .header("Content-Length", d.file().size())
@@ -198,6 +213,14 @@ public class PipelineRunResource {
             .header("Cache-Control", "no-store")
             .header("Cross-Origin-Resource-Policy", "same-origin")
             .build();
+    }
+
+    /** HEAD would run the download without sending it, and record it: not offered. */
+    @jakarta.ws.rs.HEAD
+    @Path("{id}/files/{index}")
+    @Operation(hidden = true)
+    public Response fileHead(@PathParam("id") long id, @PathParam("index") String index) {
+        return Response.status(Response.Status.METHOD_NOT_ALLOWED).header("Allow", "GET").build();
     }
 
     @POST

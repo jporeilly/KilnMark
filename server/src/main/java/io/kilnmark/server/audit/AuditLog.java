@@ -497,7 +497,8 @@ public class AuditLog {
             String who = actor.tokenId() != null ? "token " + actor.tokenId()
                 : actor.name() != null && actor.name().startsWith(OidcIdentityAugmentor.PREFIX) ? actor.name()
                 : ANONYMOUS;
-            Integer skipped = refusalSkips(who);
+            // a share of its own for download refusals, so they cannot crowd out the other refusals
+            Integer skipped = refusalSkips(FILE_DOWNLOAD_REFUSED.equals(action) ? "files " + who : who);
             keep = skipped != null; // over this minute's share: the JSON line only, counted for the next row kept
             if (skipped != null && skipped > 0) {
                 Map<String, Object> more = new LinkedHashMap<>(detail == null ? Map.of() : detail);

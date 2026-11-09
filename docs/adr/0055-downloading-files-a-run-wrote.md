@@ -21,8 +21,9 @@ wrote, and must be in the audit log (ADR 0029).
    folder or name is read from the request.
 
 2. **The run records the file it wrote.** The file writer reports, once the file is in place, its
-   real path, size and time on its `SCHEMA` event; the run keeps them in its record
-   (`file: {location, bytes, modified}`, never shown by the API). This is the most reliable
+   real path, size, time and file key (an inode, where the file system has one) on its `SCHEMA`
+   event; the run keeps them in its record (`file: {location, bytes, modified, key}`, never shown by
+   the API). This is the most reliable
    source: the run's events are kept only in memory, the catalogue's lineage names assets, not
    files, and resolving the write's path again later finds whatever is there now.
 
@@ -30,11 +31,11 @@ wrote, and must be in the audit log (ADR 0029).
    source's folder is opened as for any read, checked against the server's allowed roots; the
    recorded target is checked again as a write's target is (`.csv` or `.parquet`, no `..`, no
    absolute path, no hidden name); the file must then be a regular file reached through no link at
-   all, spelt as on disk, at the recorded place, with the recorded size and time, and is checked
-   once more as it is opened. A file deleted is refused as deleted (410); one written again,
+   all, with no other name (hard link), spelt as on disk, at the recorded place, with the recorded
+   size, time and file key, and is checked once more as it is opened. A file deleted is refused as deleted (410); one written again,
    replaced, or reached another way (a moved folder, a link) as changed or unreachable (409). Runs
-   from before this recorded nothing: their file must have changed within the run's own time, in a
-   folder the server may write (so never the read-only share), and is sent with a note that it may
+   from before this recorded nothing: their file must have changed within the run's own time (not
+   after it ended), in a folder the server may write (so never the read-only share), and is sent with a note that it may
    have changed. Only folders on this server are served; a file in a bucket is read from there.
 
 4. **Who may have it is decided by `Sights`, failing closed.** `Sights.wholeFile` is the quality
@@ -43,18 +44,25 @@ wrote, and must be in the audit log (ADR 0029).
    run carried included, only for a designer with the unmask grant, approved when approval is on.
    Admins see it masked everywhere, so they cannot download it. A file is treated as sensitive when
    its columns are not in the catalogue (the run did not catalogue it), and when an asset the run
-   read for it has had a column marked since the run started, which the run could not carry.
+   read (its lineage, and everything the run read) has had a column marked since the run started,
+   which the run could not carry.
    Anyone who may see the run sees the list, with the reason a file cannot be downloaded.
 
 5. **Every download and every refusal is an audit event**: `file.downloaded` and
    `file.download_refused`, on `pipeline-run/<id>`, with the node, source, path in the source and
    size, and why when refused; never the file's contents. Refusals, which any viewer can cause, are
-   kept at most 30 a minute for each caller, as `api.refused` is; the JSON line has every one.
+   kept at most 30 a minute for each caller, in a share of their own so they cannot crowd out
+   `api.refused`; the JSON line has every one. HEAD is not offered (405): it would run the download
+   without sending it.
 
 6. **GET with the caller's own sign-in, not a signed link.** The download is a plain GET, signed in
    as every other request is: by an API token's header, or by the provider session's cookie. GET
    changes nothing (it only records the audit event), so the session rules (`SessionRequests`) let
-   a browser follow a plain link with the cookie, and the browser streams the file to disk. A page
+   a browser follow a plain link with the cookie, and the browser streams the file to disk. Since the
+   cookie is SameSite=Lax, a page on another site could also send the browser there: it could not
+   read the file, but it would land in the person's downloads and the audit log as theirs. So a
+   request whose browser says it came from another site (`Sec-Fetch-Site` other than `same-origin`
+   or `none`) is refused and recorded (`cross_site`); scripts send no such header. A page
    signed in with a token cannot put the token on a link, so it fetches the file with the header
    and saves it.
 
@@ -79,7 +87,7 @@ wrote, and must be in the audit log (ADR 0029).
   makes the earlier run's download refuse, pointing at the later run.
 - Someone with write access to the source's folder on the server itself could swap a checked
   folder for a link between the check and the open; the final check as the file is opened (no
-  link, same size, time and file) narrows that, and the folders an administrator allows should be
+  link, no other name, same size, time and file key) narrows that, and the folders an administrator allows should be
   writable only by Kilnmark and people trusted with what it writes, as for writes.
 - A deployment that splits api and worker processes must give the api processes the same files
   volume, or downloads say the file cannot be reached.

@@ -75,6 +75,8 @@ public class WrittenFiles {
     static final String SOURCE_GONE = "The source this run wrote to has been deleted, so its file cannot be found.";
     static final String NOT_HERE = "Only files written to a folder on this server can be downloaded; this one is "
         + "elsewhere (in a bucket, say). Read it from there.";
+    static final String CROSS_SITE = "This download was asked for by another site's page, so it was refused. "
+        + "Download the file from Kilnmark's own page.";
     static final String UNRECORDED = "This run did not record the file's size, so it may have changed since the run.";
 
     @Inject
@@ -109,7 +111,7 @@ public class WrittenFiles {
 
     /** One entry of the run's record of what it wrote, with its place there. */
     record Written(int index, String node, String urn, String source, String target, boolean registered, Long rows,
-                   String location, Long bytes, Instant modified) {
+                   String location, Long bytes, Instant modified, String key) {
     }
 
     /** What checking a file gave: its state, the file when it can be sent, and the status and words when not. */
@@ -142,6 +144,10 @@ public class WrittenFiles {
                 n.put("location", file);
                 n.put("bytes", Long.parseLong(bytes));
                 n.put("modified", Instant.parse(modified).toString());
+                String key = a.get(FilesConnector.WRITTEN_KEY);
+                if (key != null) {
+                    n.put("key", key);
+                }
                 return n;
             } catch (NumberFormatException | DateTimeParseException ex) {
                 return null;
@@ -173,8 +179,11 @@ public class WrittenFiles {
      * the audit log. Refusals are thrown with their status: 404 no such run or file, 409 the run has
      * not finished or the file changed or cannot be reached, 410 deleted, 403 not for this caller.
      */
-    public Download download(long id, String index, Sights sights, AuditLog.Actor actor) {
+    public Download download(long id, String index, Sights sights, AuditLog.Actor actor, boolean crossSite) {
         String target = "pipeline-run/" + id;
+        if (crossSite) {
+            throw refuse(actor, target, null, null, "cross_site", Response.Status.FORBIDDEN, CROSS_SITE);
+        }
         PipelineStore.Run r = store.run(id).orElse(null);
         if (r == null) {
             throw refuse(actor, target, null, null, "no_run", Response.Status.NOT_FOUND, "No pipeline run " + id);
@@ -247,7 +256,8 @@ public class WrittenFiles {
                 n.path("target").asText(), n.path("registered").asBoolean(),
                 n.hasNonNull("rows") ? n.get("rows").asLong() : null,
                 file.hasNonNull("location") ? file.get("location").asText() : null,
-                file.hasNonNull("bytes") ? file.get("bytes").asLong() : null, modified));
+                file.hasNonNull("bytes") ? file.get("bytes").asLong() : null, modified,
+                file.hasNonNull("key") ? file.get("key").asText() : null));
         }
         return out;
     }
@@ -278,13 +288,15 @@ public class WrittenFiles {
         }
         if (w.bytes() != null && w.modified() != null && w.location() != null) {
             if (!now.path().toString().equals(w.location()) || now.size() != w.bytes()
-                || !now.modified().equals(w.modified())) {
+                || !now.modified().equals(w.modified())
+                || (w.key() != null && (now.key() == null || !now.key().toString().equals(w.key())))) {
                 return new Checked("changed", null, Response.Status.CONFLICT, CHANGED, "changed");
             }
             return new Checked("ready", now, Response.Status.OK, null, null);
         }
         Instant from = (r.startedAt() == null ? r.requestedAt() : r.startedAt()).minus(SLACK);
-        Instant to = (r.finishedAt() == null ? Instant.now() : r.finishedAt()).plus(SLACK);
+        // No slack after the run: a file written by the next run, moments later, is not this one's.
+        Instant to = r.finishedAt() == null ? Instant.now() : r.finishedAt();
         if (now.modified().isBefore(from) || now.modified().isAfter(to) || !Files.isWritable(now.path().getParent())) {
             return new Checked("changed", null, Response.Status.CONFLICT, NOT_THIS_RUN, "changed");
         }
@@ -295,9 +307,19 @@ public class WrittenFiles {
     String refusal(PipelineStore.Run r, Written w, Sights sights) {
         boolean known = w.registered() && graph.asset(w.urn()).map(a -> !a.fields().isEmpty() && a.removedAt() == null)
             .orElse(false);
-        List<String> from = store.lineageOfRun(r.id()).stream()
+        // What it was made from: its lineage, and everything the run read (more than this write's
+        // inputs, perhaps, which only fails closed).
+        java.util.Set<String> from = new java.util.LinkedHashSet<>();
+        store.lineageOfRun(r.id()).stream()
             .filter(l -> l.nodeId().equals(w.node()) && l.outputUrn().equals(w.urn()))
-            .map(PipelineStore.Lineage::inputUrn).distinct().toList();
+            .forEach(l -> from.add(l.inputUrn()));
+        try {
+            if (r.result() != null) {
+                json.readTree(r.result()).path("read").forEach(n -> from.add(n.asText()));
+            }
+        } catch (IOException e) {
+            // the lineage, then
+        }
         Masking.Sight sight = sights.wholeFile(w.urn(), known, from,
             r.startedAt() == null ? r.requestedAt() : r.startedAt());
         if (!sight.anyHidden()) {
@@ -382,7 +404,8 @@ public class WrittenFiles {
             LinkOption.NOFOLLOW_LINKS)) {
             BasicFileAttributes a = Files.readAttributes(expected.path(), BasicFileAttributes.class,
                 LinkOption.NOFOLLOW_LINKS);
-            if (!a.isRegularFile() || a.size() != expected.size() || channel.size() != expected.size()
+            if (!a.isRegularFile() || FilesConnector.otherNames(expected.path()) || a.size() != expected.size()
+                || channel.size() != expected.size()
                 || !a.lastModifiedTime().toInstant().equals(expected.modified())
                 || !Objects.equals(a.fileKey(), expected.key())) {
                 throw new IOException("The file changed as it was about to be sent");

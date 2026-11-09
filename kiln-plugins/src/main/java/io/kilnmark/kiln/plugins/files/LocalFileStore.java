@@ -188,7 +188,7 @@ public final class LocalFileStore implements FileStore {
             throw new IOException("outside the folder");
         }
         Path real = p.toRealPath(); // NoSuchFileException when it is not there
-        if (!real.equals(p)) {
+        if (!real.toString().equals(p.toString())) { // as text: Path.equals ignores case on Windows
             throw new IOException("reached through a link, or spelt otherwise on disk");
         }
         if (!Files.isRegularFile(real, LinkOption.NOFOLLOW_LINKS)) {

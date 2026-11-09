@@ -217,6 +217,21 @@ public final class FilesConnector extends FileSourceConnector {
     public static final String WRITTEN_BYTES = "bytes";
     /** What a file write reports on its {@code SCHEMA} event: when the file was last changed, once in place. */
     public static final String WRITTEN_MODIFIED = "modified";
+    /** What a file write reports on its {@code SCHEMA} event: what the file system knows the file by (an inode). */
+    public static final String WRITTEN_KEY = "key";
+
+    /**
+     * Whether a file has other names (hard links), so that what is sent as it could be another file's
+     * content; false where the file system does not say.
+     */
+    public static boolean otherNames(Path file) {
+        try {
+            return Files.getAttribute(file, "unix:nlink", java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                instanceof Integer n && n > 1;
+        } catch (IOException | UnsupportedOperationException | IllegalArgumentException e) {
+            return false;
+        }
+    }
 
     /**
      * A file a write put in a source's folder, as it is on this server's disk now.
@@ -252,6 +267,9 @@ public final class FilesConnector extends FileSourceConnector {
                 throw new IOException("not a folder on this server");
             }
             Path file = local.exact(checked.path());
+            if (otherNames(file)) {
+                throw new IOException("the file has other names (hard links)");
+            }
             java.nio.file.attribute.BasicFileAttributes a = Files.readAttributes(file,
                 java.nio.file.attribute.BasicFileAttributes.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
             return new LocalFile(file, a.size(), a.lastModifiedTime().toInstant(), a.fileKey());

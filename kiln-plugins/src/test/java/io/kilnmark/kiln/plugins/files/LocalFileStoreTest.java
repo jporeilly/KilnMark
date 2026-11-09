@@ -153,6 +153,13 @@ class LocalFileStoreTest {
             assertFalse(e instanceof java.nio.file.NoSuchFileException, refused);
             assertFalse(String.valueOf(e.getMessage()).contains("hunter2"));
         }
+        // A file with another name (a hard link) could be another file's content: refused where the system says.
+        Path twin = share.resolve("exports/twin.csv");
+        Files.createLink(twin, share.resolve("exports/2025/orders.csv"));
+        if (FilesConnector.otherNames(twin)) {
+            assertThrows(IOException.class, () -> files.writtenFile(source, "exports/twin.csv"));
+            assertThrows(IOException.class, () -> files.writtenFile(source, "exports/2025/orders.csv"));
+        }
         Files.createDirectories(share.resolve("folder.csv"));
         assertThrows(IOException.class, () -> files.writtenFile(source, "folder.csv"), "a folder is not a file");
         // A source outside the allowed roots finds nothing, whatever the path.
