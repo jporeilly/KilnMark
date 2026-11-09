@@ -17,7 +17,9 @@ Status: version 0.1.2, early and moving fast; see the [changelog](CHANGELOG.md).
   factor), the Keycloak that comes with Kilnmark, or an API token. With the bundled Keycloak, the
   control script adds people: `kilnmark.sh people add` for one, `people import FILE` for a class or
   a team, `people activate` and `people list`; `kilnmark.sh starter people` adds the example
-  people ([Adding people](INSTALL.md#adding-people-to-the-bundled-keycloak)). Four roles: viewer,
+  people
+  ([Adding people](docs/guide/install/production-bundled-keycloak.md#adding-people-to-the-bundled-keycloak)).
+  Four roles: viewer,
   steward (runs pipelines and looks after quality), designer (builds pipelines, flows and sources)
   and admin (Settings and tokens). Columns marked sensitive stay masked for everyone but designers
   given the unmask grant, admins included ([ADR 0027](docs/adr/0027-unmasking-is-a-grant.md)).

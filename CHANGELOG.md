@@ -1086,8 +1086,9 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
   role and for seeing sensitive values, the client Kilnmark signs in with, a sign-in of a password
   and a one-time code (so Kilnmark's MFA check passes), and a sign-in page in Kilnmark's colours
   and fonts. For demonstrations, five example people at `kilnmark.com`, one per role. Every secret
-  comes from `.env`, none with a default. (INSTALL.md, "Keycloak, if you have no identity provider";
-  [Signing in](docs/guide/signing-in.md#keycloak-if-you-have-no-identity-provider))
+  comes from `.env`, none with a default.
+  ([Production with the bundled Keycloak](docs/guide/install/production-bundled-keycloak.md);
+  [People and access](docs/guide/people-and-access.md#keycloak-if-you-have-no-identity-provider))
 
 - **Run one pipeline for each item, several at once** (ADR 0040). A flow's new `for-each` node runs
   a pipeline once for each item of a list (regions, files, years), written in the flow or given as

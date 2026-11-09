@@ -55,7 +55,7 @@ it is listed under [If Kilnmark is hosted](#if-kilnmark-is-hosted) so the cost i
 
 ## Order of work
 
-This replaces "Hardening" in the [backlog](backlog.md):
+This replaces "Hardening" in the owner's backlog (kept outside this repository):
 
 1. **The audit log** (PR #58). Then audit events for data read with the unmask grant.
 2. **HTTPS and security headers; supply chain**: SBOM, signed releases, scanning, `SECURITY.md`.
