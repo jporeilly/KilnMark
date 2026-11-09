@@ -176,18 +176,13 @@ secrets, and refuses to start, naming the missing one, while either is unset or 
 The key that encrypts stored source passwords is not a setting: the server generates it on first
 start in the `keys` volume. `.env.example` lists every variable, with the required ones empty and a
 comment on how to make each. The control script's guided `install` writes `.env` with new values
-for both, from its answers (INSTALL.md; ADR 0044, ADR 0051 decision 17); by hand, from a release
-folder:
-
-```
-cp .env.example .env && chmod 600 .env    # then fill in .env
-podman compose build                      # or load the offline images file, or pull them
-podman compose up -d                      # or: docker compose ...
-```
-
-Without the values, compose stops before starting anything, for example
-`required variable KILNMARK_DB_PASSWORD is missing a value: Set KILNMARK_DB_PASSWORD to a strong
-password before starting Kilnmark (see .env.example)`. The images are
+for both, from its answers (INSTALL.md; ADR 0044, ADR 0051 decision 17). The release's
+`compose.yaml` is run through the control script, never by hand: before every compose command it
+writes each service's secrets into a file of its own (`KILNMARK_SECRETS_DIR`, which compose
+requires), and it reads `config/.env` for compose without them. For a compose command of your
+own, `kilnmark.sh compose ARGS` (`kilnmark.cmd compose ARGS`) runs it as the control script does.
+Without the database password or the admin token, the control script stops before starting
+anything, naming the missing one. The images are
 `ghcr.io/jporeilly/kilnmark-postgres:<version>` and `ghcr.io/jporeilly/kilnmark-server:<version>`:
 the release workflow builds them from the release folder (the server image from its `server`
 folder, through the Containerfile's `APP_DIR` argument), signs them and publishes them, and saves
@@ -223,6 +218,7 @@ install only. `quarkusDev` and the tests are Starter Pack installs (`%dev` and `
 | `KILNMARK_STARTER` (`keycloak-setup` only) | `allowed` on a Starter Pack install | `allowed`: `kilnmark.sh starter people` may have `keycloak-setup` make the five example people; unset, `keycloak-setup` deletes the members of the group `kilnmark-starter-pack` at every start. Never on a production install |
 | `KILNMARK_PEOPLE_ACTIVATION_HOURS` (`keycloak-setup` only) | `72` | 1 to 720: a temporary password from the `people` commands unused for longer disables its person, at every run of `keycloak-setup` and hourly through `people expire` (only the temporary passwords those commands set, marked `kilnmark-temporary`); the control scripts refuse anything else |
 | `KILNMARK_RUN_DIR` (compose only) | `../../config/run` (never used: the control scripts always set it) | The folder of this run's secrets files, `keycloak-setup.env` and `samples-db.env`, which the control script writes for each run (in `config/run` in the data folder, its own folder each time) and removes afterwards; each one-off reads its own, read-only, instead of its environment. Linux names it by its full path, Windows relative to the version's `compose.yaml` (the data folder is on the program folder's drive). The control scripts ignore a value set outside them |
+| `KILNMARK_SECRETS_DIR` (compose only) | none, required (`${...:?}`): the control scripts always set it, and compose stops without it | The folder of the long-running services' secrets files, `postgres.env`, `kilnmark.env`, `keycloak-db.env` and `keycloak.env` (`NAME=value` a line), which the control script writes afresh from `config/.env` before every compose command (yours alone: the folder `700`, each file `644` so the container's own user can read it; Windows, the same permissions as a run's folder). Compose mounts each read-only at `/run/kilnmark/env` in its service alone, and runs `containers/kilnmark-env.sh` in place of the image's entrypoint, which reads it into that program's environment, then runs the image's own entrypoint: no secret is a container setting or an `env_file` line, which podman-compose puts on Podman's command line. Set the same way as `KILNMARK_RUN_DIR`; the control scripts ignore a value set outside them |
 | `KILNMARK_CERTS_DIR` (compose only) | `./tls` | The folder of HTTPS's `server.crt` and `server.key`, mounted read-only: the control scripts set it to `certs/https` in the data folder, the same way as `KILNMARK_RUN_DIR`, and ignore a value set outside them (Windows) or in `.env` |
 | `KILNMARK_PROJECT` (control scripts) | `kilnmark` | The compose project. Install writes the answer `project` into `.env`; the environment's wins, as the hourly task and timer pass it |
 | `KILNMARK_EMAIL_DOMAIN` (control scripts) | none | The answer `email_domain`, kept for `configure`; install checks the first admin's address against it |
@@ -811,7 +807,8 @@ it installed once, under **Settings > Drivers** ([docs/design/drivers.md](design
 | `kilnmark.drivers.download-timeout` | `120s` | How long a download may take |
 
 In the compose stack the folder is in the `keys` volume, so a driver survives upgrades. To put one
-in by hand: `podman compose cp ojdbc11-23.26.3.0.0.jar kilnmark:/var/lib/kilnmark/drivers/`.
+in by hand: `podman compose cp ojdbc11-23.26.3.0.0.jar kilnmark:/var/lib/kilnmark/drivers/` (the
+developer stack), or `kilnmark.sh compose cp ...` for an installed release.
 
 **Preview.** The first rows of a table or file (100 by default, at most 1,000), read live through
 the connector with the same time limit and places as connection tests, and never stored, logged
@@ -992,6 +989,9 @@ podman compose --profile ai-download run --rm ai-download   # once: about 1.2 GB
 podman compose --profile ai up -d                           # CPU: services ai and ai-embed
 podman compose --profile ai-cuda up -d                      # or GPU: services ai-cuda and ai-embed
 ```
+
+(the developer stack; with an installed release, `kilnmark.sh compose --profile ai up -d` and so
+on, or `kilnmark.cmd compose ...`).
 
 The defaults are Qwen2.5-1.5B-Instruct (Q4_K_M, Apache 2.0) for chat and bge-small-en-v1.5 (Q8_0,
 MIT, 384 dimensions) for embeddings. For an offline install, copy the `.gguf` files into the

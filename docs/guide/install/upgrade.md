@@ -1,13 +1,25 @@
 # Upgrading
 
 `upgrade` moves an install to a later release, keeping its answers, settings and data. Download the
-release (and, without internet access, its images file), check them
-([Checking a release](checking-a-release.md)), then:
+release (and, without internet access, its images file) into your own Downloads folder, or another
+folder only you (and root or the administrators) may change, and check them
+([Checking a release](checking-a-release.md)): `upgrade` places what is in the archive as root or
+an administrator, so nobody else may be able to change it. On Windows, `upgrade` refuses an archive
+someone else may change before it asks for an administrator, and says how to fix it; it then copies
+the archive into a folder of yours alone, and checks and unpacks that copy. Then:
 
 | | Linux | Windows |
 | --- | --- | --- |
 | Online | `sudo /opt/kilnmark/kilnmark.sh upgrade kilnmark-<version>.tar.gz` | `"C:\Program Files\Kilnmark\kilnmark.cmd" upgrade kilnmark-<version>.zip`, from a prompt that is not elevated |
 | Offline | add `--offline kilnmark-<version>-images.tar.gz` | add `-Offline kilnmark-<version>-images.tar.gz` |
+
+On Linux, `upgrade` runs as root, and first refuses a program or data folder with a folder above it
+that anyone but root may change (not root's, a link, or writable by its group or others, `/tmp`
+too), before it reads anything in the data folder: someone who could swap such a folder for a link
+could have root write, change or remove wherever they liked. It says which folder. Make each folder
+above it root's and writable by root alone (`sudo chown root:root FOLDER && sudo chmod go-w
+FOLDER`), or, with Kilnmark stopped, move the data folder under one that is, as `/var/opt` is, and
+write its new path in the program folder's `data-folder.txt`; then run `upgrade` again.
 
 Kilnmark must be running, so `upgrade` can read the mode it recorded. Each step is OK or FAILED,
 with the time it took:

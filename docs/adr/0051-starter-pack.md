@@ -9,7 +9,15 @@ install layout and the guided install, decision 17, in place of the temporary Wi
 decision 15; amended 8 November 2026 after a security review of 0.1.2: expiry reads credentials
 as JSON and fails closed, decision 10; groups compared whole and names without formatting
 characters, decision 10; the marked group found at any level and the realm checked before
-anything changes, decision 16)
+anything changes, decision 16; amended 9 November 2026 after a second security review of 0.1.2:
+no secret in any long-running service's environment, decision 13; the programs an hourly run starts
+checked on Windows too, decision 15; no `$` in an answer, root writing nothing in the data folder
+once it is the account's and taking the account from its owner, the elevated step reading no
+certificate, and only a release nobody else may change run as an administrator, decision 17;
+amended again the same day after a third: no secret in an env_file either, each read from a file
+mounted into its service, decision 13; the tools looked up once and Docker's plugin folders,
+decision 15; root never under a folder others may change, the images file checked as a copy, and
+the operator a user's SID, decision 17)
 
 ## Context
 
@@ -347,6 +355,46 @@ converted: Production or Starter Pack.
     with nothing in that session logged, a failing statement included. Lines at the top of
     `pg_hba.conf`, kept there at every start of the database image, let `kilnmark_samples` reach its
     own database over TLS and refuse it every other one, whatever the grants say.
+    The services that keep running (amended 9 November 2026, after two security reviews found
+    Kilnmark's, its database's and Keycloak's secrets on podman's command line) have no secret
+    among their settings either, by any route: not in `environment`, and not in an `env_file`,
+    whose lines podman-compose 1.6 also puts on podman's command line as `-e NAME=value` (Docker
+    Compose does not, but the release must hold with both). Each reads its own from a file the
+    control script writes for it, mounted read-only into that service alone at
+    `/run/kilnmark/env`: `postgres.env`, `kilnmark.env` (the database's password, the admin token,
+    the samples login's password and the client secret, nothing of Keycloak's), `keycloak-db.env`
+    and `keycloak.env`, in `config/run/services` (a folder the account's alone, `700`; each file
+    `644`, readable inside its container whichever user that runs as, as the one-offs' files are;
+    Windows, the same permissions as a run's folder), named by `KILNMARK_SECRETS_DIR`, which has no
+    default (`${KILNMARK_SECRETS_DIR:?...}`, as the release check asks of any name holding SECRET):
+    the control scripts always set it, and compose run by hand without it stops. Compose runs
+    `containers/kilnmark-env.sh` in place of each image's entrypoint, with that entrypoint and its
+    command after it: it reads the file, `NAME=value` a line, each value taken as it is, puts them
+    in the environment of that process and the program it then runs, and runs it; a file that is
+    not there, or a line that is not `NAME=value`, stops the service and says why. A test compares
+    each entrypoint with its image's own. The files are written afresh from `config/.env`, as the
+    control script reads it, before every compose command, never as root or elevated, so every
+    start has them; they hold nothing `config/.env` does not. A missing database password or admin
+    token stops a start with its name, where compose's own `${...:?}` did; a command that only stops
+    or looks (`down`, `stop`, `status`, `logs`, `check`, uninstall's stop) never fails over the
+    secrets, and needs none. Compose itself is handed `config/.env` without its secrets (every line
+    but one whose name ends `_PASSWORD`, `_SECRET` or `_TOKEN`, written beside the services' files
+    as `compose.env`): `compose.yaml` names none, and a secret compose would read as more (a `$`)
+    can then never make compose refuse a command, `down` and `stop` included. A secret holding `$`
+    or a backtick is refused by its name for a start, as `set_line` refuses one, and the identity
+    provider's client secret, which `set_line` writes into `config/.env` as it is, is refused too,
+    when typed or piped in, with a space, a quote mark, `#` or a backslash, which `config/.env`
+    would not read back the same. A compose command by hand goes through the control script
+    (`kilnmark.sh compose ARGS`, `kilnmark.cmd compose ARGS`), which runs it with the install's
+    project, settings, secrets and profiles; the guides give no plain `podman compose` for an
+    installed release.
+    A known limit, as before: with Docker run as root (rootful), an account on the machine whose
+    uid is a container's own user's (999 for PostgreSQL, 1000 for Keycloak, 1001 for Kilnmark) can
+    read that container's processes' environment and files; rootless Podman's containers run under
+    the account's own subordinate ids, which no one else has, which is one reason it is preferred.
+    Checked with podman-compose itself: `--dry-run up` with every profile prints no secret's value
+    or name (the release's tests do this where `KILNMARK_TEST_PODMAN_COMPOSE` names it, and show
+    the same check finding them in an `environment` and an `env_file`).
 
 14. **A new database is known before it is migrated.** The server records the mode at its first
     start only into a database that had no migration history when that start began. Before the
@@ -361,9 +409,10 @@ converted: Production or Starter Pack.
 15. **The hourly run runs only what nobody else may change.** Before the task or timer is set up,
     and again at the start of every `people expire`, before anything of the install is read or
     written (its log too), the control script checks everything a run uses: the launcher, the
-    current version's `compose.yaml` and `keycloak-setup`'s script, `config/.env` and `logs`, and
-    every folder from the install root down to each (the root, `versions`, the version's folder,
-    `containers`, `containers/keycloak`, `config`). The `current` link (Linux) must be the account's
+    current version's `compose.yaml`, `keycloak-setup`'s script and `containers/kilnmark-env.sh`
+    (which every long-running service runs with its secrets; amended 9 November 2026),
+    `config/.env` and `logs`, and every folder from the install root down to each (the root,
+    `versions`, the version's folder, `containers`, `containers/keycloak`, `config`). The `current` link (Linux) must be the account's
     own and lead to a folder directly in `versions/`; `current.txt` (Windows) must name one. A
     refusal reads nothing more: never `config/.env`, nor the admin token in it, so nothing is sent
     to Kilnmark's API (whatever answers on its port). It goes to standard error, the system's
@@ -401,7 +450,33 @@ converted: Production or Starter Pack.
       Administrators' do. `up` no longer writes the folders' permissions: install set them, and a
       folder that fails the checks stops the task being set up, and the hourly run, saying which.
       The task names Windows PowerShell by its full path, never whichever one its `PATH` finds,
-      and quotes the script's path, which has a space in it (`C:\Program Files`).
+      and quotes the script's path, which has a space in it (`C:\Program Files`). The engine a run
+      starts (`KILNMARK_ENGINE`, else podman or docker as `PATH` finds it, a program only, never a
+      script of that name) and its compose tool are looked up once a run, checked by their full
+      paths, as on Linux (amended 9 November 2026), and run by those paths, so what passed is what
+      runs. With Podman, the compose tool is `PODMAN_COMPOSE_PROVIDER` if set, else
+      `docker-compose`, else `podman-compose`, as `PATH` finds them, and `PODMAN_COMPOSE_PROVIDER` is
+      then set to that full path, so Podman launches it and looks for no other. Each must be owned
+      by the operator, SYSTEM, the Administrators or TrustedInstaller and writable by nobody else,
+      where it is a link the link's own folders too, the folder it is in must take nothing from
+      anyone else (a library beside it would be loaded), and every folder above that must pass as
+      above a root. With Docker, every folder it looks in for its compose plugin (`DOCKER_CONFIG`'s
+      or the operator's `.docker\cli-plugins`, `C:\ProgramData\Docker\cli-plugins`,
+      `C:\Program Files\Docker\cli-plugins` and Docker Desktop's), whether or not it is there,
+      must let nobody else put one there: a plugin there passes as above; a folder that is not there
+      must be one nobody else may make, so the nearest folder above it that is there must take
+      nothing from anyone else (`C:\ProgramData` lets Users make folders: the message says how to
+      make it as an administrator, closed to everyone else); so are the folders Docker's
+      `config.json` adds (`cliPluginsExtraDirs`), and a `config.json` that does not read is
+      refused. With podman-compose as Podman's compose tool, every compose command passes
+      `--podman-path` and the checked engine's full path, which Podman hands on: podman-compose
+      otherwise runs podman by its bare name, which Windows looks for in Python's folder, the
+      current folder and `PATH`, past the checked one. A known limit: only the compose tool's own
+      program is checked, not what it loads in turn (podman-compose is a Python launcher, which
+      runs a Python and its modules found elsewhere; a `.cmd` shim runs whatever it names), so
+      `docker-compose`, one program, is the one to install (`winget install Docker.DockerCompose`).
+      On Linux podman-compose finds podman on the account's own `PATH` (a timer's is systemd's),
+      which the checks do not cover beyond the engine they find.
     - The admin token goes only to a listener of the account's own. Before any call to Kilnmark's
       API (`people` commands, the hourly run's records), the control script checks who listens on
       Kilnmark's port, on the loopback or all addresses, and connects to `127.0.0.1`: on Linux
@@ -510,6 +585,52 @@ converted: Production or Starter Pack.
       bundled Keycloak), disk, free ports, elevation or root, the folders' owners and who may
       write them, the hourly run's checks, and what is running. Each problem prints the command
       that fixes it.
+    - **What runs with root's or an administrator's rights** (amended 9 November 2026, after a
+      security review of 0.1.2).
+      - No answer, and no value `configure` is given, holds `$` or a backtick, named by its key,
+        never its value: compose reads `${NAME}` in `config/.env` as another setting's value, so
+        `oidc_provider_name=${KILNMARK_ADMIN_TOKEN}` would have the unauthenticated
+        `GET /api/v1/auth/status` show the admin token. The line writers refuse such a value for any
+        key too, a second line of defence.
+      - Linux: once the data folder is the account's, root writes nothing in it, since a link the
+        account planted there would lead root's write or `chown` anywhere. The account writes what
+        upgrade puts there (`config/.env.example`) and install's log, with its own rights;
+        `chown -R -h` leaves links as links; `uninstall --purge` refuses a data folder that is a
+        link. Upgrade and uninstall take the account from the data folder's owner, never from
+        `config/install.conf`, which the account may write, and refuse when install.conf names
+        another (so `runuser`, and `--purge`'s `compose down -v`, never run as someone else). The
+        certificate's files are still read as root at install (`place_certs`): whoever runs
+        `sudo install` is root already, so naming a file of root's gains them nothing.
+      - Windows: the elevated step never reads `tls_cert` or `tls_key` (neither to check nor to
+        copy them): an operator who is a standard user could otherwise point one at a folder and
+        swap it for a junction to an administrators-only file while UAC asks, and have the
+        administrator copy it into the data folder they may read. The operator copies them, with
+        their own rights, once the elevated step has made the folders.
+      - Windows: install and upgrade run what is in the release as an administrator, so before UAC
+        is asked they refuse a release folder (it, every file and folder in it, and every folder
+        above it) or an archive that anyone but the operator, SYSTEM, the Administrators or
+        TrustedInstaller may change (a folder made under `C:\` lets Authenticated Users modify what
+        is in it), saying to download it again into the operator's own Downloads folder and unpack
+        it there: changing the permissions afterwards would not take back a change already made,
+        nor a handle someone holds open to write. A OneDrive file or folder is a reparse point too
+        (OneDrive keeps them in the cloud), so a release unpacked in OneDrive is refused, saying to
+        unpack it outside OneDrive. Upgrade copies the archive and its signature into a folder of
+        the operator's alone first, and checks and unpacks that copy, so nothing can be put in its
+        place between the two. The elevated step checks the release folder again itself, with the
+        operator counted as trusted (a SID Windows' `LookupAccountSid` names a user, never a group,
+        an alias or a well-known SID), before it copies or runs anything else. The offline images
+        file is copied into a folder of the operator's alone too, and that copy checked and loaded. The Linux edition's install runs from the release as it is (`sudo install`
+        already trusts whoever may change it); its upgrade, too, copies the archive and its
+        signature into a folder of root's first, and checks and unpacks that copy, and install and
+        upgrade do the same with the offline images file, which the account then loads from root's
+        copy. Install, upgrade and uninstall refuse a program or data folder with a folder above it
+        that anyone but root may change (not root's, a link, or writable by its group or others, a
+        sticky `/tmp` too): someone who could swap one for a link, between root's check and root's
+        write, would have root write, chown or remove wherever they liked. Upgrade and uninstall
+        check it first, before root reads `config/install.conf`, and say what to do: make each
+        folder above root's and writable by root alone, or move the data folder under one that is
+        and write its new path in `data-folder.txt`. A copy of an archive or images file that does
+        not fit says which folder and how much room it needs.
     - Carried over from #135, and true of the new layout: the admin token goes only to a listener
       of the operator's (decision 15), the task names Windows PowerShell by its full path,
       `keycloak-setup`'s lookups fail closed, and a person's groups are checked by full path

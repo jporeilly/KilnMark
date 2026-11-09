@@ -55,10 +55,10 @@ Without a folder it uses the install root's `backups`. It writes a new folder, `
 
 The script reads the whole dump back before it finishes, as a restore reads it, so a dump that was
 cut short or damaged on the way fails the backup. On Linux the control script runs the release's
-`backup.sh`, which can also be run by hand from a release folder beside `compose.yaml` (it uses
-`podman compose`, or `docker compose` if Podman is not installed; `KILNMARK_COMPOSE` overrides
-that). On Windows the control script does the same itself, and writes the same files, so a backup
-restores on either. Then move `kilnmark-keys.tar` to where you keep keys, and the rest
+`backup.sh`, handing it the compose command it runs itself (with the install's settings and
+secrets); run backups through the control script (`backup`), not `backup.sh` by hand. On Windows
+the control script does the same itself, and writes the same files, so a backup restores on
+either. Then move `kilnmark-keys.tar` to where you keep keys, and the rest
 to your backup store.
 
 **How often.** Daily is a sensible start: you lose at most a day of changes. Run it from cron or a
@@ -145,31 +145,35 @@ change record too.
 
 ## Going back, and tidying up
 
-Until you remove them, the database and keys the restore replaced are kept. To go back to them,
-from the release folder (with `<time>` from the restore's last lines):
+Until you remove them, the database and keys the restore replaced are kept. To go back to them
+(with `<time>` from the restore's last lines), run compose through the control script, which runs
+it with the install's project, settings, secrets and profiles: `kilnmark.sh compose ...` on Linux,
+as the account that runs Kilnmark (`sudo -iu kilnmark /opt/kilnmark/kilnmark.sh compose ...`), or
+`"C:\Program Files\Kilnmark\kilnmark.cmd" compose ...` on Windows. A plain `podman compose` or
+`docker compose` lacks them, and stops:
 
 ```
-podman compose stop kilnmark
-podman compose exec postgres psql -U kilnmark -d postgres -c "ALTER DATABASE kilnmark RENAME TO kilnmark_restored" -c "ALTER DATABASE kilnmark_before_<time> RENAME TO kilnmark"
-podman compose run --rm --no-deps --entrypoint sh kilnmark -c "cd /var/lib/kilnmark && rm -rf drivers drivers.loaded secret.key && mv before-restore-<time>/* ."
-podman compose up -d
+kilnmark.sh compose stop kilnmark
+kilnmark.sh compose exec postgres psql -U kilnmark -d postgres -c "ALTER DATABASE kilnmark RENAME TO kilnmark_restored" -c "ALTER DATABASE kilnmark_before_<time> RENAME TO kilnmark"
+kilnmark.sh compose run --rm --no-deps --entrypoint sh kilnmark -c "cd /var/lib/kilnmark && rm -rf drivers drivers.loaded secret.key && mv before-restore-<time>/* ."
+kilnmark.sh up --no-browser
 ```
 
 Once the restored Kilnmark has worked for a while, remove them, as they hold the same sensitive
 data:
 
 ```
-podman compose exec postgres dropdb -U kilnmark kilnmark_before_<time>
-podman compose exec kilnmark rm -rf /var/lib/kilnmark/before-restore-<time>
+kilnmark.sh compose exec postgres dropdb -U kilnmark kilnmark_before_<time>
+kilnmark.sh compose exec kilnmark rm -rf /var/lib/kilnmark/before-restore-<time>
 ```
 
 A restore with `--without-keys` keeps the keys volume as it was.
 
 With the bundled Keycloak restored too, Keycloak's previous database is kept the same way. To go
-back to it, `podman compose stop keycloak`, then rename `keycloak` to `keycloak_restored` and
-`keycloak_before_<time>` to `keycloak` with `podman compose exec keycloak-db psql -U keycloak -d
-postgres -c "..."`, and `podman compose up -d`. To remove it:
-`podman compose exec keycloak-db dropdb -U keycloak keycloak_before_<time>`.
+back to it, `kilnmark.sh compose stop keycloak`, then rename `keycloak` to `keycloak_restored` and
+`keycloak_before_<time>` to `keycloak` with `kilnmark.sh compose exec keycloak-db psql -U keycloak
+-d postgres -c "..."`, and `kilnmark.sh up --no-browser`. To remove it:
+`kilnmark.sh compose exec keycloak-db dropdb -U keycloak keycloak_before_<time>`.
 
 ## Test a restore
 
@@ -191,11 +195,11 @@ A backup is proven only by restoring it. Every quarter, or as your policy asks:
 
 | What you see | What to do |
 | --- | --- |
-| `Backup failed: the database could not be dumped` | Check the database runs: `podman compose ps`, and its log with `podman compose logs postgres` |
+| `Backup failed: the database could not be dumped` | Check the database runs: `kilnmark.sh status`, and its log with `kilnmark.sh logs postgres` |
 | `kilnmark-db.dump is missing from the backup or does not match its checksum` | The backup is damaged or incomplete. Restore an earlier one |
 | `kilnmark-keys.tar is missing from the backup or does not match its checksum` | Put the keys file back from where you keep keys. If it is lost for good, run with `--without-keys` |
 | `Restore failed while restoring the backup into kilnmark_restoring` | Nothing changed. Read the error above it: often the disk is full, or the dump is damaged |
-| `Kilnmark is still running after the stop` | Nothing was replaced. Stop it (`podman compose stop kilnmark`) and run the restore again |
+| `Kilnmark is still running after the stop` | Nothing was replaced. Stop it (`kilnmark.sh down`) and run the restore again |
 | `The backup is from Kilnmark X, newer than this release` | Install release X or later, then restore |
-| `Kilnmark did not become ready` | Read `podman compose logs kilnmark`: it says why it stopped |
+| `Kilnmark did not become ready` | Read `kilnmark.sh logs kilnmark`: it says why it stopped |
 | **Test** on a source, or Kilnmark's log at start, says "A stored password cannot be opened with this server's key" | The keys were not restored, or came from another backup: restore the database and the keys from the same backup, or enter each password again under **Sources** (and AI models' keys and the mail password under **Settings**) |

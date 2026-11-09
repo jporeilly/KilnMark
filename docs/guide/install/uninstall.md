@@ -15,6 +15,14 @@
 3. With `--purge`, **removes the data folder**: its settings, secrets, answers, logs and every
    backup in it.
 
+On Linux, `uninstall` runs as root, and first refuses a program or data folder with a folder above it
+that anyone but root may change (not root's, a link, or writable by its group or others, `/tmp`
+too), before it reads anything in the data folder: someone who could swap such a folder for a link
+could have root write, change or remove wherever they liked. It says which folder. Make each folder
+above it root's and writable by root alone (`sudo chown root:root FOLDER && sudo chmod go-w
+FOLDER`), or, with Kilnmark stopped, move the data folder under one that is, as `/var/opt` is, and
+write its new path in the program folder's `data-folder.txt`; then run `uninstall` again.
+
 `--purge` asks you to type `DELETE` first (or takes it as one line on standard input). Back up
 first, somewhere other than the data folder, if you might want any of it.
 

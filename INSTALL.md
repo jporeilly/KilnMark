@@ -46,7 +46,15 @@ what else to check.
 
 ## Install
 
-Unpack the release, and from its folder:
+Unpack the release in your own Downloads folder, or another folder only you (and root or the
+administrators) may change, and run install from there. Install runs what is in that folder as
+root or an administrator, so a folder someone else may change would let them change what runs.
+On Windows, a folder made under `C:\` lets every signed-in account change what is in it: install
+refuses a release there, and an archive or folder others may change, before it asks for an
+administrator, and says how to fix it. Unpack it outside OneDrive too: OneDrive keeps its files
+in the cloud, as links Windows fetches when they are read, and install refuses those. On Linux,
+the program and data folders (`program_dir`, `data_dir`) go only under folders root alone may
+change, as `/opt` and `/var/opt` are: install refuses any other. From the release's folder:
 
 | | Linux | Windows |
 | --- | --- | --- |
