@@ -51,7 +51,7 @@ route), found again each time because it can change. `check` says which address 
 & "C:\Program Files\Kilnmark\kilnmark.cmd" check
 ```
 
-This needs `hostAddressLoopback=true` under `[wsl2]` in the same `.wslconfig`, so WSL may reach
+This needs `hostAddressLoopback=true` under `[experimental]` in the same `.wslconfig`, so WSL may reach
 Windows by its own address; `check` warns when it is missing. After changing `.wslconfig`, run
 `wsl --shutdown`, then start Kilnmark again.
 

@@ -748,16 +748,20 @@ $script:ComposeEnv = $null
 # networking, where the engine's host-gateway is the Podman machine rather than Windows, this
 # computer's own network address, found again before every compose command because it can change.
 # Else nothing: compose.yaml's default, host-gateway.
-function Test-WslMirrored {
+# A setting of %USERPROFILE%\.wslconfig, read only in its own [section] as WSL reads it; empty
+# when it is not there.
+function Get-WslSetting([string]$Section, [string]$Key) {
     $f = Join-Path $env:USERPROFILE '.wslconfig'
-    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $false }
-    return [bool](@(Get-Content -LiteralPath $f -ErrorAction SilentlyContinue) -match '^\s*networkingMode\s*=\s*mirrored\s*$')
+    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return '' }
+    $in = ''
+    foreach ($l in @(Get-Content -LiteralPath $f -ErrorAction SilentlyContinue)) {
+        if ($l -match '^\s*\[([^\]]+)\]') { $in = $Matches[1].Trim(); continue }
+        if ($in -eq $Section -and $l -match ('^\s*' + [regex]::Escape($Key) + '\s*=\s*([^#;]*)')) { return $Matches[1].Trim() }
+    }
+    return ''
 }
-function Test-WslHostLoopback {
-    $f = Join-Path $env:USERPROFILE '.wslconfig'
-    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $false }
-    return [bool](@(Get-Content -LiteralPath $f -ErrorAction SilentlyContinue) -match '^\s*hostAddressLoopback\s*=\s*true\s*$')
-}
+function Test-WslMirrored { return ((Get-WslSetting 'wsl2' 'networkingMode') -eq 'mirrored') }
+function Test-WslHostLoopback { return ((Get-WslSetting 'experimental' 'hostAddressLoopback') -eq 'true') }
 # The IPv4 address of the interface Windows sends to other networks through (the default route
 # with the lowest metric), never a link-local one. Empty when there is none.
 function Get-NetworkAddress {
@@ -1227,7 +1231,7 @@ function Test-Install([bool]$Running) {
     if (Test-WslMirrored) {
         $hostAddress = Get-HostAddress
         if (-not $hostAddress) { Add-Warning "WSL's networking is mirrored and this computer's network address was not found, so Kilnmark's container cannot reach databases or model servers (Ollama, LM Studio) on this computer." ('set KILNMARK_HOST_ADDRESS in ' + $envFile + " to this computer's address, then " + $kc + ' restart') }
-        elseif (-not (Test-WslHostLoopback)) { Add-Warning "WSL's networking is mirrored without hostAddressLoopback=true, so Kilnmark's container cannot reach databases or model servers (Ollama, LM Studio) on this computer." ('add hostAddressLoopback=true under [wsl2] in ' + (Join-Path $env:USERPROFILE '.wslconfig') + ', run wsl --shutdown, then ' + $kc + ' up') }
+        elseif (-not (Test-WslHostLoopback)) { Add-Warning "WSL's networking is mirrored without hostAddressLoopback=true, so Kilnmark's container cannot reach databases or model servers (Ollama, LM Studio) on this computer." ('add hostAddressLoopback=true under [experimental] in ' + (Join-Path $env:USERPROFILE '.wslconfig') + ', run wsl --shutdown, then ' + $kc + ' up') }
         else { Add-Passed ("Kilnmark's container reaches this computer at " + $hostAddress + ' (host.containers.internal)') }
     }
     if (-not $last) { Add-Warning ('There is no backup in '+ (Join-Path $script:Data 'backups') + '.') ($kc + ' backup') }
