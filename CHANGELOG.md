@@ -733,6 +733,11 @@ details.
   mode and install id now asks whether the table is there, rather than leaving
   `relation "kilnmark.server_setting" does not exist` in the log. Nothing else changes: the
   answer was, and is, "nothing recorded yet".
+- **Windows commands in messages and guides can be pasted into PowerShell.** The control script's
+  messages and the install guides wrote `"C:\Program Files\Kilnmark\kilnmark.cmd" starter people`,
+  which PowerShell refuses ("Unexpected token"), and some messages left the path unquoted, which
+  breaks at its space. They now write `& "C:\Program Files\Kilnmark\kilnmark.cmd" ...`; in Command
+  Prompt, leave out the `& `.
 
 From walking a 0.1.2 Starter Pack install, in the web UI:
 

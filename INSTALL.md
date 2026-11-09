@@ -153,7 +153,7 @@ Open Kilnmark at the address install printed and sign in with the admin token,
 `KILNMARK_ADMIN_TOKEN` in `config/.env`, or as the first admin. Under **API tokens**, make a
 permanent admin token for yourself and keep it safe. Then, as the operator (on Linux
 `sudo -iu kilnmark /opt/kilnmark/kilnmark.sh <command>`; on Windows
-`"C:\Program Files\Kilnmark\kilnmark.cmd" <command>`, never elevated):
+`& "C:\Program Files\Kilnmark\kilnmark.cmd" <command>`, never elevated):
 
 - `up`, `down`, `status`, `logs` start, stop and show Kilnmark;
 - `check` checks the machine and the install, with the fix for each problem;

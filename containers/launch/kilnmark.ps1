@@ -316,6 +316,10 @@ function Test-StarterMode { return ((Get-Setting 'KILNMARK_MODE') -ceq 'starter-
 # Kept apart from the example people (Test-StarterMode), which only a Starter Pack install has.
 function Test-SamplesAllowed { return (Test-StarterMode) }
 
+# How a message names this script so it can be pasted into PowerShell: & and the path in quotes
+# (C:\Program Files has a space). In Command Prompt, leave out the "& ".
+function Get-SelfCall([string]$Folder) { return ('& "' + (Join-Path $Folder 'kilnmark.cmd') + '"') }
+
 # The deployment mode Kilnmark recorded in its own database at its first start (ADR 0051), read with
 # the database's own tools: what decides, not config\.env alone. Empty when nothing is recorded, or
 # the database does not answer.
@@ -342,7 +346,7 @@ $script:PeopleMode = ''
 function Get-PeopleModeProblem {
     $script:PeopleMode = ''
     $recorded = Get-RecordedMode
-    if (-not $recorded) { return ("Kilnmark's database does not answer, or has no deployment mode recorded, so nobody was made or changed. Start Kilnmark with " + (Join-Path $script:Root 'kilnmark.cmd') + ' up, then try again.') }
+    if (-not $recorded) { return ("Kilnmark's database does not answer, or has no deployment mode recorded, so nobody was made or changed. Start Kilnmark with " + (Get-SelfCall $script:Root) + ' up, then try again.') }
     if ($recorded -cne (Get-Setting 'KILNMARK_MODE')) { return 'KILNMARK_MODE in config\.env differs from the mode Kilnmark recorded at its first start, so nobody was made or changed: set it back.' }
     $script:PeopleMode = $recorded
     return ''
@@ -670,7 +674,7 @@ function Set-ExpiryTask {
     if (Invoke-Schtasks /Create /SC HOURLY /TN (Get-ExpiryTaskName) /TR $run /F) {
         if (-not $had) { Write-Host ('Set up the hourly expiry of unused temporary passwords: the scheduled task "' + (Get-ExpiryTaskName) + '" (it runs while you are signed in to Windows).') }
     } else {
-        Write-Host ('Warning: the hourly expiry of unused temporary passwords could not be set up (Task Scheduler). Run ' + (Join-Path $script:Root 'kilnmark.cmd') + ' people expire every hour yourself; each start expires them too.') -ForegroundColor Yellow
+        Write-Host ('Warning: the hourly expiry of unused temporary passwords could not be set up (Task Scheduler). Run ' + (Get-SelfCall $script:Root) + ' people expire every hour yourself; each start expires them too.') -ForegroundColor Yellow
     }
 }
 function Remove-ExpiryTask {
@@ -1009,7 +1013,7 @@ function Get-PortFix([int]$Port) {
     if ($Port -eq (Get-Port 'KILNMARK_DB_PORT' 5442 'db_port')) { $key = 'db_port' }
     if ($Port -eq (Get-Port 'KILNMARK_KEYCLOAK_PORT' 8180 'keycloak_port')) { $key = 'keycloak_port' }
     $alt = Get-FreePort $Port
-    if ($script:Data -and (Test-Path -LiteralPath (Join-Path $script:Data 'config\install.conf'))) { return ((Join-Path $script:Root 'kilnmark.cmd') + ' configure ' + $key + '=' + $alt) }
+    if ($script:Data -and (Test-Path -LiteralPath (Join-Path $script:Data 'config\install.conf'))) { return ((Get-SelfCall $script:Root) + ' configure ' + $key + '=' + $alt) }
     return ('answer ' + $alt + ' for ' + $key + ' (in an answers file: ' + $key + '=' + $alt + ')')
 }
 
@@ -1118,7 +1122,7 @@ function Get-FolderProblem([string]$Dir, [string[]]$Allowed, [string[]]$Owners) 
 # The install itself, by its mode (ADR 0051): who runs this, who owns the folders, what is running.
 function Test-Install([bool]$Running) {
     $mode = Get-Setting 'KILNMARK_MODE'
-    $kc = Join-Path $script:Root 'kilnmark.cmd'
+    $kc = Get-SelfCall $script:Root
     if ($mode -ceq 'production' -or $mode -ceq 'starter-pack') { Add-Passed ('a ' + $mode + ' install') }
     else { Add-Problem 'KILNMARK_MODE in config\.env is not production or starter-pack: Kilnmark does not start.' ('set KILNMARK_MODE back to the mode it was installed with in ' + (Join-Path $script:Data 'config\.env')) }
     $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -2042,15 +2046,15 @@ function Invoke-Install([string[]]$Options) {
         }
     }
     $script:AdminPassword = ''
-    $kc = Join-Path $prog 'kilnmark.cmd'
+    $kc = Get-SelfCall $prog
     Write-Host ''
     Write-Host ('Kilnmark ' + $v + ' is installed: the program in ' + $prog + ', its data in ' + $data + ', run by ' + (Get-Answer 'operator') + '.')
     Write-Host ('  Sign in with the admin token, KILNMARK_ADMIN_TOKEN in ' + (Join-Path $data 'config\.env') + '; then make a token of your own under API tokens, and keep it safe.')
-    Write-Host ('  Every day, from a prompt that is not elevated: "' + $kc + '" up | down | status | check | backup | help')
-    Write-Host ('  Change an answer later: "' + $kc + '" configure KEY=VALUE')
+    Write-Host ('  Every day, from a prompt that is not elevated: ' + $kc + ' up | down | status | check | backup | help')
+    Write-Host ('  Change an answer later: ' + $kc + ' configure KEY=VALUE')
     Write-Host ('  Shortcuts on the desktop and in the Start menu: powershell -ExecutionPolicy Bypass -File "' + (Join-Path $prog 'create-shortcut.ps1') + '"')
     Write-Host '  Back it up every day, for example from Task Scheduler: kilnmark.cmd backup'
-    if ((Get-Answer 'mode') -ceq 'starter-pack') { Write-Host ('  Add the example people, with a password you type: "' + $kc + '" starter people') }
+    if ((Get-Answer 'mode') -ceq 'starter-pack') { Write-Host ('  Add the example people, with a password you type: ' + $kc + ' starter people') }
     if ((Get-Answer 'identity') -ceq 'own') { Write-Host ('  Register Kilnmark in your identity provider with the redirect URI ' + (Get-Setting 'KILNMARK_URL') + '/api/v1/auth/login.') }
     Stop-Log
 }
@@ -2315,7 +2319,7 @@ function Invoke-UninstallElevated([string[]]$Options) {
 function Invoke-Configure([string[]]$Options) {
     [void](Get-CurrentVersion)
     if (-not (Read-InstalledAnswers)) { Fail ((Join-Path $script:Data 'config\install.conf') + ", the install's answers, is missing, so configure cannot tell what install chose. Nothing was changed.") }
-    $kc = Join-Path $script:Root 'kilnmark.cmd'
+    $kc = Get-SelfCall $script:Root
     if ($Options.Count -eq 0) {
         Write-Host ("This install's answers (" + (Join-Path $script:Data 'config\install.conf') + '):')
         Show-Answers
@@ -2625,7 +2629,7 @@ $script:PeopleSoft = $false
 # Nobody made: the people command stops; install (PeopleSoft) says so and goes on.
 function Write-NoPerson([string]$Message) {
     if ($script:PeopleSoft) {
-        Write-Host ($Message + ' Add them later with: ' + (Join-Path $script:Root 'kilnmark.cmd') + ' people add') -ForegroundColor Yellow
+        Write-Host ($Message + ' Add them later with: ' + (Get-SelfCall $script:Root) + ' people add') -ForegroundColor Yellow
     } else {
         Fail $Message
     }
@@ -2653,7 +2657,7 @@ function Read-Person([string]$Groups) {
     $email = ($email -replace '\s', '').ToLowerInvariant()
     if (-not $email) {
         if ($Groups) {
-            Write-Host ('No first admin was made. Add people later with ' + (Join-Path $script:Root 'kilnmark.cmd') + ' people add (or people import, or Keycloak''s console: docs/guide/install/production-bundled-keycloak.md).')
+            Write-Host ('No first admin was made. Add people later with ' + (Get-SelfCall $script:Root) + ' people add (or people import, or Keycloak''s console: docs/guide/install/production-bundled-keycloak.md).')
         } else {
             Write-NoPerson 'No email was given. Nobody was made.'
         }
@@ -2853,7 +2857,7 @@ function Invoke-People([string[]]$Options) {
             if ($script:PeopleMode -ceq 'starter-pack') {
                 Write-Host 'Each person made signs in with that password, then chooses their own and sets up a one-time code.'
             } else {
-                Write-Host ('Each person made waits, disabled, until you give them a temporary password of their own: ' + (Join-Path $script:Root 'kilnmark.cmd') + ' people activate EMAIL')
+                Write-Host ('Each person made waits, disabled, until you give them a temporary password of their own: ' + (Get-SelfCall $script:Root) + ' people activate EMAIL')
             }
         }
         'activate' {
@@ -3163,11 +3167,11 @@ function Invoke-Restore([string[]]$Options) {
     Write-Host '  - revoke again any token revoked after that time, and check Settings > Access review;'
     if (-not $keys) { Write-Host "  - enter every stored password again (Sources; AI models' keys; the mail password);" }
     Write-Host '  - run again the scans and pipelines that ran after it, if their results are needed;'
-    Write-Host ('  - once all is well, drop the previous database: ' + (Join-Path $script:Root 'kilnmark.cmd') + ' compose exec postgres dropdb -U kilnmark ' + $before)
+    Write-Host ('  - once all is well, drop the previous database: ' + (Get-SelfCall $script:Root) + ' compose exec postgres dropdb -U kilnmark ' + $before)
     if ($restoreKeycloak) {
         Write-Host '  - Keycloak is back to the backup too: people added or changed since then are gone, and anyone'
         Write-Host '    removed since is back (remove them again). Then drop its previous database:'
-        Write-Host ('    ' + (Join-Path $script:Root 'kilnmark.cmd') + ' compose exec keycloak-db dropdb -U keycloak ' + $kcBefore)
+        Write-Host ('    ' + (Get-SelfCall $script:Root) + ' compose exec keycloak-db dropdb -U keycloak ' + $kcBefore)
     }
 }
 

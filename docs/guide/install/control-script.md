@@ -5,6 +5,9 @@ One script installs, starts, stops, configures, checks, backs up and upgrades Ki
 ([ADR 0044](../../adr/0044-installing-with-one-control-script.md)). After install it is in the
 program folder: `/opt/kilnmark/kilnmark.sh`, or `C:\Program Files\Kilnmark\kilnmark.cmd`. Run with
 no command, it starts Kilnmark. On Windows, options are written `-Offline`, `-SkipVerify` and so on.
+In PowerShell, start the line with `&`, as the commands in these guides and the script's own
+messages do: `& "C:\Program Files\Kilnmark\kilnmark.cmd" status` (the path is in quotes because of
+its space, and PowerShell runs a quoted path only after `&`). In Command Prompt, leave out the `& `.
 
 ## Who runs what
 
