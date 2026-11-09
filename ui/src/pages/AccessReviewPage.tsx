@@ -59,7 +59,10 @@ export function sensitiveWords(e: AccessReviewEntry): string {
     return notSignedIn(e) ? "Will see them unmasked once activated and signed in" : "Sees them unmasked";
   }
   if (groups.length > 0) {
-    return `In ${groups.join(", ")}, but not a designer: sees them masked`;
+    // a designer whose last sign-in gave no grant: the unmask settings changed since
+    return e.role === "designer"
+      ? `In ${groups.join(", ")}, but their last sign-in did not give the grant: sees them masked`
+      : `In ${groups.join(", ")}, but not a designer: sees them masked`;
   }
   return e.groups == null && e.kind === "provider" ? "Not recorded" : "No";
 }

@@ -181,6 +181,10 @@ describe("the access review's words", () => {
       lastSeen(person({ state: "no-role", lastUsedAt: "2026-11-02T10:00:00Z", signIns: 0, status: "signed in, but given no role" })),
     ).not.toContain("sign-ins");
     expect(sensitiveWords(person({ groups: null, sensitiveGroups: null }))).toBe("Not recorded");
+    // a designer in the group whose last sign-in gave no grant (the settings changed since) is still a designer
+    expect(
+      sensitiveWords(person({ role: "designer", state: "signed-in", sensitiveGroups: ["kilnmark-sensitive-data"] })),
+    ).toContain("their last sign-in did not give the grant");
     expect(groupWords(person({ groups: [] }))).toBe("None that gives a role");
     expect(lastSeen(person({ createdAt: null }))).toBe("Not yet");
   });

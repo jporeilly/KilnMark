@@ -144,12 +144,20 @@ public class AccessReviewResource {
                 t.createdAt(), t.expiresAt(), t.lastUsedAt(), null, t.unmaskApprovedBy(), false, null, null, null));
         }
         List<AuditLog.SignedIn> signedIn = audit.signIns();
+        // each sign-in by its user name, read once: the bundled Keycloak's is the person's email, which
+        // keycloak-setup makes and people cannot change
+        Map<String, List<AuditLog.SignedIn>> byUser = new java.util.HashMap<>();
+        for (AuditLog.SignedIn s : signedIn) {
+            String user = userOf(s.name());
+            if (user != null) {
+                byUser.computeIfAbsent(user, u -> new ArrayList<>()).add(s);
+            }
+        }
         Set<String> shown = new HashSet<>();
         List<Entry> waiting = new ArrayList<>();
         for (AuditLog.PersonRecord p : audit.peopleRecorded()) {
-            // their sign-ins, by the user name the bundled Keycloak gives them (their email, which
-            // keycloak-setup makes and people cannot change), since the latest people event for them
-            List<AuditLog.SignedIn> theirs = signedIn.stream().filter(s -> sameUser(s.name(), p.person())).toList();
+            // their sign-ins, since the latest people event for them
+            List<AuditLog.SignedIn> theirs = byUser.getOrDefault(p.person(), List.of());
             theirs.forEach(s -> shown.add(s.name()));
             if (theirs.stream().noneMatch(s -> s.lastId() > p.latestId())) {
                 waiting.add(madeEntry(oidc, p));
@@ -172,9 +180,20 @@ public class AccessReviewResource {
      * that itself ends in a bracketed word, say) passes for theirs.
      */
     static boolean sameUser(String signInName, String person) {
-        return signInName != null && person != null && java.util.regex.Pattern.compile(java.util.regex.Pattern.quote(
-            io.kilnmark.server.auth.OidcIdentityAugmentor.PREFIX + person) + " \\([^()\\s]+\\)").matcher(signInName)
-            .matches();
+        return person != null && person.equals(userOf(signInName));
+    }
+
+    /** A sign-in's name: {@code sso:}, the user name, and the provider's ID, one word in brackets. */
+    private static final java.util.regex.Pattern SIGN_IN_NAME = java.util.regex.Pattern.compile(
+        java.util.regex.Pattern.quote(io.kilnmark.server.auth.OidcIdentityAugmentor.PREFIX) + "(.+) \\([^()\\s]+\\)");
+
+    /** The user name in a sign-in's name, or null when it is not of that shape. */
+    static String userOf(String signInName) {
+        if (signInName == null) {
+            return null;
+        }
+        java.util.regex.Matcher m = SIGN_IN_NAME.matcher(signInName);
+        return m.matches() ? m.group(1) : null;
     }
 
     private static Entry signedInEntry(KilnmarkConfig.Oidc oidc, AuditLog.SignedIn s) {
@@ -207,7 +226,7 @@ public class AccessReviewResource {
             status = p.hours() == null ? "disabled: temporary password unused"
                 : "disabled: temporary password unused for " + p.hours() + " hours";
         } else if ("added".equals(p.latest()) && "import".equals(p.via())
-            && !io.kilnmark.server.starter.ModeCheck.samplesAllowed(config)) {
+            && !io.kilnmark.server.starter.ModeCheck.starterPack(config)) {
             // a production import gives nobody a password: each waits, disabled, for people activate
             state = NOT_ACTIVATED;
             status = "waiting to be activated";

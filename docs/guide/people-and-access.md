@@ -124,7 +124,8 @@ them:
   not do, which lines need the sensitive-data grant, and which of your identity provider's groups
   give each role and the grant. It comes from the server itself. Kilnmark's tests hold every line to
   the role each endpoint asks, and try each line as every role, so a line that says more or less
-  than those checks fails the build.
+  than those checks fails the build. A narrower rule inside a line is said in its words (running a
+  failed flow again, for example), and the guide has the finer rules.
 - **Rules in force**, read-only: the longest token lifetime, whether a second person approves the
   sensitive-data grant, whether people sign in with your identity provider and, if they do, the
   longest sign-in and whether a second factor is required, when a person's schedules pause, and
@@ -171,7 +172,9 @@ Check those at your identity provider. Reading the provider's own list of people
 Kilnmark to hold a credential for it, which it does not, by design.
 
 **Download CSV** gives your auditors a copy to keep, with every entry's state, groups and
-sensitive-data groups. Each view and download is recorded in the audit log.
+sensitive-data groups. For someone who has not signed in (state `waiting`, `not-activated` or
+`disabled`), `role` and `unmask` are what their groups will give them once they do: read them with
+`state`. Each view and download is recorded in the audit log.
 
 Schedules follow what the access review shows: a schedule runs only while the token or person that
 set it still has its role, and a person must have signed in within 30 days; it is paused when that
