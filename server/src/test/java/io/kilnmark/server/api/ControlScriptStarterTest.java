@@ -235,8 +235,10 @@ class ControlScriptStarterTest {
         }
         // written before every compose command, so every start (up, restart, upgrade, configure's
         // restart, install's start, the hourly run) has them
-        assertTrue(sh.contains("  ! samples_allowed || compose+=(--profile starter-pack)\n  write_service_secrets\n}"), "set_compose writes them");
-        assertTrue(ps.replace("\r\n", "\n").contains("    Write-ServiceSecrets $dir\n    return $list\n}"), "Get-ComposeArgs writes them");
+        assertTrue(sh.contains("  write_service_secrets\n  compose=(\"$engine\" compose -p \"$project\" --env-file \"$compose_env\" -f \"$dir/compose.yaml\")\n"),
+            "set_compose writes them first, and compose reads config/.env without its secrets");
+        assertTrue(ps.replace("\r\n", "\n").contains("    Write-ServiceSecrets $dir\n    $list = @(Get-ComposeLead) + @('-p', $Project, '--env-file', $script:ComposeEnv,"),
+            "Get-ComposeArgs too");
         assertTrue(sh.contains("export KILNMARK_SECRETS_DIR=\"$dir\"") && ps.contains("$env:KILNMARK_SECRETS_DIR = $rel"));
     }
 
@@ -299,6 +301,65 @@ class ControlScriptStarterTest {
             + "    env_file:\n      - ${KILNMARK_SECRETS_DIR:?Start Kilnmark with its control script, which writes each service secrets file and sets KILNMARK_SECRETS_DIR}/kilnmark.env\n";
         assertTrue(podmanComposeLeaks(pc, before).containsAll(List.of("value of KILNMARK_DB_PASSWORD", "value of KILNMARK_ADMIN_TOKEN",
             "name POSTGRES_PASSWORD", "name KILNMARK_ADMIN_TOKEN")), "the check sees an environment's secret, and an env_file's");
+    }
+
+    /**
+     * Windows, with Podman and podman-compose as its compose tool: podman-compose runs podman by its
+     * bare name unless it is given --podman-path, so Windows would look for podman.exe in Python's
+     * folder, the current folder and PATH again, past the one the hourly run's checks passed. The
+     * control script hands it the checked path: a podman.exe planted earlier on PATH never runs,
+     * and the checked engine does. Real podman-compose, a fake podman that passes compose on to it.
+     */
+    @Test
+    void podmanComposeIsHandedTheCheckedPodman() throws Exception {
+        String powershell = System.getenv("KILNMARK_TEST_POWERSHELL");
+        String pc = System.getenv("KILNMARK_TEST_PODMAN_COMPOSE");
+        Assumptions.assumeTrue(powershell != null && !powershell.isBlank() && pc != null && !pc.isBlank(),
+            "set KILNMARK_TEST_POWERSHELL and KILNMARK_TEST_PODMAN_COMPOSE to run this");
+        // a podman.exe that only notes it ran, earlier on PATH than anything else
+        Path evil = Files.createTempDirectory("kilnmark-planted");
+        Path ran = evil.resolve("ran.txt");
+        Path build = evil.resolve("build.ps1");
+        Files.writeString(build, "Add-Type -OutputType ConsoleApplication -OutputAssembly '" + evil.resolve("podman.exe")
+            + "' -TypeDefinition 'public static class P { public static void Main() { System.IO.File.WriteAllText(@\"" + ran
+            + "\", \"ran\"); } }'\r\n");
+        Process b = new ProcessBuilder(powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", build.toString()).redirectErrorStream(true).start();
+        String built = new String(b.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertEquals(0, b.waitFor(), built);
+        assertTrue(Files.exists(evil.resolve("podman.exe")), built);
+        // the checked engine: answers podman's questions, passes compose on to its compose tool
+        Path bin = Files.createTempDirectory("kilnmark-engine-ok-podman");
+        Path used = bin.resolve("used.log");
+        Files.writeString(bin.resolve("podman.cmd"), "@echo off\r\n"
+            + "if \"%1\"==\"compose\" goto compose\r\n"
+            + "echo %*>> \"" + used + "\"\r\n"
+            + "if \"%1\"==\"--version\" (echo podman version 5.4.2& exit /b 0)\r\n"
+            + "if \"%1\"==\"version\" (echo 5.4.2& exit /b 0)\r\n"
+            + "if \"%1\"==\"ps\" (echo []& exit /b 0)\r\n"
+            + "exit /b 0\r\n"
+            + ":compose\r\n"
+            + "set rest=%*\r\n"
+            + "call set rest=%%rest:*compose =%%\r\n"
+            + "\"%PODMAN_COMPOSE_PROVIDER%\" %rest%\r\n"
+            + "exit /b %ERRORLEVEL%\r\n");
+        Path root = installRoot(true);
+        writeEnv(root, Map.of("KILNMARK_MODE", "production"));
+        String system = System.getenv("SystemRoot");
+        Map<String, String> env = new LinkedHashMap<>();
+        env.put("PATH", evil + ";" + system + "\\System32;" + system + ";" + system + "\\System32\\WindowsPowerShell\\v1.0");
+        env.put("PODMAN_COMPOSE_PROVIDER", pc);
+        List<String> c = new ArrayList<>(List.of(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+            LAUNCH.resolve("kilnmark.ps1").toAbsolutePath().toString(), "compose", "ps"));
+        String out = run(c, root, bin.resolve("podman.cmd").toString(), env);
+        assertFalse(Files.exists(ran), "the podman.exe planted on PATH ran: " + out);
+        assertTrue(Files.exists(used) && Files.readString(used).contains("ps"), "the checked podman ran podman-compose's ps: " + out);
+        // and the check can fail: podman-compose by itself, not handed the path, runs the planted one
+        ProcessBuilder bare = new ProcessBuilder(pc, "-f", root.resolve("versions/9.9.9/compose.yaml").toString(), "ps").redirectErrorStream(true);
+        bare.environment().put("PATH", env.get("PATH"));
+        Process q = bare.start();
+        q.getInputStream().readAllBytes();
+        q.waitFor(60, TimeUnit.SECONDS);
+        assertTrue(Files.exists(ran), "podman-compose ran podman by its bare name");
     }
 
     /** What of the secrets podman-compose --dry-run up prints over {@code compose}, with throwaway values. */
@@ -1379,7 +1440,7 @@ class ControlScriptStarterTest {
         // never a task or timer that runs a script others may change, as the user (Windows) or root (Linux)
         if (t.windows()) {
             // the launcher, then a file a run reads (config\.env), each writable by everyone
-            for (String file : List.of("kilnmark.ps1", "config\\.env", "versions\\9.9.9\\containers")) {
+            for (String file : List.of("kilnmark.ps1", "config\\.env", "versions\\9.9.9\\containers", "versions\\9.9.9\\containers\\kilnmark-env.sh")) {
                 Path planted = t.root().resolve(file);
                 icacls(planted, "/grant", "*S-1-1-0:(W)");
                 Timer open = t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"));
@@ -1402,7 +1463,7 @@ class ControlScriptStarterTest {
             // (where chmod means it: Git Bash on Windows keeps NTFS's permissions as they are)
             boolean posix = !System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win");
             for (String file : posix ? List.of("config/.env", "versions/9.9.9/containers/keycloak/setup.sh",
-                "versions/9.9.9/containers") : List.<String>of()) {
+                "versions/9.9.9/containers/kilnmark-env.sh", "versions/9.9.9/containers") : List.<String>of()) {
                 Path planted = t.root().resolve(file);
                 chmod(planted, "g+w");
                 Timer open = t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"));
@@ -1422,6 +1483,23 @@ class ControlScriptStarterTest {
         // a project name the timer could not take is refused at once
         String bad = t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"), Map.of("KILNMARK_PROJECT", "My Kilnmark"), "").out();
         assertTrue(bad.contains("KILNMARK_PROJECT is lower-case letters"), bad);
+        // what stops needs no secret: down and uninstall's stop work whatever the secrets hold or lack,
+        // and compose reads config/.env without them; a start refuses a secret with $ by its name
+        Map<String, String> broken = new LinkedHashMap<>(WITH_KEYCLOAK);
+        broken.put("KILNMARK_ADMIN_TOKEN", "");
+        broken.put("KILNMARK_KEYCLOAK_ADMIN_PASSWORD", "kc${oops");
+        String down = t.run(broken, List.of("down")).out();
+        assertTrue(down.contains("Kilnmark is stopped. Its data is kept."), down);
+        String composeEnv = Files.readString(t.root().resolve("config/run/services/compose.env"));
+        assertTrue(composeEnv.contains("KILNMARK_MODE=production") && !composeEnv.contains("PASSWORD") && !composeEnv.contains("TOKEN="), composeEnv);
+        Map<String, String> dollar = new LinkedHashMap<>(WITH_KEYCLOAK);
+        dollar.put("KILNMARK_KEYCLOAK_ADMIN_PASSWORD", "kc${oops");
+        String upDollar = t.run(dollar, List.of("up", "--no-browser")).out();
+        assertTrue(upDollar.contains("KILNMARK_KEYCLOAK_ADMIN_PASSWORD in config") && upDollar.contains("holds $ or `")
+            && !upDollar.contains("oops") && !upDollar.contains("is ready at"), upDollar);
+        Timer stoppedBroken = t.run(broken, List.of("_stop-for-uninstall"));
+        assertTrue(stoppedBroken.out().contains("Kilnmark is stopped and will not start again by itself"), stoppedBroken.out());
+        t.run(WITH_KEYCLOAK, List.of("up", "--no-browser"));
         Timer gone = t.run(WITH_KEYCLOAK, List.of("_stop-for-uninstall"));
         assertTrue(gone.out().contains("Removed the hourly expiry"), gone.out());
         assertTrue(gone.units().isEmpty() || !gone.units().contains("people expire"), gone.units());
@@ -1499,8 +1577,10 @@ class ControlScriptStarterTest {
             Path services = run.resolve("services");
             if (Files.isDirectory(services)) {
                 try (var kept = Files.list(services)) {
-                    assertEquals(List.of("keycloak-db.env", "keycloak.env", "kilnmark.env", "postgres.env"),
-                        kept.map(p -> p.getFileName().toString()).sorted().toList(), "the services' files, and nothing else");
+                    // (compose.env always; the services' files once their secrets were all there to write)
+                    List<String> names = kept.map(p -> p.getFileName().toString()).sorted().toList();
+                    assertTrue(List.of(List.of("compose.env"), List.of("compose.env", "keycloak-db.env", "keycloak.env", "kilnmark.env", "postgres.env"))
+                        .contains(names), "the services' files, and nothing else: " + names);
                 }
             }
         }
@@ -1702,6 +1782,7 @@ class ControlScriptStarterTest {
         // what an hourly run uses, as install leaves it: the launcher at the root, setup's script
         Files.createDirectories(v.resolve("containers/keycloak"));
         Files.writeString(v.resolve("containers/keycloak/setup.sh"), "# setup\n");
+        Files.writeString(v.resolve("containers/kilnmark-env.sh"), "# the services' start\n");
         Files.writeString(root.resolve("config/.env"), "");
         // the program folder names its data folder (install writes it): here, the same folder
         Files.writeString(root.resolve("data-folder.txt"), root.toString() + "\n");

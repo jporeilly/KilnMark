@@ -27,6 +27,7 @@ the operator: on Windows the Podman machine is theirs, on Linux the account's ro
 | `restart [service]` | Restarts everything (a stop, then `up`, so `keycloak-setup` and `samples-db` run again), or one service |
 | `status` | Version, folders, containers, health, the last backup, and, with the bundled Keycloak, the hourly expiry of unused temporary passwords |
 | `logs [service] [-f]` | The last 200 lines of the logs, or follows them |
+| `compose ARGS` | Runs compose as Kilnmark runs it, with the install's project, settings, secrets and profiles, for a command by hand: `compose ps`, `compose exec postgres ...` |
 | `check` | Checks the machine and the install, for its mode, and prints the command that fixes each problem (below). Changes nothing |
 | `configure [KEY=VALUE ...]` | Shows the install's answers, or changes them (below) |
 | `verify FILE` | Checks a downloaded file against its signature |
@@ -116,15 +117,15 @@ beside it. Kilnmark's data is in the compose project's volumes (`<project>_pgdat
 restarts by itself after a reboot: on Linux, install turns on lingering for the account, and `up`
 turns on its `podman-restart` service.
 
-A compose command run by hand, as the operator, from the program folder:
-`podman compose -p kilnmark --env-file /var/opt/kilnmark/config/.env -f current/compose.yaml` (or
-`docker compose`), which is what the control script runs. Start it through the control script
-rather than by hand: it writes the one-offs' secrets for each run and removes them after, and,
+A compose command of your own: `kilnmark.sh compose ARGS` (Windows: `kilnmark.cmd compose ARGS`),
+as the operator, which runs compose as the control script does, with the install's project,
+settings, secrets and profiles (for example `kilnmark.sh compose ps`, or `compose exec postgres
+psql -U kilnmark`). A plain `podman compose` from the program folder lacks them and stops. Start
+Kilnmark through the control script: it writes the one-offs' secrets for each run and removes them after, and,
 before every compose command, each long-running service's secrets into a file of its own in
 `config/run/services` (yours alone), which compose mounts read-only into that service alone. No
 secret is a container's setting in `compose.yaml`, nor in an `env_file`: podman-compose puts both
-on Podman's command line, where any account on the machine can read them. By hand, set
-`KILNMARK_SECRETS_DIR` to that folder. A secret changed by hand in `config/.env` reaches its service at the next
+on Podman's command line, where any account on the machine can read them. A secret changed by hand in `config/.env` reaches its service at the next
 `restart` (a stop, then `up`), which `configure` runs itself.
 
 ## Who may change what a run uses

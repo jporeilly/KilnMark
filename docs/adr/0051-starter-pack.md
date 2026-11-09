@@ -377,10 +377,17 @@ converted: Production or Starter Pack.
     start has them; they hold nothing `config/.env` does not. A missing database password or admin
     token stops a start with its name, where compose's own `${...:?}` did; a command that only stops
     or looks (`down`, `stop`, `status`, `logs`, `check`, uninstall's stop) never fails over the
-    secrets, and needs none. As the file is read by Kilnmark's own script, a secret may hold any
-    character but a line break; only the identity provider's client secret, which `set_line`
-    writes into `config/.env` as it is, is refused, when typed or piped in, with a space, a quote
-    mark, `#`, `$`, a backtick or a backslash, which `config/.env` would not read back the same.
+    secrets, and needs none. Compose itself is handed `config/.env` without its secrets (every line
+    but one whose name ends `_PASSWORD`, `_SECRET` or `_TOKEN`, written beside the services' files
+    as `compose.env`): `compose.yaml` names none, and a secret compose would read as more (a `$`)
+    can then never make compose refuse a command, `down` and `stop` included. A secret holding `$`
+    or a backtick is refused by its name for a start, as `set_line` refuses one, and the identity
+    provider's client secret, which `set_line` writes into `config/.env` as it is, is refused too,
+    when typed or piped in, with a space, a quote mark, `#` or a backslash, which `config/.env`
+    would not read back the same. A compose command by hand goes through the control script
+    (`kilnmark.sh compose ARGS`, `kilnmark.cmd compose ARGS`), which runs it with the install's
+    project, settings, secrets and profiles; the guides give no plain `podman compose` for an
+    installed release.
     A known limit, as before: with Docker run as root (rootful), an account on the machine whose
     uid is a container's own user's (999 for PostgreSQL, 1000 for Keycloak, 1001 for Kilnmark) can
     read that container's processes' environment and files; rootless Podman's containers run under
@@ -402,9 +409,10 @@ converted: Production or Starter Pack.
 15. **The hourly run runs only what nobody else may change.** Before the task or timer is set up,
     and again at the start of every `people expire`, before anything of the install is read or
     written (its log too), the control script checks everything a run uses: the launcher, the
-    current version's `compose.yaml` and `keycloak-setup`'s script, `config/.env` and `logs`, and
-    every folder from the install root down to each (the root, `versions`, the version's folder,
-    `containers`, `containers/keycloak`, `config`). The `current` link (Linux) must be the account's
+    current version's `compose.yaml`, `keycloak-setup`'s script and `containers/kilnmark-env.sh`
+    (which every long-running service runs with its secrets; amended 9 November 2026),
+    `config/.env` and `logs`, and every folder from the install root down to each (the root,
+    `versions`, the version's folder, `containers`, `containers/keycloak`, `config`). The `current` link (Linux) must be the account's
     own and lead to a folder directly in `versions/`; `current.txt` (Windows) must name one. A
     refusal reads nothing more: never `config/.env`, nor the admin token in it, so nothing is sent
     to Kilnmark's API (whatever answers on its port). It goes to standard error, the system's
@@ -460,10 +468,15 @@ converted: Production or Starter Pack.
       nothing from anyone else (`C:\ProgramData` lets Users make folders: the message says how to
       make it as an administrator, closed to everyone else); so are the folders Docker's
       `config.json` adds (`cliPluginsExtraDirs`), and a `config.json` that does not read is
-      refused. A known limit: only the compose tool's own program is checked, not what it loads in
-      turn (podman-compose is a Python launcher, which runs a Python and its modules found
-      elsewhere; a `.cmd` shim runs whatever it names), so `docker-compose`, one program, is the
-      one to install (`winget install Docker.DockerCompose`).
+      refused. With podman-compose as Podman's compose tool, every compose command passes
+      `--podman-path` and the checked engine's full path, which Podman hands on: podman-compose
+      otherwise runs podman by its bare name, which Windows looks for in Python's folder, the
+      current folder and `PATH`, past the checked one. A known limit: only the compose tool's own
+      program is checked, not what it loads in turn (podman-compose is a Python launcher, which
+      runs a Python and its modules found elsewhere; a `.cmd` shim runs whatever it names), so
+      `docker-compose`, one program, is the one to install (`winget install Docker.DockerCompose`).
+      On Linux podman-compose finds podman on the account's own `PATH` (a timer's is systemd's),
+      which the checks do not cover beyond the engine they find.
     - The admin token goes only to a listener of the account's own. Before any call to Kilnmark's
       API (`people` commands, the hourly run's records), the control script checks who listens on
       Kilnmark's port, on the loopback or all addresses, and connects to `127.0.0.1`: on Linux
@@ -613,7 +626,11 @@ converted: Production or Starter Pack.
         copy. Install, upgrade and uninstall refuse a program or data folder with a folder above it
         that anyone but root may change (not root's, a link, or writable by its group or others, a
         sticky `/tmp` too): someone who could swap one for a link, between root's check and root's
-        write, would have root write, chown or remove wherever they liked.
+        write, would have root write, chown or remove wherever they liked. Upgrade and uninstall
+        check it first, before root reads `config/install.conf`, and say what to do: make each
+        folder above root's and writable by root alone, or move the data folder under one that is
+        and write its new path in `data-folder.txt`. A copy of an archive or images file that does
+        not fit says which folder and how much room it needs.
     - Carried over from #135, and true of the new layout: the admin token goes only to a listener
       of the operator's (decision 15), the task names Windows PowerShell by its full path,
       `keycloak-setup`'s lookups fail closed, and a person's groups are checked by full path

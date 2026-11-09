@@ -105,6 +105,8 @@ Every day, as the operator, from a prompt that is not elevated:
   restart [SERVICE]    Restart everything (a stop, then up), or one service.
   status               Version, folders, containers, health and the last backup.
   logs [SERVICE] [-f]  The last 200 lines of the logs, or follow them.
+  compose ARGS ...     Run compose as Kilnmark runs it (its project, settings, secrets and
+                       profiles), for a command by hand: compose ps, compose exec postgres ...
   check                Check the prerequisites and the install, for its mode, changing nothing:
                        each problem with the command that fixes it.
   configure [KEY=VALUE ...]
@@ -277,7 +279,8 @@ function Select-Engine {
             if ($LASTEXITCODE -ne 0) { Fail 'The Podman machine could not start. If Podman has none yet, make one with: podman machine init' }
         }
     }
-    & $script:Engine compose version *> $null
+    $lead = @(Get-ComposeLead)
+    & $script:Engine @lead version *> $null
     if ($LASTEXITCODE -ne 0) { Fail ("'" + $script:EngineName + " compose' does not work: Podman needs a compose tool (winget install Docker.DockerCompose). Then run this again.") }
 }
 
@@ -587,7 +590,7 @@ function Get-EngineProblem {
 # Why someone other than you, SYSTEM or the Administrators may change what an hourly run uses, or
 # nothing (ADR 0051, decisions 15 and 17): the task runs kilnmark.ps1 from the program folder as
 # you, and that run reads current.txt, data-folder.txt, the current version's compose.yaml and
-# keycloak-setup's script there, and config\.env in the data folder, and writes to its logs\. Each,
+# keycloak-setup's script and kilnmark-env.sh there, and config\.env in the data folder, and writes to its logs\. Each,
 # and every folder from its root down to it, must pass Get-ItemProblem, and current.txt must name a
 # folder directly in versions\. Above each root, every folder must pass Get-AboveProblem. And the
 # programs it starts, the engine and the compose tool Podman launches, Get-EngineProblem.
@@ -600,7 +603,7 @@ function Get-TreeProblem {
     if (Test-Path -LiteralPath $marker -PathType Leaf) { $v = ([IO.File]::ReadAllText($marker)).Trim() }
     if ($v -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$') { return ($marker + ' does not name a version in ' + (Join-Path $top 'versions')) }
     $items = @(@($top, 'kilnmark.ps1'), @($top, 'current.txt'), @($top, 'data-folder.txt'), @($top, ('versions\' + $v + '\compose.yaml')),
-        @($top, ('versions\' + $v + '\containers\keycloak\setup.sh')), @($data, 'config\.env'))
+        @($top, ('versions\' + $v + '\containers\keycloak\setup.sh')), @($top, ('versions\' + $v + '\containers\kilnmark-env.sh')), @($data, 'config\.env'))
     if (Test-Path -LiteralPath (Join-Path $data 'logs')) { $items += , @($data, 'logs') }
     $seen = @{}
     foreach ($item in $items) {
@@ -685,7 +688,8 @@ function Get-ComposeArgs {
     $env = Join-Path $script:Data 'config\.env'
     if (-not (Test-Path -LiteralPath $env)) { Fail ('There is no ' + $env + '. Install Kilnmark with: kilnmark.cmd install, from the unpacked release folder') }
     $dir = Get-CurrentDir
-    $list = @('compose', '-p', $Project, '--env-file', $env, '-f', (Join-Path $dir 'compose.yaml'))
+    Write-ServiceSecrets $dir
+    $list = @(Get-ComposeLead) + @('-p', $Project, '--env-file', $script:ComposeEnv, '-f', (Join-Path $dir 'compose.yaml'))
     # HTTPS's certificate and key, in the data folder: relative to compose.yaml, on the same drive
     $certs = Get-RelativePath $dir (Join-Path $script:Data 'certs\https')
     if ($certs) { $env:KILNMARK_CERTS_DIR = $certs }
@@ -695,8 +699,19 @@ function Get-ComposeArgs {
     }
     # The Starter Pack's database is made only on a Starter Pack install (ADR 0051).
     if (Test-SamplesAllowed) { $list += @('--profile', 'starter-pack') }
-    Write-ServiceSecrets $dir
     return $list
+}
+
+# The words that start every compose command: compose, and with Podman and podman-compose as its
+# compose tool, --podman-path and the engine's full path, which Podman passes on as it is.
+# podman-compose otherwise runs podman by its bare name, which Windows looks for in python.exe's
+# folder, the current folder and PATH, past the path the hourly run's checks passed.
+function Get-ComposeLead {
+    $t = Get-Tools
+    if ($t.Compose -and [IO.Path]::GetFileNameWithoutExtension($t.Engine) -eq 'podman' -and [IO.Path]::GetFileNameWithoutExtension($t.Compose) -like 'podman-compose*') {
+        return @('compose', '--podman-path', $t.Engine)
+    }
+    return @('compose')
 }
 
 # A value Set-Line writes as it is and Get-Setting reads back the same: no space, quote mark, #, $,
@@ -711,8 +726,12 @@ function Test-PlainValue([string]$Value) { return ($Value -and $Value -notmatch 
 # yours alone (as each run's folder), written afresh from config\.env before every compose command.
 # They hold nothing config\.env does not. Never written elevated: the folder would then be the
 # administrator's alone. A command that stops or looks (down, status, logs, check, uninstall)
-# never fails over them: what it does needs no secret.
+# never fails over them: what it does needs no secret. Compose itself reads config\.env without
+# its secrets (compose.env beside them, $script:ComposeEnv): compose.yaml names none, and a secret
+# compose would read as more (a $) can then never stop compose, down and stop included. A secret
+# holding $ or a backtick is refused by its name, as set_line refuses one.
 $script:ServiceSecretsFor = $null
+$script:ComposeEnv = $null
 function Get-ServiceSecretLine([string]$Name, [string]$Setting) {
     $v = Get-Setting $Setting
     if ($v) { return ($Name + '=' + $v) }
@@ -723,15 +742,15 @@ function Write-ServiceSecrets([string]$VersionDir) {
     $rel = Get-RelativePath $VersionDir $dir
     if (-not $rel) { Fail 'The data folder is on another drive than the program folder, which compose cannot take: install Kilnmark afresh with both on one drive.' }
     $env:KILNMARK_SECRETS_DIR = $rel
+    $envFile = Join-Path $script:Data 'config\.env'
+    $composeEnv = Join-Path $dir 'compose.env'
     # elevated (check), the files you wrote, never written: compose still finds them
-    if (Test-Elevated) { return }
-    $text = [IO.File]::ReadAllText((Join-Path $script:Data 'config\.env'))
+    if (Test-Elevated) {
+        if (Test-Path -LiteralPath $composeEnv -PathType Leaf) { $script:ComposeEnv = $composeEnv } else { $script:ComposeEnv = $envFile }
+        return
+    }
+    $text = [IO.File]::ReadAllText($envFile)
     if ($script:ServiceSecretsFor -cne $text -or -not (Test-Path -LiteralPath $dir)) {
-        foreach ($s in @('KILNMARK_DB_PASSWORD', 'KILNMARK_ADMIN_TOKEN')) {
-            if (Get-Setting $s) { continue }
-            if ($Command -cin @('down', 'stop', 'status', 'logs', 'check', 'uninstall')) { return }
-            Fail ($s + ' is not set in ' + (Join-Path $script:Data 'config\.env') + ': Kilnmark has no database password or admin token without it. Put back the line install wrote. Nothing was started.')
-        }
         try {
             $base = Join-Path $script:Data 'config\run'
             if (-not (Test-Path -LiteralPath $base)) { New-Item -ItemType Directory $base -ErrorAction Stop | Out-Null }
@@ -739,6 +758,26 @@ function Write-ServiceSecrets([string]$VersionDir) {
         } catch { Fail ('Could not make ' + $dir + ", yours alone, for the services' secrets. Nothing was started.") }
         if ((Get-Item -LiteralPath $dir -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { Fail ($dir + ' is a link or a junction: remove it, then run this again. Nothing was started.') }
         Protect-Folder $dir
+        # config\.env as compose reads it: every line but a secret's (a name ending _PASSWORD,
+        # _SECRET or _TOKEN)
+        $kept = @(foreach ($l in [IO.File]::ReadAllLines($envFile)) {
+            if ($l -match '^\s*(export\s+)?([A-Za-z0-9_]+)\s*=' -and $Matches[2] -match '(_PASSWORD|_SECRET|_TOKEN)$') { continue }
+            $l
+        })
+        try { Write-UnixText $composeEnv $kept } catch { Fail ('Could not write ' + $composeEnv + '. Nothing was started.') }
+        $script:ComposeEnv = $composeEnv
+        $why = ''
+        foreach ($s in @('KILNMARK_DB_PASSWORD', 'KILNMARK_ADMIN_TOKEN')) {
+            if (-not $why -and -not (Get-Setting $s)) { $why = $s + ' is not set in ' + $envFile + ': Kilnmark has no database password or admin token without it. Put back the line install wrote. Nothing was started.' }
+        }
+        foreach ($s in @('KILNMARK_DB_PASSWORD', 'KILNMARK_ADMIN_TOKEN', 'KILNMARK_SAMPLES_DB_PASSWORD', 'KILNMARK_OIDC_CLIENT_SECRET', 'KILNMARK_KEYCLOAK_DB_PASSWORD', 'KILNMARK_KEYCLOAK_ADMIN_PASSWORD')) {
+            if (-not $why -and (Get-Setting $s) -match '[$`]') { $why = $s + ' in config\.env holds $ or `, which compose tools would read as the start of another setting''s name: put back the value install made, or one without them. Nothing was started.' }
+        }
+        if ($why) {
+            # what stops or looks needs no secret, and never fails over one
+            if ($Command -cin @('down', 'stop', 'status', 'logs', 'check', 'uninstall', '_stop-for-uninstall')) { return }
+            Fail $why
+        }
         $files = @{
             'postgres.env' = @(Get-ServiceSecretLine 'POSTGRES_PASSWORD' 'KILNMARK_DB_PASSWORD')
             'kilnmark.env' = @((Get-ServiceSecretLine 'QUARKUS_DATASOURCE_PASSWORD' 'KILNMARK_DB_PASSWORD'), (Get-ServiceSecretLine 'KILNMARK_ADMIN_TOKEN' 'KILNMARK_ADMIN_TOKEN'),
@@ -756,6 +795,7 @@ function Write-ServiceSecrets([string]$VersionDir) {
         } catch { Fail ("Could not write the services' secrets in " + $dir + '. Nothing was started.') }
         $script:ServiceSecretsFor = $text
     }
+    $script:ComposeEnv = $composeEnv
 }
 
 # podman-compose 1.0.x prints each podman command it runs, with every setting of the container on
@@ -857,6 +897,17 @@ function Test-FileSignature([string]$File) {
 
 # --- images ------------------------------------------------------------------------------------
 
+# When a copy of $File into $Dir failed: says so if the drive has no room for it, naming the folder
+# and the space it needs.
+function Assert-Room([string]$File, [string]$Dir) {
+    $need = 0; $free = -1
+    try { $need = (Get-Item -LiteralPath $File -Force).Length } catch { return }
+    try { $free = (New-Object IO.DriveInfo ([IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Dir)))).AvailableFreeSpace } catch { return }
+    if ($free -ge 0 -and $free -lt $need) {
+        Fail ('There is not room for a copy of ' + (Split-Path $File -Leaf) + ' in ' + $Dir + ' (your TEMP folder): it needs ' + [math]::Ceiling($need / 1MB) + ' MB, and ' + [math]::Floor($free / 1MB) + ' MB are free. Free that much on its drive, then run this again.')
+    }
+}
+
 function Import-Images([string]$File) {
     if (-not (Test-Path $File)) { Fail ('There is no file ' + $File + '.') }
     # copied into a folder of yours alone first, with its signature: the copy is what is checked and
@@ -865,9 +916,10 @@ function Import-Images([string]$File) {
     try {
         $copy = Join-Path $work (Split-Path $File -Leaf)
         try {
+            Assert-Room $File $work
             Copy-Item -LiteralPath $File -Destination $copy -ErrorAction Stop
             if (Test-Path -LiteralPath ($File + '.sigstore.json')) { Copy-Item -LiteralPath ($File + '.sigstore.json') -Destination ($copy + '.sigstore.json') -ErrorAction Stop }
-        } catch { Fail ((Split-Path $File -Leaf) + ' could not be copied into a folder of yours to check it.') }
+        } catch { Assert-Room $File $work; Fail ((Split-Path $File -Leaf) + ' could not be copied into a folder of yours to check it.') }
         Test-FileSignature $copy
         Select-Engine
         Write-Host ('Loading the images from ' + (Split-Path $File -Leaf) + ' ...')
@@ -976,7 +1028,7 @@ function Test-Prerequisites([bool]$Running, [bool]$Keycloak = $false) {
         Add-Problem 'Neither Podman nor Docker is installed.' 'winget install RedHat.Podman-Desktop (then make its machine: podman machine init --rootful)'
     } else {
         $docker = ([IO.Path]::GetFileNameWithoutExtension($engine) -like '*docker*')
-        & $engine compose version *> $null
+        & $engine @(Get-ComposeLead) version *> $null
         if ($LASTEXITCODE -eq 0) { Add-Passed ([IO.Path]::GetFileNameWithoutExtension($engine) + ' compose works') }
         elseif ($docker) { Add-Problem ("'" + [IO.Path]::GetFileNameWithoutExtension($engine) + " compose' does not work.") 'winget install Docker.DockerCompose' }
         else { Add-Problem ("'" + [IO.Path]::GetFileNameWithoutExtension($engine) + " compose' does not work: Podman needs a compose tool.") 'winget install Docker.DockerCompose' }
@@ -2081,9 +2133,10 @@ function Invoke-Upgrade([string[]]$Options) {
     $name = Split-Path $archive -Leaf
     $copy = Join-Path $work $name
     try {
+        Assert-Room $archive $work
         Copy-Item -LiteralPath $archive -Destination $copy -ErrorAction Stop
         if (Test-Path -LiteralPath ($archive + '.sigstore.json')) { Copy-Item -LiteralPath ($archive + '.sigstore.json') -Destination ($copy + '.sigstore.json') -ErrorAction Stop }
-    } catch { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue; Fail ($name + ' could not be copied into a folder of yours to check it.') }
+    } catch { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue; Assert-Room $archive $work; Fail ($name + ' could not be copied into a folder of yours to check it.') }
     $checked = $false
     try { Test-FileSignature $copy; $checked = $true } finally { if (-not $checked) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue } }
     $unpacked = Join-Path $work 'release'
@@ -3105,11 +3158,11 @@ function Invoke-Restore([string[]]$Options) {
     Write-Host '  - revoke again any token revoked after that time, and check Settings > Access review;'
     if (-not $keys) { Write-Host "  - enter every stored password again (Sources; AI models' keys; the mail password);" }
     Write-Host '  - run again the scans and pipelines that ran after it, if their results are needed;'
-    Write-Host ('  - once all is well, drop the previous database: ' + $script:EngineName + ' compose -p ' + $Project + ' exec postgres dropdb -U kilnmark ' + $before)
+    Write-Host ('  - once all is well, drop the previous database: ' + (Join-Path $script:Root 'kilnmark.cmd') + ' compose exec postgres dropdb -U kilnmark ' + $before)
     if ($restoreKeycloak) {
         Write-Host '  - Keycloak is back to the backup too: people added or changed since then are gone, and anyone'
         Write-Host '    removed since is back (remove them again). Then drop its previous database:'
-        Write-Host ('    ' + $script:EngineName + ' compose -p ' + $Project + ' exec keycloak-db dropdb -U keycloak ' + $kcBefore)
+        Write-Host ('    ' + (Join-Path $script:Root 'kilnmark.cmd') + ' compose exec keycloak-db dropdb -U keycloak ' + $kcBefore)
     }
 }
 
@@ -3134,6 +3187,14 @@ switch ($Command) {
         & $script:Engine @base logs --tail 200 @follow @svc
     }
     'check' { Invoke-Check $Rest }
+    # compose as this install runs it (its project, settings, secrets and profiles), for a command
+    # by hand: kilnmark.cmd compose ps, logs, exec, ...
+    'compose' {
+        [void](Get-CurrentVersion)
+        $base = Get-ComposeArgs
+        & $script:Engine @base @Rest
+        exit $LASTEXITCODE
+    }
     'configure' { Start-Log 'configure'; Invoke-Configure $Rest; Stop-Log }
     'verify' {
         $file = $null

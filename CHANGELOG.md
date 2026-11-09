@@ -238,14 +238,19 @@ details.
     Each reads its own from a file the control script writes before every compose command, in
     `config/run/services` (yours alone), named by `KILNMARK_SECRETS_DIR`, mounted read-only into
     that service alone: `containers/kilnmark-env.sh` starts each service with them and then runs its
-    image's own program. `podman-compose --dry-run up` shows no secret. `down`, `stop`, `status` and
-    `logs` work whatever the secrets hold, or lack.
+    image's own program. `podman-compose --dry-run up` shows no secret. Compose reads `config/.env`
+    without its secrets, so `down`, `stop`, `status` and `logs` work whatever the secrets hold or
+    lack; a start refuses a secret holding `$` or a backtick, by its name. For a compose command of
+    your own, `kilnmark.sh compose ARGS` (`kilnmark.cmd compose ARGS`) runs it as the control script
+    does; the guides no longer give a plain `podman compose`.
   - Linux: once the data folder is the account's, root writes nothing in it: the account copies
     upgrade's `.env.example` and writes install's log. Upgrade and uninstall take the account from
     the data folder's owner, and refuse when `install.conf` names another. Install, upgrade and
     uninstall refuse a program or data folder under a folder anyone but root may change. Upgrade
     checks and unpacks a copy of the archive in a folder of root's, and install and upgrade load
-    the offline images file from a checked copy.
+    the offline images file from a checked copy (a copy that does not fit says how much room it
+    needs). Upgrade and uninstall check the folders above first, before reading anything in the
+    data folder, and say what to do.
   - Windows: the step that runs as an administrator no longer reads the certificate and its key;
     you copy them, with your own rights, after it. Install and upgrade refuse a release folder or
     archive that anyone else may change (one unpacked under `C:\` is), before asking for an
@@ -254,7 +259,8 @@ details.
     images file is checked and loaded as a copy, and the elevated step checks the release again and
     trusts the operator only by a user's SID. The hourly run looks up the engine and its compose
     tool once, checks them by their full paths and runs them by those paths, never a script of the
-    engine's name (Podman is told which compose tool to launch); with Docker, a compose plugin
+    engine's name (Podman is told which compose tool to launch, and podman-compose which podman to
+    run); the hourly run checks `containers/kilnmark-env.sh` too; with Docker, a compose plugin
     folder that is not there must be one nobody else may make. Unpack a release in your own
     Downloads folder.
 - **Security: keycloak-setup reads what a person wrote as JSON** (ADR 0051, decisions 10 and 16).

@@ -57,6 +57,7 @@ class ControlScriptInstallTest {
             Files.copy(Path.of("../containers/release.env.example"), dir.resolve(".env.example"));
             Files.createDirectories(dir.resolve("containers/keycloak"));
             Files.writeString(dir.resolve("containers/keycloak/setup.sh"), "# setup\n");
+            Files.writeString(dir.resolve("containers/kilnmark-env.sh"), "# the services' start\n");
             Files.copy(LAUNCH.resolve("install.conf.example"), dir.resolve("install.conf.example"));
             return dir;
         }
@@ -535,7 +536,10 @@ class ControlScriptInstallTest {
             String asked = Files.readString(base.resolve("schtasks.log"));
             assertTrue(asked.contains("\\\"" + prog.resolve("kilnmark.ps1") + "\\\" people expire -Project kmtest"), asked);
         }
-        // uninstall -Purge: the task, the program folder and the data folder go
+        // uninstall -Purge: the task, the program folder and the data folder go, whatever the secrets
+        // hold or lack (an admin token gone, a password with $): stopping needs none
+        Files.writeString(data.resolve("config/.env"), Files.readString(data.resolve("config/.env"))
+            .replaceAll("(?m)^KILNMARK_ADMIN_TOKEN=.*$", "KILNMARK_ADMIN_TOKEN=").replaceAll("(?m)^KILNMARK_DB_PASSWORD=.*$", "KILNMARK_DB_PASSWORD=db\\${oops"));
         Map<String, String> goEnv = new LinkedHashMap<>(env);
         goEnv.put("FAKE_TIMER_LOG", base.resolve("schtasks.log").toString());
         goEnv.put("FAKE_RMI_LOG", base.resolve("rmi.log").toString());
@@ -719,35 +723,25 @@ class ControlScriptInstallTest {
         Map<String, String> asRoot = Map.of("KILNMARK_TEST_UID", "0");
         for (List<String> args : List.of(List.of("upgrade", archive.toString()), List.of("uninstall"))) {
             String out = run(e, launcher(e), args, root, engine, asRoot, "");
-            // install.conf says kmtest-nobody; the folder is the tests' account's (or root's, in CI's containers)
-            assertTrue(out.contains("Nothing was changed") && (out.contains("names another account than")
-                || out.contains("is not owned by an account of this machine other than root")), args + ": " + out);
+            // a temporary folder's parents are not root's alone (the tests' own, or a sticky /tmp):
+            // refused before anything of the account's is read, saying what to do
+            assertTrue(out.contains("Nothing was changed") && out.contains(", a folder above ") && out.contains("may be changed by someone other than root")
+                && out.contains("sudo chown root:root FOLDER && sudo chmod go-w FOLDER"), args + ": " + out);
             assertFalse(out.contains("[1/"), "no step began: " + out);
             assertTrue(Files.exists(root.resolve("versions/9.9.9/compose.yaml")) && Files.exists(root.resolve("config/.env")), "nothing removed");
         }
-        // install.conf naming the folder's owner: then the folders above the program and data folders
-        // must be root's alone, which a temporary folder's are not (the tests' own, or a sticky /tmp)
-        String bash = System.getenv("KILNMARK_TEST_BASH");
-        Process who = new ProcessBuilder(bash != null && !bash.isBlank() ? bash : "bash", "-c",
-            "stat -c %U '" + root.toString().replace('\\', '/') + "'").redirectErrorStream(true).start();
-        String owner = new String(who.getInputStream().readAllBytes(), StandardCharsets.UTF_8).strip();
-        assertEquals(0, who.waitFor(), owner);
-        Files.writeString(root.resolve("config/install.conf"), Files.readString(root.resolve("config/install.conf"))
-            .replace("user=kmtest-nobody\n", "user=" + owner + "\n"));
-        String above = run(e, launcher(e), List.of("upgrade", archive.toString()), root, engine, asRoot, "");
-        assertTrue(above.contains("Nothing was changed") && !above.contains("[1/") && (owner.equals("root")
-            ? above.contains("is not owned by an account of this machine other than root")
-            : above.contains(", a folder above ") && above.contains("may be changed by someone other than root")), above);
+        // and the account is the data folder's owner, never install.conf's word, once the folders pass
+        String shInstalled = Files.readString(LAUNCH.resolve("kilnmark.sh"));
+        for (String cmd : List.of("\ncmd_upgrade() {", "\ncmd_uninstall() {")) {
+            String body = shInstalled.substring(shInstalled.indexOf(cmd), shInstalled.indexOf("\n}\n", shInstalled.indexOf(cmd)));
+            assertTrue(body.indexOf("  check_folders_above\n  installed_user\n") > 0, cmd + ": the folders first, then the account");
+        }
+        assertTrue(shInstalled.contains("  ins_user=\"$(stat -c %U \"$data\" 2> /dev/null || true)\"\n"), "the data folder's owner");
         // the offline images file, as the archive: a copy of root's is checked and loaded, never the file twice
         String shText = Files.readString(LAUNCH.resolve("kilnmark.sh"));
         assertFalse(shText.contains("< \"$offline\""), "the images file is never read again after its check");
         assertEquals(2, shText.split("offline_copy; account_step|offline_copy\n    account_step", -1).length - 1, "install and upgrade load the checked copy");
-        // the data folder data-folder.txt names, a link: refused
-        Path link = Files.createTempDirectory("kilnmark-link-parent").resolve("data");
-        ControlScriptStarterTest.link(link, root);
-        Files.writeString(root.resolve("data-folder.txt"), link + "\n");
-        String linked = run(e, launcher(e), List.of("upgrade", archive.toString()), root, engine, asRoot, "");
-        assertTrue(linked.contains("is not a folder (or is a link)") && linked.contains("Nothing was changed"), linked);
+
         // and root writes nothing in the data folder itself: the account copies .env.example and writes
         // install's log; every chown there leaves links as links
         String sh = Files.readString(LAUNCH.resolve("kilnmark.sh"));

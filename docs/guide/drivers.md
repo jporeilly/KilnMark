@@ -59,10 +59,12 @@ the drivers folder. With the release's `compose.yaml`, the folder is `/var/lib/k
 in the `keys` volume, for example:
 
 ```
-podman compose cp ojdbc11-23.26.3.0.0.jar kilnmark:/var/lib/kilnmark/drivers/
+kilnmark.sh compose cp ojdbc11-23.26.3.0.0.jar kilnmark:/var/lib/kilnmark/drivers/
 ```
 
-(`docker compose cp` with Docker.) Running the server without containers, the folder is
+(as the account that runs Kilnmark, `sudo -iu kilnmark /opt/kilnmark/kilnmark.sh compose ...`; on
+Windows, `"C:\Program Files\Kilnmark\kilnmark.cmd" compose ...`: the control script runs compose
+with the install's settings and secrets, which a plain `podman compose` lacks). Running the server without containers, the folder is
 `kilnmark.drivers.dir`, by default `~/.kilnmark/drivers` for the user running Kilnmark.
 
 ## After an upgrade
