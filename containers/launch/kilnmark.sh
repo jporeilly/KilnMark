@@ -2420,14 +2420,19 @@ require_kilnmark_answers() {
 # their groups, auth.people_imported for each import, auth.person_activated, and
 # auth.person_disabled for each person disabled for an unused temporary password. Never a password.
 record_own_people() {
-  local made kept refused activated disabled code
+  local made kept refused activated disabled unclear hours code
   made="$(sed -n 's/^keycloak-setup: made \([a-z0-9._%+@-]*\) (\([a-z;-]*\)): \(they choose their own password\|waiting to be activated\).*$/{"person":"\1","groups":"\2"}/p' <<< "$1" | paste -sd, -)"
   kept="$(sed -n 's/^keycloak-setup: left \([a-z0-9._%+@-]*\) as they are: someone with this address is here already.*$/"\1"/p' <<< "$1" | paste -sd, -)"
   refused="$(sed -n 's/^keycloak-setup: people import: made [0-9]*, already there [0-9]*, refused \([0-9]*\).*$/\1/p' <<< "$1" | tail -n 1)"
   activated="$(sed -n 's/^keycloak-setup: activated \([a-z0-9._%+@-]*\): they choose their own password.*$/"\1"/p' <<< "$1" | paste -sd, -)"
-  disabled="$(sed -n 's/^keycloak-setup: disabled \([a-z0-9._%+@-]*\): their temporary password was not used.*$/"\1"/p' <<< "$1" | paste -sd, -)"
+  # those whose temporary password went unused for the hours setup names, and those for whom it could
+  # not tell when it was set: recorded apart, so that only the first carry the hours
+  disabled="$(sed -n 's/^keycloak-setup: disabled \([a-z0-9._%+@-]*\): their temporary password was not used within [0-9]* hours.*$/"\1"/p' <<< "$1" | paste -sd, -)"
+  hours="$(sed -n 's/^keycloak-setup: disabled [a-z0-9._%+@-]*: their temporary password was not used within \([0-9]\{1,3\}\) hours.*$/\1/p' <<< "$1" | tail -n 1)"
+  unclear="$(sed -n 's/^keycloak-setup: disabled \([a-z0-9._%+@-]*\): their temporary password was not used yet,.*$/"\1"/p' <<< "$1" | paste -sd, -)"
   # what an ordinary run of setup did, before the command's own work: its own record
-  [ -z "$disabled" ] || post_disabled "$disabled"
+  [ -z "$disabled" ] || post_disabled "$disabled" "$hours"
+  [ -z "$unclear" ] || post_disabled "$unclear" ""
   if grep -q '^keycloak-setup: stamped the realm' <<< "$1"; then
     code="$(api_call POST /api/v1/auth/people '{"via":"stamp"}')"
     [ "$code" = 204 ] || echo "Warning: Kilnmark did not record the realm's stamp in its audit log (HTTP $code)." >&2
@@ -2455,15 +2460,16 @@ record_own_people() {
   [ -z "$left" ] || echo "Warning: recorded, but not enabled:$left. Give each a temporary password with people activate EMAIL." >&2
 }
 
-# Who was disabled ($1: quoted addresses, joined by commas), recorded 500 at a time: Kilnmark takes
-# at most 1000 people in one record.
+# Who was disabled ($1: quoted addresses, joined by commas; $2: the hours their temporary password
+# could wait unused, or nothing), recorded 500 at a time: Kilnmark takes at most 1000 people in one
+# record.
 post_disabled() {
   local all chunk="" n=0 p code
   IFS=, read -r -a all <<< "$1"
   for p in "${all[@]}" ""; do
     if [ -n "$p" ]; then chunk="${chunk:+$chunk,}$p"; n=$((n + 1)); fi
     if [ -n "$chunk" ] && { [ "$n" -eq 500 ] || [ -z "$p" ]; }; then
-      code="$(api_call POST /api/v1/auth/people "{\"via\":\"expire\",\"disabled\":[$chunk]}")"
+      code="$(api_call POST /api/v1/auth/people "{\"via\":\"expire\",\"disabled\":[$chunk]${2:+,\"hours\":$2}}")"
       [ "$code" = 204 ] || echo "Warning: Kilnmark did not record who was disabled in its audit log (HTTP $code); Keycloak's admin events have it." >&2
       chunk="" n=0
     fi

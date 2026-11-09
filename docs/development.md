@@ -480,9 +480,15 @@ revokes one at once.
 token may last: new tokens must expire within it, and a token older than it stops working whatever
 its own expiry, except the one from `KILNMARK_ADMIN_TOKEN`. Check **Settings**, **Access review**
 before setting it: tokens already older stop at once. `GET /api/v1/tokens/policy` says the limit.
-`GET /api/v1/access-review` (admins; `?format=csv` for a spreadsheet) lists every token with its
-role, grant, status, expiry and last use, and everyone who has signed in with the identity provider
-with the role of their last sign-in; each view and download is an audit event. Set the limit on every
+`GET /api/v1/access-review` (admins; `?format=csv` for a spreadsheet) gives what each role may do
+(`roles`, from `RoleTable`, which `RoleTableTest` holds to `@RolesAllowed` and `RoleTableProbeTest`
+tries as every role), the groups mapped to each role (`groups`), the settings that limit people
+(`rules`), every token with its role, grant, status, expiry and last use, and everyone who signs in
+with the identity provider: those who have signed in, with the role and groups of their last
+sign-in, and those the control script made (`auth.person_added`, `_activated`, `_disabled`) who have
+not signed in since, with a `state`. All from the audit log and settings, never the provider; each
+view and download is an audit event. A new endpoint that takes more than the viewer role fails
+`RoleTableTest` until a line of `RoleTable` names it. Set the limit on every
 Kilnmark process (api, worker, scheduler): each judges tokens, and notifications, by its own setting.
 
 **Two people for the unmask grant** (ADR 0038). `kilnmark.auth.unmask-approval=true`

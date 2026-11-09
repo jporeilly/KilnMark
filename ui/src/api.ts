@@ -2188,7 +2188,33 @@ export type AccessReviewEntry = {
   signIns: number | null;
   /** A kilnmark.com example account, such as the Starter Pack's people (ADR 0051): not for real data. */
   example?: boolean;
+  /**
+   * A person's groups as Kilnmark recorded them (only those its settings name): at their last sign-in, or
+   * when the control script made them. Null for a token, or when not recorded.
+   */
+  groups?: string[] | null;
+  /** Of those, the groups the sensitive-data (unmask) settings name. */
+  sensitiveGroups?: string[] | null;
+  /**
+   * A person's state: signed-in, no-role (signed in, never given a role), waiting (for their first
+   * sign-in), not-activated (imported on production, waiting to be activated) or disabled (their temporary
+   * password went unused). Null for a token. For someone who has not signed in, role and unmask are what
+   * their groups give them once they do.
+   */
+  state?: AccessReviewState | null;
 };
+
+export type AccessReviewState = "signed-in" | "no-role" | "waiting" | "not-activated" | "disabled";
+
+/** One line of what each role may do: yes, grant (only with the sensitive-data grant) or no, by role. */
+export type AccessReviewLine = {
+  id: string;
+  what: string;
+  byRole: Record<AccessRole, "yes" | "grant" | "no">;
+};
+
+/** A setting that limits people, as it is on this server: read-only. */
+export type AccessReviewRule = { id: string; label: string; value: string; setting: string };
 
 /** Settings › Access review: who can do what, for admins. */
 export type AccessReview = {
@@ -2196,6 +2222,12 @@ export type AccessReview = {
   /** The longest a token may last, in days; null when tokens may never expire. */
   tokenMaxLifetimeDays: number | null;
   entries: AccessReviewEntry[];
+  /** What each role may do, from the server's own table, which its tests hold to the role checks. */
+  roles?: AccessReviewLine[];
+  /** The groups the settings give each role, and the sensitive-data grant (key "unmask"). */
+  groups?: Partial<Record<AccessRole | "unmask", string[]>>;
+  /** The settings that limit people. */
+  rules?: AccessReviewRule[];
 };
 
 export const accessReviewApi = {

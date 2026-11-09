@@ -132,4 +132,22 @@ class OidcAccessTest {
         assertFalse(OidcAccess.example(jakarta.json.Json.createValue("rita@bank.example")));
         assertFalse(OidcAccess.example(null));
     }
+
+    /**
+     * A sign-in records the groups the role and unmask settings name, never others, so the access
+     * review can show who holds the sensitive-data group (ADR 0037); only a designer's sees values.
+     */
+    @Test
+    void aSignInRecordsTheRoleAndUnmaskGroupsOnly() {
+        KilnmarkConfig.Oidc c = config(true, null);
+        Map<String, Object> claims = Map.of("groups", List.of("km-stewards", "km-unmask", "deal-team-x"));
+        assertEquals(List.of("km-stewards", "km-unmask"), OidcAccess.mappedGroups(c, claims::get));
+        assertEquals(List.of("km-unmask"), OidcAccess.unmaskGroupsOf(c, List.of("km-stewards", "km-unmask")));
+        assertFalse(OidcAccess.unmasks(c, AccessRole.STEWARD, List.of("km-stewards", "km-unmask")), "not a designer");
+        assertFalse(OidcAccess.unmasks(c, AccessRole.ADMIN, List.of("km-admins", "km-unmask")), "admins see values masked");
+        assertTrue(OidcAccess.unmasks(c, AccessRole.DESIGNER, List.of("km-designers", "km-unmask")));
+        assertFalse(OidcAccess.unmasks(c, null, List.of("km-unmask")));
+        // a role the recorded groups give is as a sign-in would decide it
+        assertEquals(AccessRole.STEWARD, OidcAccess.roleOf(c, OidcAccess.mappedGroups(c, claims::get)));
+    }
 }

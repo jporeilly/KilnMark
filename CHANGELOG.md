@@ -7,6 +7,19 @@ details.
 
 ### What's new
 
+- **Settings › Access review shows everyone, and what each role can do**: a table of what a
+  viewer, a steward, a designer and an admin may and may not do, with the groups that give each
+  role and the sensitive-data grant, taken from the server and held to its role checks by tests;
+  the rules in force (the longest token lifetime, whether a second person approves the grant, the
+  longest sign-in, MFA, when schedules pause, models outside your network), read-only; and, beside
+  everyone who has signed in, the people the control script made in the bundled Keycloak who have
+  not signed in yet, each with their groups and whether they wait for their first sign-in, wait to
+  be activated, or were disabled for an unused temporary password. Anyone who sees sensitive values
+  unmasked is marked. The CSV has the new `state`, `groups` and `sensitive_data_groups` columns.
+  It is all from Kilnmark's own records: someone added or removed only at your identity provider
+  shows once they sign in, and the page says so. A sign-in now also records the person's
+  sensitive-data group, and the control script reports how long an unused temporary password could
+  wait (`hours` on `auth.person_disabled`).
 - **A guided install, into the folders the operating system keeps for a program and its data**:
   `sudo ./kilnmark.sh install` (Linux) or `kilnmark.cmd install` (Windows) asks the questions (the
   mode, how people sign in, the email domain, the host name, the ports, TLS, the first admin), each
