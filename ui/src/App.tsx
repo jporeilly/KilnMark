@@ -52,6 +52,9 @@ import { Sidebar } from "./shell/Sidebar";
 import { StarterPackBanner } from "./shell/StarterPackBanner";
 import { AskButton, SearchForm, UserMenu } from "./shell/TopBar";
 
+/** Marks, for the page the identity provider sends the browser back to, that it signed out there. */
+const SIGNED_OUT_AT_PROVIDER = "kilnmark.signedOutAtProvider";
+
 /**
  * Checks who is signed in, then shows either the sign-in page or the app. Signing out (the
  * #/sign-out link) and a token the server stops accepting both return to sign-in, with a message.
@@ -60,7 +63,18 @@ export function App() {
   const route = useRoute();
   const [me, setMe] = useState<Me | null>(null);
   const [checking, setChecking] = useState(true);
-  const [notice, setNotice] = useState<SignInNotice | null>(null);
+  const [notice, setNotice] = useState<SignInNotice | null>(() => {
+    // back from the identity provider's own sign-out page (see the signout effect below)
+    try {
+      if (window.sessionStorage.getItem(SIGNED_OUT_AT_PROVIDER)) {
+        window.sessionStorage.removeItem(SIGNED_OUT_AT_PROVIDER);
+        return { kind: "info", text: "You have signed out, of Kilnmark and of your identity provider." };
+      }
+    } catch {
+      // no storage
+    }
+    return null;
+  });
 
   // Is there a usable token in this tab already (or is sign-in turned off on the server)?
   useEffect(() => {
@@ -99,7 +113,21 @@ export function App() {
       };
       if (me.via === "provider") {
         markProviderSession(false);
-        api.signOutProvider().then(done, done);
+        api.signOutProvider().then((out) => {
+          if (out?.endSession) {
+            // The provider's own session ends there too; it sends the browser back to Kilnmark,
+            // which then says so.
+            session.clear();
+            try {
+              window.sessionStorage.setItem(SIGNED_OUT_AT_PROVIDER, "1");
+            } catch {
+              // no storage: the sign-in page shows without the message
+            }
+            window.location.assign(out.endSession);
+            return;
+          }
+          done();
+        }, done);
       } else {
         done();
       }
