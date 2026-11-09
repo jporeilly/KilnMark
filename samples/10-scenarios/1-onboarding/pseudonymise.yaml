@@ -5,9 +5,8 @@
 # Names and phone numbers are left out. It keeps only the columns it lists, so a column added to the
 # golden file later stays out of the copy until someone adds it here.
 # Why it matters: Analytics teams rarely need to know who a customer is. Pseudonymised data, with
-# direct identifiers removed or replaced, is a typical GDPR safeguard, and keeps the analytics
-# platform out of reach of most data protection requests. A hash is still personal data, so Kilnmark
-# keeps it marked sensitive.
+# direct identifiers removed or replaced, is a typical GDPR safeguard that lowers the harm if the
+# copy is lost or misused. It is still personal data, so a hash stays marked sensitive.
 # Look for: the gate checks the golden file's own quality rules, the ones a steward adds on it in
 # Quality, as well as the two written here; a failing rule stops the run before the copy is written.
 # The hashes and the age band are worked out from marked columns, so they are marked too; only an

@@ -199,3 +199,5 @@ customer_id,customer_code,first_name,last_name,email,phone,date_of_birth,postcod
 198,S-00198,Noah,Lowe,noah198@shop.example.com,07496 648880,1994-12-13,N14 4SH,true,false,bronze,2025-03-30 08:26:32
 199,S-00199,Jade,Moore,jade199@shop.example.com,07204 641139,1967-09-22,NE19 6EW,true,false,silver,2020-07-31 16:30:03
 200,S-00200,Ben,Clarke,ben200@shop.example.com,07601 891693,1986-01-09,B11 6EF,true,true,gold,2023-04-20 16:14:47
+201,S-00201,Priya,Evans, priya.evans3@example.com ,07534 489396,1963-10-31,NE6 1TD,true,false,bronze,2026-08-11 09:30:00
+202,S-00202,Uma,Baker, uma.baker21@example.com ,07286 108559,1950-05-30,G3 6GR,true,false,bronze,2026-08-12 09:30:00

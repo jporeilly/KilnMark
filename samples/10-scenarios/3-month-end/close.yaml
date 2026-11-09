@@ -31,7 +31,7 @@ nodes:
   - id: regions
     type: for-each
     pipeline: sample-close-reconcile
-    items: [London, North, South, Scotland, Unassigned]
+    items: [London, North, South, Scotland]
     as: region
     max_parallel: 2
     timeout: 30m

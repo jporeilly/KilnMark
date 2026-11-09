@@ -1,8 +1,8 @@
 # Flow: a partner's file arrives (a Kilnmark sample).
 # Runs the supplier intake scenario. The supplier's feed is delivered to the incoming folder, and the
-# flow waits until the file is there. Then it checks the feed. If the check set any row aside, an
-# unknown product, a cost that is not positive or a cost that moved by more than 20%, it tells the
-# reviewers and loads nothing. If nothing was set aside, it loads the accepted costs and says so.
+# flow waits until the file is there. Then it checks the file. If the check set any row aside, an
+# unknown product, a cost that is missing or not positive, or a cost that moved by more than 20%, it
+# sends a notice for the reviewers and loads nothing. If nothing was set aside, it loads the accepted costs and says so.
 # Why it matters: A partner's file is typically trusted only once it has been checked, and a person
 # decides what happens to what the check would not accept. Holding the whole load until a steward
 # has looked keeps one wrong price from reaching a bill or a valuation.
@@ -10,7 +10,7 @@
 # (the largest share any of the check's gates set aside), and the notice. On the sample data the
 # check sets rows aside, so the flow tells the reviewers and the load does not run: the steward
 # reviews the quarantined and price review files, then runs sample-supplier-load. In real work the
-# delivery is the supplier's, and only the wait-for node and what follows are yours.
+# delivery is the supplier's: the flow starts at the wait-for node, and the delivered node goes.
 # Needs: sample-supplier-feed-arrives, sample-supplier-check and sample-supplier-load, so shop-db and
 # files. Running it needs a steward or above.
 kilnmark: flow/v1
@@ -38,7 +38,7 @@ nodes:
     severity: medium
     title: "Supplier feed held for review: up to ${check.quarantined_share} of rows set aside"
     message: >-
-      Unknown products, costs that are not positive, or costs that moved by more than 20% were set
+      Unknown products, costs that are missing or not positive, or costs that moved by more than 20% were set
       aside. Nothing was loaded. Review the quarantined and price review files, then run
       sample-supplier-load to load what was accepted.
 

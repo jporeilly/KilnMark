@@ -175,10 +175,11 @@ details.
 
 - **The business scenarios** (`samples/10-scenarios`, ADR 0051, decision 4): eight pipelines and
   three flows. Two sample tables are new, made by `generate.py` with a random generator of their
-  own so the others stay as they were: `billing.periods`, one row a month, September 2026 open, and
-  `stock.product_costs`, the cost agreed for each product, five of which the supplier feed moves by
-  more than 20%; `sample-tables` creates them with the rest, and the lab's MariaDB has
-  `stock.product_costs` too. Adding the samples with a schema now points a sql node's
+  own: `billing.periods`, one row a month, September 2026 open, and `stock.product_costs`, the cost
+  agreed for each product, five of which the supplier feed moves by more than 20%; `sample-tables`
+  creates them with the rest, and the lab's MariaDB has `stock.product_costs` too. Five rows are
+  appended to the 2023 archive and the shop's customers, people who are in the CRM too, and every
+  earlier row stays as it was. The supplier check reads the file the flow waits for. Adding the samples with a schema now points a sql node's
   `statements` at the sample tables, as it does a query. The Starter Pack adds every scenario but
   `sample-close-month-end`, which runs SQL: a designer who may see unmasked values adds it with
   **Add samples**. The tests that check every sample now check one that reads a file another

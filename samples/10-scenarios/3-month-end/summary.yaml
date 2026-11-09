@@ -5,9 +5,9 @@
 # Why it matters: Before a period is closed, finance and risk typically sign off a summary of what
 # did not reconcile, with each exception listed for someone to clear. Totals that add up to the
 # worklist are what such a review checks.
-# Look for: the union of the five regions' files, the sort (owed desc) for the worklist, and the
+# Look for: the union of the four regions' files, the sort (owed desc) for the worklist, and the
 # aggregate. Its regions are the ones sample-close-month-end reconciles: keep the two lists alike.
-# Needs: files, and runs of sample-close-reconcile for the five regions first, which write the files
+# Needs: files, and runs of sample-close-reconcile for the four regions first, which write the files
 # it reads; sample-close-month-end runs them all.
 kilnmark: pipeline/v1
 name: sample-close-summary
@@ -34,14 +34,9 @@ nodes:
     source: files
     asset: samples/scenarios/month-end/exceptions_Scotland.parquet
 
-  - id: unassigned
-    type: read
-    source: files
-    asset: samples/scenarios/month-end/exceptions_Unassigned.parquet
-
   - id: all_regions
     type: union
-    input: [london, north, south, scotland, unassigned]
+    input: [london, north, south, scotland]
 
   - id: worklist
     type: sort

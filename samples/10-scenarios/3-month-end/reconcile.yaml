@@ -1,18 +1,22 @@
 # Month-end close: reconcile one region (a Kilnmark sample).
 # The first step of the month-end scenario, run once for each region. Puts each customer in a region
-# by the area of their postcode, then totals what the region's customers were invoiced and what they
-# paid. Invoices name the customer as C-00170 and payments as 170, so it works out the number from
-# the invoice's reference to match them. A full join keeps customers on either side alone. Each
-# customer is then paid, underpaid, or unmatched (an invoice with no payment, or a payment with no
-# invoice). Paid customers go to one file and the exceptions to another, for the steward.
+# by the area of their postcode, then totals what the region's customers have been invoiced and what
+# they have paid, up to the close: each customer's balance as at the month's end. Invoices name the
+# customer as C-00170 and payments as 170, so it works out the number from the invoice's reference to
+# match them. A full join keeps customers on either side alone. Each customer is then paid,
+# underpaid, or unmatched (an invoice with no payment, or a payment with no invoice). Paid customers
+# go to one file and the exceptions to another, for the steward.
 # Why it matters: Reconciling what was billed against what was received is a core month-end control
 # for banks and other regulated firms, and every exception needs an owner before the books close.
-# Running it per region keeps each region's exceptions with the team that owns them.
+# Running it per region keeps each region's exceptions with the team that owns them. A balance left
+# unreconciled comes up again at every close until it is cleared.
 # Look for: split_part and cast making the invoice's key match the payment's, the full join, owed and
 # status, and the route's two outputs, underpaid and unmatched, joined into the exceptions file.
-# Payments in a currency other than pounds are counted in other_currency, not in received: converting
-# them is the steward's call. A postcode in no region is Unassigned, which the flow reconciles too,
-# so no customer is left out.
+# The sample data's card transactions stand in for the payments received. Payments in a currency
+# other than pounds are counted in other_currency, not in received: converting them is the steward's
+# call. Only the CRM's customers are in a region's book, and a postcode in none of the four regions is
+# Unassigned, which no region reconciles: the sample data has neither, and in real work a check for
+# them belongs before the close.
 # Needs: crm-db (the crm and billing schemas) and files.
 kilnmark: pipeline/v1
 name: sample-close-reconcile

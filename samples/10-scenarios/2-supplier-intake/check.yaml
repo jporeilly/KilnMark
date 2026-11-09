@@ -1,17 +1,18 @@
 # Supplier intake: check the feed before it is trusted (a Kilnmark sample).
-# The second step of the supplier intake scenario. Keeps each SKU's latest delivery, looks each one
-# up among the products and their agreed costs, and works out how far the new cost is from the
-# agreed one, in percent. Rows for a product nobody knows, or with a cost that is not positive, are
-# quarantined. Rows whose cost moved by more than 20% go to a price review file. The rest are
-# accepted, for sample-supplier-load to load.
+# The second step of the supplier intake scenario. Reads the file the supplier delivered, keeps each
+# SKU's latest delivery, looks each one up among the products and their agreed costs, and works out
+# how far the new cost is from the agreed one, in percent. Rows for a product nobody knows, or with a
+# cost that is missing or not positive, are quarantined. Rows whose cost moved by more than 20% go to
+# a price review file. The rest are accepted, for sample-supplier-load to load.
 # Why it matters: A partner's file is typically loaded only after it has been checked, since one
 # wrong price can reach invoices, stock valuations or a customer's bill. Unknown products and large
 # price changes are held for a data steward to review with the supplier, not loaded on trust.
 # Look for: the two lookups (unmatched: keep, so an unknown SKU arrives at the gate with no product),
 # change_pct, and the two quarantining gates, each with a file of its own. The first gate also
-# checks the supplier feed table's own quality rules, which a steward adds in Quality (rules_from).
+# checks the delivered file's own quality rules, which a steward adds to it in Quality (rules_from).
 # Each gate's share set aside is what sample-supplier-intake reads to decide whether to load.
-# Needs: shop-db (the stock schema) and files.
+# Needs: shop-db (the stock schema), files, and a delivered feed, which sample-supplier-feed-arrives
+# writes; sample-supplier-intake runs both.
 kilnmark: pipeline/v1
 name: sample-supplier-check
 description: The supplier feed checked against the products and their agreed costs.
@@ -19,8 +20,8 @@ description: The supplier feed checked against the products and their agreed cos
 nodes:
   - id: feed
     type: read
-    source: shop-db
-    asset: stock.supplier_feed
+    source: files
+    asset: samples/scenarios/supplier-intake/incoming/supplier_feed.csv
 
   - id: latest
     type: dedupe
@@ -65,10 +66,12 @@ nodes:
     type: gate
     input: change
     on_fail: quarantine
-    rules_from: feed                 # the supplier feed table's own rules, besides these
+    rules_from: feed                 # the delivered file's own rules, besides these
     rules:
       - {name: known product, type: not_null, field: product_id}
+      - {name: has a cost, type: not_null, field: cost_price}
       - {name: positive cost, type: in_range, field: cost_price, min: 0.01}
+      - {name: has an agreed cost, type: not_null, field: agreed_cost}   # so the change can be worked out
     max_failing_share: 0.2
 
   - id: price_check

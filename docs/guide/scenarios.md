@@ -56,7 +56,7 @@ no need to know who anyone is.
 | `sample-onboarding-merge` | Reads the three customer tables and puts them together (`union`), marking where each row came from. Tidies each email and name: lower case for the email, spaces trimmed. A `gate` sets aside every row whose email is missing or does not look like an email (`matches_pattern`). A `dedupe` then keeps one row per email: the one created most recently (`duplicates: latest` by `created_at`, [Which row wins](reference-pipeline-nodes.md#which-row-wins)). | `golden_customers.parquet`, the golden record; `quarantined_customers.csv`, the rows set aside; `merged_records.csv`, the older records folded into a golden one |
 | `sample-onboarding-pseudonymise` | Reads the golden file through a `gate` that stops the run if a rule fails: its own (one row per email, a source key on each) and the golden file's own quality rules, the ones the steward adds. Then a SHA-256 hash in place of the email and the National Insurance number, an age band in place of the date of birth, and the postcode's area in place of the postcode. It keeps only the columns it lists, so names, phone numbers and full postcodes are left out, and so is any column added to the golden file later. | `analytics_customers.parquet` |
 | `sample-onboarding-record` | Counts the golden customers by the system each came from, with the time of the load. | `load_record.csv` |
-| `sample-onboarding-nightly` (flow) | Checks that the three tables are there (`check-source`), then runs the merge. If more than `limit_share` (5%) of the rows were set aside, or the merge failed, it tells the stewards and stops. Otherwise it runs the pseudonymised copy and the load record, and says it is done. A failure later tells the stewards and stops too. | |
+| `sample-onboarding-nightly` (flow) | Checks that the three tables are there (`check-source`), then runs the merge. If more than `limit_share` (5%) of the rows were set aside, or the merge failed, it sends a notice and stops. Otherwise it runs the pseudonymised copy and the load record, and says it is done. A failure later sends a notice and stops too. | |
 
 The flow runs no SQL, so the Starter Pack adds it. To run it each night, a designer or an admin
 gives it a schedule on its **Schedules** tab ([Running pipelines and flows on a
@@ -90,7 +90,9 @@ schedule](schedules.md)).
    tab shows its sample rows: the customers with no email, their emails empty, the other marked
    columns masked. Sam takes them to the team that owns the CRM, to correct at the source; the next
    night's run picks the corrections up. `merged_records.csv` shows which records were folded into
-   a golden one, as evidence of each merge.
+   a golden one, as evidence of each merge: on the sample data, repeats inside the CRM, older copies
+   of three CRM customers in the 2023 archive, and two CRM customers who are also shop customers,
+   whose newer shop record wins.
 5. **Sam puts quality rules on the golden file.** On `golden_customers.parquet`'s **Quality** tab,
    Sam adds rules from **Recommended from the profile**, or writes them under **Quality rules**: for
    example **Unique** on `email` and **Not null** on `source_key`, with **Open a task in the
@@ -102,9 +104,10 @@ schedule](schedules.md)).
    rows written and the quality score of each file written. In the catalogue she sees the golden
    and analytics files' columns, scores and lineage (which tables each came from). She sees no
    values from the data, and not the notice's text.
-7. **Priya sees the values unmasked.** On the golden file's **Quality** tab, its sample rows show
-   Priya the emails, dates of birth and National Insurance numbers that Sam, Dana and Alex see as
-   ••••.
+7. **Priya sees the values unmasked.** On the golden file's **Quality** tab, under **Sample rows**,
+   Priya chooses **Show sample rows** and turns on **Show sensitive values**, which only a designer
+   who may see unmasked values is offered. She then sees the emails, dates of birth and National
+   Insurance numbers that Sam, Dana and Alex see as ••••.
 8. **Alex clears a mark, if the steward agrees.** The age band in the analytics copy is marked,
    because it is worked out from the date of birth. If Sam decides an age band alone says too little
    to identify anyone, Alex, an admin, clears its mark on `analytics_customers.parquet`'s **Quality**
@@ -117,17 +120,17 @@ schedule](schedules.md)).
 
 A supplier sends its price feed as a file. One wrong cost can reach invoices, stock valuations or a
 customer's bill, so nothing in the file is trusted until it has been checked: every product must
-be one the business knows, every cost must be positive, and a cost that moved a long way from the
-one agreed must be looked at by a person before it is used.
+be one the business knows, every cost must be there and positive, and a cost that moved a long way
+from the one agreed must be looked at by a person before it is used.
 
 ### What it does
 
 | Sample | What it does | What it writes, under `samples/scenarios/supplier-intake/` |
 | --- | --- | --- |
 | `sample-supplier-feed-arrives` | Stands in for the supplier: copies its feed into the incoming folder of the file storage, as the supplier's own system would deliver it. In real work this step is the supplier's. | `incoming/supplier_feed.csv` |
-| `sample-supplier-check` | Keeps each SKU's latest delivery (`dedupe`, latest by `received_on`). Looks each one up among the products and their agreed costs (two `lookup` nodes that keep rows with no match), and works out the change from the agreed cost in percent. A first `gate` quarantines rows for a product nobody knows and costs that are not positive, and checks the supplier feed table's own quality rules (`rules_from`). A second `gate` sends costs that moved by more than 20% to price review. | `accepted.parquet`; `quarantined_rows.csv`; `price_review.csv`; `superseded_rows.csv`, the earlier deliveries of a SKU sent twice |
+| `sample-supplier-check` | Reads the delivered file. Keeps each SKU's latest delivery (`dedupe`, latest by `received_on`). Looks each one up among the products and their agreed costs (two `lookup` nodes that keep rows with no match), and works out the change from the agreed cost in percent. A first `gate` quarantines rows for a product nobody knows and costs that are missing or not positive, and checks the delivered file's own quality rules (`rules_from`). A second `gate` sends costs that moved by more than 20% to price review. | `accepted.parquet`; `quarantined_rows.csv`; `price_review.csv`; `superseded_rows.csv`, the earlier deliveries of a SKU sent twice |
 | `sample-supplier-load` | Takes every product's agreed cost and puts the accepted new cost, and its date, in place of each one the check accepted. Rows held for review are not in the accepted file, so they never reach it. Here the cost list is a file; in real work it would be your products table. | `agreed_costs.csv` |
-| `sample-supplier-intake` (flow) | Runs the delivery, then waits for the file (`wait-for`, every 30 seconds, for up to 30 minutes). Then it runs the check. If either gate set anything aside (`check.quarantined_share > 0`), it tells the reviewers and loads nothing. If nothing was set aside, it runs the load and says so. | |
+| `sample-supplier-intake` (flow) | Runs the delivery, then waits for the file (`wait-for`, every 30 seconds, for up to 30 minutes). Then it runs the check. If either gate set anything aside (`check.quarantined_share > 0`), it sends a notice for the reviewers and loads nothing. If nothing was set aside, it runs the load and says so. | |
 
 The products table holds a list price, not a cost, so the costs agreed with the supplier are a
 sample table of their own, `stock.product_costs`. The check uses gates, not a `route`, for price
@@ -137,22 +140,24 @@ review: a gate's share set aside is what the flow reads to decide whether to loa
 
 1. **Sam runs the flow** (or a schedule does). On the sample data the check sets rows aside: two
    unknown products, two costs that are not positive, and five costs that moved by more than 20%.
-   So the flow tells the reviewers, and the load does not run. Sam reads the notice on the flow's
-   run.
+   So the flow sends its notice for the reviewers, and the load does not run. Sam reads the notice
+   on the flow's run.
 2. **Sam reviews what was held.** From the flow's run, Sam opens the check's pipeline run: its log
    gives each gate's verdict and each rule's count. Under **What it wrote**, `quarantined_rows.csv`
    and `price_review.csv` open in the catalogue, with their rows on the **Quality** tab:
    `change_pct` beside each new and agreed cost. Sam takes them to the supplier: a SKU sent in the
    wrong shape, a missing price, a price rise the buyers must agree.
-3. **Sam tightens the check.** On the supplier feed table, `stock_supplier_feed` in
-   `starter-samples-db`, Sam adds a rule such as **Matches pattern** on `sku`, `^[A-Z]{3}-[0-9]{4}$`.
-   The check's first gate reads the table's own rules (`rules_from: feed`), so from the next run a
-   SKU of the wrong shape is quarantined by Sam's rule too, with its name in the run's log. No
-   designer has to change the pipeline.
+3. **Sam tightens the check.** On the delivered file, `samples/scenarios/supplier-intake/incoming/supplier_feed.csv`
+   in `starter-samples-files`, Sam adds a rule such as **Matches pattern** on `sku`,
+   `^[A-Z]{3}-[0-9]{4}$`. Each delivery replaces the file, and its rules stay. The check's first gate
+   reads the file's own rules (`rules_from: feed`), so from the next run a SKU of the wrong shape is
+   quarantined by Sam's rule too, with its name in the run's log. No designer has to change the
+   pipeline.
 4. **Sam approves the rest.** Satisfied that what was held can wait, Sam runs
    `sample-supplier-load` on its page: it loads only what the check accepted, and the rows held stay
-   out. The run records that Sam started it. Once the supplier sends a corrected file, the flow runs
-   again; with nothing set aside, it loads by itself.
+   out. The run records that Sam started it. In real work, once the supplier sends a corrected
+   file, the flow runs again and, with nothing set aside, loads by itself. (Here the stand-in
+   delivers the same feed each time, so it is held again.)
 5. **Dana** changes what the business decides, such as the 20% limit on the second gate, and saves
    a new version; every version is kept with who saved it and why.
 6. **Vera** sees each run, the rows each file received, and the quality scores, but no costs.
@@ -161,8 +166,9 @@ review: a gate's share set aside is what the flow reads to decide whether to loa
 
 ### The business problem
 
-At the end of each month finance closes the books: what was invoiced is reconciled with what was
-received, customer by customer, and every difference is given to someone to clear. The close must
+At the end of each month finance closes the books: what each customer has been invoiced is
+reconciled with what they have paid, as at the month's end, and every difference is given to someone
+to clear. A difference not cleared comes up again at the next close. The close must
 not start before all the month's invoices are out, and the month must not be marked closed unless
 every region was reconciled. Each region's team owns its own exceptions.
 
@@ -170,13 +176,18 @@ every region was reconciled. Each region's team owns its own exceptions.
 
 | Sample | What it does | What it writes, under `samples/scenarios/month-end/` |
 | --- | --- | --- |
-| `sample-close-reconcile` | For one region (its parameter `region`): puts each customer in a region by the area of their postcode. Totals each customer's invoices and payments (`aggregate`), after matching invoices to customers. Invoices name the customer as `C-00170` and payments as `170`, so the invoice's number is worked out with `split_part` and `cast`. A `join` (`how: full`) keeps customers on either side alone. Each customer is then paid, underpaid, or unmatched (an invoice with no payment, or a payment with no invoice), and a `route` sends each its way. Payments in another currency are counted, not added. | `paid_<region>.parquet`; `exceptions_<region>.parquet`, the underpaid and unmatched |
-| `sample-close-summary` | Puts the five regions' exceptions together: a worklist, largest amount owed first, and a summary by region and kind. | `exceptions_worklist.csv`; `exceptions_summary.csv` |
-| `sample-close-month-end` (flow) | Waits until the billing periods table says an open month has all its invoices issued (`wait-for` with a `query`). Then it reconciles each region with `for-each`, two at a time: London, North, South, Scotland, and Unassigned for a postcode in no region, so no customer is left out. If every region succeeded, it runs the summary, then marks the month closed in the billing periods table with a `sql` node, and says so. Otherwise it says so and closes nothing. | |
+| `sample-close-reconcile` | For one region (its parameter `region`): puts each customer in a region by the area of their postcode. Totals each customer's invoices and payments up to the close (`aggregate`), after matching invoices to customers. Invoices name the customer as `C-00170` and payments as `170`, so the invoice's number is worked out with `split_part` and `cast`. A `join` (`how: full`) keeps customers on either side alone. Each customer is then paid, underpaid, or unmatched (an invoice with no payment, or a payment with no invoice), and a `route` sends each its way. The sample data's card transactions stand in for payments received; payments in another currency are counted, not added. | `paid_<region>.parquet`; `exceptions_<region>.parquet`, the underpaid and unmatched |
+| `sample-close-summary` | Puts the four regions' exceptions together: a worklist, largest amount owed first, and a summary by region and kind. | `exceptions_worklist.csv`; `exceptions_summary.csv` |
+| `sample-close-month-end` (flow) | Waits until the billing periods table says an open month has all its invoices issued (`wait-for` with a `query`). Then it reconciles each region with `for-each`, two at a time: London, North, South and Scotland. If every region succeeded, it runs the summary, then marks the month closed in the billing periods table with a `sql` node, and says so. Otherwise it says so and closes nothing. | |
 
 The billing periods table, `billing.periods`, is the control table the billing system would keep:
 one row a month, whether its invoices are all issued, and whether it is open or closed. On the
 sample data September 2026 is open and ready.
+
+A region's book holds the CRM's customers whose postcode area is in that region. An invoice or
+payment for a customer the CRM does not know, or a postcode in none of the four regions, is in no
+region's book: the sample data has neither, and in real work a check for them belongs before the
+close.
 
 ### Who does what
 
@@ -188,7 +199,7 @@ sample data September 2026 is open and ready.
    `starter-samples-files` for `files`. The samples already there are left as they are, and the
    flow is added. Each run that waits on the query, and each `sql` node that runs, is in the audit
    log, without the SQL.
-2. **Sam runs the flow** on the close day. It finds September ready at once, reconciles the five
+2. **Sam runs the flow** on the close day. It finds September ready at once, reconciles the four
    regions, two at a time, writes the worklist and summary, and closes September. The notice says
    how many periods were closed. The run's timeline shows each region's pipeline run under the
    `for-each` node.

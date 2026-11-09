@@ -38,7 +38,8 @@ billing periods the month-end close reads, as CSV files in a folder per group
 messy and repeated emails, missing emails and unknown segments for the quarantine gate (under 5%),
 orders whose customer is not there, two shipping fees out of range for the gate that stops, and
 repeated or badly shaped SKUs for the gate that warns and for the rows that fail, and five agreed
-costs that the supplier feed moves by more than 20%, for the supplier intake scenario.
+costs that the supplier feed moves by more than 20%, and a few customers who are in the CRM and the
+archive or the shop too, for the scenarios.
 
 One table is large: `volume/sales.csv`, four million made-up till sales (about 216 MB of CSV). It is
 not stored: Kilnmark writes it as it is read, from a fixed seed, so it is the same on every read and
@@ -146,14 +147,15 @@ bank or person.
 | `10-scenarios` | `sample-onboarding-merge` | Customer onboarding: three customer tables in one golden record per email, the latest winning; invalid emails quarantined for the steward | One current record per customer, which KYC and consent reporting often rely on, with the rows that could not be matched kept for review |
 | | `sample-onboarding-pseudonymise` | Customer onboarding: a copy for analytics with hashes, an age band and a postcode area in place of the identifiers, after a gate that checks the golden file's own rules | A typical GDPR safeguard: analysts get data they need without who it is about |
 | | `sample-onboarding-record` | Customer onboarding: a record of each load, counted by source system | How many records a nightly load produced, and when, without reading the data |
-| | `sample-onboarding-nightly` | Customer onboarding, the flow: checks the tables, merges, then the analytics copy and the record; tells the stewards and stops when too many rows were set aside | A nightly load that stops and says so before anything downstream uses it |
+| | `sample-onboarding-nightly` | Customer onboarding, the flow: checks the tables, merges, then the analytics copy and the record; sends a notice and stops when too many rows were set aside | A nightly load that stops and says so before anything downstream uses it |
 | | `sample-supplier-feed-arrives` | Supplier intake: stands in for the supplier, delivering its feed to the incoming folder | A partner's file landing in a shared folder at a time nobody controls |
-| | `sample-supplier-check` | Supplier intake: each SKU's latest delivery looked up among the products and their agreed costs; unknown products and costs that are not positive quarantined, costs moved by more than 20% sent for price review | A partner's prices checked before they reach invoices or valuations |
+| | `sample-supplier-check` | Supplier intake: each SKU's latest delivery looked up among the products and their agreed costs; unknown products and costs that are missing or not positive quarantined, costs moved by more than 20% sent for price review | A partner's prices checked before they reach invoices or valuations |
 | | `sample-supplier-load` | Supplier intake: the agreed cost of every product, with the accepted new costs in place | Only checked data changes the prices a business relies on |
-| | `sample-supplier-intake` | Supplier intake, the flow: waits for the file, checks it, and loads it only if nothing was held for review; otherwise tells the reviewers | A person decides what happens to what a check would not accept |
+| | `sample-supplier-intake` | Supplier intake, the flow: waits for the file, checks it, and loads it only if nothing was held for review; otherwise sends a notice for the reviewers | A person decides what happens to what a check would not accept |
 | | `sample-close-reconcile` | Month-end close: one region's invoices matched with its customers' payments; paid, underpaid and unmatched | Billed against received, a core month-end control, per region so each exception has an owner |
 | | `sample-close-summary` | Month-end close: every region's exceptions in one worklist, largest first, and a summary by region and kind | The summary a close is signed off on, with each exception listed for someone to clear |
 | | `sample-close-month-end` | Month-end close, the flow: waits for a query on the billing periods table to be true, reconciles each region with `for-each`, then marks the month closed with a `sql` node (needs `crm-db` with Allow SQL and Allow writing) | A close that starts only when the invoices are out, and is marked done only when every region reconciled |
+
 The scenarios in `10-scenarios` are whole business processes rather than one idea each: each has
 several pipelines and the flow that runs them, and a step for a data steward. Who does what in each,
 with the Starter Pack's example people, is in [Business scenarios](../docs/guide/scenarios.md).

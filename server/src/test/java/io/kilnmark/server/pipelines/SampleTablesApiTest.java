@@ -114,7 +114,8 @@ class SampleTablesApiTest {
      * The business scenarios (samples/10-scenarios) on the sample tables: customer onboarding end to end
      * through its flow; the supplier intake's flow holding the feed for review, then the steward's load;
      * and the month-end reconciliation of every region, then its summary. The month-end flow runs SQL,
-     * which e2e-db does not allow, so its pipelines are run one by one, as its for-each node runs them.
+     * which e2e-db does not allow, so its pipelines are run one by one, as its for-each node runs them,
+     * and its query and statement, as Add samples points them at the sample tables, are run here.
      */
     private void scenarios(String designer, Path out) throws Exception {
         // Onboarding: every customer row read is golden, set aside for the steward, or folded into a golden one.
@@ -159,7 +160,7 @@ class SampleTablesApiTest {
 
         // Month-end: every customer with an invoice or a payment is reconciled once, in one region.
         long written = 0;
-        for (String region : List.of("London", "North", "South", "Scotland", "Unassigned")) {
+        for (String region : List.of("London", "North", "South", "Scotland")) {
             JsonPath r = runPipeline(designer, "sample-close-reconcile", Map.of("region", region));
             assertEquals("succeeded", r.getString("run.status"), r.prettify());
             written += r.getLong("run.rowsWritten");
@@ -176,6 +177,24 @@ class SampleTablesApiTest {
         int customers = List.of(totals.get(0).split(",")).indexOf("customers");
         assertEquals(worklist.size() - 1, totals.stream().skip(1).mapToLong(l -> Long.parseLong(l.split(",")[customers]))
             .sum(), "the summary adds up to the worklist");
+
+        // The close's wait-for query and sql statement: ready at first, the open month closed once, then not ready.
+        String close = Samples.withTables(Samples.bundled().stream().filter(x -> x.name().equals("sample-close-month-end"))
+            .findFirst().orElseThrow().yaml(), SCHEMA);
+        java.util.regex.Matcher ready = java.util.regex.Pattern.compile("(?m)^\\s*query: \"(.*)\"$").matcher(close);
+        java.util.regex.Matcher update = java.util.regex.Pattern.compile("(?m)^\\s*- (UPDATE .*)$").matcher(close);
+        assertTrue(ready.find() && update.find(), close);
+        String table = Samples.tableIn(SCHEMA, "billing.periods");
+        assertTrue(ready.group(1).contains(table) && update.group(1).contains(table), close);
+        try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
+            try (ResultSet r = s.executeQuery(ready.group(1))) {
+                assertTrue(r.next() && r.getBoolean(1), "September is ready to close");
+            }
+            assertEquals(1, s.executeUpdate(update.group(1)), "one month closed");
+            try (ResultSet r = s.executeQuery(ready.group(1))) {
+                assertTrue(r.next() && !r.getBoolean(1), "no month is ready once September is closed");
+            }
+        }
     }
 
     @Test

@@ -99,7 +99,8 @@ converted: Production or Starter Pack.
    customer onboarding, a supplier's file and the month-end close, each several pipelines and a
    flow, with two more sample tables, `billing.periods` and `stock.product_costs`; the nightly
    onboarding flow, `sample-onboarding-nightly`, runs no SQL, so the pack adds it, ready for a
-   schedule; the month-end flow runs SQL, so it is left, as below). `DELETE /api/v1/starter-pack` with `{"confirm": "DELETE"}` turns it off: every sample
+   schedule; the month-end flow runs SQL, so it is left, as below).
+   `DELETE /api/v1/starter-pack` with `{"confirm": "DELETE"}` turns it off: every sample
    pipeline and flow in the Library, the two sources (and `sample-data` unless a team's own pipeline
    or flow reads it), the `sample_region` variable the pack set, every table and schema the samples'
    login owns in `kilnmark_samples` (the database stays, empty) and the pack's folder in the files

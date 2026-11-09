@@ -219,12 +219,34 @@ def read(schema, table):
 
 
 def scenarios():
-    """The tables the business scenarios (samples/10-scenarios) need besides the others.
+    """What the business scenarios (samples/10-scenarios) need besides the others.
 
-    Made last, from the files already written and with a random generator of their own, so the
-    tables above stay exactly as they were.
+    Made last, from the files already written and with a random generator of their own: two tables
+    of their own, and a few rows appended to the archive and to the shop's customers, so every row
+    above stays exactly as it was.
     """
     r = random.Random(20261109)
+    # The same person in more than one system, for onboarding's merge: three CRM customers also in the
+    # 2023 archive (an older record, the email in other capitals) and two also shop customers (a newer
+    # record). Appended, so every row already in those tables stays as it was.
+    crm_people = {row["customer_id"]: row for row in read("crm", "customers")}
+    archive = read("crm", "customers_archive_2023")
+    for n, cid in enumerate(["2", "3", "9"], start=len(archive) + 1):
+        p = crm_people[cid]
+        archive.append(dict(p, customer_id=str(5000 + n), email=p["email"].title(), phone=f"07{r.randrange(100, 999)} {r.randrange(100000, 999999)}",
+                            created_at=tz(dt.datetime(2019, 1 + n % 12, 1 + n % 28, 10, 0, 0))))
+    write("crm", "customers_archive_2023", list(archive[0].keys()), [list(a.values()) for a in archive])
+    shop_people = read("shop", "customers")
+    for n, cid in enumerate(["3", "21"], start=len(shop_people) + 1):
+        p = crm_people[cid]
+        shop_people.append({"customer_id": str(n), "customer_code": f"S-{n:05d}", "first_name": p["first_name"],
+                            "last_name": p["last_name"], "email": " " + p["email"] + " ",
+                            "phone": f"07{r.randrange(100, 999)} {r.randrange(100000, 999999)}",
+                            "date_of_birth": p["date_of_birth"], "postcode": p["postcode"], "is_active": "true",
+                            "marketing_opt_in": "false", "loyalty_tier": "bronze",
+                            "created_at": f"2026-08-{10 + n % 10:02d} 09:30:00"})
+    write("shop", "customers", list(shop_people[0].keys()), [list(s.values()) for s in shop_people])
+
     # The cost agreed with the supplier for each product, before the latest feed. Most of the feed's
     # latest costs are within a few percent of it; a few have moved by more than 20%, for the steward
     # to review before they are trusted.
