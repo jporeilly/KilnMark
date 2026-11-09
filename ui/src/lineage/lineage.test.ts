@@ -1,11 +1,24 @@
 import { describe, expect, test } from "vitest";
-import { assetName, BOX_WIDTH, layoutLineage, lineageModel, type LineageLink } from "./lineage";
-import { assetLinks } from "./AssetLineagePanel";
+import {
+  assetName,
+  BOX_HEIGHT,
+  BOX_WIDTH,
+  edgeLabel,
+  labelWidth,
+  layoutLineage,
+  lineageModel,
+  type Cubic,
+  type LineageLayout,
+  type LineageLink,
+  type Point,
+} from "./lineage";
+import { assetLinks, boxKind } from "./AssetLineagePanel";
 
 const DB = "urn:kilnmark:starter-samples-db:public.shop_orders";
 const CUSTOMERS = "urn:kilnmark:starter-samples-db:public.shop_customers";
 const NAMED = "urn:kilnmark:starter-samples-files:samples/combine/orders_named.csv";
 const TOTALS = "urn:kilnmark:starter-samples-files:samples/combine/totals.parquet";
+const t = (name: string) => `urn:kilnmark:pg:public.${name}`;
 
 describe("readable names from asset URNs", () => {
   test("a table keeps its schema and table", () => {
@@ -37,6 +50,15 @@ describe("readable names from asset URNs", () => {
     expect(assetName("urn:kilnmark:pg:sales.orders").kind).toBe("table");
   });
 
+  test("the catalogue's kind wins over the guess", () => {
+    expect(assetName("urn:kilnmark:pg:public.json", "table")).toMatchObject({ kind: "table", name: "public.json" });
+    expect(assetName("urn:kilnmark:share:README", "file")).toMatchObject({ kind: "file", name: "README", folder: null });
+    expect(boxKind("view")).toBe("table");
+    expect(boxKind("partitioned table")).toBe("table");
+    expect(boxKind("sheet")).toBe("file");
+    expect(boxKind("document")).toBeUndefined();
+  });
+
   test("colons in the path belong to the path, not the source", () => {
     const file = assetName("urn:kilnmark:lake:s3:raw/2026-11-09T10:00/a.csv");
     expect([file.source, file.name, file.folder]).toEqual(["lake", "a.csv", "s3:raw/2026-11-09T10:00"]);
@@ -58,6 +80,50 @@ describe("readable names from asset URNs", () => {
   });
 });
 
+/** Points along a line, ends left out (they touch their own boxes). */
+function along(curves: Cubic[]): Point[] {
+  const out: Point[] = [];
+  for (const [a, b, c, d] of curves)
+    for (let i = 1; i < 40; i++) {
+      const s = i / 40;
+      const u = 1 - s;
+      out.push({
+        x: u * u * u * a.x + 3 * u * u * s * b.x + 3 * u * s * s * c.x + s * s * s * d.x,
+        y: u * u * u * a.y + 3 * u * u * s * b.y + 3 * u * s * s * c.y + s * s * s * d.y,
+      });
+    }
+  return out;
+}
+
+/** Every line passes only through the boxes at its two ends, and everything lies in the drawing. */
+function expectClear(placed: LineageLayout) {
+  for (const e of placed.edges) {
+    const points = along(e.curves);
+    for (const [urn, p] of placed.at) {
+      if (urn === e.from || urn === e.to) continue;
+      const through = points.find((q) => q.x > p.x + 1 && q.x < p.x + BOX_WIDTH - 1 && q.y > p.y + 1 && q.y < p.y + BOX_HEIGHT - 1);
+      expect(through, `the line ${e.from} to ${e.to} passes behind ${urn}`).toBeUndefined();
+    }
+    for (const q of [...points, ...e.curves.flat()]) {
+      expect(q.x).toBeGreaterThanOrEqual(0);
+      expect(q.x).toBeLessThanOrEqual(placed.width);
+      expect(q.y).toBeGreaterThanOrEqual(0);
+      expect(q.y).toBeLessThanOrEqual(placed.height);
+    }
+    if (e.label) {
+      const w = labelWidth(edgeLabel(e)) / 2;
+      expect(e.label.x - w).toBeGreaterThanOrEqual(0);
+      expect(e.label.x + w).toBeLessThanOrEqual(placed.width);
+    }
+  }
+  for (const p of placed.at.values()) {
+    expect(p.x).toBeGreaterThanOrEqual(0);
+    expect(p.y).toBeGreaterThanOrEqual(0);
+    expect(p.x + BOX_WIDTH).toBeLessThanOrEqual(placed.width);
+    expect(p.y + BOX_HEIGHT).toBeLessThanOrEqual(placed.height);
+  }
+}
+
 describe("the lineage graph", () => {
   // Two inputs; totals came only from orders, orders_named from both.
   const links: LineageLink[] = [
@@ -73,8 +139,9 @@ describe("the lineage graph", () => {
       [CUSTOMERS, NAMED],
       [DB, TOTALS],
     ]);
-    expect(model.edges.some((e) => e.from === CUSTOMERS && e.to === TOTALS)).toBe(false);
     expect(model.assets.map((a) => a.urn)).toEqual([DB, NAMED, CUSTOMERS, TOTALS]);
+    const placed = layoutLineage(model);
+    expect(placed.edges.map((e) => [e.from, e.to])).toEqual(model.edges.map((e) => [e.from, e.to]));
   });
 
   test("an asset that came from itself is not a line", () => {
@@ -83,7 +150,7 @@ describe("the lineage graph", () => {
     expect(model.edges.some((e) => e.from === e.to)).toBe(false);
   });
 
-  test("puts inputs left of outputs", () => {
+  test("puts inputs left of outputs, with the band between", () => {
     const placed = layoutLineage(lineageModel(links));
     for (const input of [DB, CUSTOMERS])
       for (const output of [NAMED, TOTALS]) {
@@ -92,30 +159,79 @@ describe("the lineage graph", () => {
     expect(placed.band).not.toBeNull();
     expect(placed.band!.x).toBeGreaterThan(placed.at.get(DB)!.x + BOX_WIDTH);
     expect(placed.band!.x + placed.band!.width).toBeLessThan(placed.at.get(NAMED)!.x);
+    expectClear(placed);
   });
 
-  test("a chain keeps each asset left of what came from it", () => {
-    const placed = layoutLineage(lineageModel([...links, { input: NAMED, output: "urn:kilnmark:pg:mart.report" }]));
-    expect(placed.at.get(NAMED)!.x).toBeLessThan(placed.at.get("urn:kilnmark:pg:mart.report")!.x);
-    expect(placed.at.get(DB)!.x).toBeLessThan(placed.at.get(NAMED)!.x);
+  test("every input is in the first column and every output in the last, whatever the chain", () => {
+    // y feeds only b, two columns on; c came only from x. Neither may drift into the middle.
+    const [x, y, a, b, c] = ["x", "y", "a", "b", "c"].map(t);
+    const placed = layoutLineage(
+      lineageModel([
+        { input: x, output: a },
+        { input: a, output: b },
+        { input: y, output: b },
+        { input: x, output: c },
+      ]),
+    );
+    const col = (u: string) => placed.at.get(u)!.x;
+    expect(col(y)).toBe(col(x));
+    expect(col(c)).toBe(col(b));
+    expect(col(x)).toBeLessThan(col(a));
+    expect(col(a)).toBeLessThan(col(b));
+    expect(placed.columns).toEqual({ first: col(x), last: col(b) });
+    expectClear(placed);
   });
 
-  test("everything fits the drawing and no two boxes overlap", () => {
-    const placed = layoutLineage(lineageModel(links), { labels: true });
-    const boxes = [...placed.at.entries()];
-    for (const [, p] of boxes) {
-      expect(p.x).toBeGreaterThanOrEqual(0);
-      expect(p.x + BOX_WIDTH).toBeLessThanOrEqual(placed.width);
-    }
-    for (const [a, p] of boxes)
-      for (const [b, q] of boxes) {
-        if (a >= b) continue;
-        const apart = p.x + BOX_WIDTH <= q.x || q.x + BOX_WIDTH <= p.x || Math.abs(p.y - q.y) >= 66;
-        expect(apart, `${a} and ${b}`).toBe(true);
+  test("a line that skips a column passes between its boxes, never behind one", () => {
+    const [t1, t2, t3, t4, t5, t6, t7] = ["t1", "t2", "t3", "t4", "t5", "t6", "t7"].map(t);
+    const pairs: [string, string][] = [
+      [t1, t7],
+      [t1, t6],
+      [t1, t2],
+      [t2, t3],
+      [t3, t6],
+      [t2, t4],
+      [t4, t5],
+    ];
+    const model = lineageModel(pairs.map(([input, output]) => ({ input, output, pipeline: "p" })));
+    expectClear(layoutLineage(model));
+    expectClear(layoutLineage(model, { labels: true }));
+  });
+
+  test("a loop of lineage goes back apart from the line forward, inside the drawing, with its label on it", () => {
+    const [x, c] = [t("x"), t("c")];
+    for (const labels of [false, true]) {
+      const placed = layoutLineage(
+        lineageModel([
+          { input: x, output: c, pipeline: "p1" },
+          { input: c, output: x, pipeline: "p2" },
+        ]),
+        { labels },
+      );
+      expectClear(placed);
+      const back = placed.edges.find((e) => e.back)!;
+      const forward = placed.edges.find((e) => !e.back)!;
+      expect(back).toBeDefined();
+      // It leaves the left side of the right box and ends at the right side of the left one.
+      const [from, to] = [placed.at.get(back.from)!, placed.at.get(back.to)!];
+      expect(back.curves[0][0].x).toBe(from.x);
+      expect(back.curves[back.curves.length - 1][3].x).toBe(to.x + BOX_WIDTH + 2);
+      // It does not lie on the line forward: halfway between the boxes the two are well apart.
+      const half = (cs: Cubic[]) => {
+        const midX = (from.x + to.x + BOX_WIDTH) / 2;
+        return along(cs).reduce((best, p) => (Math.abs(p.x - midX) < Math.abs(best.x - midX) ? p : best));
+      };
+      expect(Math.abs(half(back.curves).y - half(forward.curves).y)).toBeGreaterThan(20);
+      // Nor do they meet at the boxes' sides.
+      expect(back.curves[0][0].y).not.toBe(forward.curves[forward.curves.length - 1][3].y);
+      if (labels) {
+        const ends = back.curves.flatMap((k) => [k[0], k[3]]);
+        expect(ends).toContainEqual(back.label);
       }
+    }
   });
 
-  test("on an asset's page each line is labelled with its pipelines", () => {
+  test("on an asset's page each line is labelled with its pipelines, on the line", () => {
     const model = lineageModel([
       { input: DB, output: NAMED, pipeline: "orders-combine" },
       { input: DB, output: NAMED, pipeline: "orders-nightly" },
@@ -123,7 +239,10 @@ describe("the lineage graph", () => {
     expect(model.edges).toHaveLength(1);
     expect(model.edges[0].pipelines).toEqual(["orders-combine", "orders-nightly"]);
     const placed = layoutLineage(model, { labels: true });
-    expect(placed.edges[0].label).not.toBeNull();
+    const e = placed.edges[0];
+    expect(e.label).not.toBeNull();
+    expect(e.curves.flatMap((k) => [k[0], k[3]])).toContainEqual(e.label);
+    expectClear(placed);
   });
 });
 

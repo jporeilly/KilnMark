@@ -684,7 +684,8 @@ status changes.
 - **Lineage:** a graph of which assets each written asset came from. The inputs are on the left,
   the outputs on the right, and the band between them names the pipeline. A line joins an input to
   an output only where the run recorded that the output came from it, so an output made from some
-  of the inputs shows just those. Each box gives the table's or file's name, its folder and its
+  of the inputs shows just those. A table or file the run both wrote and read again sits between,
+  and one that came from itself says so. Each box gives the table's or file's name, its folder and its
   source, with its full identifier when you point at it; choose a box to open it in the catalogue.
   Pointing at or focusing a box picks out its lines. On a phone the graph scrolls sideways inside
   its frame. **Show the lineage as a list** gives the same as sentences.

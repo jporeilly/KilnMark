@@ -4,6 +4,10 @@
   min-width: 0;
 }
 
+.lg-figure {
+  margin: 0;
+}
+
 /* The drawing scrolls inside its frame, never the page, at any width. */
 .lg-frame {
   max-width: 100%;
@@ -46,12 +50,17 @@
   font-weight: 600;
   text-align: center;
   overflow-wrap: anywhere;
+  line-height: 14px;
   box-sizing: border-box;
 }
 
-/* The pipeline's name on a line of its own, under the word Pipeline. */
 .lg-band-name {
-  display: block;
+  /* At most two lines under the word Pipeline; the full name is in the title. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
 }
 
 .lg-heading {
@@ -81,13 +90,21 @@
   stroke-width: 3;
 }
 
-.lg-line.is-faded,
-.lg-edge-label.is-faded {
+.lg-line.is-faded {
   opacity: 0.18;
+}
+
+/* Faded, a label stays readable. */
+.lg-edge-label.is-faded {
+  opacity: 0.55;
 }
 
 .lg-arrow {
   fill: var(--km-muted);
+}
+
+.lg-arrow.is-near {
+  fill: var(--km-ink);
 }
 
 .lg-edge-label {
@@ -181,11 +198,7 @@
 }
 
 .lg-self {
-  position: absolute;
-  top: 4px;
-  right: 6px;
-  color: var(--km-muted);
-  font-size: 13px;
+  font-weight: 600;
 }
 
 .lg-caption {

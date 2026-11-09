@@ -132,7 +132,7 @@ export function AssetPage({ urn, tab }: { urn: string; tab?: string | null }) {
         {!isDocument && (selected === "overview" || selected === "columns") && (
           <TableDetails asset={asset} part={selected} />
         )}
-        {!isDocument && selected === "overview" && <AssetLineagePanel urn={asset.urn} name={asset.name} />}
+        {!isDocument && selected === "overview" && <AssetLineagePanel urn={asset.urn} name={asset.name} kind={asset.kind} />}
         {!isDocument && selected === "quality" && <QualityPanel asset={asset} />}
       </TabPanel>
       <p className="muted small km-footnote">
