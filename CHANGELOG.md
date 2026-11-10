@@ -1,7 +1,13 @@
 # Changelog
 
-Each release starts with **What's new**, a short summary in plain words, followed by the
-details.
+From 0.1.2, each release's notes are sorted by kind, in this order: **What's new**, a short summary
+in plain words; **Security**, each fix with its severity; **Fixed**; **Changed**, anything you must
+act on or that now behaves differently; and **Details**, the technical notes. Earlier releases
+have What's new and Details only.
+
+A severity (Critical, High, Medium or Low) rates the exposure before the fix, with who could have
+done what, and each fix says whether the flaw was in a release or only in code that was never
+released.
 
 ## Unreleased
 
@@ -49,16 +55,8 @@ details.
   SYSTEM's and the Administrators'). Install, upgrade and uninstall ask for root or an
   administrator, and say why; everything else runs as the operator, never elevated.
   `configure KEY=VALUE` changes an answer later, and `check` checks the machine and the install,
-  printing the command that fixes each problem. Release 0.1.2 is a fresh install: there is no
-  upgrade to it from 0.1.1. The install guide is now
+  printing the command that fixes each problem. The install guide is now
   [INSTALL.md](INSTALL.md) and the pages under [docs/guide/install](docs/guide/install/README.md).
-- **Security fixes to the bundled Keycloak's setup and the server**, from a review of 0.1.2: a
-  one-time code's name can no longer stop an unused temporary password from expiring, and anyone
-  whose sign-in details setup cannot read cleanly is disabled and named rather than left alone;
-  a group with a space in it, or a name with an invisible formatting character, is refused; a
-  Keycloak kept from a Starter Pack install is found however deep its marked group is; a refused
-  setup run changes nothing; and the samples' refusals on a production install are recorded in
-  the audit log.
 - **Two ways to deploy, chosen once at install**: **Production**, for real work, or a **Starter
   Pack** install, for training, demonstrations and development. The mode is recorded at the first
   start, and an install never changes mode: for production, install afresh.
@@ -89,12 +87,14 @@ details.
   to, so file sources with **Allow writing** work out of the box. Put your own folder there with
   `KILNMARK_FILES_DIR` in `config/.env`, which Kilnmark sees read-only at `/srv/share`; the
   samples and the pack write only in their own `files` volume.
-- **Every sample and template explains itself in the Library**: **About this sample** on each
-  sample's row, and each template's card, show what it shows (or is for), why it matters (the
-  real need it meets, in banking and other regulated work, and who typically has it), what to look
-  for when it runs, and what it needs, read from the comment its file starts with. The API gives the same, as
-  `explanation`, and a test fails the build if a sample or template lacks a part. Every explanation
-  has been rewritten in shorter, plainer sentences.
+- **Every sample and template explains itself**: **About this sample** on each sample's row in the
+  Library, and each template's card, show what it shows (or is for), why it matters (the real need
+  it meets, in banking and other regulated work, and who typically has it), what to look for when
+  it runs, and what it needs, read from the comment its file starts with. A pipeline or flow added
+  from the samples (the Starter Pack adds them all) shows the same on its own page, read from the
+  sample's file, and one changed since it was added says so: **Based on a sample; changed since**.
+  The API gives the same, as `explanation`, and a test fails the build if a sample or template
+  lacks a part. Every explanation has been rewritten in shorter, plainer sentences.
   ([The Library](docs/guide/library.md#samples))
 - **Four new samples**: `sample-functions` (padding, splitting a reference, due dates and days
   overdue, `if`, `contains` and a `sha256` of an email as a key that stays marked sensitive),
@@ -160,9 +160,8 @@ details.
   the key's columns, never its value. Each node keeps what it did before: dedupe and lookup the
   first row, an upsert the last, so no pipeline changes. The canvas shows each node's rule on its
   card, the default too, and the settings panel offers the deciding column only for `latest` and
-  `earliest`. A lookup's error for a repeated key no longer quotes the key's value. A preview is
-  refused for those who cannot unmask when `duplicates_by` names a column marked sensitive.
-  ([Which row wins](docs/guide/reference-pipeline-nodes.md#which-row-wins))
+  `earliest`. A preview is refused for those who cannot unmask when `duplicates_by` names a column
+  marked sensitive. ([Which row wins](docs/guide/reference-pipeline-nodes.md#which-row-wins))
 - **Rows that fail are set aside, not fatal** (ADR 0054; backlog item 9, point 1): `compute`,
   `select`, `filter`, `route` and `write` have an `errors` port. Connect something to it, such as a
   write to a quarantine file, and a row whose expression, cast or condition fails, or whose value a
@@ -173,10 +172,8 @@ details.
   rows, judged over the whole run (a write's before it commits). The run records each node's rows
   per port and logs how many failed. With nothing on the `errors` port, the first failure stops the
   run, as before. A refusal by the database itself (a unique index, a foreign key) still stops the
-  write. A route can no longer be called `errors`. A write's messages about a value its column
-  cannot hold (a decimal or time too precise, a number out of range, a year, an Oracle character)
-  no longer quote the value. A sample, `sample-rows-that-fail`, sets bad
-  SKUs aside into a quarantine file. ([Rows that fail](docs/guide/rows-that-fail.md))
+  write. A sample, `sample-rows-that-fail`, sets bad SKUs aside into a quarantine file.
+  ([Rows that fail](docs/guide/rows-that-fail.md))
 - **The documentation, arranged by reader**: the Documentation page now shows the guides in six
   groups, Get started, Build, Data quality, Install and deploy, Administer and Reference, each in
   reading order. New: [Your first pipeline](docs/guide/first-pipeline.md), from signing in to a
@@ -209,10 +206,423 @@ details.
   hand. **Run now** on a pipeline with parameters asks for their values in the **Run** tab, filled
   with the defaults, and sends what you changed. See
   [Parameters in the canvas](docs/guide/pipelines.md#parameters-in-the-canvas).
-- **About this sample on a sample's own page**: a pipeline or flow added from the samples (the
-  Starter Pack adds them all) shows what its sample shows, why it matters, what to look for when it
-  runs and what it needs, as the Library does, read from the sample's file. One changed since it
-  was added says so: **Based on a sample; changed since**.
+
+### Security
+
+Each was found in Kilnmark's own reviews and walks of 0.1.2. The most severe come first.
+
+- **Secrets kept off podman's command line.** Severity **High**: any account on the machine could
+  read the admin token and the database and Keycloak passwords while Kilnmark started with
+  podman-compose. In 0.1.1. Kilnmark, its database, Keycloak, Keycloak's database and the one-off
+  `keycloak-setup` took their secrets from their environment in `compose.yaml`, which
+  podman-compose puts on podman's command line, where any account on the machine can read it
+  (podman-compose does the same with an `env_file`); podman-compose 1.0.x also prints those command
+  lines, secrets and all. Now (ADR 0051, decision 13):
+  - Kilnmark, its database, Keycloak and Keycloak's database each read their own secrets from a
+    file the control script writes before every compose command, in `config/run/services` (yours
+    alone), named by `KILNMARK_SECRETS_DIR`, mounted read-only into that service alone:
+    `containers/kilnmark-env.sh` starts each service with them and then runs its image's own
+    program. `podman-compose --dry-run up` shows no secret. Compose reads `config/.env` without its
+    secrets, so `down`, `stop`, `status` and `logs` work whatever the secrets hold or lack; a start
+    refuses a secret holding `$` or a backtick, by its name.
+  - `keycloak-setup` and `samples-db` read theirs from a file the control script writes for each
+    run, holding only the two each needs, in a folder only its account can open (`config/run`),
+    mounted read-only and removed once the run is over: never `config/.env` whole, nor their
+    environment. Each file is read as compose reads `.env`, quotes, `export` and comments included.
+    Both one-offs run with no Linux capabilities and no new privileges, `keycloak-setup` as the
+    image's own user; it keeps kcadm's master-realm token in a private folder it removes at the
+    end, and `samples-db` sets the samples login's password with nothing in that session logged, a
+    failing statement included.
+  - The control scripts never show or log the podman command lines podman-compose 1.0.x prints,
+    logging or not.
+- **A column worked out from a computed column lost its sensitive mark.** Severity **High**: a
+  designer without the unmask grant could write a sensitive value into a table unmarked, where
+  anyone who may see that table, viewers included, would see it unmasked. In 0.1.1. A `compute`
+  node's columns may each use the ones computed before them, but a column was marked only when it
+  used a marked input column: with `a: upper(ssn)` and then `b: a`, `b` was not marked where the
+  pipeline wrote it. A mark now carries down the node's list of columns.
+- **Windows: other accounts could change the installed program.** Severity **High**: any account
+  that could sign in to the computer could change the scripts and `compose.yaml` the operator
+  runs, and so run its own program as the operator, with the admin token to hand. In 0.1.1, which
+  installed into `C:\Kilnmark` and protected only `config`, `certs` and `backups` there: `versions`
+  and the launchers kept what a folder under `C:\` inherits, which lets any signed-in account
+  change what is in it. 0.1.2 installs the program into `C:\Program Files\Kilnmark` (full control
+  for the Administrators and SYSTEM, read and run for Users, nothing inherited) and the data into
+  `C:\ProgramData\Kilnmark` (the operator, SYSTEM and the Administrators only), each made with
+  those permissions from its first moment.
+- **Linux: root followed links in the account's data folder.** Severity **High**: the service
+  account could have planted a link that root then wrote through, during install, upgrade or
+  uninstall, and so changed any file on the machine. Not in any release: in 0.1.1 root ran only
+  `prepare`, which made a new folder. Now (ADR 0051, decision 17), once the data folder is the
+  account's, root writes nothing in it: the account copies upgrade's `.env.example` and writes
+  install's log, and `uninstall --purge` refuses a data folder that is a link. Upgrade and
+  uninstall take the account from the data folder's owner, and refuse when `install.conf` names
+  another. Install, upgrade and uninstall refuse a program or data folder under a folder anyone but
+  root may change. Upgrade checks and unpacks a copy of the archive in a folder of root's, and
+  install and upgrade load the offline images file from a checked copy (a copy that does not fit
+  says how much room it needs). Upgrade and uninstall check the folders above first, before
+  reading anything in the data folder, and say what to do.
+- **Windows: the administrator's step ran a release others could change.** Severity **High**:
+  another account on the computer could have changed the scripts of a release unpacked where others
+  may write, and had them run as an administrator at install or upgrade. Not in any release: the
+  administrator's step is new in 0.1.2. Install and upgrade now refuse a release folder or archive
+  that anyone else may change (one unpacked under `C:\` is), before asking for an administrator,
+  and say to download it again into your own Downloads folder (a release in OneDrive is refused,
+  saying so). Upgrade checks and unpacks a copy of its own, the offline images file is checked and
+  loaded as a copy, and the elevated step checks the release again and trusts the operator only by
+  a user's SID. The install's folders carry their permissions from their first moment, and folders
+  above them that are links or junctions are refused.
+- **Signing out left the identity provider's session open.** Severity **Medium**: on a shared
+  computer, the next person could sign in again as whoever had signed out, without a password,
+  until the provider's own session ended. In 0.1.1. Signing out of Kilnmark ended only Kilnmark's
+  own session, so signing in again went straight back in as the same person (revoking the refresh
+  token, new in this release, does not end Keycloak's session either). Kilnmark now takes the
+  browser on to the provider's own sign-out page (its end-session endpoint, with the session's ID
+  token as the hint), which ends that session and sends the browser back to Kilnmark's sign-in
+  page. What this changes for the API and for your own identity provider is under Changed.
+- **Values in messages.** Severity **Medium**: anyone who could read a run's messages could see a
+  value, a sensitive one included, that masking would have hidden. In 0.1.1. A lookup's error for
+  a repeated key quoted the key's value; a decimal read through a generic JDBC driver that did not
+  fit the type the driver reports quoted the value; and a write's messages about a value its column
+  cannot hold (a decimal or time too precise, a number out of range, a year, an Oracle character)
+  quoted the value. Each now names the column and the type, never the value, as every message
+  should.
+- **The hourly expiry ran what others could change.** Severity **Medium**: another account that
+  could write the control script, a file a run uses, a folder above them or a folder on the
+  operator's PATH could have had its own program run as the operator every hour, with the admin
+  token to hand. Not in any release: `people expire` is new in 0.1.2. Now (ADR 0051, decision 15):
+  - `up` does not set the task or timer up while anyone else may write `kilnmark.ps1` (or
+    `kilnmark.sh`) or its folder. Before setting it up, and at the start of every `people expire`,
+    the control script checks for its owner and who may write it the whole tree a run uses: every
+    folder from the install root down to what a run uses (the launcher, the current version's
+    `compose.yaml`, setup script and `containers/kilnmark-env.sh`, `config/.env`, `logs`), and
+    every folder above the root, up to `/`, so the root cannot be moved away and another put in its
+    place; `current` must lead into `versions/`.
+  - The check comes before anything is read: a refused `people expire` reads no settings and sends
+    no admin token anywhere, and goes to the journal or Task Scheduler's history and leaves its line
+    in the day's log. The audit event `auth.expire_refused` is gone with the call that sent it.
+  - Linux: the timer's unit names the root by its canonical path, quoted (refusing a path a unit
+    would misread), and `KILNMARK_ENGINE` goes into it only as podman's or docker's full path; the
+    engine and the units' folder, and the folders above them, are checked at every run; `logs` is
+    kept private and never written through a link. podman-compose still finds podman on the
+    account's own PATH (ADR 0051).
+  - Windows: the hourly run looks up the engine and its compose tool once, checks them by their
+    full paths and runs them by those paths, never a script of the engine's name (Podman is told
+    which compose tool to launch, and podman-compose which podman to run); with Docker, a compose
+    plugin folder that is not there must be one nobody else may make. The task names Windows
+    PowerShell by its full path and quotes the script's path.
+  - The tests' hooks need a marker no release sets.
+- **The admin token went to whoever listened on Kilnmark's port.** Severity **Medium**: another
+  account on the machine that held Kilnmark's port first would have been sent the admin token by
+  the control script. Not in any release: 0.1.1's control script never sent the token. Before any
+  call to Kilnmark's API, the control scripts check who listens on its port (Linux: the account's
+  or root's sockets only; Windows: your programs only) and send nothing otherwise. Every request
+  with the admin token, the Starter Pack's turn-on included, goes through that one check and
+  connects to 127.0.0.1, and the Windows check fails closed when Windows does not answer.
+- **Windows: the administrator's step copied any file named as the TLS key.** Severity **Medium**:
+  an operator who needed an administrator's approval to install could have had any file on the
+  computer copied, as the certificate or its key, into a folder they can read. Not in any release.
+  The step that runs as an administrator no longer reads the certificate and its key; install
+  copies them with your own rights, after it.
+- **A `$` in an install answer could put a secret on the sign-in page.** Severity **Medium**: an
+  answers file from someone else, or a mistyped answer, could have shown the admin token to anyone
+  who could open Kilnmark's sign-in page. Not in any release: install's questions are new in 0.1.2.
+  Compose reads `${NAME}` in `config/.env` as another setting, so a provider name of
+  `${KILNMARK_ADMIN_TOKEN}` would have shown the admin token on the sign-in page. No answer, and no
+  `configure` value, may hold `$` or a backtick (refused by its key, never its value), and the
+  scripts refuse to write such a value into `config/.env` for any key. The identity provider's
+  client secret is refused with a space, a quote mark, `#`, `$`, a backtick or `\`, before
+  anything changes.
+- **A one-time code's name could stop a temporary password from expiring.** Severity **Medium**:
+  someone holding a person's unused temporary password (a class's shared one, say) could have kept
+  it working past its 72 hours. Not in any release: the people commands are new in 0.1.2. The
+  expiry of unused temporary passwords read each person's credentials as kcadm's CSV, where a
+  one-time code's label holding a line break (Keycloak 26.8's form for setting up the code keeps a
+  CRLF) read as a second credential: a password marked `kilnmark-temporary` with whatever time the
+  label said, a future one or none, so it never expired. Now (ADR 0051, decisions 10 and 16):
+  - Credentials are read as JSON, by a small strict reader in setup.sh (the image has no jq): only
+    a credential whose type is exactly `password` and whose label is exactly `kilnmark-temporary`
+    counts, and the earliest time. It fails closed: anyone still asked to choose their own password
+    whose credentials do not read cleanly (a label with a control or formatting character, a time
+    that is not one, or one more than an hour ahead) is disabled at once, and named for
+    `auth.person_disabled`; a listing of people that does not read cleanly stops the run. Every
+    listing of people, the realm's stamp and the pack's group's mark are read the same way.
+  - A temporary password with a one-time code set up on it still expires, and the code is taken
+    away again, so the real person can be activated.
+- **The people commands' checks.** Severity **Low**: a group list or a name written to mislead
+  could pass a check, though Keycloak then stopped the import. Not in any release. Groups are
+  compared whole, one at a time: `kilnmark-designers kilnmark-admins`, with a space for a `;`,
+  passed the admin and sensitive-data checks as a part of the list and stopped an import half way;
+  a group with a space in it is now refused before anything is made. Groups `config/.env` maps to a
+  role are compared whole too, a name with a space included. Names holding a Unicode format or
+  separator character (a right-to-left override or isolate, a zero-width space, a soft hyphen, a
+  byte-order mark), which `[[:cntrl:]]` misses, are refused. keycloak-setup's lookups fail closed
+  in `enable` and `activate`, the pack's group is looked for by an exact search, and a person's
+  groups are compared by path. People are made disabled and enabled only once the audit log has
+  them (Details, "Recorded first, then enabled").
+- **The realm checks.** Severity **Low**: on production, a realm holding the Starter Pack's group
+  below its top level was taken for one without it, and a refused setup run still changed
+  Keycloak's master realm. Not in any release. On production the pack's marked group is found at
+  every level: the exact search answers a subgroup of that name with its top-level group, which was
+  taken for "not there". A realm already there is checked before anything changes, so a refused
+  run no longer turns on brute-force protection in Keycloak's master realm first while saying
+  nothing was changed.
+- **setup's sign-in failure named Keycloak's address and its admin's user name.** Severity
+  **Low**: anyone who could read the one-off's log learnt them. In 0.1.1. It names neither now.
+- **Messages repeated what was typed.** Severity **Low**: a kind or a source's name typed into a
+  request came back in its error, and so in the server's log. In 0.1.1. A source of a kind the
+  server does not have, and the samples' refusals of a source, no longer repeat the kind or the
+  source's name typed.
+- **Refused requests for the samples on production went unrecorded.** Severity **Low**: on a
+  production install, anyone could ask for the samples again and again without an audit event.
+  Not in any release: deployment modes are new in 0.1.2. A request for the samples on a production
+  install (their list, Add samples, the sample tables, or offering them) is an audit event of its
+  own, `samples.refused`, with what was asked, kept at most 30 a minute for each caller as
+  `api.refused` is; a refused turn-on of the Starter Pack already was one.
+- **A run named a token by its name alone.** Severity **Low**: whoever makes a token chooses its
+  name, so a token named like another made the runs it asked for look like that one's. In 0.1.1. A
+  run asked for by a token names it `token <id> (<name>)`, and only the id ever says which token;
+  a schedule a token sets names it by id too.
+
+### Fixed
+
+- **The Windows logs no longer show the error text of checks that find nothing.** Windows
+  PowerShell's transcript, which writes the control script's logs, keeps what a program writes to
+  its error output even when the script discards it. So a fresh install's log showed
+  `relation "kilnmark.server_setting" does not exist` (the recorded mode and install id, before
+  Kilnmark's first start), `image not known` (the images, before they are built or loaded) and
+  `ERROR: The system cannot find the file specified.` (the hourly task, before it is set up), which
+  read like failures. Every such check now runs its program through one helper, `Invoke-Quiet`,
+  which reads and drops the error output outside PowerShell, keeps the exit code and the output,
+  and closes the program's input: the recorded settings, the images, the hourly task, the engine's
+  version, machine, cgroups and memory, WSL's version, the database's readiness, the containers'
+  states, and restore's checks of the backup. The answers are the same. A compose command or a
+  signature check is logged in full as before, and when restore cannot check Keycloak's database
+  in a backup, it now shows why on the screen as well as in the log.
+- **Ollama, LM Studio or a database on the same Windows computer can be reached under WSL's
+  mirrored networking.** There, the engine's route to "this computer" reaches the Podman machine,
+  so `http://host.containers.internal:11434/v1` was refused however Ollama listened. The Windows
+  control script now points `host.containers.internal` and `host.docker.internal` at the
+  computer's network address before every compose command, `check` says which address it uses
+  (and warns when `.wslconfig` lacks `hostAddressLoopback=true`), and `KILNMARK_HOST_ADDRESS` in
+  `config/.env` chooses the address yourself on either system. A new guide page,
+  [A model server or database on this computer](docs/guide/install/models-on-this-computer.md),
+  covers this and Ollama's own `OLLAMA_HOST`, on Windows and Linux.
+- **A tidier node settings panel**: each setting's box now sits straight under its name, with its
+  help under the box, so the boxes of a row line up however long each one's help is. A write
+  node that names its table with `table:` (or its file with `path:`) no longer shows an empty
+  "Table or file" box beside it. A setting with several controls, such as Key columns, no longer
+  draws a rule and padding above itself, and its box comes before the list of what is chosen.
+- **Panels laid out evenly**: a sweep of every panel at 1900, 1280 and 1024 pixels, measured
+  rather than eyeballed.
+  - Node settings: an on/off setting's name now sits level with the names beside it (it was
+    11 pixels lower), and every setting's name is the same size, whether one box or several.
+    A list of columns keeps one column's width whether or not any are chosen, instead of
+    stretching across the panel once the first is added, and a long column name wraps inside its
+    chip (a read node's columns take the whole row, before and after the table's columns are
+    known). A pair's two boxes (a column and its expression, a column and the one it matches, a
+    column and its new name) sit side by side where there is room. A read node's checklist says
+    what it reads under the boxes, a node's id has its help under the box, "None chosen." no
+    longer leaves a gap before the help, and a long node id wraps in the side column instead of
+    running into the settings. A setting's default no longer pulls the word before it onto the
+    next line.
+  - Boxes in the code face are as tall as the others (40 pixels, not 41).
+  - Email settings: a number's unit sits beside its box, centred, and the boxes are a number's
+    width; Send a test email is as wide as its words; Allowed email domains has the box under
+    its name and the help last.
+  - Explore: a long table name keeps its kind on the same line, and the SQL tab's choices and
+    Generate SQL no longer touch the text above them.
+
+From walking a 0.1.2 Starter Pack install, in the web UI:
+
+- **Schedules tables keep every column in view.** A long sign-in name no longer widens the table on
+  the Schedules page and a pipeline's or flow's Schedules tab, so **Last time it was due** and
+  **Edit**, **Pause** and **Delete** show at 1240px. Names wrap, and a person who signs in through
+  the identity provider shows by their `sso:` name, with the provider's ID for them on hover.
+- **One way of naming who did something.** A token shows by its name everywhere, whether the
+  server recorded it as `KILNMARK_ADMIN_TOKEN` or `token 1 (KILNMARK_ADMIN_TOKEN)`: who saved a
+  pipeline or flow, who asked for a run, who set a schedule, made a token or turned the Starter
+  Pack on (`Who.tsx`).
+- **Settings, Notifications tells a provider sign-in the truth**: people who sign in through the
+  identity provider get no notifications yet. It no longer says that sign-in is off.
+- **Explore shows `text`**, not `text(2147483647)`: a size a database driver gives for "no limit"
+  is not shown as a size, as the generated SQL already treats it.
+- **Counts read right for one**: "1 sign-in", "1 row in", "errors · 1 row", "1 address is", and
+  every other count on the screen, through one helper (`plural`); a test fails on a count printed
+  before a plural noun without it.
+- **Fit leaves the overview map clear**: on a tall window the canvas no longer fits nodes under the
+  map in the bottom-right corner (sample-gate-quarantine, sample-sort).
+- **The browser tab's title follows every move**: each route sets its title, so a flow's page no
+  longer keeps the title of the pipeline before it, and Admins only pages have one too.
+- **Run timelines tell the time as the rest of Kilnmark does**, 24-hour ("17:17:06"), whatever the
+  browser's language; so does a run's next try.
+- **"Run 12 of version 1 is queued." keeps up with the run**: on a pipeline's or flow's page and on
+  the Pipelines and Flows lists it says when the run is running, has succeeded or has failed,
+  without a reload.
+- **The access review's advice on a Starter Pack install**: a Starter Pack install is for training
+  and development only; for real data, install Kilnmark afresh in production mode (ADR 0051). It no
+  longer suggests turning the pack off, which would leave the example people in Keycloak.
+- **Auto-layout orders a join's inputs by their ports**: on sample-join, orders (`left`) sits above
+  customers (`right`), so their connections no longer cross.
+- **A Starter Pack install shows a schedule from the start.** The Schedules page was empty. Turning
+  the Starter Pack on now sets one example schedule: `sample-read-write-csv` every hour, on the
+  hour (UTC), which reads the example accounts and replaces one CSV file in the pack's folder, so
+  running it again and again is harmless: the file does not grow, though the run history gains one
+  short run an hour until the schedule is paused or deleted. It is set by the admin who turned the
+  pack on, acts as steward, and is in the audit log as **Schedule set** (`via: starter pack`).
+  Pause or delete it like any schedule. Turning the pack on again never adds a second. Turning it
+  off now deletes the samples' schedules first, then cancels any sample's run still queued or
+  running, so a run never stops the samples going; a sample still busy is named, and the rest go
+  on. A production install never has it
+  ([A Starter Pack install](docs/guide/install/starter-pack.md#the-example-schedule)).
+- **A read shows the SQL it runs.** A `read` node's **Query** box showed only `SELECT ... FROM
+  schema.table`. Under it, **SQL Kilnmark runs** now shows, read-only, the statement the read sends
+  for the table, columns, `where` and row limit chosen (a `?` for each value of `where`, bound as
+  it runs), or a query as it is sent. The server works it out with the same code that sets the read
+  up when it runs, from the table as last scanned, without connecting
+  (`POST /api/v1/pipelines/read-sql`, any role), so what is shown is what runs; a file, a table not yet
+  scanned or settings with problems say why there is none. The **Query** box is editable only by a
+  designer whose token may see unmasked values, the only people the server lets save a query
+  (ADR 0028): everyone else, admins included, sees it read-only with why, and a designer who may
+  not write one can choose **Remove the query**, since the server saves no pipeline holding a query
+  from them. Viewers and stewards see
+  the whole canvas read-only, as before; the YAML tab now says designers and admins edit a
+  pipeline, not stewards ([Settings](docs/guide/pipelines.md#settings)).
+- **Change owners is laid out as a form.** On a pipeline's or flow's page the **Owners** card
+  lists each owner on a line by a readable name (a token by its name, `token 1 (KILNMARK_ADMIN_TOKEN)`
+  as `KILNMARK_ADMIN_TOKEN` with the full record on hover) and whether it is a person or a team
+  address. **Change owners** shows the label above a box across the card, the hint under it, then
+  the buttons, as the app's other forms do; it still takes one owner a line.
+- **Settings spaces the Samples card from the Administration tiles** by the same gap as the page's
+  other sections, in every theme, density and width.
+- **Conditions say how to write them.** Under a filter's condition, a read's `where`, a route's
+  conditions and a compute's columns, chips put operators in at the cursor as the column chips do
+  (compare, `in`, `between`, `like`, `is null`, `and`, `or`, `not`, brackets and arithmetic), and
+  **How to write it** gives the operators, how to nest (`and` binds tighter than `or`; brackets
+  group), worked examples such as `is_active and (loyalty_tier = 'gold' or (loyalty_tier =
+  'silver' and amount >= 500))` and `price * qty > 1000`, and a link to
+  [Expressions](docs/guide/expressions.md#operators). A server test parses and checks every
+  example shown. **Columns leaving this node** lists each output port (out, rejected, errors) with
+  its columns and their types, a long list folded, in place of one line of text.
+- **The panel under the canvas is taller**: 38% of the window's height (at least 260px, at most
+  540px) in place of 32%, so a node's settings, such as a read's **Where**, **Row limit** and the
+  note under them, need less scrolling; on a 900px laptop screen it is 342px, not 288px. The canvas
+  above it may now be as short as 300px, not 360px, so the page stays about the screen's height. A
+  read's **Where** reference starts folded, being optional. On a phone the panel still takes its
+  content's height, up to 70% of the screen.
+- **Smaller things**: the Library's **Look for when it runs** and the other parts of a sample's
+  explanation start with a capital, unless they start with something to type; the Pipeline choice
+  on a flow's node is wider, so long names are not cut off, and no longer offers `sample-tables`,
+  which Kilnmark keeps to copy the sample data; a `stop` node has its own icon (a raised hand) in a
+  flow run's timeline, as on the diagram, not a tick.
+- **Uninstalling on Windows ends cleanly.** `kilnmark.cmd uninstall` removed everything, then said
+  "The system cannot find the path specified" and returned 1: Command Prompt reads a batch file
+  line by line as it runs it, and uninstall had just deleted it. It now ends with no error and
+  returns 0 once the program folder is gone, and the Command Prompt window stays open.
+- **Windows says how to get a prompt that is not elevated.** A day-to-day command refused an
+  elevated prompt with only "open one without Run as administrator", but in Windows Terminal
+  every tab of a window opened as administrator is elevated too, Command Prompt tabs included,
+  and a profile set to Run this profile as Administrator always opens one. The message now says
+  to open a new window from the Start menu, and why.
+- **A connector's card names the driver to install, with its version.** **Add a connection** said
+  only "Needs its driver"; the Oracle card now says **Tested with `ojdbc11 23.26.3.0.0`**, the exact
+  version Kilnmark downloads under Settings › Drivers, and names the driver once it is installed
+  (`driverName` and `driverVersion` in `GET /api/v1/connectors`).
+- **The MySQL and MariaDB driver's source ships with it.** LGPL 2.1 asks that whoever ships the
+  library also makes its source available: the release now has MariaDB Connector/J's sources jar,
+  as MariaDB published it, in `licenses/` beside the licence (ADR 0007).
+
+### Changed
+
+- **0.1.2 is a fresh install: there is no upgrade to it from 0.1.1**
+  ([Upgrading](docs/guide/install/upgrade.md), "From 0.1.1 or earlier"). Installs from before this
+  release (0.1.1 and earlier, previews, never production releases) **cannot be upgraded**: install
+  Kilnmark afresh, in the mode you want, backing up first anything you mean to carry across by
+  hand. The server refuses to start on a database made before this start with no mode recorded
+  (only a new database records one, and never production where `kilnmark_samples` is already on
+  the server), and records the refusal in the audit log (`server.start_refused`) when it can; `up`
+  refuses a `config/.env` with no `KILNMARK_MODE`; `upgrade` refuses before it changes anything;
+  `restore` refuses a backup with no mode recorded, or of the other mode, before it stops anything.
+  `KILNMARK_KEYCLOAK_DEMO_PASSWORD`, which 0.1.1 used for its example people, is not read. A
+  Windows backup to a folder you name is made yours only.
+- **The install layout**: a program folder and a data folder (`/opt/kilnmark` and
+  `/var/opt/kilnmark`, or `C:\Program Files\Kilnmark` and `C:\ProgramData\Kilnmark`) in place of
+  one install folder, with `data-folder.txt` in the program folder naming the data folder. Linux
+  `prepare` is gone into `install`, and so is the `C:\Kilnmark` default. Details, "The guided
+  install and the 0.1.2 layout", has the rest.
+- **Who runs what**: `install`, `upgrade` and `uninstall` need root (on Linux, install runs itself
+  again with `sudo`, and says why) or an administrator (Windows asks through UAC for the one step that
+  changes the folders). Every day-to-day command refuses root, an elevated prompt, and on Windows
+  anyone but the operator: on Windows, open a new window from the Start menu, without Run as
+  administrator.
+- **Where a release may be unpacked**: on Windows, install and upgrade refuse a release folder or
+  archive anyone else may change (one unpacked under `C:\` is) or one in OneDrive: download it
+  again into your own Downloads folder. On Linux, install, upgrade and uninstall refuse a program
+  or data folder under a folder anyone but root may change. With Docker on Windows, a compose
+  plugin folder that is not there must be one nobody else may make. On Windows, install copies the
+  TLS certificate and key with your own rights, so you must be able to read them.
+- **Compose by hand goes through the control script**: compose now needs `KILNMARK_SECRETS_DIR`
+  and the secrets files the control script writes before every command, so run a compose command
+  of your own with `kilnmark.sh compose ARGS` (`kilnmark.cmd compose ARGS`), which runs it as the
+  control script does. The guides no longer give a plain `podman compose`. `restart` with no
+  service is now a stop and an `up`, so the one-offs run again.
+- **What answers and secrets may hold**: no install answer and no `configure` value may hold `$` or
+  a backtick, and a start refuses a secret in `config/.env` that holds either, naming it. An OIDC
+  client secret may not hold a space, a quote mark, `#`, `$`, a backtick or `\`: ask your identity
+  provider for another. An answers file refuses a key naming a password, secret or token: the
+  client secret or the first admin's temporary password is typed hidden, or piped in. API tokens
+  only is no longer an answer for how people sign in.
+- **Signing out, in the API**: `POST /api/v1/auth/sign-out` answers 200 with `endSession`, the
+  provider's sign-out page to go to (`null` for an API token, or a provider without one), in place
+  of 204.
+- **Your own identity provider**: register `https://<host>/` as its post-logout redirect URI
+  ([Production with your own identity provider](docs/guide/install/production-own-identity-provider.md)).
+  For a sign-in to renew, Microsoft Entra ID and Okta need `KILNMARK_OIDC_SCOPES=offline_access`
+  (never Keycloak). A session that can no longer sign anyone in is answered 401 "Your sign-in has
+  ended. Sign in again." with its cookie cleared.
+- **Windows commands now start with `& `, so they can be pasted into PowerShell.** The control
+  script's messages and the install guides wrote `"C:\Program Files\Kilnmark\kilnmark.cmd" starter people`,
+  which PowerShell refuses ("Unexpected token"), and some messages left the path unquoted, which
+  breaks at its space. They now write `& "C:\Program Files\Kilnmark\kilnmark.cmd" ...`; in Command
+  Prompt, leave out the `& `.
+- **The sample flows' notice titles name the files to open.** The onboarding, supplier intake and quality-decides
+  flows put the share of rows set aside straight into their notices' titles, which showed as
+  "0.011881188118811881 of rows set aside". A flow cannot format a number in text, so the titles
+  now name the files to open instead: `quarantined_customers.csv`, `quarantined_rows.csv` and
+  `price_review.csv`, or `customers_aside.csv`. When each flow goes on or stops is unchanged.
+- **New fields in the API**: `GET /api/v1/connectors` gives `driverName` and `driverVersion`
+  (`null` for a driver Kilnmark ships); a pipeline's versions list the `parameters` they declare,
+  and a pipeline or flow added from the samples gives `sample`; `GET /api/v1/samples` and
+  `GET /api/v1/templates` give `explanation`; `auth.person_disabled` has `hours`. The access
+  review's CSV has the new `state`, `groups` and `sensitive_data_groups` columns, and the access
+  review a new `example` column.
+- **A route can no longer be called `errors`**: it is the name of the new errors port.
+- **Settings**: `KILNMARK_MODE` is new, and required. `KILNMARK_PROJECT` must be lower-case
+  letters, digits, `-` and `_`. Your own folder of files is now `KILNMARK_FILES_DIR`, a full path,
+  which Kilnmark sees read-only at `/srv/share`, while `/srv/files` is a volume Kilnmark writes: a
+  files source on your own folder uses the path `/srv/share`, not `/srv/files` as in 0.1.1, where
+  you mounted it yourself in `compose.yaml`. The one-offs' per-run
+  folder setting is `KILNMARK_RUN_DIR`. The OIDC group mappings and `KILNMARK_KEYCLOAK_BIND` come
+  from `config/.env` only, and a host other than `localhost` with the bundled Keycloak needs
+  `tls=proxy`.
+- **The database pool**: the default is now 30, and a process whose pool is smaller than it needs
+  no longer starts: if you raised `KILNMARK_WORKER_CONCURRENCY` above 5 (with 8 flows), raise
+  `QUARKUS_DATASOURCE_JDBC_MAX_SIZE` too
+  ([Sizing the workers](docs/guide/install/running-kilnmark.md#sizing-the-workers)).
+- **The hourly people expiry**: with the bundled Keycloak, `up` sets up an hourly run of
+  `people expire` (a systemd timer of the service account on Linux, a scheduled task on Windows)
+  and removes it without; `uninstall` removes it.
+- **On production**, a sign-in at kilnmark.com, by user name or email, or in the group
+  `kilnmark-starter-pack` is refused and recorded, a source of kind `sample-data` is refused, and
+  the samples are refused.
+- **In the bundled Keycloak**, people can no longer change their own email address or first or
+  last name (admins can), and user names are fixed.
+- **A node's retries** wait at most an hour each, as a run's do.
+- **What `check` looks for** includes WSL 2.7.11 (3.0.x breaks crun's pids controller) and 5 GB
+  of memory with the bundled Keycloak.
+- **On Windows, `host.containers.internal` and `host.docker.internal`** now point at the
+  computer's network address, so a model server or database on the same computer can be reached
+  under WSL's mirrored networking; `KILNMARK_HOST_ADDRESS` in `config/.env` chooses the address.
 
 ### Details
 
@@ -222,7 +632,6 @@ details.
   flow added from the samples gives `sample`: the sample's `file`, its `explanation` from the
   bundled file, and `changed`, true once a later version differs from the one added other than in
   where the canvas draws the nodes. Others give none.
-
 - **The business scenarios** (`samples/10-scenarios`, ADR 0051, decision 4): eight pipelines and
   three flows. Two sample tables are new, made by `generate.py` with a random generator of their
   own: `billing.periods`, one row a month, September 2026 open, and `stock.product_costs`, the cost
@@ -297,74 +706,6 @@ details.
     answer. The OIDC group mappings and Keycloak's published address
     (`KILNMARK_KEYCLOAK_BIND`, `0.0.0.0` for a host other than `localhost`, which then needs
     `tls=proxy` with the bundled Keycloak) come from `config/.env` only.
-- **Security: the control scripts keep secrets off command lines, and run as root or an
-  administrator only what nobody else may change** (ADR 0051, decisions 13, 15 and 17), from
-  reviews of 0.1.2:
-  - No answer, and no `configure` value, may hold `$` or a backtick (refused by its key, never its
-    value): compose reads `${NAME}` in `config/.env` as another setting, so a provider name of
-    `${KILNMARK_ADMIN_TOKEN}` would have shown the admin token on the sign-in page. The scripts
-    refuse to write such a value into `config/.env` for any key.
-  - Kilnmark, its database, Keycloak and Keycloak's database no longer take their secrets from
-    their environment in `compose.yaml`, which podman-compose put on Podman's command line, where
-    any account on the machine could read them (podman-compose does the same with an `env_file`).
-    Each reads its own from a file the control script writes before every compose command, in
-    `config/run/services` (yours alone), named by `KILNMARK_SECRETS_DIR`, mounted read-only into
-    that service alone: `containers/kilnmark-env.sh` starts each service with them and then runs its
-    image's own program. `podman-compose --dry-run up` shows no secret. Compose reads `config/.env`
-    without its secrets, so `down`, `stop`, `status` and `logs` work whatever the secrets hold or
-    lack; a start refuses a secret holding `$` or a backtick, by its name. For a compose command of
-    your own, `kilnmark.sh compose ARGS` (`kilnmark.cmd compose ARGS`) runs it as the control script
-    does; the guides no longer give a plain `podman compose`.
-  - Linux: once the data folder is the account's, root writes nothing in it: the account copies
-    upgrade's `.env.example` and writes install's log. Upgrade and uninstall take the account from
-    the data folder's owner, and refuse when `install.conf` names another. Install, upgrade and
-    uninstall refuse a program or data folder under a folder anyone but root may change. Upgrade
-    checks and unpacks a copy of the archive in a folder of root's, and install and upgrade load
-    the offline images file from a checked copy (a copy that does not fit says how much room it
-    needs). Upgrade and uninstall check the folders above first, before reading anything in the
-    data folder, and say what to do.
-  - Windows: the step that runs as an administrator no longer reads the certificate and its key;
-    you copy them, with your own rights, after it. Install and upgrade refuse a release folder or
-    archive that anyone else may change (one unpacked under `C:\` is), before asking for an
-    administrator, and say to download it again into your own Downloads folder (a release in
-    OneDrive is refused, saying so); upgrade checks and unpacks a copy of its own, the offline
-    images file is checked and loaded as a copy, and the elevated step checks the release again and
-    trusts the operator only by a user's SID. The hourly run looks up the engine and its compose
-    tool once, checks them by their full paths and runs them by those paths, never a script of the
-    engine's name (Podman is told which compose tool to launch, and podman-compose which podman to
-    run); the hourly run checks `containers/kilnmark-env.sh` too; with Docker, a compose plugin
-    folder that is not there must be one nobody else may make. Unpack a release in your own
-    Downloads folder.
-- **Security: keycloak-setup reads what a person wrote as JSON** (ADR 0051, decisions 10 and 16).
-  The expiry of unused temporary passwords read each person's credentials as kcadm's CSV, where a
-  one-time code's label holding a line break (Keycloak 26.8's form for setting up the code keeps a
-  CRLF) read as a second credential: a password marked `kilnmark-temporary` with whatever time the
-  label said, a future one or none, so it never expired. Credentials are now read as JSON, by a
-  small strict reader in setup.sh (the image has no jq): only a credential whose type is exactly
-  `password` and whose label is exactly `kilnmark-temporary` counts, and the earliest time. It fails
-  closed: anyone still asked to choose their own password whose credentials do not read cleanly
-  (a label with a control or formatting character, a time that is not one, or one more than an
-  hour ahead) is disabled at once, and named for `auth.person_disabled`; a listing of people that
-  does not read cleanly stops the run. Every listing of people, the realm's stamp and the pack's
-  group's mark are read the same way.
-- **Security: the people commands' checks** (ADR 0051, decision 10). Groups are compared whole, one
-  at a time: `kilnmark-designers kilnmark-admins`, with a space for a `;`, passed the admin and
-  sensitive-data checks as a part of the list and stopped an import half way; a group with a space
-  in it is now refused before anything is made. Groups `config/.env` maps to a role are compared
-  whole too, a name with a space included. Names holding a Unicode format or separator character
-  (a right-to-left override or isolate, a zero-width space, a soft hyphen, a byte-order mark), which
-  `[[:cntrl:]]` misses, are refused.
-- **Security: the realm checks** (ADR 0051, decision 16). On production the pack's marked group is
-  found at every level: the exact search answers a subgroup of that name with its top-level group,
-  which was taken for "not there". A realm already there is checked before anything changes, so a
-  refused run no longer turns on brute-force protection in Keycloak's master realm first while
-  saying nothing was changed. setup's sign-in failure no longer names Keycloak's address or its
-  admin's user name.
-- **Security: the server**. A request for the samples on a production install (their list, Add
-  samples, the sample tables, or offering them) is an audit event of its own, `samples.refused`,
-  with what was asked, kept at most 30 a minute for each caller as `api.refused` is; a refused
-  turn-on of the Starter Pack already was one. A source of a kind the server does not have, and the
-  samples' refusals of a source, no longer repeat the kind or the source's name typed.
 - **README and screenshots from 0.1.2**: the README says what Kilnmark does now (the two
   deployment modes, the people commands, the new nodes, which row wins, rows that fail, run
   retries, Run again from the failure and the samples that explain themselves), and every
@@ -397,9 +738,6 @@ details.
   waiting for a file, and points a check-source node's `tables` at the sample tables when they were
   created in a schema, as a pipeline's `asset` is. `sample-limit` no longer says its table holds
   100,000 rows (it holds 1,200), and the samples' README no longer says the flows are skipped.
-- **A read message no longer shows a value**: a decimal read through a generic JDBC driver that
-  does not fit the type the driver reports now fails naming the column and the type, not the
-  value, as every message should.
 - **Run retries, carrying on and owners** (ADR 0053; backlog item 1, done; migration V39): the
   `run:` block (`RunOptions`), checked when saved (with retries, a pipeline's writes must replace or
   upsert; so must a flow's pipelines with `retry_on: any`, unless a node has retries of its own); a
@@ -424,7 +762,7 @@ details.
   documentation, the 15 gaps that matter most for banks, and a migration map. The backlog takes
   it: run retries, owners and Run again from the failure (item 1), the gaps in nodes (item 9),
   audit reporting tables, and dashboards and reports about Kilnmark itself (item 18). flow-controls.md now says that no worker takes a flow over
-  until run retries exist.
+  until run retries exist (they now do: ADR 0053).
 - **Deployment modes** ([ADR 0051](docs/adr/0051-starter-pack.md)): `KILNMARK_MODE`
   (`kilnmark.mode`) is `production` or `starter-pack`, in ASCII lower case; the server and the
   control scripts refuse anything else. The control scripts write it at install (`--starter` for a
@@ -501,16 +839,6 @@ details.
   `auth.person_disabled`; `POST /api/v1/auth/people`, admin, from the control script), never with a
   password; Keycloak's admin events are on in both modes. With an outside identity provider the
   commands refuse. The release ships `containers/keycloak/people.example.csv`.
-- **Secrets off command lines**: `keycloak-setup` and `samples-db` read their secrets from a file
-  the control script writes for each run, holding only the two each needs, in a new folder only
-  its account can open (`config/run`), mounted read-only and removed once the run is over: never
-  `config/.env` whole, nor their environment, which podman-compose puts on podman's command line.
-  Each file is read as compose reads `.env`, quotes, `export` and comments included. Both one-offs
-  run with no Linux capabilities and no new privileges, `keycloak-setup` as the image's own user;
-  it keeps kcadm's master-realm token in a private folder it removes at the end, and `samples-db`
-  sets the samples login's password with nothing in that session logged, a failing statement
-  included. `restart` with no service is now a stop and an `up`, so the one-offs run again. The
-  long-running services still take theirs from compose's environment.
 - **Backup and restore with the bundled Keycloak** ([ADR 0039](docs/adr/0039-backup-and-restore.md),
   decision 8): `backup.sh` also dumps `keycloak-db` (`keycloak-db.dump`, read back in full, in
   `SHA256SUMS`, `keycloak=yes` in `backup.txt`) while the `auth` profile is on; `restore.sh`
@@ -535,42 +863,13 @@ details.
   restore's check of a production Keycloak database, know the example people by their user names,
   never their email. Someone made by the people commands who lands in a Kilnmark group the request
   did not name (a default group) is deleted again, and the command stops.
-- **A temporary password with a one-time code set up on it still expires**, and the code is taken
-  away again, so the real person can be activated.
 - **Every start tells the realm which install it belongs to**, once the server has recorded it, and a
   production restore refuses a Keycloak database whose realm does not say; `restore.sh` run by hand
   refuses when it cannot tell this install's mode.
-- **The hourly task and timer run only a script nobody else may change**: `up` does not set the
-  task or timer up while anyone else may write `kilnmark.ps1` (or `kilnmark.sh`) or its folder. `KILNMARK_PROJECT`
-  must be lower-case letters, digits, `-` and `_`. `uninstall --purge` keeps, and names, an image
-  another install on the machine still uses. The one-offs' per-run folder setting is now
-  `KILNMARK_RUN_DIR`.
-- **The hourly expiry runs only what nobody else may change**: before setting the task or timer up,
-  and at the start of every `people expire` (refused and audited when it fails), the control script
-  checks the whole tree a run uses (root, launcher, current version's `compose.yaml` and setup
-  script, `config/.env`) for its owner and who may write it, and every folder up to `/` too. `KILNMARK_ENGINE` goes
-  into a unit only as podman's or docker's full path; the tests' hooks need a marker no release sets.
 - **A Keycloak realm is one install's**: stamped once with its id and mode, and every
   `keycloak-setup` run refuses a realm of another install or mode, or, on production, one holding
   the Starter Pack's group or example people. The stamp and the first start's record of the mode
   are audit events (`auth.realm_stamped`, `server.mode_recorded`).
-- **The hourly expiry's checks reach the whole way**: every folder from the install root down to
-  what a run uses, `logs` too, and every folder above the root (so the root cannot be moved away
-  and another put in its place); `current` must lead into `versions/`. The check comes before anything is read: a refused `people expire`
-  reads no settings and sends no admin token anywhere, and goes to the journal or Task
-  Scheduler's history and the log. Linux names the root by its canonical path in the timer's unit,
-  quoted (refusing a path a unit would misread), checks the engine and
-  the units' folder, keeps `logs` private and never writes a log through a link; the Windows task
-  quotes the script's path. The audit event `auth.expire_refused` is gone with the call that sent it.
-- **The Windows install's folders carry their permissions from their first moment** (the guided
-  install, above): folders above them that are links or junctions are refused, and the hourly task
-  names Windows PowerShell by its full path.
-- **The admin token goes only to a listener of yours**: before any call to Kilnmark's API, the
-  control scripts check who listens on its port (Linux: the account's or root's sockets only;
-  Windows: your programs only) and send nothing otherwise. On Linux the engine and the units'
-  folder, and the folders above them, are checked at every `people expire` too, and a refused run
-  leaves its line in the day's log. keycloak-setup's lookups fail closed in `enable` and `activate`,
-  the pack's group is looked for by an exact search, and a person's groups are compared by path.
 - **Recorded first, then enabled**: whoever `people add`, `import` or `activate` gives a temporary
   password stays disabled until Kilnmark's audit log has them, and only then is enabled; a group
   `config/.env` maps to the admin role or to sensitive values counts as those in an import file.
@@ -594,32 +893,22 @@ details.
   sensitive.
 - **Control script**: `install --starter` (`-Starter`) makes a Starter Pack install, with the
   bundled Keycloak, and turns the pack on; `install` asks how people sign in on production
-  (`--auth`: the bundled Keycloak) and, with the bundled Keycloak, offers the first admin;
+  (the `identity` answer: `bundled` for the bundled Keycloak, or `own`) and, with the bundled
+  Keycloak, offers the first admin;
   `starter people [--new-password | --remove]`; `people add | import FILE | list`. `up` adds
   secrets a newer version needs to `config/.env` before starting, and refuses a one-run setting
   (`KILNMARK_PEOPLE_ACTION`, `KILNMARK_PERSON_*`, `KILNMARK_STARTER_PEOPLE_ACTION`) written there.
   The control scripts ignore the mode and those settings in the shell's environment, read `export`
-  lines in `config/.env` as compose does, read a setting's name with its case exactly, and never
-  show or log the podman command lines podman-compose 1.0.x prints, secrets and all, logging or
-  not. `install --auth` with other ports now also sets `KILNMARK_KEYCLOAK_URL` and `KILNMARK_URL` to
-  match them, so a second install's sign-in never goes to the first one's Keycloak. The server
+  lines in `config/.env` as compose does, and read a setting's name with its case exactly.
+  An install with the bundled Keycloak on other ports also sets `KILNMARK_KEYCLOAK_URL` and
+  `KILNMARK_URL` to match them, so a second install's sign-in never goes to the first one's Keycloak. The server
   image makes `/srv/files` its user's, and the database image carries `kilnmark-samples-db.sh`.
   `keycloak-setup` finds groups by path, so a subgroup named like one of its groups is never taken
-  for it. `KILNMARK_FILES_DIR` must be a full path.
+  for it. `uninstall --purge` keeps, and names, an image another install on the machine still
+  uses.
 - **Developer stack**: the root `compose.yaml` mounts the share at `/srv/share`, as the release
   does, and is a production install unless `KILNMARK_MODE` says otherwise (it has no Keycloak);
   `quarkusDev` and the tests are Starter Pack installs.
-- **Upgrading** ([Upgrading](docs/guide/install/upgrade.md), "From 0.1.1 or earlier"): installs from before this release
-  (0.1.1 and earlier, previews, never production releases) **cannot be upgraded**: install Kilnmark
-  afresh, in the mode you want, backing up first anything you mean to carry across by hand. The
-  server refuses to start on a database made before this start with no mode recorded (only a new
-  database records one, and never production where `kilnmark_samples` is already on the server),
-  and records the refusal in the audit log (`server.start_refused`) when it can; `up` refuses a
-  `config/.env` with no `KILNMARK_MODE`; `upgrade` refuses before it changes anything; `restore`
-  refuses a backup with no mode recorded, or of the other mode, before it stops anything. A Windows
-  backup to a folder you name is made yours only.
-- **flow-controls.md now says that no worker takes a flow over** until run retries exist (they
-  now do: ADR 0053).
 - **The backlog, the plan and scope, the positioning notes and the research into other tools**
   moved out of this repository, to be kept with the owner's other business documents. ADR 0049
   is revised for about 55 nodes by shape of work, and ADR 0050 makes each AI task a node of its
@@ -743,9 +1032,8 @@ details.
     to the job queue and to `asset`, `sample`, `document`, `quality_run` and `quality_result` wait
     until all seven are built; reads go on. The job table keeps every job ever queued, so on a
     long-used install its two take longest. The migrations run at start, before the worker takes
-    jobs; other processes sharing the database wait meanwhile. A process whose pool is smaller than it needs no longer starts: one that raised
-    `KILNMARK_WORKER_CONCURRENCY` above 5 (with 8 flows) without raising `QUARKUS_DATASOURCE_JDBC_MAX_SIZE` must
-    raise it (INSTALL.md, "Sizing the workers").
+    jobs; other processes sharing the database wait meanwhile. What a smaller pool now means is
+    under Changed.
 - **A provider sign-in renews with the refresh token** (ADR 0036, decision 4, amended). Quarkus's
   OIDC client was set up without `quarkus.oidc.token.refresh-expired`, so a session lasted only as
   long as the provider's first ID token: 5 minutes with Keycloak's default, about an hour with
@@ -758,188 +1046,19 @@ details.
   as a login, and `SignInEvents` now passes over it); it pauses the schedules set above a role the
   provider has lowered since, and nothing when the role is the same. Signing out asks the provider
   to revoke the refresh token (RFC 7009) where the provider offers that (Keycloak and Okta do, Entra
-  ID does not), so a copy of the session cookie cannot renew afterwards;
-  with the bundled Keycloak this ends its session too, so signing in again asks for the password
-  and code. A session that can no longer sign anyone in is answered 401 "Your sign-in has ended.
+  ID does not), so a copy of the session cookie cannot renew afterwards. Revoking it does not end
+  the provider's own session: signing out now does that too (see Security). A session that can no longer sign anyone in is answered 401 "Your sign-in has ended.
   Sign in again." with its cookie cleared, so later requests do not ask the provider again.
   New `KILNMARK_OIDC_SCOPES` (`quarkus.oidc.authentication.scopes`) for providers that issue a
   refresh token only for `offline_access`. The bundled Keycloak keeps its 5-minute tokens.
-- **A tidier node settings panel**: each setting's box now sits straight under its name, with its
-  help under the box, so the boxes of a row line up however long each one's help is. A write
-  node that names its table with `table:` (or its file with `path:`) no longer shows an empty
-  "Table or file" box beside it. A setting with several controls, such as Key columns, no longer
-  draws a rule and padding above itself, and its box comes before the list of what is chosen.
 - **A refactoring plan** on the backlog (item 21): one run lifecycle for pipelines and flows first,
   then the UI's API file split by area, one form-field building block, and the two largest server
   classes split. Each step changes no behaviour.
-
-- **Panels laid out evenly**: a sweep of every panel at 1900, 1280 and 1024 pixels, measured
-  rather than eyeballed.
-  - Node settings: an on/off setting's name now sits level with the names beside it (it was
-    11 pixels lower), and every setting's name is the same size, whether one box or several.
-    A list of columns keeps one column's width whether or not any are chosen, instead of
-    stretching across the panel once the first is added, and a long column name wraps inside its
-    chip (a read node's columns take the whole row, before and after the table's columns are
-    known). A pair's two boxes (a column and its expression, a column and the one it matches, a
-    column and its new name) sit side by side where there is room. A read node's checklist says
-    what it reads under the boxes, a node's id has its help under the box, "None chosen." no
-    longer leaves a gap before the help, and a long node id wraps in the side column instead of
-    running into the settings. A setting's default no longer pulls the word before it onto the
-    next line.
-  - Boxes in the code face are as tall as the others (40 pixels, not 41).
-  - Email settings: a number's unit sits beside its box, centred, and the boxes are a number's
-    width; Send a test email is as wide as its words; Allowed email domains has the box under
-    its name and the help last.
-  - Explore: a long table name keeps its kind on the same line, and the SQL tab's choices and
-    Generate SQL no longer touch the text above them.
 
 - **Quieter start and stop**: `kilnmark.sh` and `kilnmark.cmd` no longer show Podman's notice
   that it runs an external compose tool (they set `PODMAN_COMPOSE_WARNING_LOGS=false` for their
   own compose commands), and `up` and `down` show compose's container ids and names only when
   compose fails. Their own lines still say what happened.
-
-### Fixed
-
-- **The Windows logs no longer show the error text of checks that find nothing.** Windows
-  PowerShell's transcript, which writes the control script's logs, keeps what a program writes to
-  its error output even when the script discards it. So a fresh install's log showed
-  `relation "kilnmark.server_setting" does not exist` (the recorded mode and install id, before
-  Kilnmark's first start), `image not known` (the images, before they are built or loaded) and
-  `ERROR: The system cannot find the file specified.` (the hourly task, before it is set up), which
-  read like failures. Every such check now runs its program through one helper, `Invoke-Quiet`,
-  which reads and drops the error output outside PowerShell, keeps the exit code and the output,
-  and closes the program's input: the recorded settings, the images, the hourly task, the engine's
-  version, machine, cgroups and memory, WSL's version, the database's readiness, the containers'
-  states, and restore's checks of the backup. The answers are the same. A compose command or a
-  signature check is logged in full as before, and when restore cannot check Keycloak's database
-  in a backup, it now shows why on the screen as well as in the log.
-- **Windows commands in messages and guides can be pasted into PowerShell.** The control script's
-  messages and the install guides wrote `"C:\Program Files\Kilnmark\kilnmark.cmd" starter people`,
-  which PowerShell refuses ("Unexpected token"), and some messages left the path unquoted, which
-  breaks at its space. They now write `& "C:\Program Files\Kilnmark\kilnmark.cmd" ...`; in Command
-  Prompt, leave out the `& `.
-- **Ollama, LM Studio or a database on the same Windows computer can be reached under WSL's
-  mirrored networking.** There, the engine's route to "this computer" reaches the Podman machine,
-  so `http://host.containers.internal:11434/v1` was refused however Ollama listened. The Windows
-  control script now points `host.containers.internal` and `host.docker.internal` at the
-  computer's network address before every compose command, `check` says which address it uses
-  (and warns when `.wslconfig` lacks `hostAddressLoopback=true`), and `KILNMARK_HOST_ADDRESS` in
-  `config/.env` chooses the address yourself on either system. A new guide page,
-  [A model server or database on this computer](docs/guide/install/models-on-this-computer.md),
-  covers this and Ollama's own `OLLAMA_HOST`, on Windows and Linux.
-
-From walking a 0.1.2 Starter Pack install, in the web UI:
-
-- **Signing out ends the identity provider's session too.** Signing out of Kilnmark ended only
-  Kilnmark's own session, so signing in again went straight back in as the same person, without a
-  password: revoking the refresh token does not end Keycloak's session. Kilnmark now takes the
-  browser on to the provider's own sign-out page (its end-session endpoint, with the session's ID
-  token as the hint), which ends that session and sends the browser back to Kilnmark's sign-in
-  page. `POST /api/v1/auth/sign-out` answers 200 with `endSession`, the page to go to, in place of
-  204. With your own identity provider, register `https://<host>/` as its post-logout redirect URI
-  ([Production with your own identity provider](docs/guide/install/production-own-identity-provider.md)).
-
-- **Schedules tables keep every column in view.** A long sign-in name no longer widens the table on
-  the Schedules page and a pipeline's or flow's Schedules tab, so **Last time it was due** and
-  **Edit**, **Pause** and **Delete** show at 1240px. Names wrap, and a person who signs in through
-  the identity provider shows by their `sso:` name, with the provider's ID for them on hover.
-- **One way of naming who did something.** A token shows by its name everywhere, whether the
-  server recorded it as `KILNMARK_ADMIN_TOKEN` or `token 1 (KILNMARK_ADMIN_TOKEN)`: who saved a
-  pipeline or flow, who asked for a run, who set a schedule, made a token or turned the Starter
-  Pack on (`Who.tsx`).
-- **Settings, Notifications tells a provider sign-in the truth**: people who sign in through the
-  identity provider get no notifications yet. It no longer says that sign-in is off.
-- **Explore shows `text`**, not `text(2147483647)`: a size a database driver gives for "no limit"
-  is not shown as a size, as the generated SQL already treats it.
-- **Counts read right for one**: "1 sign-in", "1 row in", "errors · 1 row", "1 address is", and
-  every other count on the screen, through one helper (`plural`); a test fails on a count printed
-  before a plural noun without it.
-- **Fit leaves the overview map clear**: on a tall window the canvas no longer fits nodes under the
-  map in the bottom-right corner (sample-gate-quarantine, sample-sort).
-- **The browser tab's title follows every move**: each route sets its title, so a flow's page no
-  longer keeps the title of the pipeline before it, and Admins only pages have one too.
-- **Run timelines tell the time as the rest of Kilnmark does**, 24-hour ("17:17:06"), whatever the
-  browser's language; so does a run's next try.
-- **"Run 12 of version 1 is queued." keeps up with the run**: on a pipeline's or flow's page and on
-  the Pipelines and Flows lists it says when the run is running, has succeeded or has failed,
-  without a reload.
-- **The access review's advice on a Starter Pack install**: a Starter Pack install is for training
-  and development only; for real data, install Kilnmark afresh in production mode (ADR 0051). It no
-  longer suggests turning the pack off, which would leave the example people in Keycloak.
-- **Auto-layout orders a join's inputs by their ports**: on sample-join, orders (`left`) sits above
-  customers (`right`), so their connections no longer cross.
-- **A Starter Pack install shows a schedule from the start.** The Schedules page was empty. Turning
-  the Starter Pack on now sets one example schedule: `sample-read-write-csv` every hour, on the
-  hour (UTC), which reads the example accounts and replaces one CSV file in the pack's folder, so
-  running it again and again is harmless: the file does not grow, though the run history gains one
-  short run an hour until the schedule is paused or deleted. It is set by the admin who turned the
-  pack on, acts as steward, and is in the audit log as **Schedule set** (`via: starter pack`).
-  Pause or delete it like any schedule. Turning the pack on again never adds a second. Turning it
-  off now deletes the samples' schedules first, then cancels any sample's run still queued or
-  running, so a run never stops the samples going; a sample still busy is named, and the rest go
-  on. A production install never has it
-  ([A Starter Pack install](docs/guide/install/starter-pack.md#the-example-schedule)).
-- **A read shows the SQL it runs.** A `read` node's **Query** box showed only `SELECT ... FROM
-  schema.table`. Under it, **SQL Kilnmark runs** now shows, read-only, the statement the read sends
-  for the table, columns, `where` and row limit chosen (a `?` for each value of `where`, bound as
-  it runs), or a query as it is sent. The server works it out with the same code that sets the read
-  up when it runs, from the table as last scanned, without connecting
-  (`POST /api/v1/pipelines/read-sql`, any role), so what is shown is what runs; a file, a table not yet
-  scanned or settings with problems say why there is none. The **Query** box is editable only by a
-  designer whose token may see unmasked values, the only people the server lets save a query
-  (ADR 0028): everyone else, admins included, sees it read-only with why, and a designer who may
-  not write one can choose **Remove the query**, since the server saves no pipeline holding a query
-  from them. Viewers and stewards see
-  the whole canvas read-only, as before; the YAML tab now says designers and admins edit a
-  pipeline, not stewards ([Settings](docs/guide/pipelines.md#settings)).
-- **Change owners is laid out as a form.** On a pipeline's or flow's page the **Owners** card
-  lists each owner on a line by a readable name (a token by its name, `token 1 (KILNMARK_ADMIN_TOKEN)`
-  as `KILNMARK_ADMIN_TOKEN` with the full record on hover) and whether it is a person or a team
-  address. **Change owners** shows the label above a box across the card, the hint under it, then
-  the buttons, as the app's other forms do; it still takes one owner a line.
-- **Settings spaces the Samples card from the Administration tiles** by the same gap as the page's
-  other sections, in every theme, density and width.
-- **Conditions say how to write them.** Under a filter's condition, a read's `where`, a route's
-  conditions and a compute's columns, chips put operators in at the cursor as the column chips do
-  (compare, `in`, `between`, `like`, `is null`, `and`, `or`, `not`, brackets and arithmetic), and
-  **How to write it** gives the operators, how to nest (`and` binds tighter than `or`; brackets
-  group), worked examples such as `is_active and (loyalty_tier = 'gold' or (loyalty_tier =
-  'silver' and amount >= 500))` and `price * qty > 1000`, and a link to
-  [Expressions](docs/guide/expressions.md#operators). A server test parses and checks every
-  example shown. **Columns leaving this node** lists each output port (out, rejected, errors) with
-  its columns and their types, a long list folded, in place of one line of text.
-- **The panel under the canvas is taller**: 38% of the window's height (at least 260px, at most
-  540px) in place of 32%, so a node's settings, such as a read's **Where**, **Row limit** and the
-  note under them, need less scrolling; on a 900px laptop screen it is 342px, not 288px. The canvas
-  above it may now be as short as 300px, not 360px, so the page stays about the screen's height. A
-  read's **Where** reference starts folded, being optional. On a phone the panel still takes its
-  content's height, up to 70% of the screen.
-- **The sample flows' notices read well.** The onboarding, supplier intake and quality-decides
-  flows put the share of rows set aside straight into their notices' titles, which showed as
-  "0.011881188118811881 of rows set aside". A flow cannot format a number in text, so the titles
-  now name the files to open instead: `quarantined_customers.csv`, `quarantined_rows.csv` and
-  `price_review.csv`, or `customers_aside.csv`. When each flow goes on or stops is unchanged.
-- **Smaller things**: the Library's **Look for when it runs** and the other parts of a sample's
-  explanation start with a capital, unless they start with something to type; the Pipeline choice
-  on a flow's node is wider, so long names are not cut off, and no longer offers `sample-tables`,
-  which Kilnmark keeps to copy the sample data; a `stop` node has its own icon (a raised hand) in a
-  flow run's timeline, as on the diagram, not a tick.
-- **Uninstalling on Windows ends cleanly.** `kilnmark.cmd uninstall` removed everything, then said
-  "The system cannot find the path specified" and returned 1: Command Prompt reads a batch file
-  line by line as it runs it, and uninstall had just deleted it. It now ends with no error and
-  returns 0 once the program folder is gone, and the Command Prompt window stays open.
-- **Windows says how to get a prompt that is not elevated.** A day-to-day command refused an
-  elevated prompt with only "open one without Run as administrator", but in Windows Terminal
-  every tab of a window opened as administrator is elevated too, Command Prompt tabs included,
-  and a profile set to Run this profile as Administrator always opens one. The message now says
-  to open a new window from the Start menu, and why.
-- **A connector's card names the driver to install, with its version.** **Add a connection** said
-  only "Needs its driver"; the Oracle card now says **Tested with `ojdbc11 23.26.3.0.0`**, the exact
-  version Kilnmark downloads under Settings › Drivers, and names the driver once it is installed
-  (`driverName` and `driverVersion` in `GET /api/v1/connectors`).
-- **The MySQL and MariaDB driver's source ships with it.** LGPL 2.1 asks that whoever ships the
-  library also makes its source available: the release now has MariaDB Connector/J's sources jar,
-  as MariaDB published it, in `licenses/` beside the licence (ADR 0007).
 
 ## 0.1.1 (6 November 2026)
 
