@@ -1742,7 +1742,13 @@ class ControlScriptStarterTest {
             + "if [ \"$1 $2\" = \"compose version\" ]; then exit 0; fi\n"
             + "if [ \"$1 $2\" = \"version --format\" ]; then echo \"${FAKE_PODMAN_VERSION:-5.4.2}\"; exit 0; fi\n"
             + "if [ \"$1\" = info ]; then case \"$*\" in *CgroupsVersion*) echo v2 ;; *CgroupControllers*) echo \"${FAKE_CGROUPS:-[cpu memory pids]}\" ;;\n"
-            + "  *MemTotal*) echo 8589934592 ;; esac; exit 0; fi\n"
+            + "  *MemTotal*) echo 8589934592 ;;\n"
+            // the log driver a new container gets (FAKE_LOG_DRIVER); FAKE_BAD_CONF: Podman cannot read the containers.conf
+            // given it; FAKE_INFO_FAILS: nor the one it has
+            + "  *LogDriver*) [ -z \"${FAKE_INFO_FAILS-}\" ] || exit 125\n"
+            + "    [ -z \"${CONTAINERS_CONF-}\" ] || [ -z \"${FAKE_BAD_CONF-}\" ] || exit 125; echo \"${FAKE_LOG_DRIVER-}\" ;; esac; exit 0; fi\n"
+            // the log driver the containers there were made with
+            + "case \"$1\" in inspect) echo \"${FAKE_CONTAINER_LOG_DRIVER:-k8s-file}\"; exit 0 ;; esac\n"
             + "case \"$*\" in *install_id*) echo 0e38a49e-ee00-4b1e-98f9-fe3c44e6fa09; exit 0 ;; *psql*) [ \"${FAKE_RECORDED_MODE-}\" != none ] || exit 1\n"
             + "  echo \"${FAKE_RECORDED_MODE:-starter-pack}\"; exit 0 ;; esac\n"
             + "case \"$*\" in *\" up -d\"*) echo \"install id [${KILNMARK_INSTALL_ID-}]\" >> \"${FAKE_UP_LOG:-/dev/null}\" ;; esac\n"

@@ -12,12 +12,16 @@
 # taken with the bundled Keycloak has its database too (people, groups, one-time code setups): it
 # is restored the same way, beside Kilnmark's, the one it replaces kept as keycloak_before_<time>.
 # KILNMARK_COMPOSE overrides the compose command; KILNMARK_KEYCLOAK (on or off) says whether the
-# bundled Keycloak is on, else COMPOSE_PROFILES (or .env beside compose.yaml) does.
+# bundled Keycloak is on, else COMPOSE_PROFILES (or .env beside compose.yaml) does. KILNMARK_CONTROL
+# is the control script as the operator runs it (kilnmark.sh hands it): the commands this says to run
+# next go through it, as the operator runs a restore.
 set -eu
 
+control=${KILNMARK_CONTROL:-}
+if [ -n "$control" ]; then again="$control restore"; else again="./restore.sh"; fi
 src=${1:-}
 if [ -z "$src" ] || [ ! -f "$src/backup.txt" ] || [ ! -f "$src/SHA256SUMS" ]; then
-  echo "Say which backup to restore, a folder made by backup.sh: ./restore.sh /path/to/backups/kilnmark-<time> --yes" >&2
+  echo "Say which backup to restore, a folder made by backup: $again /path/to/backups/kilnmark-<time> --yes" >&2
   exit 2
 fi
 shift
@@ -49,6 +53,9 @@ if [ -z "$compose_words" ]; then
   compose_words=$(printf '%s\n' $compose_words)
 fi
 compose_text=$(printf '%s' "$compose_words" | tr '\n' ' ')
+# compose for a command by hand: through the control script, which runs it with the install's
+# project, settings, secrets and profiles; else as this script runs it.
+if [ -n "$control" ]; then by_hand="$control compose"; else by_hand=$compose_text; fi
 compose() (
   IFS=$nl
   set -f
@@ -105,7 +112,7 @@ fi
 if ! $yes; then
   echo "This puts Kilnmark back to the backup taken at $taken (Kilnmark $from)."
   if $restore_keycloak; then echo "The bundled Keycloak goes back to it too: its people, groups and one-time code setups."; fi
-  echo "The database and keys it replaces are kept, to go back to. To go on: ./restore.sh $src --yes"
+  echo "The database and keys it replaces are kept, to go back to. To go on: $again $src --yes"
   exit 2
 fi
 
@@ -130,7 +137,7 @@ wait_for() {
   until eval "$2" > /dev/null 2>&1; do
     tries=$((tries + 1))
     if [ "$tries" -ge "$3" ]; then
-      echo "$1 did not become ready. See: $compose_text logs" >&2
+      echo "$1 did not become ready. See: $by_hand logs" >&2
       exit 1
     fi
     sleep 2
@@ -237,7 +244,7 @@ stage="stopping Kilnmark"
 echo "Stopping Kilnmark"
 compose stop kilnmark
 if compose exec -T kilnmark true > /dev/null 2>&1; then
-  echo "Kilnmark is still running after the stop: nothing was replaced. Stop it, then run restore.sh again." >&2
+  echo "Kilnmark is still running after the stop: nothing was replaced. Stop it, then run the restore again." >&2
   exit 1
 fi
 
@@ -294,10 +301,10 @@ if ! $keys; then
   echo "  - enter every stored password again (Sources; AI models' keys; the mail password);"
 fi
 echo "  - run again the scans and pipelines that ran after it, if their results are needed;"
-echo "  - once all is well, drop the previous database: podman compose exec postgres dropdb -U kilnmark $before"
+echo "  - once all is well, drop the previous database: $by_hand exec postgres dropdb -U kilnmark $before"
 echo "    and remove before-restore-$stamp from the keys volume (the guide says how)."
 if $restore_keycloak; then
   echo "  - Keycloak is back to the backup too: people added or changed since then are gone, and anyone"
   echo "    removed since is back (remove them again). Then drop its previous database:"
-  echo "    podman compose exec keycloak-db dropdb -U keycloak $kc_before"
+  echo "    $by_hand exec keycloak-db dropdb -U keycloak $kc_before"
 fi

@@ -386,6 +386,30 @@ Each was found in Kilnmark's own reviews and walks of 0.1.2. The most severe com
 
 ### Fixed
 
+- **`logs` shows the containers' logs on Linux.** Podman's default log driver there is usually
+  journald, which files the lines of a system account, such as `kilnmark`, in the system journal,
+  where that account cannot read them: `kilnmark.sh logs` and `podman logs` printed nothing. Install,
+  and every `up` (so an upgrade too), now sets `log_driver = "k8s-file"` under `[containers]` in the
+  account's own `~/.config/containers/containers.conf`, as the account, adding it to the settings
+  already there; a file that is a link, or that Podman would not read with it, is left as it is,
+  with what to do. A container keeps the driver it was made with, so `up` makes Kilnmark's
+  containers again, once, where they were made with journald (all data is kept). `check` warns,
+  with the fix (`kilnmark.sh restart`), when the containers' logs go to a journal the account cannot
+  read. Docker, and Windows' Podman machine, are unchanged; `compose.yaml` names no log driver.
+- **`status` answers at once when Kilnmark is stopped.** Its health check had no time limit, and
+  under WSL's mirrored networking a closed port does not refuse a connection, it hangs: `status`
+  took about two minutes. It now gives up after 5 seconds. The other health checks in both control
+  scripts had a limit already.
+- **`restore` says the commands to run next as the control script.** Asked without `--yes`, it said
+  to run `./restore.sh <dir> --yes`; it now says `/opt/kilnmark/kilnmark.sh restore <dir> --yes`
+  (Windows: `& "C:\Program Files\Kilnmark\kilnmark.cmd" restore "<dir>" -Yes`). At the end it said
+  to drop the kept databases with `podman compose exec ...`, which lacks the install's settings and
+  secrets and stops; it now says `kilnmark.sh compose exec ...`.
+- **Backing up and restoring Kilnmark** describes the 0.1.2 layout: the program in `/opt/kilnmark`
+  or `C:\Program Files\Kilnmark`; settings, backups and logs in `/var/opt/kilnmark` or
+  `C:\ProgramData\Kilnmark`; each command run as the account that runs Kilnmark, or on Windows from
+  a prompt that is not elevated; a daily backup from that account's crontab; and a test restore
+  through the control script. It also says how to read the logs.
 - **The Windows logs no longer show the error text of checks that find nothing.** Windows
   PowerShell's transcript, which writes the control script's logs, keeps what a program writes to
   its error output even when the script discards it. So a fresh install's log showed
