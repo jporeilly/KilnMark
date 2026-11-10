@@ -1100,6 +1100,11 @@ class ControlScriptInstallTest {
             + "  *keycloak_restoring*\"'kilnmark_mode'\"*|*deployment_mode*) echo production ;;\n"
             + "  *keycloak_restoring*) echo 0 ;;\n"
             + "esac\nexit 0\n");
+        try {
+            Files.setPosixFilePermissions(compose, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+        } catch (UnsupportedOperationException notPosix) {
+            // Windows: Git Bash runs it by its first line
+        }
         Path release = Files.createTempDirectory("kilnmark-release");
         Files.writeString(release.resolve("compose.yaml"), "services:\n  kilnmark:\n    image: ghcr.io/jporeilly/kilnmark-server:9.9.9\n");
         ProcessBuilder pb = new ProcessBuilder(e.command(Path.of("../containers/restore.sh"), List.of(src, "--yes")))
