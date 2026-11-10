@@ -869,11 +869,12 @@ class ControlScriptStarterTest {
             Admin refused = a.run(WITH_KEYCLOAK, List.of("people", "activate", bad[0]), bad[1], true);
             assertTrue(refused.out().contains(bad[2]) && !refused.out().contains("keycloak-setup:"), refused.out());
         }
-        // list: who is there, and who is waiting; anyone setup disabled for an unused password is recorded
+        // list: who is there, and who is waiting; anyone setup disabled for an unused password is recorded,
+        // with the hours setup says the password could wait
         Admin list = a.run(WITH_KEYCLOAK, List.of("people", "list"), "", true);
         assertTrue(list.out().contains("rita@bank.example groups=kilnmark-admins status=active must-choose-password=yes")
             && list.out().contains("people: 1"), list.out());
-        assertEquals(List.of("{\"via\":\"expire\",\"disabled\":[\"old@bank.example\"]}"), list.posted());
+        assertEquals(List.of("{\"via\":\"expire\",\"disabled\":[\"old@bank.example\"],\"hours\":72}"), list.posted());
         // keycloak-setup is handed the mode Kilnmark recorded, and its few secrets in a file for the
         // run, read from config/.env as compose reads it (quotes and comments), which goes after it
         Map<String, String> quoted = new LinkedHashMap<>(WITH_KEYCLOAK);
@@ -912,6 +913,7 @@ class ControlScriptStarterTest {
             String body = expired.posted().get(i);
             assertTrue(body.startsWith("{\"via\":\"expire\",\"disabled\":[\"p" + (i * 500 + 1) + "@bank.example\""), body);
             assertEquals(i < 2 ? 500 : 200, body.split("@bank.example", -1).length - 1, body);
+            assertTrue(body.endsWith("],\"hours\":72}"), body);
         }
         // a person Kilnmark cannot record is never enabled (fail closed), and that is said
         Admin unrecorded = a.run(WITH_KEYCLOAK, ADD, "fail-me@bank.example\nFay\nIl\nkilnmark-viewers\n" + PERSON_PASSWORD, true);

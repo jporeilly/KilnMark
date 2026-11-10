@@ -53,3 +53,39 @@ from a provider sign-in that needs MFA (ADR 0036), turning an 8-hour session int
   INSTALL.md say to check the access review before setting it.
 - A person who leaves stays in the review until the audit rows age out (they are kept); their
   access ends when the provider stops giving them the group, as the review's note says.
+
+## Later: everyone, and what each role can do (November 2026)
+
+An admin asked to see, in one place, who has what role and the limits on them. The review now
+also gives:
+
+- **What each role can do**, from `RoleTable`: one line for each thing a role allows, with the least
+  role, whether the sensitive-data grant is needed too, and the endpoints that allow it. It is not a
+  second copy kept by hand: `RoleTableTest` fails when a line names an endpoint whose
+  `@RolesAllowed` asks another role, or when an endpoint above viewer is named by no line, and
+  `RoleTableProbeTest` tries each line as a viewer, a steward, a designer with and without the
+  grant, and an admin, so a check made in the code (clearing a mark, setting a variable, writing
+  SQL) is held to the line too: a line checked in the code on every endpoint it names, any other on
+  one. What neither catches is a check in the code that narrows a line checked only by its
+  annotation (running a flow again acts as no higher a role than the caller's, say): the line says
+  it in words, and a review of a change to such a check must look at the table. Generating the `@RolesAllowed` annotations from the table instead
+  was rejected: the in-code checks would still need a test, and it would touch every resource.
+- **The groups mapped to each role** and to the grant, and **the rules in force**: the settings
+  that limit people, read-only, each with its name. Only settings Kilnmark has; the idle limit of a
+  session is the identity provider's, and the page says so.
+- **People before their first sign-in**: those the control script made in the bundled Keycloak
+  (`auth.person_added`, `auth.person_activated`, `auth.person_disabled`), with the groups it gave,
+  the role and grant those give under today's settings, and a state: waiting for first sign-in,
+  waiting to be activated (a production import), or disabled for an unused temporary password, for
+  the hours the control script now reports (`hours`, `KILNMARK_PEOPLE_ACTIVATION_HOURS`). A sign-in
+  is matched to them by its user name, which the bundled Keycloak sets to the email and people
+  cannot change; once they have signed in since, their sign-in is shown instead.
+- A sign-in now records the person's groups that the unmask settings name, beside those the role
+  settings name, so the review can show who holds the grant's group without being a designer.
+
+Still from Kilnmark's own records alone: it never asks the identity provider, and holds no
+credential for the bundled Keycloak. Someone added, removed or disabled only at the provider is
+not known until they sign in; the page says so. Reading the provider's list of people would need a
+credential with read access to it (for Keycloak, a client with the `view-users` role), which is a
+decision for a later ADR.
+

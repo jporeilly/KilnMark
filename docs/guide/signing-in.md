@@ -13,8 +13,8 @@ for administrators: see [People and access](people-and-access.md).
 - **Roles for people come from their groups** at your identity provider, as you map them in
   Kilnmark's settings. Kilnmark never stores anyone's password.
 - **Tokens can be made to expire**: set a longest lifetime (say 90 days) and no token lasts longer.
-- **Settings › Access review** lists who can do what, and when they last did anything, as a CSV for
-  auditors ([People and access](people-and-access.md#token-lifetime-and-the-access-review)). Every
+- **Settings › Access review** shows what each role can do, the rules in force, and who can do what
+  and when they last did anything, as a CSV for auditors ([People and access](people-and-access.md#token-lifetime-and-the-access-review)). Every
   sign-in, refusal and review download is in the [audit log](audit-log.md).
 
 ## Two ways in
@@ -38,9 +38,13 @@ Everyone, and every token, has exactly one role. Each role can do everything the
 
 - **Viewer**: search and read the catalogue, pipelines, flows and runs.
 - **Steward**: also run pipelines and flows, scan sources, and look after quality rules and issues.
-- **Designer**: also build pipelines and flows, give them schedules, add and edit sources, write
-  custom SQL rules.
+- **Designer**: also build pipelines and flows, give them schedules, add and edit sources. With the
+  sensitive-data grant (below), also write SQL into what they build: custom SQL rules, a pipeline
+  read that runs a query, a flow's sql node.
 - **Admin**: also Settings, API tokens and the audit log.
+
+The full table, line by line, is on **Settings › Access review** for admins
+([People and access](people-and-access.md#token-lifetime-and-the-access-review)).
 
 ![The four roles as steps, each including the one below; the unmask grant sits beside designers, and admins see values masked](images/signin-roles.svg)
 

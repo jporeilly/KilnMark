@@ -2888,20 +2888,29 @@ function Invoke-PeopleSetup([string]$Action, $Person, [string[]]$Lines) {
 # groups, auth.people_imported for each import, auth.person_activated, and auth.person_disabled for
 # each person disabled for an unused temporary password. Never a password.
 function Send-OwnPeopleDone([string[]]$Lines, [string]$Via) {
-    $made = @(); $kept = @(); $refused = '0'; $activated = @(); $disabled = @()
+    $made = @(); $kept = @(); $refused = '0'; $activated = @(); $disabled = @(); $unclear = @(); $hours = ''
     foreach ($line in $Lines) {
         if ($line -cmatch '^keycloak-setup: made ([a-z0-9._%+@-]+) \(([a-z;-]+)\): (they choose their own password|waiting to be activated)') { $made += ('{"person":"' + $Matches[1] + '","groups":"' + $Matches[2] + '"}') }
         elseif ($line -cmatch '^keycloak-setup: left ([a-z0-9._%+@-]+) as they are: someone with this address is here already') { $kept += ('"' + $Matches[1] + '"') }
         elseif ($line -cmatch '^keycloak-setup: people import: made [0-9]+, already there [0-9]+, refused ([0-9]+)') { $refused = $Matches[1] }
         elseif ($line -cmatch '^keycloak-setup: activated ([a-z0-9._%+@-]+): they choose their own password') { $activated += ('"' + $Matches[1] + '"') }
-        elseif ($line -cmatch '^keycloak-setup: disabled ([a-z0-9._%+@-]+): their temporary password was not used') { $disabled += ('"' + $Matches[1] + '"') }
+        # those whose temporary password went unused for the hours setup names, and anyone else it
+        # disabled for an unused password (when it could not tell when it was set, say): recorded
+        # apart, so that only the first carry the hours, as a JSON number (072 in config\.env is 72)
+        elseif ($line -cmatch '^keycloak-setup: disabled ([a-z0-9._%+@-]+): their temporary password was not used within ([0-9]{1,3}) hours') { $disabled += ('"' + $Matches[1] + '"'); $hours = [string][int]$Matches[2] }
+        elseif ($line -cmatch '^keycloak-setup: disabled ([a-z0-9._%+@-]+): their temporary password was not used') { $unclear += ('"' + $Matches[1] + '"') }
     }
     $bodies = @()
     # what an ordinary run of setup did, before the command's own work: its own record, 500 people
     # at a time (Kilnmark takes at most 1000 in one)
-    for ($i = 0; $i -lt $disabled.Count; $i += 500) {
-        $chunk = @($disabled[$i..([Math]::Min($i + 499, $disabled.Count - 1))])
-        $bodies += ('{"via":"expire","disabled":[' + ($chunk -join ',') + ']}')
+    foreach ($group in @(@{ People = $disabled; Hours = $hours }, @{ People = $unclear; Hours = '' })) {
+        $people = @($group.People)
+        $tail = ''
+        if ($group.Hours -ne '') { $tail = ',"hours":' + $group.Hours }
+        for ($i = 0; $i -lt $people.Count; $i += 500) {
+            $chunk = @($people[$i..([Math]::Min($i + 499, $people.Count - 1))])
+            $bodies += ('{"via":"expire","disabled":[' + ($chunk -join ',') + ']' + $tail + '}')
+        }
     }
     if ($Via -eq 'activate') {
         if ($activated.Count -gt 0) { $bodies += ('{"via":"activate","activated":[' + ($activated -join ',') + ']}') }

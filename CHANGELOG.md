@@ -17,6 +17,20 @@ details.
   says why when it is off. Every download and refusal is in the audit log (`file.downloaded`,
   `file.download_refused`). `GET /api/v1/pipeline-runs/{id}/files` and `.../files/{index}`
   (ADR 0055).
+- **Settings › Access review shows everyone, and what each role can do**: a table of what a
+  viewer, a steward, a designer and an admin may and may not do, with the groups that give each
+  role and the sensitive-data grant, taken from the server and tried against its role checks by
+  tests;
+  the rules in force (the longest token lifetime, whether a second person approves the grant, the
+  longest sign-in, MFA, when schedules pause, models outside your network), read-only; and, beside
+  everyone who has signed in, the people the control script made in the bundled Keycloak who have
+  not signed in yet, each with their groups and whether they wait for their first sign-in, wait to
+  be activated, or were disabled for an unused temporary password. Anyone who sees sensitive values
+  unmasked is marked. The CSV has the new `state`, `groups` and `sensitive_data_groups` columns.
+  It is all from Kilnmark's own records: someone added or removed only at your identity provider
+  shows once they sign in, and the page says so. A sign-in now also records the person's
+  sensitive-data group, and the control script reports how long an unused temporary password could
+  wait (`hours` on `auth.person_disabled`).
 - **Lineage as a graph**: a run's page draws its lineage left to right, the inputs, a band naming
   the pipeline, then the outputs, with a line only where the run recorded that an output came
   from an input. Each box shows a readable name (`public.shop_orders`, or `orders_named.csv` with

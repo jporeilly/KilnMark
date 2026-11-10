@@ -117,17 +117,64 @@ relies on. The operator's own `KILNMARK_ADMIN_TOKEN` is not limited, and Kilnmar
 first-admin file is written if the limit would otherwise leave no admin able to sign in. It is off
 unless set, and must be between 1 and 3650 days, so a typing mistake cannot quietly mean "no limit".
 
-**Access review** (Settings › Access review) is one list of who can do what:
+**Access review** (Settings › Access review) is one page of who can do what, and the limits on
+them:
 
-- every API token: its role, whether it sees sensitive values, who made it, when it expires and
+- **What each role can do**: a table of what a viewer, a steward, a designer and an admin may and may
+  not do, which lines need the sensitive-data grant, and which of your identity provider's groups
+  give each role and the grant. It comes from the server itself. Kilnmark's tests hold every line to
+  the role each endpoint asks, and try each line as every role, so a line that says more or less
+  than those checks fails the build. A narrower rule inside a line is said in its words (running a
+  failed flow again, for example), and the guide has the finer rules.
+- **Rules in force**, read-only: the longest token lifetime, whether a second person approves the
+  sensitive-data grant, whether people sign in with your identity provider and, if they do, the
+  longest sign-in and whether a second factor is required, when a person's schedules pause, and
+  whether models outside your network may be used. Each names its setting; change it in the
+  server's settings.
+- every **API token**: its role, whether it sees sensitive values, who made it, when it expires and
   when it was last used;
-- everyone who has signed in through your organisation: the role their last sign-in gave them (or
-  none, if it was refused), when, and how often.
+- **everyone who signs in with your identity provider**: their state, their role, their groups,
+  whether they see sensitive values, and when they last signed in.
 
-![Settings › Access review: every API token with what it can do, its status, expiry, when it was last used and who made it; everyone who signs in with your identity provider, with the role their last sign-in gave them and when, the Starter Pack's example accounts marked as such; and a warning that example accounts have signed in](images/access-review.png)
+The states a person can be in:
 
-**Download CSV** gives your auditors a copy to keep. Each view and download is recorded in the audit
-log.
+| State | Means | Their role and groups come from |
+| --- | --- | --- |
+| Signed in | They have signed in. A later refusal shows too ("last sign-in refused: ..."); only "no group gives a role any more" takes the role away | Their last sign-in that gave a role |
+| Signed in, but given no role | The control script made them and they signed in, but no sign-in of theirs was ever given a role (no second factor, say). Others never given a role are not listed: they never had access | Their latest sign-in |
+| Waiting for first sign-in | The control script made them in the bundled Keycloak (`people add`, `people import` on a Starter Pack install, or `people activate`), and they have not signed in since | What `people add` or `people import` gave them, under your settings today |
+| Waiting to be activated | `people import` made them on a production install, with no password: `people activate` gives them one | As above |
+| (any of the above) | Someone the control script could not enable after Kilnmark recorded them stays disabled in Keycloak, but shows as waiting: the control script said so ("recorded, but not enabled") when it ran | |
+| Disabled: temporary password unused for 72 hours | Their temporary password went unused for longer than `KILNMARK_PEOPLE_ACTIVATION_HOURS`, so Keycloak's setup disabled them; `people activate` gives them a new one | As above |
+
+**Who sees sensitive values unmasked** is marked **Sees sensitive values**: an active token that
+holds the grant, or a designer whose last sign-in was in the sensitive-data group
+(`kilnmark-sensitive-data` with the bundled Keycloak, or the group you set in
+`KILNMARK_OIDC_UNMASK_GROUPS`). Someone in that group who is not a designer sees the values masked,
+and the page says so. For someone who has not signed in yet, the page says what they will see once
+they do.
+
+![Settings › Access review: what each role can do, with the groups that give each role; the rules in force; every API token with what it can do, its status, expiry, when it was last used and who made it; and everyone who signs in with your identity provider, with their state, role, groups and whether they see sensitive values, those who see them unmasked marked](images/access-review.png)
+
+**What the review cannot know.** Kilnmark builds the review from its own records (the audit log)
+and its settings: it never asks your identity provider, and holds no credential for the bundled
+Keycloak. So:
+
+- someone added only in Keycloak's console, or at your own provider, shows once they sign in;
+- someone removed or disabled at the provider still shows as they were, until a sign-in says
+  otherwise. Their access ends at the provider ([Your identity provider](#your-identity-provider));
+- how long a session may sit unused (the idle limit) is the provider's own setting: the realm
+  `keycloak-setup` makes allows 2 hours, and 8 hours at most;
+- sign-ins recorded before this release did not record the sensitive-data group, so for those
+  people the page knows only whether their last sign-in saw values unmasked.
+
+Check those at your identity provider. Reading the provider's own list of people would need
+Kilnmark to hold a credential for it, which it does not, by design.
+
+**Download CSV** gives your auditors a copy to keep, with every entry's state, groups and
+sensitive-data groups. For someone who has not signed in (state `waiting`, `not-activated` or
+`disabled`), `role` and `unmask` are what their groups will give them once they do: read them with
+`state`. Each view and download is recorded in the audit log.
 
 Schedules follow what the access review shows: a schedule runs only while the token or person that
 set it still has its role, and a person must have signed in within 30 days; it is paused when that

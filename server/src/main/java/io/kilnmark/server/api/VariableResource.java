@@ -20,7 +20,7 @@ import jakarta.ws.rs.core.Response;
 
 /**
  * Server variables: values every pipeline and flow on this server reads as {@code ${vars.name}}
- * (docs/design/pipelines.md, "Parameters and server variables"). Stewards and admins read and set them.
+ * (docs/design/pipelines.md, "Parameters and server variables"). Stewards and above read them; designers and admins set them.
  */
 @Path("/api/v1/variables")
 @Produces(MediaType.APPLICATION_JSON)
@@ -65,7 +65,7 @@ public class VariableResource {
     @Consumes(MediaType.APPLICATION_JSON)
     @Operation(summary = "Set a server variable", description = "Creates or replaces it. Runs already queued keep "
         + "the value they started with. Never a secret: a name that looks like a credential is refused. "
-        + "Role: steward.")
+        + "Role: designer.")
     public VariableService.View set(@PathParam("name") String name, SetVariable body) {
         if (body == null) {
             throw new IllegalArgumentException("Send the variable's type and value, such as {\"type\": \"text\", "
@@ -77,7 +77,7 @@ public class VariableResource {
     @DELETE
     @Path("{name}")
     @Operation(summary = "Delete a server variable", description = "Pipelines that name it cannot run until it is "
-        + "set again. Its changes are kept. Role: steward.")
+        + "set again. Its changes are kept. Role: designer.")
     public Response delete(@PathParam("name") String name) {
         variables.delete(name, who(), role());
         return Response.noContent().build();

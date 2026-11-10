@@ -55,8 +55,9 @@ public class SignInEvents {
         if (person != null) {
             detail.put("person", person); // opaque: what a schedule set by this person is checked by
         }
-        // only the groups the role settings name, so a schedule the person set is checked against
-        // today's mapping (ADR 0046); never their other groups
+        // only the groups the role and unmask settings name, so a schedule the person set is checked
+        // against today's mapping (ADR 0046) and the access review shows them (ADR 0037); never their
+        // other groups
         detail.put("groups", OidcAccess.mappedGroups(config.auth().oidc(), token::getClaim).stream()
             .map(ApiTokens::loggable).toList());
         AuditLog.Actor actor = new AuditLog.Actor(OidcIdentityAugmentor.actorName(token), null);

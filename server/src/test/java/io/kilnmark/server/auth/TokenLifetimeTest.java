@@ -188,9 +188,13 @@ class TokenLifetimeTest {
     void csvCellsCannotRunAsFormulas() {
         var r = new io.kilnmark.server.api.AccessReviewResource.Review(Instant.now(), null, java.util.List.of(
             new io.kilnmark.server.api.AccessReviewResource.Entry("token", "=HYPERLINK(\"x\")", "viewer", false,
-                "active", "@admin", null, null, null, null, null, false)));
+                "active", "@admin", null, null, null, null, null, false, null, null, null),
+            new io.kilnmark.server.api.AccessReviewResource.Entry("provider", "rita@bank.example", "viewer", false,
+                "waiting for first sign-in", null, null, null, null, 0L, null, false, java.util.List.of("+cmd"),
+                java.util.List.of(), "waiting")), java.util.List.of(), java.util.Map.of(), java.util.List.of());
         String csv = io.kilnmark.server.api.AccessReviewResource.csvForTests(r);
         assertTrue(csv.contains("\"'=HYPERLINK(\"\"x\"\")\""), csv);
         assertTrue(csv.contains("\"'@admin\""), csv);
+        assertTrue(csv.contains("\"'+cmd\""), "a group a provider names is quoted safe too: " + csv);
     }
 }
