@@ -85,6 +85,8 @@ const ratio = (a, b) => {
 };
 
 const TINTS = ["sky", "blue", "violet", "green", "amber", "orange", "red", "pink", "teal", "slate"];
+/** The tints notes on the canvas are drawn with: yellow, blue, green, pink and grey. */
+const NOTE_TINTS = ["amber", "sky", "green", "pink", "slate"];
 const FILLS = ["--km-fill-sky", "--km-fill-violet", "--km-fill-green", "--km-fill-amber", "--km-fill-red"];
 const NAV = ["sky", "mint", "violet", "pink", "green", "red", "amber", "slate"].map((n) => `--km-nav-${n}`);
 
@@ -143,6 +145,12 @@ for (const [name, base] of Object.entries(themes)) {
     for (const fill of ["--km-good", "--km-warn", "--km-bad"]) need(fill, "--km-track", 3, "status bar fill vs track");
     for (const t of TINTS) {
       need(`--km-tint-${t}-fg`, `--km-tint-${t}-bg`, 4.5, "chip, icon square and tile letters");
+    }
+    // Notes on the canvas (canvas.css .cv-note-*): their letters on their tint (above), and their
+    // edge, the letters' colour, against the canvas.
+    for (const t of NOTE_TINTS) {
+      need(`--km-tint-${t}-fg`, "--km-surface", 3, "a note's edge on the canvas");
+      need(`--km-tint-${t}-fg`, "--km-surface-2", 3, "a note's edge on the canvas");
     }
     // The dark sidebar.
     for (const bg of ["--km-side-bg", "--km-side-active", "--km-side-hover"]) {

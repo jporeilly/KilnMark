@@ -59,7 +59,13 @@ connections:
   - { from: clean, to: halt,  when: "clean.quarantined_share >= limit_share" }
   - { from: clean, to: halt,  when: failure }
 layout: { ... }                # where the canvas draws each node; ignored when running
+notes: [ ... ]                 # notes on the canvas, for people; ignored when running
 ```
+
+- Notes: a top-level `notes:` list and a `note:` on any node, as a pipeline's (pipelines.md
+  section 2): checked for their shape and limits by `CanvasNotes`, never kept in `FlowDefinition`,
+  so they never change a run. The diagram draws them with the pipeline canvas's `CanvasNotes`
+  component; **Add a note** is under the diagram, beside Undo.
 
 - Node types: `run-pipeline` (a saved pipeline, by name and optionally version, with `with:` for its
   parameters), `for-each` (a saved pipeline once for each item of a list; section 8), `stop` (ends

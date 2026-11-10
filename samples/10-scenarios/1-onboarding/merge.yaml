@@ -71,6 +71,7 @@ nodes:
 
   - id: valid_email
     type: gate
+    note: Two rules on every row; failing rows go to the quarantine file
     input: tidy
     on_fail: quarantine
     asset_rules: false             # three tables are read: the rules are written here
@@ -106,3 +107,22 @@ nodes:
     source: files
     path: samples/scenarios/onboarding/merged_records.csv
     mode: replace
+
+# Notes on the canvas, for people. Kilnmark ignores this list when it runs the pipeline.
+notes:
+  - text: |-
+      **One golden record per customer.** Three customer tables are put together, tidied and checked, then one row is kept for each email.
+    node: shop
+    x: 0
+    y: -150
+    width: 300
+    height: 110
+    colour: blue
+  - text: |-
+      **Steward:** review the rows in *quarantined_customers.csv* the morning after each run. They were set aside, not loaded.
+    node: quarantine
+    x: 0
+    y: 150
+    width: 240
+    height: 120
+    colour: yellow

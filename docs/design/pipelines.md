@@ -258,6 +258,25 @@ nodes:
     customers: {x: 40, y: 120}
     tidy: {x: 320, y: 120}
   ```
+- **Notes** (10 November 2026, for 0.1.2) are read the same way: `notes:`, a top-level list of
+  sticky notes on the canvas, and `note:`, a key every node may have (pipelines and flows alike).
+  `CanvasNotes` (kiln-core) checks only their shape and limits: at most 50 notes, each a mapping with
+  `text` (at most 2,000 characters; empty is allowed, as a note just added has none) and optionally
+  `node` (the node it is attached to; its `x` and `y` are then from that node's top-left corner, so
+  it moves with it), `x` and `y` (±100,000), `width` (120 to 1,200), `height` (60 to 1,200) and
+  `colour` (`yellow`, `blue`, `green`, `pink` or `grey`); a node's `note` is text of at most 280
+  characters. Anything else, or more, is a problem with its line, so the version saves as a draft.
+  `note` is in `PipelineDefinition.NODE_KEYS` (and the flow's), so it is never one of a node's
+  settings: no node type is asked about it, and "a key the node does not take" never names it. A
+  note attached to a node the pipeline does not have is no problem (it is drawn from the origin).
+  Neither is kept in `PipelineDefinition` or `FlowDefinition`: nothing a run, its check, its
+  prediction or its lineage is made from can see a note, which is what "notes never change what
+  runs" rests on. `CanvasNotes.withoutCanvas` (and `withoutCanvas` in ui/src/pipelines/canvas/notes.ts,
+  which does the same) leaves out `layout:`, `notes:` and each node's `note:` (on lines of its own)
+  when two versions are compared, finding them by where the parser read each key, and only in YAML
+  written as blocks (a root in braces, or YAML that cannot be read, is compared as written, so a
+  real change is never hidden; a lone CR counts as a line break, as the parser counts it): Run's unsaved-changes question, the message a save suggests, and
+  whether a pipeline or flow added from the samples has been changed (`Samples.about`).
 - Secrets never appear: nodes name saved sources, and the source holds the credentials.
 
 ### Reading and checking (`io.kilnmark.kiln.yaml`)
@@ -1425,7 +1444,19 @@ its run ends, and a retried start never to run the work twice.
   a change that adds, removes, renames, duplicates, connects or disconnects nodes also writes the
   position of every node drawn without one, so nothing jumps when the layout is worked out again.
   Nodes without a position are placed by a layered layout (dagre). Run's unsaved-changes question
-  ignores the layout block.
+  ignores the layout block, and the notes.
+- **Notes on the canvas** (`CanvasNotes.tsx`, shared with the flow diagram) are drawn in React
+  Flow's viewport (`ViewportPortal`), under the nodes, so they pan and zoom with the canvas but are
+  never React Flow nodes: they have no ports, take no part in connecting, Connect to…, the node list,
+  the overview or the node counts, and are announced as notes (`aria-roledescription="note"`). A
+  note's text is rendered by `NoteText`: `marked`'s lexer, then React elements for paragraphs, bold,
+  italic, lists and links only, so nothing becomes HTML; a link becomes one only to an http(s)
+  address (`safeHref`), with `target="_blank"` and `rel="noopener noreferrer"`, and anything else
+  is shown as written. Each change (add, text, colour, attach, move, resize, remove) is one text edit
+  of that note only (`notes.ts`) and one undo step; moves with the keys are written once the keys
+  have been still for 400 ms. Removing a node makes its notes free-standing where they are drawn;
+  renaming it keeps them attached. Viewers see notes read-only: the canvas is read-only for them,
+  and only designers save pipelines (`PipelineResource`, `@RolesAllowed(DESIGNER_ROLE)`).
 - **Room to work.** The canvas takes the page's full width and the window's height. The node list
   is an icon rail of folders (`NodeFactory.category()`, from `GET /api/v1/node-types`), expanding to a
   searchable tree docked in a column of its own, so the canvas narrows rather than being covered (over

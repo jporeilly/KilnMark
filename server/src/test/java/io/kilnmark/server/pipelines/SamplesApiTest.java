@@ -158,10 +158,26 @@ class SamplesApiTest {
         assertEquals(2, d.getInt("latestVersion"));
         assertFalse(d.getBoolean("sample.changed"));
 
+        // Notes on its canvas, and a note on a node, are for people: still as added.
+        String noted = moved.replace("    type: read\n", "    type: read\n    note: Reads every account\n")
+            + "\n# Notes on the canvas, for people. Kilnmark ignores this list when it runs the pipeline.\n"
+            + "notes:\n  - text: Copies the accounts to a **CSV** file.\n    node: accounts\n    y: -160\n";
+        String problems = as(designer).header("If-Match", "\"2\"").body(Map.of("yaml", noted, "message", "Notes"))
+            .put("/api/v1/pipelines/sample-read-write-csv").then().statusCode(200).extract().jsonPath()
+            .getList("latest.problems.message").toString();
+        assertFalse(problems.contains("note") || problems.contains("Note"), problems);
+        d = as(viewer).get("/api/v1/pipelines/sample-read-write-csv").then().statusCode(200).extract().jsonPath();
+        assertEquals(3, d.getInt("latestVersion"));
+        assertFalse(d.getBoolean("sample.changed"), d.prettify());
+        // A viewer may read the notes, never save them.
+        as(viewer).header("If-Match", "\"3\"").body(Map.of("yaml", noted + "  - text: Mine\n", "message", "Mine"))
+            .put("/api/v1/pipelines/sample-read-write-csv").then().statusCode(403);
+        moved = noted;
+
         // A parameter of its own: changed since, and the parameter listed with its kind and default.
         String changed = moved.replace("nodes:\n", "parameters:\n  label: { type: text, default: accounts, description: "
             + "Names the file }\n\nnodes:\n");
-        as(designer).header("If-Match", "\"2\"").body(Map.of("yaml", changed, "message", "A label"))
+        as(designer).header("If-Match", "\"3\"").body(Map.of("yaml", changed, "message", "A label"))
             .put("/api/v1/pipelines/sample-read-write-csv").then().statusCode(200);
         d = as(viewer).get("/api/v1/pipelines/sample-read-write-csv").then().statusCode(200).extract().jsonPath();
         assertTrue(d.getBoolean("sample.changed"), d.prettify());
@@ -187,15 +203,22 @@ class SamplesApiTest {
     }
 
     @Test
-    void withoutLayoutLeavesOutOnlyWhereTheNodesAreDrawn() {
+    void withoutCanvasLeavesOutOnlyWhereTheNodesAreDrawnAndTheNotes() {
         String yaml = "name: x\nnodes:\n  - id: a\n";
         String drawn = yaml + "\n# Where the canvas draws each node. Kilnmark ignores this when it runs the pipeline.\n"
             + "layout:\n  a: {x: 1, y: 2}\n";
-        assertEquals(Samples.withoutLayout(yaml), Samples.withoutLayout(drawn));
-        assertEquals(Samples.withoutLayout(yaml), Samples.withoutLayout(drawn.replace("\n", "\r\n")));
-        assertFalse(Samples.withoutLayout(yaml).equals(Samples.withoutLayout(yaml + "description: y\n")));
+        assertEquals(Samples.withoutCanvas(yaml), Samples.withoutCanvas(drawn));
+        assertEquals(Samples.withoutCanvas(yaml), Samples.withoutCanvas(drawn.replace("\n", "\r\n")));
+        assertFalse(Samples.withoutCanvas(yaml).equals(Samples.withoutCanvas(yaml + "description: y\n")));
         // A key after the layout block is kept.
-        assertTrue(Samples.withoutLayout(drawn + "quality: {min_score: 0.9}\n").contains("quality:"));
+        assertTrue(Samples.withoutCanvas(drawn + "quality: {min_score: 0.9}\n").contains("quality:"));
+        // Notes on the canvas, before or after the layout, and a node's own note: no change either.
+        String noted = drawn + "\n# Notes on the canvas, for people. Kilnmark ignores this list when it runs the pipeline.\n"
+            + "notes:\n  - text: |-\n      Reads **a**.\n\n      Then stops.\n    node: a\n    y: -150\n";
+        assertEquals(Samples.withoutCanvas(yaml), Samples.withoutCanvas(noted));
+        assertEquals(Samples.withoutCanvas(yaml), Samples.withoutCanvas(yaml.replace("  - id: a\n",
+            "  - id: a\n    note: |\n      The first node.\n\n      Two lines.\n")));
+        assertTrue(Samples.withoutCanvas(noted + "run: {retries: 1}\n").contains("run:"));
     }
 
     /** The templates: listed with their YAML for any signed-in person, even with the samples turned off. */

@@ -19,7 +19,7 @@ import {
   type Change,
   type Graph,
 } from "./model";
-import { emptyYaml as emptyPipeline, withoutLayout } from "../template";
+import { emptyYaml as emptyPipeline, withoutCanvas } from "../template";
 
 const t = (type: string, kind: string, inputs: string[], outputs: string[], many: string[] = []): NodeType => ({
   type,
@@ -443,8 +443,8 @@ describe("only what changes is rewritten", () => {
   });
 
   test("the layout is what Run and Save may ignore", () => {
-    expect(withoutLayout(ok(setPositions(BILLING, { tidy: { x: 1, y: 2 } })))).toBe(BILLING);
-    expect(withoutLayout(TRICKY)).toBe(TRICKY.slice(0, TRICKY.indexOf("layout:")));
+    expect(withoutCanvas(ok(setPositions(BILLING, { tidy: { x: 1, y: 2 } })))).toBe(BILLING);
+    expect(withoutCanvas(TRICKY)).toBe(TRICKY.slice(0, TRICKY.indexOf("layout:")));
   });
 });
 

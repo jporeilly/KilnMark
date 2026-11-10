@@ -30,7 +30,7 @@ public record PipelineDefinition(String name, String description, List<NodeDefin
     public static final String FORMAT = "pipeline/v1";
 
     static final Set<String> TOP_LEVEL_KEYS = Set.of("kilnmark", "name", "description", "parameters", "quality",
-        "run", "nodes", "layout");
+        "run", "nodes", "layout", CanvasNotes.KEY);
     static final Set<String> QUALITY_KEYS = Set.of("min_score");
 
     /**
@@ -39,7 +39,9 @@ public record PipelineDefinition(String name, String description, List<NodeDefin
      * runs the same however its nodes are drawn.
      */
     public static final String LAYOUT = "layout";
-    static final Set<String> NODE_KEYS = Set.of("id", "type", "input", "inputs");
+    // notes: and each node's note: are read as layout is: checked (CanvasNotes), never kept, so
+    // they never change what a pipeline does.
+    static final Set<String> NODE_KEYS = Set.of("id", "type", "input", "inputs", CanvasNotes.NODE_KEY);
 
     public PipelineDefinition {
         nodes = List.copyOf(nodes);
@@ -79,8 +81,8 @@ public record PipelineDefinition(String name, String description, List<NodeDefin
      * @param id       its id, unique in the pipeline
      * @param type     its node type, or null if none was given
      * @param inputs   the inputs it names, in the order written
-     * @param config     its settings: every key except {@code id}, {@code type}, {@code input} and
-     *                   {@code inputs}, as maps, lists, strings, numbers (whole numbers as Integer, Long
+     * @param config     its settings: every key except {@code id}, {@code type}, {@code input},
+     *                   {@code inputs} and {@code note} (shown on the canvas only), as maps, lists, strings, numbers (whole numbers as Integer, Long
      *                   or BigInteger, decimals as BigDecimal), booleans and nulls
      * @param position   where the node starts
      * @param keys       where each of the node's keys is written
@@ -195,7 +197,7 @@ public record PipelineDefinition(String name, String description, List<NodeDefin
             if (!TOP_LEVEL_KEYS.contains(e.key()) && !Renamed.isOld(e.key(), TOP_LEVEL_KEYS)) {
                 problems.add(Problem.at(e.keyPosition(), null, "Unknown key '" + Suggest.clip(e.key()) + "'"
                     + Suggest.hint(e.key(), TOP_LEVEL_KEYS)
-                    + ": a pipeline has kilnmark, name, description, parameters, quality, run, nodes and layout"));
+                    + ": a pipeline has kilnmark, name, description, parameters, quality, run, nodes, layout and notes"));
             }
         }
         String name = text(top.entries().get("name"), "name", null, problems);
@@ -207,6 +209,7 @@ public record PipelineDefinition(String name, String description, List<NodeDefin
         RunOptions run = RunOptions.read(top.entries().get("run"), problems);
         List<Parameters.Parameter> parameters = Parameters.read(top.entries().get("parameters"), "pipeline", true,
             problems);
+        CanvasNotes.read(top.entries().get(CanvasNotes.KEY), problems);
 
         List<NodeDefinition> nodes = new ArrayList<>();
         YamlReader.Entry nodesEntry = Renamed.entry(top, "nodes", "pipeline", problems);
@@ -288,6 +291,7 @@ public record PipelineDefinition(String name, String description, List<NodeDefin
             return null;
         }
         String type = text(m.entries().get("type"), "type", id, problems);
+        CanvasNotes.readNodeNote(m.entries().get(CanvasNotes.NODE_KEY), id, problems);
         if (!m.entries().containsKey("type")) {
             problems.add(Problem.at(m.position(), id, "Node " + id + " needs a type"));
         }

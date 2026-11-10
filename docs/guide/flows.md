@@ -591,6 +591,39 @@ The panel under the diagram has the same tabs as a pipeline's:
 The `layout:` block only says where the diagram draws each node: a flow runs the same however it
 is drawn.
 
+### Notes on the canvas
+
+A flow's diagram has notes as a pipeline's canvas does ([Notes on the
+canvas](pipelines.md#notes-on-the-canvas)): sticky notes anywhere on the diagram, and a short note
+on any node, shown under its name. Kilnmark ignores them when it runs the flow, so a note never
+changes a run or its check.
+
+- **Add a note**, under the diagram beside **Undo**, adds one above the chosen node, attached to it,
+  or above the diagram when no node is chosen, and opens its editor. Type what it says, then press
+  Escape or choose **Done**.
+- Double-click a note, or press Enter on it, to edit it, change its colour or the node it is
+  attached to. Drag it, or its corner, to move or resize it, or use Shift and the arrow keys (with
+  Ctrl as well to resize). Delete removes it. Each change is one step for **Undo**.
+- **A node's note** is in **Note** in the node's **Settings** tab.
+
+The text, its limits and the YAML are as a pipeline's: a `notes:` list after the connections, and
+`note:` on a node. Notes are never masked: **never paste data values into a note**. Designers and
+admins change them; everyone else reads them.
+
+```yaml
+nodes:
+  - id: merge
+    type: run-pipeline
+    note: Goes on only while few rows are set aside
+    pipeline: sample-onboarding-merge
+
+# Notes on the canvas, for people. Kilnmark ignores this list when it runs the flow.
+notes:
+  - text: Give it a schedule under **Schedules** to run it every night.
+    node: merge
+    y: -170
+```
+
 ## Checking as you type
 
 The YAML is checked a moment after you stop typing: its shape, its connections (no loops), its

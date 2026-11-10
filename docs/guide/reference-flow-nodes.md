@@ -9,15 +9,20 @@ Each entry gives what the node does, the controls it takes (a timeout, tries aga
 the values it reports for conditions and `${node.value}` in later nodes, a table of its settings,
 what to know about it, who may use it, and an example you can copy. The controls and values come
 from the server's own definitions, so they are always those of this version. Every node also has an
-`id` (small letters, digits, `-` and `_`, starting with a letter; never `vars`) and its `type`.
+`id` (small letters, digits, `-` and `_`, starting with a letter; never `vars`) and its `type`, and
+may have a `note`: a short note for people, shown under its name on the diagram, plain text of at
+most 280 characters, which Kilnmark ignores when it runs the flow. Never put data values in a note:
+notes are not masked ([Notes on the canvas](flows.md#notes-on-the-canvas)).
 
 ## The flow and its connections
 
 A flow's own keys are `kilnmark` (always `flow/v1`), `name`, `description`, `parameters`,
 `queue_timeout` (how long a node waits for a pipeline that is already running before it fails; 30m
 when left out, 24h at most), `max_parallel` (how many of its nodes run at once, 1 to 50; no limit
-when left out), `run` (how the flow's runs are tried, below), `nodes`, `connections` and `layout`
-(where the diagram draws each node).
+when left out), `run` (how the flow's runs are tried, below), `nodes`, `connections`, `layout`
+(where the diagram draws each node) and `notes` (the notes on the diagram, at most 50, as a
+pipeline's: [Notes on the canvas](flows.md#notes-on-the-canvas)). Kilnmark ignores `layout` and
+`notes` when it runs the flow.
 
 ### The run block
 

@@ -1,5 +1,6 @@
 import { isMap, isScalar, isSeq, parseDocument, type Scalar } from "yaml";
 import { plural } from "../api";
+import { nodeNoteOf, readNotes, type CanvasNote } from "../pipelines/canvas/notes";
 
 /** A node type in words, as the diagram and the run page say it. */
 export const TYPE_WORDS: Record<string, string> = {
@@ -17,7 +18,8 @@ export const TYPE_WORDS: Record<string, string> = {
  * A flow node as the diagram draws it: its id, type and a few words of what it does; `settings` are
  * its settings written as single values (`pipeline: x`, `for: 10m`), for the Settings tab.
  */
-export type FlowGraphNode = { id: string; type: string; summary: string; settings: Record<string, string> };
+/** `note` is the node's own note, shown on its card. */
+export type FlowGraphNode = { id: string; type: string; summary: string; settings: Record<string, string>; note?: string | null };
 /** How a connection is taken: on success (the default), on failure, always, or when a condition holds. */
 export type ConnectionKind = "success" | "failure" | "always" | "condition";
 /** `index` is the connection's place in the YAML list, which is how the canvas changes it. */
@@ -28,6 +30,8 @@ export type FlowGraph = {
   connections: FlowConnection[];
   /** Where the `layout:` block puts each node, for those it names. */
   positions: Record<string, Point>;
+  /** The notes on the canvas: never nodes, never counted as nodes. */
+  notes: CanvasNote[];
 };
 export type FlowGraphResult = { ok: true; graph: FlowGraph } | { ok: false; error: string };
 
@@ -98,6 +102,12 @@ function summaryOf(type: string, node: { get: (k: string) => unknown }): string 
   }
 }
 
+/** A node's own note, when it has one. */
+const noteOf = (item: Parameters<typeof nodeNoteOf>[0]) => {
+  const note = nodeNoteOf(item);
+  return note ? { note } : {};
+};
+
 /** How a connection is taken, read as the server reads `when`: trimmed, in any case. */
 export function kindOf(when: string): ConnectionKind {
   const word = when.trim().toLowerCase();
@@ -129,9 +139,9 @@ export function readFlowGraph(yamlText: string): FlowGraphResult {
     for (const p of item.items) {
       const k = text(p.key);
       const v = isScalar(p.value) ? text(p.value) : null;
-      if (k && k !== "id" && k !== "type" && v != null) settings[k] = v;
+      if (k && k !== "id" && k !== "type" && k !== "note" && v != null) settings[k] = v;
     }
-    nodes.push({ id, type, summary: summaryOf(type, { get: (k) => item.get(k, true) }), settings });
+    nodes.push({ id, type, summary: summaryOf(type, { get: (k) => item.get(k, true) }), settings, ...noteOf(item) });
   }
 
   const connections: FlowConnection[] = [];
@@ -160,7 +170,7 @@ export function readFlowGraph(yamlText: string): FlowGraphResult {
       if (Number.isFinite(x) && Number.isFinite(y)) positions[id] = { x, y };
     }
   }
-  return { ok: true, graph: { nodes, connections, positions } };
+  return { ok: true, graph: { nodes, connections, positions, notes: readNotes(doc) } };
 }
 
 /** A connection's label: when it is taken, in words; a long condition is shortened (the full text is in its title). */

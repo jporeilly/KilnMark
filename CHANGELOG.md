@@ -13,6 +13,20 @@ released.
 
 ### What's new
 
+- **Notes on the canvas.** Designers and admins put sticky notes on a pipeline's canvas or a
+  flow's diagram, to say what it is for, give an instruction or warn: **Add a note** in the
+  toolbar (or N) on a pipeline, beside **Undo** under a flow's diagram. A note is free-standing or
+  attached to a node, which it then moves with; drag it or its corner, or use Shift and the arrow
+  keys; double-click or Enter edits it, with five colours; Delete removes it, and each change is one
+  step for Undo. Any node may also have a short `note:`, shown under its name on its card and in
+  full in its settings. The text is plain, with **bold**, *italic*, lists and https links (opened in
+  a new tab); HTML, pictures and other links show as typed. Everyone else sees notes read-only, and
+  notes are announced as notes, never counted as nodes. They are kept in the YAML (`notes:` and a
+  node's `note:`), checked for their limits (50 notes of up to 2,000 characters; a node's note up
+  to 280), and ignored by runs, checks, predictions and lineage: changing them is no change to what
+  runs, so Run now does not ask about it and a pipeline added from the samples still counts as
+  unchanged. Notes are never masked: never paste data values into one. The samples
+  sample-onboarding-merge, sample-onboarding-nightly and sample-gate-quarantine carry notes.
 - **Download the files a run wrote.** A pipeline run's page lists each CSV or Parquet file its
   write nodes wrote to a folder source, with a **Download** button. The server sends the file from
   Kilnmark's own files folder, so it works the same on Windows (where the folder is inside the

@@ -11,6 +11,7 @@ import { runWords, NodeIcon, type NodeRunInfo } from "./NodeCard";
 import { NodeMetricsList } from "../NodeMetricsList";
 import { ReadSqlShown } from "./ReadSqlShown";
 import { PortColumns } from "./PortColumns";
+import { NodeNoteField } from "./CanvasNotes";
 import type { NodeMetrics } from "../nodeMetrics";
 
 const assetCache = new Map<string, Promise<string[]>>();
@@ -100,6 +101,7 @@ export function SettingsPanel({
   declared = [],
   yaml,
   onSetting,
+  onNote,
   onRename,
   onDisconnect,
   onConnectMenu,
@@ -127,6 +129,8 @@ export function SettingsPanel({
   /** The pipeline's YAML as it stands, for the server to work out a read's SQL from; none: not shown. */
   yaml?: string;
   onSetting: (key: string, value: Value | undefined, kind: string) => void;
+  /** Writes the node's own note (empty removes it). */
+  onNote?: (text: string) => void;
   onRename: (to: string) => string | null;
   onDisconnect: (edge: GraphEdge) => void;
   onConnectMenu: () => void;
@@ -218,6 +222,8 @@ export function SettingsPanel({
           Small letters, digits, - and _. Changing it updates the nodes reading from it.
         </p>
       </div>
+
+      <NodeNoteField id={`${base}-note`} note={node.note ?? null} readOnly={readOnly || !onNote} onNote={(t) => onNote?.(t)} />
 
       {ports.inputs.length > 0 && (
         <section className="cv-section" aria-labelledby={`${base}-reads`}>
