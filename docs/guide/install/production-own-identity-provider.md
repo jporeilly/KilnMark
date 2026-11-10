@@ -92,9 +92,11 @@ asks for TLS, and refuses a host other than `localhost` without it. Behind a pro
 
 ## Review who has access
 
-**Settings**, **Access review** lists every API token (role, whether it sees sensitive values,
-expiry, last use) and everyone who signs in with your identity provider, with the role of their last
-sign-in. **Download CSV** keeps it as evidence for your auditors; each download is in the audit log.
+**Settings**, **Access review** shows what each role can do, with the groups you mapped to each,
+the settings that limit people, every API token (role, whether it sees sensitive values, expiry,
+last use) and everyone who has signed in with your identity provider, with the role and groups of
+their last sign-in. Kilnmark never asks your provider for its list of people, so someone who has not
+signed in yet is not listed: check them at your provider. **Download CSV** keeps it as evidence for your auditors; each download is in the audit log.
 Every kilnmark.com account that has signed in is marked **Example account** (the Starter Pack's
 people): there should be none on an install with real data, and a production install refuses them.
 

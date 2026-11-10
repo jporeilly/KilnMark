@@ -17,6 +17,27 @@ details.
   says why when it is off. Every download and refusal is in the audit log (`file.downloaded`,
   `file.download_refused`). `GET /api/v1/pipeline-runs/{id}/files` and `.../files/{index}`
   (ADR 0055).
+- **Settings › Access review shows everyone, and what each role can do**: a table of what a
+  viewer, a steward, a designer and an admin may and may not do, with the groups that give each
+  role and the sensitive-data grant, taken from the server and tried against its role checks by
+  tests;
+  the rules in force (the longest token lifetime, whether a second person approves the grant, the
+  longest sign-in, MFA, when schedules pause, models outside your network), read-only; and, beside
+  everyone who has signed in, the people the control script made in the bundled Keycloak who have
+  not signed in yet, each with their groups and whether they wait for their first sign-in, wait to
+  be activated, or were disabled for an unused temporary password. Anyone who sees sensitive values
+  unmasked is marked. The CSV has the new `state`, `groups` and `sensitive_data_groups` columns.
+  It is all from Kilnmark's own records: someone added or removed only at your identity provider
+  shows once they sign in, and the page says so. A sign-in now also records the person's
+  sensitive-data group, and the control script reports how long an unused temporary password could
+  wait (`hours` on `auth.person_disabled`).
+- **Lineage as a graph**: a run's page draws its lineage left to right, the inputs, a band naming
+  the pipeline, then the outputs, with a line only where the run recorded that an output came
+  from an input. Each box shows a readable name (`public.shop_orders`, or `orders_named.csv` with
+  its folder dimmed), its source and a table or file icon, with the full identifier on hover, and
+  opens the asset in the catalogue. An asset's **Overview** now has a **Lineage** section drawn the
+  same way: what it came from, what was made from it, and the pipelines between. The graph scrolls
+  inside its frame on a phone, and **Show the lineage as a list** keeps the pairs as sentences.
 - **A guided install, into the folders the operating system keeps for a program and its data**:
   `sudo ./kilnmark.sh install` (Linux) or `kilnmark.cmd install` (Windows) asks the questions (the
   mode, how people sign in, the email domain, the host name, the ports, TLS, the first admin), each
@@ -180,8 +201,27 @@ details.
   closes the month. [Business scenarios](docs/guide/scenarios.md) walks through each with the
   Starter Pack's example people: who builds, who reviews, who sees the results and who sees
   sensitive values unmasked.
+- **Parameters you can see and set in the canvas**: each `${name}` in a node's settings says what
+  it is when you point at it or move to it with Tab: its type, default and description, or for a
+  server variable that it is one, and its value for stewards and above. With no node selected, the
+  canvas's **Settings** shows the pipeline's **Parameters** as a table; designers and admins add,
+  change and remove them there, checked as the server checks them and written to the YAML as by
+  hand. **Run now** on a pipeline with parameters asks for their values in the **Run** tab, filled
+  with the defaults, and sends what you changed. See
+  [Parameters in the canvas](docs/guide/pipelines.md#parameters-in-the-canvas).
+- **About this sample on a sample's own page**: a pipeline or flow added from the samples (the
+  Starter Pack adds them all) shows what its sample shows, why it matters, what to look for when it
+  runs and what it needs, as the Library does, read from the sample's file. One changed since it
+  was added says so: **Based on a sample; changed since**.
 
 ### Details
+
+- **Parameters and About this sample, in the API**: a pipeline's versions
+  (`GET /api/v1/pipelines/{name}` and `.../versions/{n}`) list the `parameters` they declare, as a
+  flow's do: name, type, default (or the server variable it is) and description. A pipeline or
+  flow added from the samples gives `sample`: the sample's `file`, its `explanation` from the
+  bundled file, and `changed`, true once a later version differs from the one added other than in
+  where the canvas draws the nodes. Others give none.
 
 - **The business scenarios** (`samples/10-scenarios`, ADR 0051, decision 4): eight pipelines and
   three flows. Two sample tables are new, made by `generate.py` with a random generator of their
@@ -760,11 +800,19 @@ details.
 
 ### Fixed
 
-- **The Windows install log no longer shows a database error on a fresh install.** Before
-  Kilnmark's first start has made its settings table, the control script's look for the recorded
-  mode and install id now asks whether the table is there, rather than leaving
-  `relation "kilnmark.server_setting" does not exist` in the log. Nothing else changes: the
-  answer was, and is, "nothing recorded yet".
+- **The Windows logs no longer show the error text of checks that find nothing.** Windows
+  PowerShell's transcript, which writes the control script's logs, keeps what a program writes to
+  its error output even when the script discards it. So a fresh install's log showed
+  `relation "kilnmark.server_setting" does not exist` (the recorded mode and install id, before
+  Kilnmark's first start), `image not known` (the images, before they are built or loaded) and
+  `ERROR: The system cannot find the file specified.` (the hourly task, before it is set up), which
+  read like failures. Every such check now runs its program through one helper, `Invoke-Quiet`,
+  which reads and drops the error output outside PowerShell, keeps the exit code and the output,
+  and closes the program's input: the recorded settings, the images, the hourly task, the engine's
+  version, machine, cgroups and memory, WSL's version, the database's readiness, the containers'
+  states, and restore's checks of the backup. The answers are the same. A compose command or a
+  signature check is logged in full as before, and when restore cannot check Keycloak's database
+  in a backup, it now shows why on the screen as well as in the log.
 - **Windows commands in messages and guides can be pasted into PowerShell.** The control script's
   messages and the install guides wrote `"C:\Program Files\Kilnmark\kilnmark.cmd" starter people`,
   which PowerShell refuses ("Unexpected token"), and some messages left the path unquoted, which
@@ -866,6 +914,11 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
   above it may now be as short as 300px, not 360px, so the page stays about the screen's height. A
   read's **Where** reference starts folded, being optional. On a phone the panel still takes its
   content's height, up to 70% of the screen.
+- **The sample flows' notices read well.** The onboarding, supplier intake and quality-decides
+  flows put the share of rows set aside straight into their notices' titles, which showed as
+  "0.011881188118811881 of rows set aside". A flow cannot format a number in text, so the titles
+  now name the files to open instead: `quarantined_customers.csv`, `quarantined_rows.csv` and
+  `price_review.csv`, or `customers_aside.csv`. When each flow goes on or stops is unchanged.
 - **Smaller things**: the Library's **Look for when it runs** and the other parts of a sample's
   explanation start with a capital, unless they start with something to type; the Pipeline choice
   on a flow's node is wider, so long names are not cut off, and no longer offers `sample-tables`,
@@ -880,6 +933,13 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
   every tab of a window opened as administrator is elevated too, Command Prompt tabs included,
   and a profile set to Run this profile as Administrator always opens one. The message now says
   to open a new window from the Start menu, and why.
+- **A connector's card names the driver to install, with its version.** **Add a connection** said
+  only "Needs its driver"; the Oracle card now says **Tested with `ojdbc11 23.26.3.0.0`**, the exact
+  version Kilnmark downloads under Settings › Drivers, and names the driver once it is installed
+  (`driverName` and `driverVersion` in `GET /api/v1/connectors`).
+- **The MySQL and MariaDB driver's source ships with it.** LGPL 2.1 asks that whoever ships the
+  library also makes its source available: the release now has MariaDB Connector/J's sources jar,
+  as MariaDB published it, in `licenses/` beside the licence (ADR 0007).
 
 ## 0.1.1 (6 November 2026)
 

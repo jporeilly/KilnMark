@@ -210,6 +210,9 @@ export type Connector = {
   driverBundled: boolean;
   /** bundled, ready (installed by an admin), or missing, mismatch or unreadable: then it needs its driver. */
   driver?: "bundled" | "ready" | "missing" | "mismatch" | "unreadable";
+  /** The driver a customer installs (such as ojdbc11) and the exact version Kilnmark is tested with; null when shipped. */
+  driverName?: string | null;
+  driverVersion?: string | null;
 };
 /** id is the kind it is expected to have, so a branding manifest can name it. */
 export type PlannedConnector = {
@@ -1412,7 +1415,15 @@ export type PipelineVersion = {
   createdAt: string;
   valid: boolean;
   problems: PipelineProblem[];
+  /** The parameters this version declares (absent from older servers). */
+  parameters?: FlowParameter[];
 };
+/**
+ * What a pipeline or flow added from the samples says about itself, from the sample's bundled file:
+ * its file under samples/, its explanation, and whether it has been changed since it was added
+ * (a later version whose YAML, but for where the nodes are drawn, differs).
+ */
+export type SampleAbout = { file: string; explanation: SampleExplanation | null; changed: boolean };
 export type PipelineDetail = {
   name: string;
   displayName: string;
@@ -1426,6 +1437,8 @@ export type PipelineDetail = {
   lastRun: PipelineRun | null;
   /** "sample": added from the samples, listed in the Library, not on the Pipelines or Flows page (ADR 0043). Older servers send none. */
   library?: "sample" | null;
+  /** For one added from the samples: what its sample explains. Null otherwise; older servers send none. */
+  sample?: SampleAbout | null;
 };
 /** ports: rows per input and output port; null where the engine did not count a port on its own. */
 export type PipelineNodeRun = {
@@ -1603,6 +1616,10 @@ export type PipelineRunDetail = {
   /** Each ended try, the first first (ADR 0053); missing from older servers. */
   tries?: RunTry[];
 };
+/** One recorded link of an asset's lineage: the asset at the other end, and the run that recorded it. */
+export type AssetLineageEntry = { urn: string; pipeline: string; runId: number | null; node: string; recordedAt: string };
+/** An asset's lineage (GET /api/v1/lineage): upstream it came from, downstream was made from it; one entry per run. */
+export type AssetLineage = { urn: string; upstream: AssetLineageEntry[]; downstream: AssetLineageEntry[] };
 /**
  * A run's rows a second over time, read on its own (pipelinesApi.series): t is ms from workerStartedAt; r each node's
  * rows/s, q its output queue's fill (0 to 1), in nodes' order. When stride changes the points were merged: read again.
@@ -1749,6 +1766,20 @@ export const starterPackApi = {
 
 const pipe = (name: string) => `/api/v1/pipelines/${encodeURIComponent(name)}`;
 
+/** A server variable, read as ${vars.name} by every pipeline and flow on the server; stewards and above see them. */
+export type ServerVariable = {
+  name: string;
+  type: "text" | "number" | "boolean";
+  value: string | number | boolean;
+  description: string | null;
+  updatedBy: string;
+  updatedAt: string;
+};
+/** Server variables (GET /api/v1/variables/{name}): for stewards and above. */
+export const variablesApi = {
+  get: (name: string) => call<ServerVariable>(`/api/v1/variables/${encodeURIComponent(name)}`),
+};
+
 export const pipelinesApi = {
   list: () => call<PipelineSummary[]>("/api/v1/pipelines"),
   get: (name: string) => call<PipelineDetail>(pipe(name)),
@@ -1769,11 +1800,22 @@ export const pipelinesApi = {
     }),
   versions: (name: string) => call<PipelineVersionSummary[]>(`${pipe(name)}/versions`),
   version: (name: string, n: number) => call<PipelineVersion>(`${pipe(name)}/versions/${n}`),
-  run: (name: string, version?: number) =>
-    call<PipelineRun>(`${pipe(name)}/runs`, { method: "POST", body: JSON.stringify({ version: version ?? null }) }),
+  /**
+   * Queues a run of the latest version (or `version`). `parameters`: values for the parameters it
+   * declares, sent as given; those left out take their defaults. None, or none given, sends none.
+   */
+  run: (name: string, parameters?: Record<string, unknown>, version?: number) =>
+    call<PipelineRun>(`${pipe(name)}/runs`, {
+      method: "POST",
+      body: JSON.stringify(
+        parameters && Object.keys(parameters).length > 0 ? { version: version ?? null, parameters } : { version: version ?? null },
+      ),
+    }),
   runs: (name: string) => call<PipelineRun[]>(`${pipe(name)}/runs?limit=50`),
   runDetail: (id: number) => call<PipelineRunDetail>(`/api/v1/pipeline-runs/${id}`),
   cancel: (id: number) => call<PipelineRun>(`/api/v1/pipeline-runs/${id}/cancel`, { method: "POST" }),
+  /** What an asset came from and what was made from it, as pipeline writes recorded it, newest first. */
+  lineage: (urn: string) => call<AssetLineage>(`/api/v1/lineage?urn=${encodeURIComponent(urn)}`),
   owners: (name: string) => call<Owners>(`${pipe(name)}/owners`),
   setOwners: (name: string, owners: string[]) =>
     call<Owners>(`${pipe(name)}/owners`, { method: "PUT", body: JSON.stringify({ owners }) }),
@@ -1889,6 +1931,8 @@ export type FlowDetail = {
   lastRun: FlowRun | null;
   /** "sample": added from the samples, listed in the Library, not on the Pipelines or Flows page (ADR 0043). Older servers send none. */
   library?: "sample" | null;
+  /** For one added from the samples: what its sample explains. Null otherwise; older servers send none. */
+  sample?: SampleAbout | null;
 };
 export type FlowNodeStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
 /** One node's part in a flow run; pipelineRunId is the pipeline run a run-pipeline node started. */
@@ -2249,7 +2293,33 @@ export type AccessReviewEntry = {
   signIns: number | null;
   /** A kilnmark.com example account, such as the Starter Pack's people (ADR 0051): not for real data. */
   example?: boolean;
+  /**
+   * A person's groups as Kilnmark recorded them (only those its settings name): at their last sign-in, or
+   * when the control script made them. Null for a token, or when not recorded.
+   */
+  groups?: string[] | null;
+  /** Of those, the groups the sensitive-data (unmask) settings name. */
+  sensitiveGroups?: string[] | null;
+  /**
+   * A person's state: signed-in, no-role (signed in, never given a role), waiting (for their first
+   * sign-in), not-activated (imported on production, waiting to be activated) or disabled (their temporary
+   * password went unused). Null for a token. For someone who has not signed in, role and unmask are what
+   * their groups give them once they do.
+   */
+  state?: AccessReviewState | null;
 };
+
+export type AccessReviewState = "signed-in" | "no-role" | "waiting" | "not-activated" | "disabled";
+
+/** One line of what each role may do: yes, grant (only with the sensitive-data grant) or no, by role. */
+export type AccessReviewLine = {
+  id: string;
+  what: string;
+  byRole: Record<AccessRole, "yes" | "grant" | "no">;
+};
+
+/** A setting that limits people, as it is on this server: read-only. */
+export type AccessReviewRule = { id: string; label: string; value: string; setting: string };
 
 /** Settings › Access review: who can do what, for admins. */
 export type AccessReview = {
@@ -2257,6 +2327,12 @@ export type AccessReview = {
   /** The longest a token may last, in days; null when tokens may never expire. */
   tokenMaxLifetimeDays: number | null;
   entries: AccessReviewEntry[];
+  /** What each role may do, from the server's own table, which its tests hold to the role checks. */
+  roles?: AccessReviewLine[];
+  /** The groups the settings give each role, and the sensitive-data grant (key "unmask"). */
+  groups?: Partial<Record<AccessRole | "unmask", string[]>>;
+  /** The settings that limit people. */
+  rules?: AccessReviewRule[];
 };
 
 export const accessReviewApi = {

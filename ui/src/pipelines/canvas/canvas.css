@@ -793,6 +793,50 @@ p.cv-field-problems {
   color: var(--km-tint-violet-fg);
 }
 
+/* A ${name} chip and what it is: shown beside it on hover and on keyboard focus, hidden by Escape. */
+.cv-chip-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.cv-tip {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  width: max-content;
+  max-width: min(36ch, 80vw);
+  padding: 6px 10px;
+  border: 1px solid var(--km-border-control);
+  border-radius: 6px;
+  background: var(--km-surface);
+  color: var(--km-ink);
+  box-shadow: var(--km-shadow-raised);
+  font-size: var(--km-text-sm);
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.cv-tip[hidden] {
+  display: none;
+}
+
+/* Bridges the gap above the details, so the pointer can move onto them without hiding them. */
+.cv-tip::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -6px;
+  height: 6px;
+}
+
+.cv-param-used {
+  align-items: center;
+  margin-top: 4px;
+}
+
 .cv-column-buttons {
   display: flex;
   flex-wrap: wrap;

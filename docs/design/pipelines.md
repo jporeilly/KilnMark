@@ -332,6 +332,16 @@ Built with flows' F2 (CHANGELOG; the guide's "Parameters and server variables" i
   compiles with, however the variables change before it starts. Queueing resolves and checks the
   values first: a wrong value is a 400, a version that does not check with them a 409.
 - **SQL**, when nodes take SQL of their own: a value goes in as a bound parameter, never as text.
+- **In the UI.** A pipeline version's API view lists its `parameters` (`FlowViews.parameters`, the
+  same view a flow's version has: a variable default by its name only, never its value). The Run
+  tab asks for values from that list (the saved version's, not the canvas's unsaved text) and sends
+  only those changed from their defaults, as the flow's Run now dialog does. The canvas reads and
+  writes `parameters:` in the YAML model (`model.ts`, `setParameter` and `removeParameter`), so a
+  change is a text splice like any other canvas change: one parameter's line, its style kept, one
+  undo step. Its checks (`canvas/parameters.ts`) are the server's (`Parameters.read`), so the panel
+  refuses only what saving would report anyway; the server's check stays the authority. A
+  `${vars.name}` chip asks `GET /api/v1/variables/{name}` only for stewards and above, the roles that
+  endpoint allows; others are told who sees it.
 
 ### The read node's columns and where (decisions)
 
@@ -1079,7 +1089,15 @@ asset's previous profile.
   a pipeline wrote after the scan began. Lineage links each written asset to every read asset
   upstream of it (`GET /api/v1/lineage?urn=`), each under the URN its read node resolved and the
   catalogue records (a file's `#` and `%` escaped, as its asset path), which is also what the run's
-  read list and its assets for Sights hold.
+  read list and its assets for Sights hold. The UI draws lineage with one component
+  (`ui/src/lineage`), on a run's page from the run's pairs and on an asset's Overview from
+  `GET /api/v1/lineage`: a box per asset, named from its URN (a path with a folder, or ending in a
+  file's extension, is a file; anything else a table, unless the catalogue says), and a line per
+  recorded pair only, laid out left to right with dagre. Inputs are tied to the first column and
+  outputs to the last; a line that skips a column follows dagre's route between the boxes, and a
+  line back to the left (a loop) leaves below the middle and bows apart from the line forward. An
+  asset recorded only as coming from itself goes with the outputs. On an asset's page each line runs
+  level through its pipelines' label, so no line passes behind another's label.
 - **Each node's outcome** is recorded as the engine reports it (finished, ended early, stopped by the
   engine, failed), so a writer the engine stopped never looks like a clean finish.
 - **Write permission stays with admins.** Only admins change `allow_writing`, and while it is on

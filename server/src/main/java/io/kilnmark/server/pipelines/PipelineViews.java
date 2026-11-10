@@ -107,14 +107,24 @@ public final class PipelineViews {
                                  int problems) {
     }
 
+    /**
+     * One saved version. {@code parameters} are those it declares (each with its type, its default, or
+     * the server variable its default is, and its description), for the values asked for before a run;
+     * none when its YAML cannot be read.
+     */
     public record VersionDetail(int n, String yaml, String message, String author, Instant createdAt, boolean valid,
-                                List<PipelineCompilerPort.Problem> problems) {
+                                List<PipelineCompilerPort.Problem> problems,
+                                List<io.kilnmark.server.flows.FlowViews.Parameter> parameters) {
     }
 
-    /** A pipeline with its latest version. Its ETag is the latest version's number. */
+    /**
+     * A pipeline with its latest version. Its ETag is the latest version's number. {@code sample} is
+     * what the sample it was added from explains about itself, for one in the Library added from the
+     * samples ({@code library} {@code sample}); else null.
+     */
     public record PipelineDetail(String name, String displayName, String description, int latestVersion,
                                  String createdBy, Instant createdAt, String updatedBy, Instant updatedAt,
-                                 VersionDetail latest, RunSummary lastRun, String library) {
+                                 VersionDetail latest, RunSummary lastRun, String library, Samples.About sample) {
     }
 
     /**

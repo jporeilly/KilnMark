@@ -9,7 +9,6 @@ import {
   type FlowSummary,
   type PipelineSummary,
   type SampleCatalogue,
-  type SampleExplanation,
   type SampleInfo,
   type Template,
   plural,
@@ -23,6 +22,9 @@ import { RunStatus } from "../pipelines/RunStatus";
 import { FlowRunStatus } from "../flows/RunFlow";
 import "../pipelines/pipelines.css";
 import "./library.css";
+import { explains, Explanation } from "./Explanation";
+
+export { explains, Explanation, sentenceStart } from "./Explanation";
 
 type Tab = "samples" | "templates";
 
@@ -41,47 +43,6 @@ export function groupSamples(samples: SampleInfo[]): [string, SampleInfo[]][] {
     groups.set(g, [...(groups.get(g) ?? []), s]);
   }
   return [...groups.entries()];
-}
-
-/** Whether an explanation has anything to show beyond its title. */
-export function explains(e: SampleExplanation | null): e is SampleExplanation {
-  return !!e && !!(e.shows || e.why || e.lookFor || e.needs);
-}
-
-/**
- * A part of an explanation as the start of a sentence: its first word capitalised ("the note under
- * the read node" reads "The note under the read node") when it is a plain word. A part that starts
- * with something to type (inputs:, lpad, group_by, shop-db, ${…}) is left as written.
- */
-export function sentenceStart(text: string): string {
-  return /^[a-z][a-z']*\s/.test(text) ? text.charAt(0).toUpperCase() + text.slice(1) : text;
-}
-
-/**
- * A sample's or template's explanation, from the comment its file starts with: what it shows (for a
- * template, what it is for), why it matters, what to look for, and what it needs. Parts left out are
- * not shown.
- */
-export function Explanation({ explanation: e, template = false }: { explanation: SampleExplanation | null; template?: boolean }) {
-  if (!explains(e)) return null;
-  const parts: [string, string | null][] = [
-    [template ? "What it is for" : "What it shows", e.shows],
-    ["Why it matters", e.why],
-    [template ? "Look for" : "Look for when it runs", e.lookFor],
-    ["Needs", e.needs],
-  ];
-  return (
-    <dl className="lib-explain">
-      {parts
-        .filter((p): p is [string, string] => !!p[1])
-        .map(([label, text]) => (
-          <div key={label}>
-            <dt>{label}</dt>
-            <dd>{sentenceStart(text)}</dd>
-          </div>
-        ))}
-    </dl>
-  );
 }
 
 /**

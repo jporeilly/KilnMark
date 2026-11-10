@@ -112,7 +112,7 @@ public final class OidcAccess {
         if (role == null) {
             return Decision.refused(NO_GROUP);
         }
-        boolean unmask = role.mayHoldUnmask() && anyOf(groups, config.unmaskGroups().orElse(List.of()));
+        boolean unmask = unmasks(config, role, groups);
         return new Decision(role, unmask, null);
     }
 
@@ -170,22 +170,48 @@ public final class OidcAccess {
     }
 
     /**
-     * Of the groups a sign-in's claims name, only those the group-to-role settings name now, as the
-     * settings write them, sorted: what a sign-in records for checking a person's schedules
-     * (ADR 0046). Other groups are never recorded: in a bank a group's name can say more than it
-     * should (a deal team, a health or HR matter). Bounded by the settings, so none is dropped.
+     * Of the groups a sign-in's claims name, only those the group-to-role and unmask settings name
+     * now, as the settings write them, sorted: what a sign-in records for checking a person's
+     * schedules (ADR 0046), and for the access review to show (ADR 0037). Other groups are never
+     * recorded: in a bank a group's name can say more than it should (a deal team, a health or HR
+     * matter). Bounded by the settings, so none is dropped.
      */
     public static List<String> mappedGroups(KilnmarkConfig.Oidc config, Function<String, Object> claim) {
         Set<String> groups = Set.copyOf(strings(claim.apply(config.groupsClaim())));
         java.util.TreeSet<String> out = new java.util.TreeSet<>();
+        List<List<String>> named = new ArrayList<>();
         for (AccessRole r : AccessRole.values()) {
-            for (String w : groupsFor(config, r)) {
+            named.add(groupsFor(config, r));
+        }
+        named.add(config.unmaskGroups().orElse(List.of()));
+        for (List<String> wanted : named) {
+            for (String w : wanted) {
                 if (w != null && !w.isBlank() && groups.contains(w.strip())) {
                     out.add(w.strip());
                 }
             }
         }
         return List.copyOf(out);
+    }
+
+    /**
+     * Of {@code groups}, those the unmask settings name, as the settings write them: whether a person
+     * holds the sensitive-data grant's group. Only a designer's sees values unmasked (ADR 0027).
+     */
+    public static List<String> unmaskGroupsOf(KilnmarkConfig.Oidc config, java.util.Collection<String> groups) {
+        Set<String> g = Set.copyOf(groups);
+        java.util.TreeSet<String> out = new java.util.TreeSet<>();
+        for (String w : config.unmaskGroups().orElse(List.of())) {
+            if (w != null && !w.isBlank() && g.contains(w.strip())) {
+                out.add(w.strip());
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    /** Whether {@code role} with {@code groups} sees values marked sensitive unmasked: as {@link #decide} gives it. */
+    public static boolean unmasks(KilnmarkConfig.Oidc config, AccessRole role, java.util.Collection<String> groups) {
+        return role != null && role.mayHoldUnmask() && anyOf(Set.copyOf(groups), config.unmaskGroups().orElse(List.of()));
     }
 
     private static List<String> groupsFor(KilnmarkConfig.Oidc config, AccessRole role) {

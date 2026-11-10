@@ -869,11 +869,12 @@ class ControlScriptStarterTest {
             Admin refused = a.run(WITH_KEYCLOAK, List.of("people", "activate", bad[0]), bad[1], true);
             assertTrue(refused.out().contains(bad[2]) && !refused.out().contains("keycloak-setup:"), refused.out());
         }
-        // list: who is there, and who is waiting; anyone setup disabled for an unused password is recorded
+        // list: who is there, and who is waiting; anyone setup disabled for an unused password is recorded,
+        // with the hours setup says the password could wait
         Admin list = a.run(WITH_KEYCLOAK, List.of("people", "list"), "", true);
         assertTrue(list.out().contains("rita@bank.example groups=kilnmark-admins status=active must-choose-password=yes")
             && list.out().contains("people: 1"), list.out());
-        assertEquals(List.of("{\"via\":\"expire\",\"disabled\":[\"old@bank.example\"]}"), list.posted());
+        assertEquals(List.of("{\"via\":\"expire\",\"disabled\":[\"old@bank.example\"],\"hours\":72}"), list.posted());
         // keycloak-setup is handed the mode Kilnmark recorded, and its few secrets in a file for the
         // run, read from config/.env as compose reads it (quotes and comments), which goes after it
         Map<String, String> quoted = new LinkedHashMap<>(WITH_KEYCLOAK);
@@ -912,6 +913,7 @@ class ControlScriptStarterTest {
             String body = expired.posted().get(i);
             assertTrue(body.startsWith("{\"via\":\"expire\",\"disabled\":[\"p" + (i * 500 + 1) + "@bank.example\""), body);
             assertEquals(i < 2 ? 500 : 200, body.split("@bank.example", -1).length - 1, body);
+            assertTrue(body.endsWith("],\"hours\":72}"), body);
         }
         // a person Kilnmark cannot record is never enabled (fail closed), and that is said
         Admin unrecorded = a.run(WITH_KEYCLOAK, ADD, "fail-me@bank.example\nFay\nIl\nkilnmark-viewers\n" + PERSON_PASSWORD, true);
@@ -963,6 +965,44 @@ class ControlScriptStarterTest {
         @Override
         public void close() {
             server.stop(0);
+        }
+    }
+
+    /**
+     * Windows PowerShell's transcript (logs\) keeps what a program writes to its error output even
+     * when the script sends it to $null. A probe that finds what it often finds, nothing (the images
+     * not there yet, no hourly task yet), leaves no error text there to read like a failure: it runs
+     * through Invoke-Quiet. What the script itself says is still logged.
+     */
+    @Test
+    void aProbeThatFindsNothingLeavesNoErrorInTheWindowsLog() throws Exception {
+        String powershell = System.getenv("KILNMARK_TEST_POWERSHELL");
+        Assumptions.assumeTrue(powershell != null && !powershell.isBlank(),
+            "set KILNMARK_TEST_POWERSHELL to powershell.exe to run this");
+        Path dir = Files.createTempDirectory("kilnmark-noisy-probes");
+        // an engine with no images until FAKE_IMAGES is set, saying so on its error output as Podman does
+        Path engine = dir.resolve("engine-ok.cmd");
+        Files.writeString(engine, "@echo off\r\n"
+            + "if \"%1 %2\"==\"image inspect\" if not defined FAKE_IMAGES (echo Error: unable to find the image: image not known 1>&2& exit /b 125)\r\n"
+            + "exit /b 0\r\n");
+        // a Task Scheduler with no task, saying so as schtasks.exe does
+        Path schtasks = dir.resolve("schtasks.cmd");
+        Files.writeString(schtasks, "@echo off\r\n"
+            + "if /i \"%1\"==\"/Query\" (echo ERROR: The system cannot find the file specified. 1>&2& exit /b 1)\r\n"
+            + "exit /b 0\r\n");
+        List<String> up = List.of(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+            LAUNCH.resolve("kilnmark.ps1").toAbsolutePath().toString(), "up", "-NoBrowser");
+        try (Api api = Api.start()) {
+            Path root = adminRoot(true, Map.of("KILNMARK_MODE", "production"), api);
+            String missing = run(up, root, engine.toString(), Map.of("KILNMARK_SCHTASKS", schtasks.toString()));
+            assertTrue(missing.contains("are not here"), missing);
+            // with the images, up goes on to the hourly task, looked for to remove it (no bundled Keycloak)
+            String started = run(up, root, engine.toString(), Map.of("KILNMARK_SCHTASKS", schtasks.toString(), "FAKE_IMAGES", "yes"));
+            assertTrue(started.contains("is ready at"), started);
+            String logs = logsOf(root);
+            assertTrue(logs.contains("are not here") && logs.contains("is ready at"), "both runs were logged: " + logs);
+            assertFalse(logs.contains("image not known"), "the image probe's error output was logged: " + logs);
+            assertFalse(logs.contains("cannot find the file specified"), "the task probe's error output was logged: " + logs);
         }
     }
 

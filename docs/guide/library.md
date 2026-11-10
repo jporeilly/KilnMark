@@ -37,6 +37,13 @@ shows:
 The explanation is the comment at the top of the sample's file, so it reads the same in the app, in
 the YAML and in the release's `samples` folder.
 
+Once added, a sample's own page shows the same explanation under its name, as **About this
+sample**, and a pipeline's canvas shows it in **Settings** when no node is selected. It comes from
+the sample's file as this release ships it, not from the saved pipeline or flow. A sample changed
+since it was added (more than moving its nodes on the canvas) still shows it, labelled **Based on a
+sample; changed since**. The business scenarios' samples link to
+[Business scenarios](scenarios.md); the others to this page.
+
 Among them: `sample-functions` tidies values and works out new ones with the expression functions,
 including a `sha256` of an email as a key that stays marked sensitive; `sample-which-row` keeps the
 latest row of each key with `duplicates: latest`; `sample-retries` tries a flow and a node again
@@ -163,5 +170,8 @@ On the **Pipelines** and **Flows** pages, **From a template** opens this tab.
   and `needs`, read from the comment its file starts with.
 - `GET /api/v1/pipelines` and `GET /api/v1/flows` give each one's `library`: `sample` for one added
   from the samples, empty for your own.
+- `GET /api/v1/pipelines/{name}` and `GET /api/v1/flows/{name}` give one added from the samples its
+  `sample`: the sample's `file`, its `explanation` from the file this release ships, and `changed`,
+  true once it has been changed since it was added (moving its nodes on the canvas does not count).
 
 Why samples are kept apart, and how: [ADR 0043](../adr/0043-library-of-samples-and-templates.md).

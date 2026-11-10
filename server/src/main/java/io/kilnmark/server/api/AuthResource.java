@@ -182,10 +182,12 @@ public class AuthResource {
     /**
      * Body of {@code POST /api/v1/auth/people}: how (add, import, activate, or expire for what an
      * ordinary start's keycloak-setup did), who was made, who was there already, for an import how
-     * many lines were refused, who was activated, and who was disabled for an unused password.
+     * many lines were refused, who was activated, who was disabled for an unused password, and for
+     * those, how many hours a temporary password could wait unused (KILNMARK_PEOPLE_ACTIVATION_HOURS,
+     * 1 to 720), when the control script says.
      */
     public record PeopleDone(String via, List<PersonMade> made, List<String> kept, Integer refused,
-                             List<String> activated, List<String> disabled) {
+                             List<String> activated, List<String> disabled, Integer hours) {
     }
 
     /** An email address, in lower case, as the control script and keycloak-setup take it. */
@@ -215,7 +217,7 @@ public class AuthResource {
         + "keycloak-setup did in the bundled Keycloak, so its audit log holds it: auth.person_added for each person "
         + "made, with their groups, auth.people_imported for each import, with how many were made, already there "
         + "and refused, auth.person_activated, and auth.person_disabled for each person whose temporary password "
-        + "went unused. Never a password. An import never makes an admin. Kilnmark holds no Keycloak credential and "
+        + "went unused (with hours, how long it could wait, when sent). Never a password. An import never makes an admin. Kilnmark holds no Keycloak credential and "
         + "changes nothing here. Role: admin.")
     @APIResponses({
         @APIResponse(responseCode = "204", description = "Recorded"),
@@ -246,6 +248,9 @@ public class AuthResource {
             throw new IllegalArgumentException("people: one person for add or activate, at most " + MAX_PEOPLE
                 + " for import");
         }
+        if (body.hours() != null && (disabled.isEmpty() || body.hours() < 1 || body.hours() > 720)) {
+            throw new IllegalArgumentException("hours: a whole number from 1 to 720, sent only with who was disabled");
+        }
         List<Map<String, Object>> events = new java.util.ArrayList<>();
         for (PersonMade m : made) {
             List<String> groups = m == null || m.groups() == null ? List.of()
@@ -274,8 +279,9 @@ public class AuthResource {
             audit.record(actor, AuditLog.PERSON_ACTIVATED, "person", Map.of("person", person));
         }
         for (String person : disabled) {
-            audit.record(actor, AuditLog.PERSON_DISABLED, "person", Map.of("person", person, "reason",
-                "temporary password unused"));
+            audit.record(actor, AuditLog.PERSON_DISABLED, "person", body.hours() == null
+                ? Map.of("person", person, "reason", "temporary password unused")
+                : Map.of("person", person, "reason", "temporary password unused", "hours", body.hours()));
         }
         if ("import".equals(via)) {
             audit.record(actor, AuditLog.PEOPLE_IMPORTED, "people", Map.of("made", made.size(), "alreadyThere",

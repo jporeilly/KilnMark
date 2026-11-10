@@ -175,6 +175,14 @@ export function ConnectorGallery({
                             <span className="card-name">{c.name}</span>
                             <span className="card-family">{c.family}</span>
                             {needsDriver(c.connector) && <span className="planned-label">Needs its driver</span>}
+                            {c.connector.driverName && c.connector.driverVersion && (
+                              <span className="card-driver small">
+                                {needsDriver(c.connector) ? "Tested with " : "Driver "}
+                                <code>
+                                  {c.connector.driverName} {c.connector.driverVersion}
+                                </code>
+                              </span>
+                            )}
                           </span>
                           <Badges caps={c.capabilities} formats={c.connector.formats} />
                         </button>

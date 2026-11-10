@@ -56,6 +56,11 @@ templates (starting points for common jobs) are in the **Library**, apart from y
 see [The Library: samples and templates](library.md). Added samples stay there, never on the
 Pipelines page. On the Pipelines page, **From a template** opens the Library's templates.
 
+A pipeline added from the samples shows **About this sample** under its name: what it shows, why it
+matters, what to look for when it runs and what it needs, as the Library shows them, with a link to
+this guide. Once the pipeline has been changed since it was added (more than moving its nodes), it
+is labelled **Based on a sample; changed since**: what it says is about the sample as it was added.
+
 ## Building on the canvas
 
 ![A pipeline on the canvas: a read node, a quality gate setting aside 10 rows, and two writes, each with its rows and quality from the last run](images/pipeline-canvas.png)
@@ -70,11 +75,14 @@ finding your way around a large one. Nothing covers the canvas: under it is one 
 which **Collapse** in its tab bar folds away to give the canvas more room (Kilnmark remembers which
 you chose):
 
-- **Settings** and **Preview**, for the selected node. They are there only while a node is
-  selected: selecting one (a click, or moving to it with Tab or the arrow keys) shows its
-  **Settings**, and the focus stays where it was. Enter or a double-click also moves you into the
-  settings. When nothing is selected any more, the panel shows **Run** if a run is going or Run
-  was the last of the pipeline's tabs you looked at, else **Nodes**.
+- **Settings**, for the selected node, and with no node selected the pipeline's own: **About this
+  sample** for a pipeline added from the samples, and its **Parameters** (see
+  [Parameters in the canvas](#parameters-in-the-canvas)). Selecting a node (a click, or moving to
+  it with Tab or the arrow keys) shows its **Settings**, and the focus stays where it was. Enter or
+  a double-click also moves you into the settings.
+- **Preview**, for the selected node: there only while a node is selected. When the node whose
+  settings or preview you were looking at is no longer selected, the panel shows **Run** if a run
+  is going or Run was the last of the pipeline's tabs you looked at, else **Nodes**.
 - **Run**: the run the canvas shows (the latest), with its status, when it started and how long it
   took, the rows read and written, and each node's rows in and out, time, peak memory, quality and
   error. While it runs it updates every two seconds. **Open run** goes to the run's own page, with
@@ -148,7 +156,13 @@ viewers and stewards see its canvas and settings read-only.
 - Column settings offer the columns arriving at the node, as the last check worked them out, so
   you choose rather than type. Before the columns are known you can type names.
 - Expressions (a filter's condition, computed columns, aggregate values, routes) have the arriving
-  columns as buttons below them: choosing one puts its name where the cursor is.
+  columns as buttons below them: choosing one puts its name where the cursor is. A condition or a
+  read's **Where** also has the pipeline's parameters as `${name}` buttons.
+- Each `${name}` says what it is when you point at it or move to it with Tab: a parameter's type,
+  default and description, such as "statuses: text list, default delivered. The order statuses to
+  keep."; a server variable (`${vars.name}`) that it is one, and its value now if you are a steward
+  or above. Escape hides it. A setting that puts in a parameter or variable, such as a write's path
+  `orders_${label}.csv`, lists them under its box the same way, also when you can only read it.
 - A filter's condition, a read's **Where**, a route's conditions and a compute's columns also have
   the operators as buttons, in groups (**Compare**, **Test**, **Combine**, **Arithmetic**), which
   go in where the cursor is, and **How to write it**: the operators, how to nest a test in brackets
@@ -471,9 +485,40 @@ nor another node (`rules_from`).
   compared), an unknown name (with the closest suggested) or a value that does not fit is a problem
   before anything runs.
 
+### Parameters in the canvas
+
+With no node selected, the **Settings** tab under the canvas shows the pipeline's own settings. Its
+**Parameters** table lists each parameter the pipeline declares: its name, type, default,
+description, and the nodes that put it in with `${name}`.
+
+Designers and admins change them there:
+
+- **Add a parameter** asks for its name, type, default and, if you like, a description. **Change**
+  and **Remove** are on each row.
+- They are checked as the server checks the YAML: names start with a small letter and use a-z,
+  0-9 and `_`; the words conditions use (`and`, `or`, `not`, `true`, `false`, `good`, `fair`,
+  `poor`) are taken; every parameter needs a default that fits its type, or a server variable
+  written as `${vars.name}`; lists are separated by commas.
+- Each change is written to the YAML as you would write it by hand: only that parameter's line
+  changes, written on one line as the others are, and **Undo** takes it back. The first parameter
+  starts a `parameters:` block under the description; removing the last removes the block. A
+  default you leave as it is when you change a parameter is written back exactly as it was.
+- Renaming or removing a parameter does not change the nodes that put it in: the check then names
+  them, and the panel says which.
+
+Viewers and stewards see the table read-only.
+
 ### Running with values
 
-Choose **Run now** to run with the defaults. Through the API, give values in the run's body:
+On the pipeline's page, **Run now** on a pipeline with parameters opens the **Run** tab under the
+canvas, with a field for each parameter of the saved version, filled with its default. Change what
+you need and choose **Run with these values**: a field left as its default, or empty, runs with the
+default (for a default that is a server variable, the variable's value), and lists are separated by
+commas. Only the values you changed are sent, with the version whose parameters were shown, so
+they never go to a version someone saved since. A value of the wrong kind is caught before anything
+is sent; anything the server refuses, such as a value that does not fit, is shown beside the fields.
+**Back to the defaults** fills them in again. On the Pipelines page, **Run now** runs with the
+defaults. Through the API, give values in the run's body:
 
 ```
 POST /api/v1/pipelines/orders-by-status/runs
@@ -548,8 +593,8 @@ appears in the **History** tab, under the canvas, as Queued, then Running, and t
 **Run** tab, following the run as it goes.
 
 A run uses the version that was latest when you asked, even if someone saves another while it
-waits. A pipeline with parameters runs with their defaults; see
-[Parameters and server variables](#parameters-and-server-variables) to give other values.
+waits. A pipeline with parameters asks for their values first, in the **Run** tab, filled with
+their defaults; see [Running with values](#running-with-values).
 
 To stop a run, open it and choose **Cancel run**. A queued run is cancelled at once; a running one
 stops within a few seconds. Rows already written stay written.
@@ -702,7 +747,14 @@ status changes.
 - **What it wrote:** each table or file a write node wrote, with its mode and rows. Choose one to
   open it in the catalogue. Under **Files to download**, each file the run wrote to a folder source
   has a **Download** button (see below).
-- **Lineage:** which assets each written asset came from.
+- **Lineage:** a graph of which assets each written asset came from. The inputs are on the left,
+  the outputs on the right, and the band between them names the pipeline. A line joins an input to
+  an output only where the run recorded that the output came from it, so an output made from some
+  of the inputs shows just those. A table or file the run both wrote and read again sits between,
+  and one that came from itself says so. Each box gives the table's or file's name, its folder and its
+  source, with its full identifier when you point at it; choose a box to open it in the catalogue.
+  Pointing at or focusing a box picks out its lines. On a phone the graph scrolls sideways inside
+  its frame. **Show the lineage as a list** gives the same as sentences.
 
 ## Downloading the files a run wrote
 
@@ -762,7 +814,9 @@ could not be made, the write still counts and the run says so.
 
 Kilnmark also records the lineage: the written asset came from the assets the pipeline read. It is
 kept even if the pipeline is later deleted, so the next pipeline that reads the written table
-starts from what is known about it.
+starts from what is known about it. An asset's page shows its lineage under **Lineage** on its
+**Overview** tab, as a graph: what it came from on the left, what was made from it on the right,
+each line naming the pipelines that recorded it.
 
 **Marks follow the data.** A column the run writes from a column marked sensitive is marked
 sensitive where it is written too, whoever ran it and however the run ended: a column passed on

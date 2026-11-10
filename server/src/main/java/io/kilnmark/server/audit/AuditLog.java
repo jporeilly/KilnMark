@@ -85,7 +85,10 @@ public class AuditLog {
     /** A request was refused for want of sign-in or a role; detail: method, status. Target: the path. */
     public static final String API_REFUSED = "api.refused";
 
-    /** Someone signed in with the identity provider (ADR 0036); detail: role, unmask. */
+    /**
+     * Someone signed in with the identity provider (ADR 0036); detail: role, unmask, person (an opaque
+     * key), and groups (only those the role and unmask settings name).
+     */
     public static final String SIGN_IN = "auth.sign_in";
     /** Someone signed in with the identity provider but was given no role; detail: reason. */
     public static final String SIGN_IN_REFUSED = "auth.sign_in_refused";
@@ -105,7 +108,8 @@ public class AuditLog {
     public static final String PERSON_ACTIVATED = "auth.person_activated";
     /**
      * keycloak-setup disabled a person whose temporary password went unused for longer than
-     * KILNMARK_PEOPLE_ACTIVATION_HOURS, as the control script reported it; detail: person.
+     * KILNMARK_PEOPLE_ACTIVATION_HOURS, as the control script reported it; detail: person, reason,
+     * and hours (that setting, when the control script reported it).
      */
     public static final String PERSON_DISABLED = "auth.person_disabled";
     /** The server refused to start: its deployment mode (ADR 0051); detail: reason. */
@@ -350,30 +354,53 @@ public class AuditLog {
 
     /** Everyone who has signed in with the identity provider and been given a role, most recent first. */
     public List<ProviderAccess> providerAccess() {
+        return signIns().stream().filter(SignedIn::everGiven).map(s -> new ProviderAccess(s.name(), s.lastSignIn(),
+            s.role(), s.unmask(), s.signIns(), s.refused())).toList();
+    }
+
+    /**
+     * Someone who has signed in with the identity provider, as the access review reads them (ADR 0037):
+     * {@link ProviderAccess}'s facts, with {@code lastId}, the id of their latest sign-in event (given
+     * a role or not), to order it against other events; {@code groups}, the groups recorded by the
+     * sign-in that gave their role, or by their latest when none did or none of their groups gives one
+     * any more (only groups the settings name; null for a sign-in recorded before groups were); and
+     * {@code everGiven}, whether any sign-in of theirs was given a role.
+     */
+    public record SignedIn(String name, Instant lastSignIn, long lastId, String role, boolean unmask, long signIns,
+                           String refused, List<String> groups, boolean everGiven) {
+    }
+
+    /**
+     * Everyone who has signed in with the identity provider, given a role or not, most recent first.
+     * Each person's events are taken in the order the database stored them (their id), not by the
+     * times different servers' clocks gave them.
+     */
+    public List<SignedIn> signIns() {
         return db.tx(c -> {
-            List<ProviderAccess> out = new ArrayList<>();
+            List<SignedIn> out = new ArrayList<>();
             // every sign-in event, newest first per person: the latest says what happened last, the
             // latest with a role says what their groups gave them
-            try (PreparedStatement ps = c.prepareStatement("SELECT actor, at, action, detail::text FROM "
-                + "kilnmark.audit_event WHERE action IN (?, ?) ORDER BY actor, at DESC")) {
+            try (PreparedStatement ps = c.prepareStatement("SELECT actor, at, action, detail::text, id FROM "
+                + "kilnmark.audit_event WHERE action IN (?, ?) ORDER BY actor, id DESC")) {
                 ps.setString(1, SIGN_IN);
                 ps.setString(2, SIGN_IN_REFUSED);
                 try (ResultSet rs = ps.executeQuery()) {
                     String actor = null;
                     Instant last = null;
+                    long lastId = 0;
                     String refused = null;
+                    Map<String, Object> latest = null;
                     Map<String, Object> given = null;
                     long count = 0;
                     while (true) {
                         boolean more = rs.next();
                         String next = more ? rs.getString(1) : null;
                         if (actor != null && (!more || !actor.equals(next))) {
-                            if (given != null) {
-                                boolean gone = OidcAccess.NO_GROUP.equals(refused);
-                                out.add(new ProviderAccess(actor, last, gone || given.get("role") == null ? null
-                                    : String.valueOf(given.get("role")), !gone && Boolean.TRUE.equals(given.get("unmask")),
-                                    count, refused));
-                            }
+                            boolean gone = OidcAccess.NO_GROUP.equals(refused);
+                            boolean role = given != null && !gone && given.get("role") != null;
+                            out.add(new SignedIn(actor, last, lastId, role ? String.valueOf(given.get("role")) : null,
+                                role && Boolean.TRUE.equals(given.get("unmask")), count, refused,
+                                groupNames((given == null || gone ? latest : given).get("groups")), given != null));
                             actor = null;
                         }
                         if (!more) {
@@ -382,8 +409,10 @@ public class AuditLog {
                         if (actor == null) {
                             actor = next;
                             last = Db.instant(rs.getTimestamp(2));
+                            lastId = rs.getLong(5);
+                            latest = detail(rs.getString(4));
                             refused = SIGN_IN_REFUSED.equals(rs.getString(3))
-                                ? String.valueOf(detail(rs.getString(4)).getOrDefault("reason", "")) : null;
+                                ? String.valueOf(latest.getOrDefault("reason", "")) : null;
                             given = null;
                             count = 0;
                         }
@@ -396,8 +425,60 @@ public class AuditLog {
                     }
                 }
             }
-            out.sort(java.util.Comparator.comparing(ProviderAccess::lastSignIn).reversed());
+            out.sort(java.util.Comparator.comparing(SignedIn::lastSignIn).reversed());
             return out;
+        });
+    }
+
+    /**
+     * A person of the organisation's own whom the control script's people commands made in the bundled
+     * Keycloak, as the audit log knows them (ADR 0051): their email; the groups, how ({@code add} or
+     * {@code import}), when and by whom of the latest {@value #PERSON_ADDED} for them (all null when
+     * Kilnmark recorded them only being activated or disabled); the latest of those three events for
+     * them ({@code added}, {@code activated} or {@code disabled}), when, and its id; and, for
+     * {@code disabled}, how many hours a temporary password could wait unused, as the control script
+     * reported it (null when it did not).
+     */
+    public record PersonRecord(String person, List<String> groups, String via, Instant addedAt, String addedBy,
+                               String latest, Instant latestAt, long latestId, Integer hours) {
+    }
+
+    /** Everyone the control script's people commands made, activated or disabled, in the order first recorded. */
+    public List<PersonRecord> peopleRecorded() {
+        return db.tx(c -> {
+            Map<String, PersonRecord> out = new LinkedHashMap<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT id, at, actor, token_id, action, detail::text FROM "
+                + "kilnmark.audit_event WHERE action IN (?, ?, ?) ORDER BY id")) {
+                ps.setString(1, PERSON_ADDED);
+                ps.setString(2, PERSON_ACTIVATED);
+                ps.setString(3, PERSON_DISABLED);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> d = detail(rs.getString(6));
+                        if (!(d.get("person") instanceof String person) || person.isBlank()) {
+                            continue;
+                        }
+                        long id = rs.getLong(1);
+                        Instant at = Db.instant(rs.getTimestamp(2));
+                        long token = rs.getLong(4);
+                        Long tokenId = rs.wasNull() ? null : token;
+                        String by = new Actor(rs.getString(3), tokenId).toString();
+                        String action = rs.getString(5);
+                        PersonRecord was = out.get(person);
+                        if (PERSON_ADDED.equals(action)) {
+                            out.put(person, new PersonRecord(person, groupNames(d.get("groups")),
+                                d.get("via") instanceof String v ? v : null, at, by, "added", at, id, null));
+                        } else {
+                            boolean disabled = PERSON_DISABLED.equals(action);
+                            Integer hours = disabled && d.get("hours") instanceof Number n ? n.intValue() : null;
+                            out.put(person, new PersonRecord(person, was == null ? null : was.groups(),
+                                was == null ? null : was.via(), was == null ? null : was.addedAt(),
+                                was == null ? null : was.addedBy(), disabled ? "disabled" : "activated", at, id, hours));
+                        }
+                    }
+                }
+            }
+            return List.copyOf(out.values());
         });
     }
 

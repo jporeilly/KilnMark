@@ -36,6 +36,7 @@ import { ScheduledNext, useSchedules } from "../schedules/SchedulesTable";
 import "../pipelines/pipelines.css";
 import { Who } from "../components/Who";
 import { noticeText, statusIn, type Notice } from "../components/runNotice";
+import { SampleAbout } from "../library/Explanation";
 
 const FlowDiagram = lazy(() => import("./FlowDiagram"));
 
@@ -505,6 +506,7 @@ export function FlowPage({
         />
       )}
       {detail?.description && <p className="lead">{detail.description}</p>}
+      {!viewing && <SampleAbout about={detail?.sample} kind="flow" id="fl-sample-about" />}
       {isNew && (
         <p className="lead">
           Build the flow on its diagram, or write its YAML: both edit the same flow, its nodes and the connections that

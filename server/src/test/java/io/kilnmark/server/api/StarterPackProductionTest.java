@@ -210,6 +210,29 @@ class StarterPackProductionTest {
             .refusal());
     }
 
+    /**
+     * On production an import gives nobody a password: the access review lists each person as waiting
+     * to be activated, with the role their groups give, until people activate gives them one.
+     */
+    @Test
+    void theAccessReviewListsAProductionImportAsWaitingToBeActivated() {
+        String nell = "nell." + Long.toString(System.nanoTime(), 36) + "@bank.example";
+        admin().contentType(ContentType.JSON).body(Map.of("via", "import", "made", List.of(made(nell,
+            "kilnmark-viewers")))).post("/api/v1/auth/people").then().statusCode(204);
+        audit.awaitStored(5000);
+        JsonPath r = admin().get("/api/v1/access-review").then().statusCode(200).extract().jsonPath();
+        Map<String, Object> e = r.getMap("entries.find { it.name == '" + nell + "' }");
+        assertEquals("not-activated", e.get("state"));
+        assertEquals("waiting to be activated", e.get("status"));
+        assertEquals("viewer", e.get("role"));
+        assertEquals(List.of("kilnmark-viewers"), e.get("groups"));
+        admin().contentType(ContentType.JSON).body(Map.of("via", "activate", "activated", List.of(nell)))
+            .post("/api/v1/auth/people").then().statusCode(204);
+        audit.awaitStored(5000);
+        r = admin().get("/api/v1/access-review").then().statusCode(200).extract().jsonPath();
+        assertEquals("waiting", r.getString("entries.find { it.name == '" + nell + "' }.state"));
+    }
+
     @Test
     void theTemplatesAreThereAsOnAnyInstall() {
         List<String> names = admin().get("/api/v1/templates").then().statusCode(200).extract().jsonPath().getList("name");

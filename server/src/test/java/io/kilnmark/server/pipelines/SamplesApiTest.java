@@ -8,6 +8,7 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItems;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -117,12 +118,84 @@ class SamplesApiTest {
         String settings = String.join("\n", yaml.lines().filter(l -> !l.startsWith("#")).toList());
         assertFalse(settings.contains("crm-db") || settings.contains("source: files"), yaml);
 
+        aboutTheSample(designer, viewer, yaml);
+
         // Again: what is there is left as it is.
         as(designer).body(body).post("/api/v1/samples").then().statusCode(200)
             .body("added", equalTo(0))
             .body("samples.findAll { it.name == 'sample-read-write-csv' }.outcome", hasItems("exists"));
         as(viewer).get("/api/v1/samples").then().statusCode(200)
             .body("samples.find { it.name == 'sample-read-write-csv' }.exists", equalTo(true));
+    }
+
+    /**
+     * A pipeline added from the samples carries its sample's explanation, from the bundled file, and
+     * whether it has been changed since: moving its nodes is not a change, a new setting is. Its
+     * versions list the parameters they declare.
+     */
+    private static void aboutTheSample(String designer, String viewer, String added) {
+        Samples.Explanation bundled = Samples.bundled().stream().filter(s -> s.name().equals("sample-read-write-csv"))
+            .findFirst().orElseThrow().explanation();
+        JsonPath d = as(viewer).get("/api/v1/pipelines/sample-read-write-csv").then().statusCode(200).extract().jsonPath();
+        assertEquals("01-read-and-write/read-table-write-csv.yaml", d.getString("sample.file"));
+        assertEquals(bundled.shows(), d.getString("sample.explanation.shows"));
+        assertEquals(bundled.why(), d.getString("sample.explanation.why"));
+        assertEquals(bundled.lookFor(), d.getString("sample.explanation.lookFor"));
+        assertEquals(bundled.needs(), d.getString("sample.explanation.needs"));
+        assertFalse(d.getBoolean("sample.changed"));
+        assertEquals(List.of(), d.getList("latest.parameters"));
+        // Read from the sample's own file: its comment, lines joined into sentences.
+        assertTrue(d.getString("sample.explanation.shows").startsWith("Reads every row of the CRM accounts table and "
+            + "writes it to a CSV file."), d.prettify());
+        assertTrue(d.getString("sample.explanation.needs").startsWith("crm-db (the crm schema) and files"), d.prettify());
+
+        // Moving its nodes on the canvas changes only the layout: still as added.
+        String moved = added + "\n# Where the canvas draws each node. Kilnmark ignores this when it runs the pipeline.\n"
+            + "layout:\n  accounts: {x: 0, y: 0}\n  out: {x: 240, y: 0}\n";
+        as(designer).header("If-Match", "\"1\"").body(Map.of("yaml", moved, "message", "Moved nodes"))
+            .put("/api/v1/pipelines/sample-read-write-csv").then().statusCode(200);
+        d = as(viewer).get("/api/v1/pipelines/sample-read-write-csv").then().statusCode(200).extract().jsonPath();
+        assertEquals(2, d.getInt("latestVersion"));
+        assertFalse(d.getBoolean("sample.changed"));
+
+        // A parameter of its own: changed since, and the parameter listed with its kind and default.
+        String changed = moved.replace("nodes:\n", "parameters:\n  label: { type: text, default: accounts, description: "
+            + "Names the file }\n\nnodes:\n");
+        as(designer).header("If-Match", "\"2\"").body(Map.of("yaml", changed, "message", "A label"))
+            .put("/api/v1/pipelines/sample-read-write-csv").then().statusCode(200);
+        d = as(viewer).get("/api/v1/pipelines/sample-read-write-csv").then().statusCode(200).extract().jsonPath();
+        assertTrue(d.getBoolean("sample.changed"), d.prettify());
+        assertEquals(bundled.shows(), d.getString("sample.explanation.shows"));
+        assertEquals("label", d.getString("latest.parameters[0].name"));
+        assertEquals("text", d.getString("latest.parameters[0].type"));
+        assertEquals("accounts", d.getString("latest.parameters[0].defaultValue"));
+        assertEquals("Names the file", d.getString("latest.parameters[0].description"));
+        assertFalse(d.getBoolean("latest.parameters[0].required"));
+
+        // A pipeline of a team's own has none, even one with a bundled sample's very name (sample-filter
+        // was skipped above, so the name is free): the name alone is never the mark.
+        String own = changed.replace("name: sample-read-write-csv", "name: sample-filter");
+        as(designer).body(Map.of("name", "sample-filter", "yaml", own, "message", "Mine")).post("/api/v1/pipelines")
+            .then().statusCode(201);
+        try {
+            JsonPath o = as(viewer).get("/api/v1/pipelines/sample-filter").then().statusCode(200).extract().jsonPath();
+            assertNull(o.get("sample"));
+            assertNull(o.get("library"));
+        } finally {
+            admin().delete("/api/v1/pipelines/sample-filter");
+        }
+    }
+
+    @Test
+    void withoutLayoutLeavesOutOnlyWhereTheNodesAreDrawn() {
+        String yaml = "name: x\nnodes:\n  - id: a\n";
+        String drawn = yaml + "\n# Where the canvas draws each node. Kilnmark ignores this when it runs the pipeline.\n"
+            + "layout:\n  a: {x: 1, y: 2}\n";
+        assertEquals(Samples.withoutLayout(yaml), Samples.withoutLayout(drawn));
+        assertEquals(Samples.withoutLayout(yaml), Samples.withoutLayout(drawn.replace("\n", "\r\n")));
+        assertFalse(Samples.withoutLayout(yaml).equals(Samples.withoutLayout(yaml + "description: y\n")));
+        // A key after the layout block is kept.
+        assertTrue(Samples.withoutLayout(drawn + "quality: {min_score: 0.9}\n").contains("quality:"));
     }
 
     /** The templates: listed with their YAML for any signed-in person, even with the samples turned off. */
