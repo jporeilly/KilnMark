@@ -754,7 +754,16 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
   [Rows that fail](docs/guide/rows-that-fail.md) and a failed flow run in
   [Run again from the failure](docs/guide/flows.md#run-again-from-the-failure). Descriptions now
   match what each picture shows, and the notifications guide says that people who sign in through
-  an identity provider get no notifications yet.
+  an identity provider get no notifications yet. Thirteen more are new, for what this release
+  adds: the card of a connector that needs its driver, About this sample on a pipeline's page, the
+  Parameters table and running with values, SQL Kilnmark runs, the buttons under **Where**, a
+  read's query as each kind of designer sees it, a run's files to download and a download
+  refused, lineage on a run and on an asset, and a note on a flow's diagram.
+- **Known issue: the sample flow `sample-sql-before-and-after` cannot be run.** A flow's `sql`
+  node refuses a statement holding the word `GROUP`, so this sample's `INSERT ... SELECT ... GROUP
+  BY` is refused when you choose **Run now**; nothing is run or changed. It has been so since
+  0.0.10, and the other samples run. [The Library](docs/guide/library.md) says so beside the
+  sample.
 - **The documentation's groups and moves** (`ui/src/docs/groups.ts`): the groups the Documentation
   page shows, and where each page or section that moved went, which the viewer follows for an old
   link and for a link inside a guide. `groups.test.ts` fails when a guide is in no group, when a

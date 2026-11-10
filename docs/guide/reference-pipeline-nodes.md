@@ -981,7 +981,7 @@ Joins the rows of a `left` and a `right` input whose key columns are equal, as S
 
 [end: node join]: #
 
-![The sample-join pipeline on the canvas: orders into the join's left port and customers into its right port, the join node saying "full on customer_id = customer_id" and 707 rows out, and a write to a file](images/join-canvas.png)
+![The sample-join pipeline on the canvas: orders into the join's left port and customers into its right port, the join node saying "full on customer_id = customer_id" and 709 rows out, and a write to a file](images/join-canvas.png)
 
 In its settings, **Match on** pairs each left column with the right column it must equal, and
 **Join** chooses which rows with no match to keep:

@@ -36,6 +36,8 @@ its driver**, with the exact driver and version Kilnmark is tested with, for exa
 `ojdbc11 23.26.3.0.0`**, and a link to **Settings**, **Drivers**. Once it is installed, the card
 names the driver in place of that.
 
+![Add a connection: the connectors as cards, grouped; under Databases, the Oracle card says Needs its driver and Tested with ojdbc11 23.26.3.0.0, with the link Install the Oracle driver, and the cards of connectors still planned are dashed](images/add-connection-oracle.png)
+
 ![Settings › Drivers: a driver Kilnmark does not ship, with its licence, whether it is installed, and Accept and download](images/drivers-page.png)
 
 Open **Settings**, **Drivers**. Each driver your server's connectors need is listed with the
