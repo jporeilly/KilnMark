@@ -7,6 +7,7 @@ import { DocumentDetails, PartOf } from "../components/DocumentDetails";
 import { DocumentReader } from "../components/DocumentReader";
 import { KindIcon } from "../components/KindIcon";
 import { QualityPanel } from "../components/QualityPanel";
+import { AssetLineagePanel } from "../lineage/AssetLineagePanel";
 import { SourceTile } from "../components/ConnectorTile";
 import { Card, EmptyState, PageHeader, StatusChip, TabPanel, Tabs, useTabsId } from "../components/ui";
 import { Icon } from "../components/icons";
@@ -14,7 +15,7 @@ import { formatAgo } from "../format";
 
 /**
  * One asset: a header with its source tile, name and facts, then tabs. Tables, views and files
- * with columns have Overview (summary and relationships), Columns (statistics) and Quality
+ * with columns have Overview (summary, relationships and lineage), Columns (statistics) and Quality
  * (scores, rules with their history, recommended rules, patterns, drift and samples). Documents
  * have Overview and, when readable, Text. The tab is kept in the address (?tab=), so it can be
  * linked to and survives a reload.
@@ -131,6 +132,7 @@ export function AssetPage({ urn, tab }: { urn: string; tab?: string | null }) {
         {!isDocument && (selected === "overview" || selected === "columns") && (
           <TableDetails asset={asset} part={selected} />
         )}
+        {!isDocument && selected === "overview" && <AssetLineagePanel urn={asset.urn} name={asset.name} kind={asset.kind} />}
         {!isDocument && selected === "quality" && <QualityPanel asset={asset} />}
       </TabPanel>
       <p className="muted small km-footnote">

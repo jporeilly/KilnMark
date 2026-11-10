@@ -20,6 +20,7 @@ import { WrittenFilesList } from "./WrittenFilesList";
 import { runOrigin } from "./timeline";
 import { RunFacts, RunNodes, ScoreChip, useRunDetail } from "./RunSummary";
 import { retrying, RunTriesList } from "../components/RunTries";
+import { LineageGraph } from "../lineage/LineageGraph";
 import "./pipelines.css";
 
 const FILL: Record<string, FillTone> = { good: "good", fair: "warn", poor: "bad" };
@@ -345,19 +346,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
         {detail.lineage.length > 0 && (
           <>
             <h3>Lineage</h3>
-            <ul className="small">
-              {detail.lineage.map((l, i) => (
-                <li key={i}>
-                  <a href={href.asset(l.output)} className="mono">
-                    {l.output}
-                  </a>{" "}
-                  came from{" "}
-                  <a href={href.asset(l.input)} className="mono">
-                    {l.input}
-                  </a>
-                </li>
-              ))}
-            </ul>
+            <LineageGraph links={detail.lineage} pipeline={r.pipeline} label={`Lineage of run ${r.id} of ${r.pipeline}`} />
           </>
         )}
         {detail.notes.length > 0 && (

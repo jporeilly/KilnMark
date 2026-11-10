@@ -1603,6 +1603,10 @@ export type PipelineRunDetail = {
   /** Each ended try, the first first (ADR 0053); missing from older servers. */
   tries?: RunTry[];
 };
+/** One recorded link of an asset's lineage: the asset at the other end, and the run that recorded it. */
+export type AssetLineageEntry = { urn: string; pipeline: string; runId: number | null; node: string; recordedAt: string };
+/** An asset's lineage (GET /api/v1/lineage): upstream it came from, downstream was made from it; one entry per run. */
+export type AssetLineage = { urn: string; upstream: AssetLineageEntry[]; downstream: AssetLineageEntry[] };
 /**
  * A run's rows a second over time, read on its own (pipelinesApi.series): t is ms from workerStartedAt; r each node's
  * rows/s, q its output queue's fill (0 to 1), in nodes' order. When stride changes the points were merged: read again.
@@ -1774,6 +1778,8 @@ export const pipelinesApi = {
   runs: (name: string) => call<PipelineRun[]>(`${pipe(name)}/runs?limit=50`),
   runDetail: (id: number) => call<PipelineRunDetail>(`/api/v1/pipeline-runs/${id}`),
   cancel: (id: number) => call<PipelineRun>(`/api/v1/pipeline-runs/${id}/cancel`, { method: "POST" }),
+  /** What an asset came from and what was made from it, as pipeline writes recorded it, newest first. */
+  lineage: (urn: string) => call<AssetLineage>(`/api/v1/lineage?urn=${encodeURIComponent(urn)}`),
   owners: (name: string) => call<Owners>(`${pipe(name)}/owners`),
   setOwners: (name: string, owners: string[]) =>
     call<Owners>(`${pipe(name)}/owners`, { method: "PUT", body: JSON.stringify({ owners }) }),
