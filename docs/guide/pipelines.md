@@ -139,7 +139,8 @@ layout:
 ### Settings
 
 Select a node to see its settings. Each has its help and, where there is one, its default; a
-setting left at its default is left out of the YAML.
+setting left at its default is left out of the YAML. Designers and admins change a pipeline;
+viewers and stewards see its canvas and settings read-only.
 
 - On and off settings are switches; numbers, choices and text are fields and lists.
 - **Source** lists your saved sources; for a write, those that do not allow writing say so.
@@ -148,6 +149,24 @@ setting left at its default is left out of the YAML.
   you choose rather than type. Before the columns are known you can type names.
 - Expressions (a filter's condition, computed columns, aggregate values, routes) have the arriving
   columns as buttons below them: choosing one puts its name where the cursor is.
+- A filter's condition, a read's **Where**, a route's conditions and a compute's columns also have
+  the operators as buttons, in groups (**Compare**, **Test**, **Combine**, **Arithmetic**), which
+  go in where the cursor is, and **How to write it**: the operators, how to nest a test in brackets
+  (`and` binds tighter than `or`), worked examples, and a link to
+  [Expressions](expressions.md#operators). It starts open when a condition the node needs is still empty, and folded otherwise.
+- A `read` node shows **SQL Kilnmark runs** under its **Query** box, read-only: the statement it
+  sends to the database for the table, columns, **Where** and row limit chosen, with a `?` for each
+  value of **Where**, bound as it runs. The server works it out as a run sets the read up, from the
+  table as last scanned, so it is the SQL that runs, with the pipeline's parameters at their
+  defaults (a run given other values may read another table). A file, a table not yet scanned, or a
+  generic JDBC source, which writes its SQL once connected, says why there is none. The **Query**
+  box itself, for SQL of your own ([Reading with a query](#reading-with-a-query)), can be changed
+  only by a designer whose token may see unmasked values; everyone else sees it read-only, with
+  why. A designer who may not write a query cannot save or preview a pipeline while a read has one,
+  and can choose **Remove the query** to read a table instead.
+- **Columns leaving this node**, beside the settings, lists each output (out, and rejected or
+  errors where the node has them) with its columns and their types. An output with more than ten
+  columns starts folded: choose its name to open it.
 - A write node shows the settings of its source's writer, such as **Commit every N rows** for a
   database or **Overwrite** for files, once you choose the source.
 - **Node id** renames the node, and the nodes reading from it follow.
@@ -355,7 +374,8 @@ On a PostgreSQL source with **Allow SQL** on, a read can run one `SELECT` in pla
 - Parameters (`${name}`) are not filled in a query yet; write the value in the SQL.
 - Its columns are known only when it runs, so the nodes after it are checked against them then.
 - Only a designer who may see unmasked values saves or previews a pipeline with a query, since a
-  query can read any column the login can. Others, admins included, can run it.
+  query can read any column the login can. Others, admins included, can run it. On the canvas, the
+  **Query** box is read-only for them, and says why.
 - Every column the query returns is treated as marked sensitive, since a query can read any table
   its login can: masked for everyone else, and marked on what a write writes from it. A run's error
   messages are held back the same way. Once someone has checked that what was written holds nothing
@@ -680,7 +700,8 @@ status changes.
   failed (stewards and above, or only designers when the run touched columns marked sensitive); others see that it
   was held back. A run keeps up to 10,000 events; the log says if it was cut short.
 - **What it wrote:** each table or file a write node wrote, with its mode and rows. Choose one to
-  open it in the catalogue.
+  open it in the catalogue. Under **Files to download**, each file the run wrote to a folder source
+  has a **Download** button (see below).
 - **Lineage:** a graph of which assets each written asset came from. The inputs are on the left,
   the outputs on the right, and the band between them names the pipeline. A line joins an input to
   an output only where the run recorded that the output came from it, so an output made from some
@@ -689,6 +710,52 @@ status changes.
   source, with its full identifier when you point at it; choose a box to open it in the catalogue.
   Pointing at or focusing a box picks out its lines. On a phone the graph scrolls sideways inside
   its frame. **Show the lineage as a list** gives the same as sentences.
+
+## Downloading the files a run wrote
+
+A pipeline that writes CSV or Parquet files to a folder source puts them in that source's folder on
+the Kilnmark server. On an installed release that is Kilnmark's own files folder inside its
+container (`/srv/files`), which on Windows is inside the Podman machine, so you cannot open it from
+your desktop. Download the file from the run instead: open the run (from the pipeline's page, or
+from a flow run, which links to each pipeline run it started) and choose **Download** beside the
+file under **What it wrote**. The server sends the file, so it works the same on Windows and Linux.
+
+The button is off, with the reason beside it, when you may not have the file or it is no longer the
+run's:
+
+- **Holds sensitive columns.** A file holding a column marked sensitive, including a mark the run
+  carried from what it read, can be downloaded only by people who may see sensitive values
+  unmasked (a designer with the unmask grant; see [People and access](people-and-access.md#downloading-files-a-run-wrote)).
+  Admins see it masked everywhere else, so they cannot download it either.
+- **Columns not in the catalogue.** When Kilnmark does not know a file's columns (the run did not
+  catalogue it, for example because it failed after the file was written), it is treated as
+  sensitive.
+- **Marked since the run.** When a column of something the run read has been marked sensitive since
+  the run started, the run could not carry that mark, so the file is treated as sensitive.
+- **Viewers** see no values from the data, so they cannot download files; stewards and above can.
+- **Deleted**, or **changed since**: the file was deleted, or written again or replaced (by a later
+  run, say). Kilnmark checks the file's place, size and time against what the run recorded when it
+  wrote it, and never sends a file that is not the run's. Download it from the run that wrote it
+  last, or run the pipeline again. Runs from before this release recorded no size, so Kilnmark
+  cannot be sure the file there is theirs: those files are treated as sensitive, with a note that
+  they may have changed.
+
+Only files in a folder on the Kilnmark server can be downloaded; a file written to a bucket is read
+from the bucket. Kilnmark finds the file only where its write put it: you choose a file of a run,
+never a path, and nothing reached through a link is sent. Every download, and every refusal, is in
+the [audit log](audit-log.md). Signed in with your organisation's identity provider, the browser
+saves the file as it arrives; Kilnmark must then be on HTTPS or localhost (as sign-in through your organisation
+needs anyway), since browsers say which page asked for a download only to secure sites, and a
+download whose browser does not say so is refused. Signed in with an API token, the page fetches the file and then saves
+it, so for a very large file use the API with your token instead:
+
+```sh
+curl -H "Authorization: Bearer $KILNMARK_TOKEN" -OJ \
+  https://kilnmark.example.com/api/v1/pipeline-runs/42/files/0
+```
+
+`GET /api/v1/pipeline-runs/{id}/files` lists the files a run wrote, with each one's index, state
+and whether you may download it.
 
 ## What Kilnmark records about what you write
 

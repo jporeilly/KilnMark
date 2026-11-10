@@ -506,6 +506,31 @@ export async function callText(path: string, accept: string): Promise<string> {
   return text;
 }
 
+/** Whether this tab is signed in with an API token, which a plain link cannot send (a provider session's cookie it can). */
+export const signedInWithToken = () => currentToken() != null;
+
+/** A GET whose answer is a file to save, with the same sign-in and errors as call. */
+export async function callBlob(path: string): Promise<Blob> {
+  const token = currentToken();
+  let response: Response;
+  try {
+    response = await fetch(path, { headers: headers({ Accept: "*/*" }, token) });
+  } catch {
+    throw new ApiError("Cannot reach the Kilnmark server. Is it running?", 0);
+  }
+  if (notSignedIn(response.status)) signedOut(token != null);
+  if (!response.ok) {
+    let message = `The server answered ${response.status}`;
+    try {
+      message = JSON.parse(await response.text())?.error ?? message;
+    } catch {
+      // not JSON
+    }
+    throw new ApiError(message, response.status);
+  }
+  return response.blob();
+}
+
 /** "?node=a&level=warn", leaving out what is not set. */
 function logQuery(q: Record<string, string | number | null | undefined>): string {
   const p = new URLSearchParams();
@@ -1494,6 +1519,27 @@ export type PipelineWrittenAsset = {
   rows: number | null;
   registered: boolean;
 };
+/**
+ * A file a run wrote, by its index in the run's record (what a download names; never a path).
+ * state: ready (there as the run wrote it), unrecorded (there, but the run recorded no size, so it
+ * may have changed), changed, deleted or unavailable. reason: why it cannot be downloaded by the
+ * caller now; note: what to know when it can.
+ */
+export type PipelineWrittenFile = {
+  index: number;
+  node: string;
+  source: string;
+  path: string;
+  format: string;
+  rows: number | null;
+  bytes: number | null;
+  modified: string | null;
+  state: "ready" | "unrecorded" | "changed" | "deleted" | "unavailable";
+  downloadable: boolean;
+  reason: string | null;
+  note: string | null;
+};
+export type PipelineWrittenFiles = { run: number; finished: boolean; files: PipelineWrittenFile[] };
 /** A score from 0 to 1, overall and per dimension, with its main reasons (words and counts only). */
 export type QualityScore = { overall: number; dimensions: Record<string, number>; reasons: string[] };
 export type GateRuleResult = {
@@ -1749,6 +1795,12 @@ export const pipelinesApi = {
       `/api/v1/pipeline-runs/${id}/events/download${logQuery({ ...f, format })}`,
       format === "ndjson" ? "application/x-ndjson" : "text/plain",
     ),
+  /** The files a run wrote, and whether the caller may download each now (ADR 0055). */
+  files: (id: number) => call<PipelineWrittenFiles>(`/api/v1/pipeline-runs/${id}/files`),
+  /** Where a file a run wrote is downloaded from: the run and the file's index, never a path. */
+  fileUrl: (id: number, index: number) => `/api/v1/pipeline-runs/${id}/files/${index}`,
+  /** The file, fetched with the sign-in's token, for a tab signed in with one (a link cannot carry it). */
+  fileBlob: (id: number, index: number) => callBlob(`/api/v1/pipeline-runs/${id}/files/${index}`),
   /** The node catalogue with settings schemas, from which the canvas builds its palette and settings panels. */
   nodes: () => call<NodeType[]>("/api/v1/node-types"),
   /**
@@ -1757,7 +1809,16 @@ export const pipelinesApi = {
    */
   preview: (p: { yaml: string; node: string; port?: string | null; rows?: number }, signal?: AbortSignal) =>
     call<NodePreview>("/api/v1/pipelines/preview", { method: "POST", body: JSON.stringify(p), signal }),
+  /** The SQL one read node sends to its database as the YAML stands (saved or not), or why there is none. Any role. */
+  readSql: (yaml: string, node: string, signal?: AbortSignal) =>
+    call<ReadSql>("/api/v1/pipelines/read-sql", { method: "POST", body: JSON.stringify({ yaml, node }), signal }),
 };
+
+/**
+ * The SQL a read node sends to its database, worked out by the server as a run sets the read up:
+ * `sql` with `?` for each of `values` bound from its where, or null with `note` saying why.
+ */
+export type ReadSql = { node: string; sql: string | null; values: number; note: string | null };
 
 // ---- Flows (docs/design/flows.md) ----
 

@@ -196,6 +196,27 @@ public class PipelineService {
     }
 
     /**
+     * The SQL one read node of {@code yaml} sends to its database, worked out as a run sets the read
+     * up (its parameters at their defaults, the server's variables filled in) but without connecting:
+     * see {@link ReadNodeFactory#statement}. A 400 for a node that is not there or is not a read.
+     */
+    public PipelineViews.ReadSql readSql(String yaml, String node) {
+        checkSize(yaml);
+        if (node == null || node.isBlank()) {
+            throw new IllegalArgumentException("node: the id of the read node");
+        }
+        PipelineCompilerPort.Compilation c = compiler.check(yaml, nodes, Map.of(), variables());
+        PipelineCompilerPort.NodeOutline outline = c.nodes().stream().filter(n -> node.equals(n.id())).findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("node: the pipeline has no node by that id"));
+        if (!ReadNodeFactory.TYPE.equals(outline.type())
+            || !(nodes.get(ReadNodeFactory.TYPE).orElse(null) instanceof ReadNodeFactory read)) {
+            throw new IllegalArgumentException("node: only a read node sends SQL of its own");
+        }
+        ReadNodeFactory.SqlShown s = read.statement(c.configs().getOrDefault(node, Map.of()));
+        return new PipelineViews.ReadSql(node, s.sql(), s.values(), s.note());
+    }
+
+    /**
      * What is wrong with a pipeline's {@code run:} block against its nodes (ADR 0053): with retries,
      * every write must replace or upsert, as a retried run starts again from its beginning and writes
      * again. Whatever {@code retry_on} says: a run lost with its worker may have written too.
@@ -1374,6 +1395,10 @@ public class PipelineService {
                     n.put("rows", rows);
                 }
                 n.put("registered", registered);
+                ObjectNode file = WrittenFiles.recorded(o.events(), w.urn(), w.target(), json);
+                if (file != null) {
+                    n.set("file", file);
+                }
             }
             result.put("rowsWritten", total);
             result.set("notes", notes);

@@ -165,6 +165,25 @@ Managing those accounts is the provider's job. For people who sign in themselves
 from the "unmask" group at your provider, so there the second person is whoever approves membership
 of that group.
 
+## Downloading files a run wrote
+
+A file a pipeline run wrote to a folder source can be downloaded from the run's page
+([Downloading the files a run wrote](pipelines.md#downloading-the-files-a-run-wrote)). A file holds
+every value of every column it has, and cannot be masked, so who may download it follows the rule
+for seeing values:
+
+| Who | A file with no sensitive columns | A file holding a column marked sensitive, or whose columns are not known |
+| --- | --- | --- |
+| Viewers | No: they see no values from the data | No |
+| Stewards, designers without the unmask grant, admins | Yes | No |
+| Designers with the unmask grant (approved, when two people are needed) | Yes | Yes |
+
+Anyone who may see the run sees its files listed, and the reason when the button is off. A file is
+treated as sensitive when a column it holds is marked (by a steward, or carried by the run from what
+it read), when its columns are not in the catalogue or the run did not record the file, and when something it was made from has had a
+column marked since the run. Every download and every refusal is in the audit log, with who, the
+run, the source and path, and the size; never the file's contents.
+
 ## What keeps it honest
 
 - **The audit log** (Settings › Audit log) records, and never changes or deletes: tokens made and

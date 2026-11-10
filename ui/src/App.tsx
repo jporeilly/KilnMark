@@ -10,7 +10,7 @@ import { SourcePage } from "./pages/SourcePage";
 import { SignInPage, type SignInNotice } from "./pages/SignInPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { BrowsePage } from "./browse/BrowsePage";
-import { RoleContext } from "./components/role";
+import { RoleContext, UnmaskContext } from "./components/role";
 import { IssuesPage } from "./pages/IssuesPage";
 import "./docs/docs.css";
 import { AssistantPanel } from "./assistant/AssistantPanel";
@@ -378,6 +378,7 @@ function Shell({ me }: { me: Me }) {
             </div>
           </header>
           <RoleContext.Provider value={me.role}>
+          <UnmaskContext.Provider value={me.unmask === true}>
           <main id="main" tabIndex={-1}>
           <Suspense fallback={<p role="status" className="muted">Loading…</p>}>
           {route.page === "home" && <HomePage me={me} />}
@@ -470,6 +471,7 @@ function Shell({ me }: { me: Me }) {
             ))}
           </Suspense>
           </main>
+          </UnmaskContext.Provider>
           </RoleContext.Provider>
         </div>
         {askOpen && (

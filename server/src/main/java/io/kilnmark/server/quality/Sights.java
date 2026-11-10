@@ -114,6 +114,26 @@ public class Sights {
     }
 
     /**
+     * Whether the caller may take a whole file a pipeline run wrote, every value of every column in
+     * it (ADR 0055): the quality views' rule ({@link #of}, asked to unmask, since a file cannot be
+     * masked) for the asset it is. So values only for roles that may see data, and a file holding a
+     * column marked sensitive only for a designer with the unmask grant. For anyone else it is
+     * treated as sensitive, failing closed, when its columns are not known ({@code known} false: not
+     * catalogued by its run), or when an asset it was made from ({@code from}) has had a column
+     * marked since {@code since} (the run's start), which the run could not carry to it.
+     */
+    public Masking.Sight wholeFile(String urn, boolean known, Collection<String> from, java.time.Instant since) {
+        Masking.Sight sight = of(urn, true);
+        if (!sight.data() || sight.unmasked() || !sight.sensitive().isEmpty()) {
+            return sight;
+        }
+        if (!known || store.markedSince(from, since)) {
+            return new Masking.Sight(true, Set.of(QualityStore.EVERY_COLUMN), false);
+        }
+        return sight;
+    }
+
+    /**
      * Documents whose text is withheld from the caller: a document's text holds its sheets' cells
      * (a workbook), so when it or any part of it has a column marked sensitive, only a designer
      * with the unmask grant reads its text, finds in it or sees its snippets.
