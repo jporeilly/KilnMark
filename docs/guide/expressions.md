@@ -9,6 +9,9 @@ suggestion:
 Node tidy: column full_name: unknown column 'frist_name' at 7; did you mean first_name?
 ```
 
+On the canvas, the box for a condition or a computed column has the operators as buttons and
+**How to write it**, a short version of [Operators](#operators) with worked examples.
+
 Expressions only ever compute values: they cannot run code, read files or reach the network. Each
 node's settings are in [Reference: pipeline nodes](reference-pipeline-nodes.md); what happens to a
 row whose expression fails is in [Rows that fail](rows-that-fail.md).

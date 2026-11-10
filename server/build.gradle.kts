@@ -118,6 +118,9 @@ tasks.withType<Test>().configureEach {
     systemProperty("kmtest.eval.docs", rootProject.file("tests/ai-eval/docs.json").absolutePath)
     inputs.dir(rootProject.file("tests/docs"))
     inputs.file(rootProject.file("tests/ai-eval/docs.json"))
+    // The canvas's worked examples of conditions, each checked by ExpressionHelpTest.
+    systemProperty("kmtest.ui.root", rootProject.file("ui").absolutePath)
+    inputs.file(rootProject.file("ui/src/pipelines/canvas/expression-help.json"))
     // The run script's tests run containers/launch/kilnmark-run.* (ADR 0047): a change there reruns them.
     inputs.files(rootProject.fileTree("containers/launch") { include("kilnmark-run.*") })
     // and the environment that turns them on

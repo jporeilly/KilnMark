@@ -373,6 +373,15 @@ The guide's "Reading" is the user's view.
   Kilnmark counts the rows it keeps and stops the read when it has enough.
 - **Notes.** `NodeFactory.notes` lets a node add notes to a check; the read node says whether the
   database applies `where`, applies part of it (and what it leaves), or not at all.
+- **The SQL shown.** `POST /api/v1/pipelines/read-sql` {yaml, node} (any role) gives the statement
+  a read node sends, for the canvas to show under **Query**: `ReadNodeFactory.statement` builds the
+  read's options with the same `readOptions` as `create` and asks the connector's own `reader` for
+  its `query` setting, given the table as the catalogue last recorded it (`catalogued`: the same
+  schema, table and columns, a view bounded as the connector counts it) and the source's settings
+  without its secret, without connecting. It says how many values are bound (`?`) but never what
+  they are, and when a source samples large tables. A query read gives the query as
+  `queryReader` sends it. None for a file, a generic JDBC source (which writes its SQL once
+  connected) or a table not yet scanned; the browser never builds SQL itself.
 
 ### The read node's query (decisions, ADR 0028)
 
@@ -998,7 +1007,7 @@ profile node's defaults.
 
 | Write | Events | Meaning for the service |
 | --- | --- | --- |
-| Table `create`, `replace`; any file | `SCHEMA` (`columns`: JSON array of `{name, kind, type}`, `type` as written; `target`, `mode` or `format`, `location`), `ROW_COUNT` (`rows`, `complete=true`, `written=true`), `PROFILE` per column, `SAMPLE` when values are kept | The asset now holds exactly these rows: register or update it, replace its fields, row count and profile, apply the source's sample controls to `SAMPLE` |
+| Table `create`, `replace`; any file | `SCHEMA` (`columns`: JSON array of `{name, kind, type}`, `type` as written; `target`, `mode` or `format`, `location`; for a file in a folder on this server also `file`, `bytes`, `modified` and `key`, read once it is in place), `ROW_COUNT` (`rows`, `complete=true`, `written=true`), `PROFILE` per column, `SAMPLE` when values are kept | The asset now holds exactly these rows: register or update it, replace its fields, row count and profile, apply the source's sample controls to `SAMPLE` |
 | Table `append`, `upsert` | `ROW_COUNT` only (`rows` written, `complete=false`, `written=true`, `appended=true`, `mode`) | Rows were added to or merged into an existing table: record the run's lineage and row count, but keep the table's fields, row count and profile from its last scan; a scan refreshes them |
 
 Columns, kinds and profile attributes are those a scan reports (`JdbcColumn.Kind` names,
@@ -1144,6 +1153,29 @@ asset's previous profile.
   (`after` and `limit` that are not whole numbers, 0 or more, are a 400). Both
   follow the run's own role and Sights rules: a held-back detail is null, with `withheld` saying
   why.
+- **Written files** (ADR 0055). The run's record (`result.written[i]`) keeps, for a file written
+  to a folder on this server, `file: {location, bytes, modified, key}`: the file's real path, size,
+  time and file key from the writer's `SCHEMA` event (the path is never shown by the API). `GET
+  /api/v1/pipeline-runs/{id}/files` lists the writes to sources of files by `index` (their place in
+  `written`), each with its `state` (ready, unrecorded, changed, deleted, unavailable),
+  `downloadable` and `reason`; `GET .../files/{index}` streams one (`WrittenFiles.copy`, 64 KiB at a
+  time, exactly the checked size). The file is found by `FilesConnector.writtenFile`: the source's
+  folder opened and checked against the roots as for any read, the target checked again as a write's
+  (`FileTarget`), then `LocalFileStore.exact`, which takes only a regular file reached through no
+  link, with no other name (`unix:nlink` 1) and spelt as on disk; it must match the recorded place,
+  size, time and key, and is opened by `LocalFileStore.openBelow` one folder at a time through
+  `SecureDirectoryStream` handles that never follow a link (Linux; by path elsewhere), its
+  attributes read through that handle before and after the open and compared again. With nothing recorded (older runs)
+  it must have changed within the run's own time, in a folder the server may write, and is treated
+  as sensitive. Who may have it
+  is `Sights.wholeFile`: the quality views' rule asked to unmask, failing closed (as if every column
+  were marked) when the run did not catalogue it or it has no columns there, or when an asset the
+  run read has a mark newer than the run's start. Every download and refusal is an audit
+  event (`file.downloaded`, `file.download_refused`, the latter rate-limited per caller as
+  `api.refused` is, in a share of their own; a 403 is also an `api.refused` event, as every 403 is). A GET with the session cookie changes nothing, so a
+  plain link works for a provider sign-in; one whose `Sec-Fetch-Site` says another site sent it,
+  or a cookie request without a token or that header, is refused (`cross_site`); HEAD answers 405;
+  a download not sent whole is recorded as refused with `not_sent`. A token sign-in fetches the file with its token.
 - **Cancelling.** A queued run is cancelled at once and its job taken off the queue; a running one
   is interrupted within about half a second, and one asked to stop while its nodes are being set
   up stops before they run. A running run reads whether it is asked to stop in memory, from its
@@ -1391,7 +1423,11 @@ its run ends, and a retried start never to run the work twice.
   toolbar.
 - **Settings panels** come from `GET /api/v1/node-types`: one control per `SettingSpec` kind; column
   pickers use the columns validation worked out for the node's inputs; a write shows the writer
-  settings its source's kind takes (`writerSettings`).
+  settings its source's kind takes (`writerSettings`). A read's **Query** is editable only for a
+  designer whose token may unmask (`Me.unmask`, `UnmaskContext`), as the server checks on saving.
+  Conditions and computed columns have operator buttons and a short reference whose worked examples
+  live in `ui/src/pipelines/canvas/expression-help.json`, which `ExpressionHelpTest` parses and
+  checks on the server.
 - **Connections** are refused before they reach the YAML when the compiler would refuse them: a
   node reading from itself, loops, a single-input port fed twice, and the same edge twice (two
   ports of one node may both feed a port that takes many). References split at the last dot, as

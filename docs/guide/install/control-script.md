@@ -17,7 +17,10 @@ its space, and PowerShell runs a quoted path only after `&`). In Command Prompt,
 | Every other command | As the account that runs Kilnmark, never as root: `sudo -iu kilnmark /opt/kilnmark/kilnmark.sh <command>` | As the operator install named, from a prompt that is not elevated |
 
 Each day-to-day command refuses root (Linux), an elevated prompt (Windows), and on Windows anyone
-but the operator, saying how to run it instead. `check` runs as anyone, and says so. An account that is always elevated (Windows' built-in Administrator, or any administrator with UAC turned off) can never be the operator: run Kilnmark as an ordinary account, with UAC on. Podman runs as
+but the operator, saying how to run it instead. In Windows Terminal, every tab of a window opened
+as administrator is elevated too, Command Prompt tabs included, and a profile set to **Run this
+profile as Administrator** always opens such a window: open a new window from the Start menu
+instead, or turn that setting off for the profile. `check` runs as anyone, and says so. An account that is always elevated (Windows' built-in Administrator, or any administrator with UAC turned off) can never be the operator: run Kilnmark as an ordinary account, with UAC on. Podman runs as
 the operator: on Windows the Podman machine is theirs, on Linux the account's rootless Podman.
 
 ## Commands

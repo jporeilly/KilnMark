@@ -165,6 +165,103 @@ public final class LocalFileStore implements FileStore {
         return real;
     }
 
+    /**
+     * The file at {@code path} exactly: a path relative to the folder with no empty, {@code .} or
+     * {@code ..} part, that leads to a regular file through no link at all and is spelt as it is
+     * on disk. For handing back a file Kilnmark wrote, where a link swapped in since must not lead
+     * to another file, even one inside the folder.
+     *
+     * @throws java.nio.file.NoSuchFileException when nothing is there
+     * @throws IOException                         when the path, a link or what is there is refused
+     */
+    public Path exact(String path) throws IOException {
+        if (path == null || path.isBlank() || path.startsWith("/") || path.contains("\\") || path.contains("\0")) {
+            throw new IOException("not a path relative to the folder");
+        }
+        for (String part : path.split("/", -1)) {
+            if (part.isEmpty() || part.equals(".") || part.equals("..")) {
+                throw new IOException("not a path relative to the folder");
+            }
+        }
+        Path p = root.resolve(path).normalize();
+        if (!p.startsWith(root) || p.equals(root)) {
+            throw new IOException("outside the folder");
+        }
+        Path real = p.toRealPath(); // NoSuchFileException when it is not there
+        if (!real.toString().equals(p.toString())) { // as text: Path.equals ignores case on Windows
+            throw new IOException("reached through a link, or spelt otherwise on disk");
+        }
+        if (!Files.isRegularFile(real, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("not a file");
+        }
+        return real;
+    }
+
+    /**
+     * A file opened through {@link #openBelow}: the channel, and its attributes read just before and
+     * just after it was opened, through the same folder handle.
+     */
+    public record Opened(java.nio.channels.SeekableByteChannel channel, BasicFileAttributes before,
+                         BasicFileAttributes after) {
+    }
+
+    /**
+     * Opens the file at {@code path} below {@code root} one folder at a time, through folder handles
+     * that never follow a link, so a folder swapped for a link at any moment leads nowhere; the file
+     * is opened, and its attributes read, through the handle of the folder it is in. Null where the
+     * file system has no such handles (Windows): the caller then opens it by path.
+     */
+    public static Opened openBelow(Path root, String path) throws IOException {
+        String[] parts = path.split("/", -1);
+        for (String part : parts) {
+            if (part.isEmpty() || part.equals(".") || part.equals("..") || part.contains("\\")) {
+                throw new IOException("not a path relative to the folder");
+            }
+        }
+        try (java.nio.file.DirectoryStream<Path> top = Files.newDirectoryStream(root)) {
+            if (!(top instanceof java.nio.file.SecureDirectoryStream<Path> folder)) {
+                return null;
+            }
+            return openBelow(folder, root, parts);
+        }
+    }
+
+    /** {@link #openBelow(Path, String)} from the root's own handle, which the caller closes. */
+    private static Opened openBelow(java.nio.file.SecureDirectoryStream<Path> folder, Path root, String[] parts)
+        throws IOException {
+        List<java.nio.file.SecureDirectoryStream<Path>> held = new ArrayList<>();
+        try {
+            java.nio.file.SecureDirectoryStream<Path> at = folder;
+            for (int i = 0; i < parts.length - 1; i++) {
+                at = at.newDirectoryStream(root.getFileSystem().getPath(parts[i]), LinkOption.NOFOLLOW_LINKS);
+                held.add(at);
+            }
+            Path name = root.getFileSystem().getPath(parts[parts.length - 1]);
+            java.nio.file.attribute.BasicFileAttributeView view = at.getFileAttributeView(name,
+                java.nio.file.attribute.BasicFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+            BasicFileAttributes before = view.readAttributes();
+            if (!before.isRegularFile()) {
+                throw new IOException("not a file"); // never opened: a pipe would wait for ever
+            }
+            java.nio.channels.SeekableByteChannel channel = at.newByteChannel(name,
+                java.util.Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS));
+            try {
+                return new Opened(channel, before, view.readAttributes());
+            } catch (IOException | RuntimeException e) {
+                channel.close();
+                throw e;
+            }
+        } finally {
+            for (int i = held.size() - 1; i >= 0; i--) {
+                try {
+                    held.get(i).close();
+                } catch (IOException e) {
+                    // a folder handle: nothing more to release
+                }
+            }
+        }
+    }
+
     /** One file, by the listing's rules: inside the folder, not hidden, at the top unless recursive. */
     @Override
     public Entry entry(String path) throws IOException {

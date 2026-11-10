@@ -210,4 +210,74 @@ public final class FilesConnector extends FileSourceConnector {
     protected String container(SourceConfig source, String path) {
         return folder(path);
     }
+
+    /** What a file write reports on its {@code SCHEMA} event: the file on this server's disk, links resolved. */
+    public static final String WRITTEN_FILE = "file";
+    /** What a file write reports on its {@code SCHEMA} event: the file's size in bytes once in place. */
+    public static final String WRITTEN_BYTES = "bytes";
+    /** What a file write reports on its {@code SCHEMA} event: when the file was last changed, once in place. */
+    public static final String WRITTEN_MODIFIED = "modified";
+    /** What a file write reports on its {@code SCHEMA} event: what the file system knows the file by (an inode). */
+    public static final String WRITTEN_KEY = "key";
+
+    /**
+     * Whether a file has other names (hard links), so that what is sent as it could be another file's
+     * content; false where the file system does not say.
+     */
+    public static boolean otherNames(Path file) {
+        try {
+            return Files.getAttribute(file, "unix:nlink", java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                instanceof Integer n && n > 1;
+        } catch (IOException | UnsupportedOperationException | IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    /**
+     * A file a write put in a source's folder, as it is on this server's disk now.
+     *
+     * @param path     the file, with no link anywhere below the source's folder
+     * @param size     its size in bytes
+     * @param modified when it was last changed
+     * @param key      what the file system knows it by (an inode), or null where it has none
+     * @param root     the source's folder, links resolved, which {@code relative} is below; null to
+     *                 open {@code path} as it is
+     * @param relative the file's path below {@code root}
+     */
+    public record LocalFile(Path path, long size, java.time.Instant modified, Object key, Path root,
+                            String relative) {
+    }
+
+    /**
+     * The file a pipeline's write node wrote to {@code target} in {@code source}, found as the write
+     * found its place: the source's folder opened and checked against the allowed roots as for any
+     * read, the target checked as a write's target is ({@link FileTarget}), and the file then taken
+     * only if it is a regular file reached with no link and spelt as written. Nothing else in the
+     * folder, or outside it, can be reached this way.
+     *
+     * @throws java.nio.file.NoSuchFileException when there is no such file (deleted since)
+     * @throws IOException                         for anything else: a folder outside the roots, a
+     *                                             target no write could have had, a link, a folder
+     */
+    public LocalFile writtenFile(SourceConfig source, String target) throws IOException {
+        FileTarget checked;
+        try {
+            checked = FileTarget.of(target, null);
+        } catch (io.kilnmark.kiln.connect.ConnectorException e) {
+            throw new IOException("not a path a write could have written", e);
+        }
+        try (FileStore store = open(source)) {
+            if (!(store instanceof LocalFileStore local)) {
+                throw new IOException("not a folder on this server");
+            }
+            Path file = local.exact(checked.path());
+            if (otherNames(file)) {
+                throw new IOException("the file has other names (hard links)");
+            }
+            java.nio.file.attribute.BasicFileAttributes a = Files.readAttributes(file,
+                java.nio.file.attribute.BasicFileAttributes.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            return new LocalFile(file, a.size(), a.lastModifiedTime().toInstant(), a.fileKey(), local.root(),
+                checked.path());
+        }
+    }
 }
