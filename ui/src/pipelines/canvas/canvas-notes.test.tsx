@@ -8,6 +8,7 @@ import { RoleContext } from "../../components/role";
 import type { DockControl } from "../PipelineDock";
 import CanvasView from "./CanvasView";
 import { NoteText, safeHref } from "./NoteText";
+import { NodeNoteField } from "./CanvasNotes";
 import { readNotes } from "./notes";
 import { parseDocument } from "yaml";
 import FlowDiagram from "../../flows/FlowDiagram";
@@ -85,6 +86,29 @@ describe("a note's text is shown safely", () => {
     for (const bad of ["javascript:alert(1)", " https://x.y", "https://x y", "https:\\\\x.y", "ftp://x.y", "mailto:a@b.c", "/x", "data:,x", "https://"]) {
       expect(safeHref(bad)).toBeNull();
     }
+  });
+});
+
+describe("a node's note in its settings", () => {
+  test("written only when something is typed, once, on leaving the field", async () => {
+    const wrote: string[] = [];
+    await show(<NodeNoteField id="n" note={"Written by hand\nover two lines"} readOnly={false} onNote={(t) => wrote.push(t)} />);
+    const field = host.querySelector<HTMLTextAreaElement>("textarea")!;
+    await act(async () => {
+      field.focus();
+      field.blur();
+    });
+    expect(wrote).toEqual([]);
+    await act(async () => field.focus());
+    await type(field, "Short and new");
+    await act(async () => field.blur());
+    expect(wrote).toEqual(["Short and new"]);
+    expect(field.maxLength).toBe(280);
+  });
+
+  test("read-only, with no note, it is not shown at all", async () => {
+    await show(<NodeNoteField id="n" note={null} readOnly onNote={() => {}} />);
+    expect(host.querySelector("textarea")).toBeNull();
   });
 });
 

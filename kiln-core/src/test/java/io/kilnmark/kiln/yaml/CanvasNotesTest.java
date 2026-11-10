@@ -210,5 +210,18 @@ class CanvasNotesTest {
         assertFalse(CanvasNotes.withoutCanvas(nested).equals(bare));
         // YAML that cannot be read is compared as written.
         assertEquals("a: [\n", CanvasNotes.withoutCanvas("a: [\n"));
+        // A root in braces may go on over lines starting at column 1: compared as written, so a change
+        // after notes: or layout: is never hidden.
+        String braces = "{kilnmark: pipeline/v1, name: t,\nnotes: [], nodes: [{id: a, type: read, path: one.csv}]}\n";
+        assertFalse(CanvasNotes.withoutCanvas(braces).equals(CanvasNotes.withoutCanvas(braces.replace("one.csv", "two.csv"))));
+        String braces2 = "{\nkilnmark: pipeline/v1,\nlayout: {},\nrun: {retries: 1}}\n";
+        assertFalse(CanvasNotes.withoutCanvas(braces2).equals(CanvasNotes.withoutCanvas(braces2.replace("1}}", "2}}"))));
+        // A lone CR ends a line, as the parser counts lines: the note's line goes, the next stays.
+        String cr = PIPELINE.replace("name: toy\n", "name: toy\r").replace("    batches: 4\n", "    note: x\n    batches: 4\n");
+        assertEquals(bare, CanvasNotes.withoutCanvas(cr));
+        assertFalse(bare.equals(CanvasNotes.withoutCanvas(cr.replace("batches: 4", "batches: 5"))));
+        // A top-level key after the notes, whatever odd character its line holds, is kept.
+        String odd = PIPELINE + NOTES + "run: {retries: 1}   # \u2028 \u0085\n";
+        assertTrue(CanvasNotes.withoutCanvas(odd).contains("run: {retries: 1}"), CanvasNotes.withoutCanvas(odd));
     }
 }

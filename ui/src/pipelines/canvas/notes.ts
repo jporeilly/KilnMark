@@ -99,7 +99,12 @@ export function placeOf(note: Pick<CanvasNote, "node" | "x" | "y">, anchors: Rec
 /** A note's text as a person may keep it: no control characters but line breaks and tabs, no trailing space, within the limit. */
 export function cleanNoteText(text: string, most = MAX_NOTE_TEXT): string {
   // eslint-disable-next-line no-control-regex
-  return text.replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b-\u001f\u007f\u2028\u2029]/g, "").replace(/\s+$/, "").slice(0, most);
+  return text
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f\u2028\u2029]/g, "")
+    .replace(/^(?:[ \t]*\n)+/, "")
+    .replace(/\s+$/, "")
+    .slice(0, most);
 }
 
 /** A node's note: one line, no control characters, within its limit. */
@@ -117,7 +122,7 @@ const pairOf = (map: YAMLMap, key: string) =>
 function textYaml(text: string, indent: number, eol: string): string {
   if (!text.includes("\n")) return scalarYaml(text);
   // A literal block keeps the lines as typed; one starting with a space, or holding a tab, is double-quoted instead.
-  if (/^[ \t]/.test(text) || text.includes("\t")) return scalarYaml(text, true);
+  if (/^\n|^[ \t]/.test(text) || text.includes("\t")) return scalarYaml(text, true);
   const pad = " ".repeat(indent + 2);
   return `|-${eol}${text.split("\n").map((l) => (l === "" ? "" : pad + l)).join(eol)}`;
 }
@@ -213,7 +218,13 @@ function writeNote(ctx: Ctx, item: YAMLMap, was: CanvasNote, next: Omit<CanvasNo
     const trial = new Patch(p.text);
     try {
       const keyCol = trial.col(((item.items as Pair[])[0].key as unknown as Ranged).range[0]);
-      if (next.text !== was.text || !pairOf(item, "text")) {
+      const textPair = pairOf(item, "text");
+      if (textPair && next.text.includes("\n")) {
+        // A comment after the text would end up inside a block of lines: the note is written again whole.
+        const end = trial.valueEnd(textPair);
+        if (trial.text.slice(end, trial.lineEnd(end)).trim() !== "") throw new Error("a comment follows the text");
+      }
+      if (next.text !== was.text || !textPair) {
         trial.put(item, "text", null, { raw: textYaml(next.text, keyCol, trial.eol) });
       }
       if (next.node !== was.node) {
@@ -320,17 +331,35 @@ export function detachNotes(text: string, id: string, at: { x: number; y: number
 
 // ---- comparing versions ----
 
-const CANVAS_KEY = /^(?:layout|notes)\s*:/;
 const CANVAS_COMMENT = /^#.*Kilnmark ignores this/;
-const TOP_LEVEL = /^[^\s#]/;
 
-/** The lines (from 0) of each node's `note:` written on lines of its own: its key's line and those under it indented further. */
-function nodeNoteLines(text: string, lines: string[]): Set<number> {
-  const out = new Set<number>();
+/**
+ * The root mapping when it is written as blocks: every top-level key at the start of a line of its
+ * own. Null for YAML that cannot be read, a root in braces, or anything else.
+ */
+function blockRoot(text: string, lines: string[]): { top: YAMLMap; keyLines: Map<string, number>; counter: LineCounter } | null {
   const counter = new LineCounter();
   const doc = parseDocument(text, { lineCounter: counter });
-  if (doc.errors.length || !isMap(doc.contents)) return out;
-  for (const map of nodeMaps(doc.contents)) {
+  if (doc.errors.length || !isMap(doc.contents) || doc.contents.flow) return null;
+  const keyLines = new Map<string, number>();
+  const seen = new Set<number>();
+  for (const p of doc.contents.items as Pair[]) {
+    const key = p.key as (Scalar & Ranged) | null;
+    if (!isScalar(key) || !key.range) return null;
+    const pos = counter.linePos(key.range[0]);
+    const line = pos.line - 1;
+    const name = String(key.value);
+    if (pos.col !== 1 || seen.has(line) || !(lines[line] ?? "").startsWith(name)) return null;
+    seen.add(line);
+    keyLines.set(name, line);
+  }
+  return { top: doc.contents, keyLines, counter };
+}
+
+/** The lines (from 0) of each node's `note:` written on lines of its own: its key's line and those under it indented further. */
+function nodeNoteLines(top: YAMLMap, counter: LineCounter, lines: string[]): Set<number> {
+  const out = new Set<number>();
+  for (const map of nodeMaps(top)) {
     const pair = pairOf(map, "note");
     const key = pair?.key as (Scalar & Ranged) | undefined;
     if (!key?.range) continue;
@@ -356,21 +385,28 @@ function nodeNoteLines(text: string, lines: string[]): Set<number> {
 /**
  * The YAML without what only the canvas reads: the `layout:` and `notes:` blocks (with the comment
  * the canvas writes above each, and the blank lines before it) and each node's `note:`. What decides
- * whether a change is more than moving nodes and writing notes; the server compares versions the same
- * way (CanvasNotes.withoutCanvas).
+ * whether a change is more than moving nodes and writing notes. Only a mapping written as blocks is
+ * taken apart, by where the parser found each key; any other YAML is compared as written, so a real
+ * change is never hidden. The server compares versions the same way (CanvasNotes.withoutCanvas).
  */
 export function withoutCanvas(yaml: string): string {
-  const text = yaml.replace(/\r\n/g, "\n");
-  const all = text.split("\n");
-  const drop = nodeNoteLines(text, all);
-  const kept = all.filter((_, i) => !drop.has(i));
-  for (let at = kept.findIndex((l) => CANVAS_KEY.test(l)); at >= 0; at = kept.findIndex((l) => CANVAS_KEY.test(l))) {
-    let end = at + 1;
-    while (end < kept.length && !TOP_LEVEL.test(kept[end])) end++;
-    let start = at;
-    while (start > 0 && CANVAS_COMMENT.test(kept[start - 1])) start--;
-    while (start > 0 && kept[start - 1].trim() === "") start--;
-    kept.splice(start, end - start);
+  // As the parser counts lines: a lone CR ends a line too.
+  const text = yaml.replace(/\r\n?/g, "\n");
+  const lines = text.split("\n");
+  const root = blockRoot(text, lines);
+  const drop = new Set<number>();
+  if (root) {
+    nodeNoteLines(root.top, root.counter, lines).forEach((l) => drop.add(l));
+    const starts = [...root.keyLines.values()].sort((a, b) => a - b);
+    for (const key of ["layout", NOTES]) {
+      const at = root.keyLines.get(key);
+      if (at == null) continue;
+      const end = starts.find((l) => l > at) ?? lines.length;
+      let start = at;
+      while (start > 0 && CANVAS_COMMENT.test(lines[start - 1])) start--;
+      while (start > 0 && lines[start - 1].trim() === "") start--;
+      for (let i = start; i < end; i++) drop.add(i);
+    }
   }
-  return kept.join("\n").replace(/\n*$/, "\n");
+  return lines.filter((_, i) => !drop.has(i)).join("\n").replace(/\n*$/, "\n");
 }

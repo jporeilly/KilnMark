@@ -273,7 +273,9 @@ nodes:
   prediction or its lineage is made from can see a note, which is what "notes never change what
   runs" rests on. `CanvasNotes.withoutCanvas` (and `withoutCanvas` in ui/src/pipelines/canvas/notes.ts,
   which does the same) leaves out `layout:`, `notes:` and each node's `note:` (on lines of its own)
-  when two versions are compared: Run's unsaved-changes question, the message a save suggests, and
+  when two versions are compared, finding them by where the parser read each key, and only in YAML
+  written as blocks (a root in braces, or YAML that cannot be read, is compared as written, so a
+  real change is never hidden; a lone CR counts as a line break, as the parser counts it): Run's unsaved-changes question, the message a save suggests, and
   whether a pipeline or flow added from the samples has been changed (`Samples.about`).
 - Secrets never appear: nodes name saved sources, and the source holds the credentials.
 

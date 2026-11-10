@@ -207,6 +207,7 @@ export default function FlowDiagram({
   onNoteUpdate,
   onNoteRemove,
   noteFocus = null,
+  onNoteFocused,
   onPlaced,
 }: {
   graph: FlowGraph;
@@ -222,6 +223,7 @@ export default function FlowDiagram({
   onNoteRemove?: (index: number, label: string) => void;
   /** Set by Add a note: focus that note and open its editor. */
   noteFocus?: { index: number; n: number } | null;
+  onNoteFocused?: () => void;
   /** Where the diagram draws each node (its top-left corner), whenever that changes. */
   onPlaced?: (where: Record<string, Point>) => void;
 }) {
@@ -419,6 +421,7 @@ export default function FlowDiagram({
             onUpdate={(i, p, l) => onNoteUpdate?.(i, p, l)}
             onRemove={(i, l) => onNoteRemove?.(i, l)}
             focusRequest={noteFocus}
+            onFocused={onNoteFocused}
           />
           <Controls showInteractive={false} />
         </ReactFlow>

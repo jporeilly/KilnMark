@@ -33,6 +33,8 @@ export type CanvasNotesProps = {
   onRemove: (index: number, label: string) => void;
   /** Set by Add a note: focus this note and open its editor, once drawn. */
   focusRequest?: { index: number; n: number } | null;
+  /** Called once a focus request has been handled, so drawing the notes again never repeats it. */
+  onFocused?: () => void;
   /** After a note is removed: where the focus goes. */
   onRemoved?: () => void;
 };
@@ -87,7 +89,7 @@ export function CanvasNotes(props: CanvasNotesProps) {
   );
 }
 
-function NotesLayer({ notes, anchors, nodeIds, editable, what, onUpdate, onRemove, focusRequest, onRemoved }: CanvasNotesProps) {
+function NotesLayer({ notes, anchors, nodeIds, editable, what, onUpdate, onRemove, focusRequest, onFocused, onRemoved }: CanvasNotesProps) {
   const zoom = useStore((s) => s.transform[2]);
   const idBase = useId();
   const layer = useRef<HTMLDivElement>(null);
@@ -126,6 +128,7 @@ function NotesLayer({ notes, anchors, nodeIds, editable, what, onUpdate, onRemov
     const t = window.setTimeout(() => {
       elementOf(focusRequest.index)?.focus();
       if (editable) setEditing(focusRequest.index);
+      onFocused?.();
     }, 30);
     return () => window.clearTimeout(t);
     // Only a new request moves the focus.
@@ -180,6 +183,8 @@ function NotesLayer({ notes, anchors, nodeIds, editable, what, onUpdate, onRemov
       e.stopPropagation();
     };
     if (!editable) return;
+    // Any other key (Ctrl+Z, say) comes after the moves made with the arrow keys: they are written first.
+    if (!(k.startsWith("Arrow") && e.shiftKey)) flushKeys();
     if (k === "Enter" || k === "F2") {
       done();
       flushKeys();
@@ -489,10 +494,16 @@ export function NodeNoteField({
   onNote: (text: string) => void;
 }) {
   const [draft, setDraft] = useState(note ?? "");
-  useEffect(() => setDraft(note ?? ""), [note]);
+  // Written only once something is typed: tabbing through leaves a note written by hand as it is.
+  const typed = useRef(false);
+  useEffect(() => {
+    setDraft(note ?? "");
+    typed.current = false;
+  }, [note]);
   const write = () => {
     const next = cleanNodeNote(draft);
-    if (!readOnly && next !== (note ?? "")) onNote(next);
+    if (!readOnly && typed.current && next !== cleanNodeNote(note ?? "")) onNote(next);
+    typed.current = false;
   };
   if (readOnly && !note) return null;
   return (
@@ -508,7 +519,10 @@ export function NodeNoteField({
         readOnly={readOnly}
         maxLength={MAX_NODE_NOTE}
         aria-describedby={`${id}-help`}
-        onChange={(e) => setDraft(e.target.value.replace(/[\r\n]+/g, " "))}
+        onChange={(e) => {
+          typed.current = true;
+          setDraft(e.target.value.replace(/[\r\n]+/g, " "));
+        }}
         onBlur={write}
         onKeyDown={(e) => {
           if (e.key === "Enter") {

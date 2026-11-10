@@ -627,6 +627,7 @@ export function FlowPage({
                       onNoteUpdate={(i, patch, words) => applyEdit(updateNote(yaml, i, patch), words)}
                       onNoteRemove={(i, words) => applyEdit(removeNote(yaml, i, NOTES_COMMENT), words)}
                       noteFocus={noteFocus}
+                      onNoteFocused={() => setNoteFocus(null)}
                       onPlaced={setPlaced}
                     />
                   </Suspense>

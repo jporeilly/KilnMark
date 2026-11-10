@@ -1439,6 +1439,7 @@ function Canvas(props: CanvasProps) {
               onUpdate={changeNote}
               onRemove={dropNote}
               focusRequest={noteFocus}
+              onFocused={() => setNoteFocus(null)}
               onRemoved={() => flowBox.current?.focus()}
             />
             <MiniMap

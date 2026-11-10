@@ -118,43 +118,51 @@ public final class CanvasNotes {
         }
     }
 
-    /** A top-level key the canvas writes, which no run reads: where it draws each node, and its notes. */
-    private static final Pattern CANVAS_KEY = Pattern.compile("^(?:" + PipelineDefinition.LAYOUT + "|" + KEY + ")\\s*:.*");
-    /** The comment the canvas writes above such a key. */
+    /** The comment the canvas writes above its own top-level keys. */
     private static final Pattern CANVAS_COMMENT = Pattern.compile("^#.*Kilnmark ignores this.*");
-    private static final Pattern TOP_LEVEL = Pattern.compile("^[^\\s#].*");
 
     /**
      * The YAML of a pipeline or flow without what only the canvas reads: the {@code layout:} and
      * {@code notes:} blocks, with the comment the canvas writes above each and the blank lines before
      * it, and each node's {@code note:} (written on lines of its own). Two versions with the same text
      * here run the same: moving nodes and changing notes is no change to what runs. Line breaks are
-     * made {@code \n}, and the text ends in exactly one. The canvas compares versions the same way
-     * (ui/src/pipelines/template.ts).
+     * made {@code \n}, and the text ends in exactly one. Only a mapping written as blocks, one
+     * top-level key a line, is taken apart, by where the parser found each key; any other YAML (a root
+     * in braces, YAML that cannot be read) is compared as written, so a real change is never hidden.
+     * The canvas compares versions the same way (ui/src/pipelines/canvas/notes.ts).
      */
     public static String withoutCanvas(String yaml) {
-        String text = yaml == null ? "" : yaml.replace("\r\n", "\n");
+        // As the parser counts lines: a lone CR ends a line too.
+        String text = yaml == null ? "" : yaml.replace("\r\n", "\n").replace('\r', '\n');
         List<String> lines = new ArrayList<>(List.of(text.split("\n", -1)));
-        Set<Integer> drop = nodeNoteLines(text, lines);
+        YamlReader.Mapping top = blockRoot(text, lines);
+        Set<Integer> drop = new HashSet<>();
+        if (top != null) {
+            drop.addAll(nodeNoteLines(top, lines));
+            List<Integer> keyLines = top.entries().values().stream().map(e -> e.keyPosition().line() - 1).sorted().toList();
+            for (YamlReader.Entry e : top.entries().values()) {
+                if (!e.key().equals(PipelineDefinition.LAYOUT) && !e.key().equals(KEY)) {
+                    continue;
+                }
+                int at = e.keyPosition().line() - 1;
+                int end = keyLines.stream().filter(l -> l > at).findFirst().orElse(lines.size());
+                int start = at;
+                while (start > 0 && CANVAS_COMMENT.matcher(lines.get(start - 1)).matches()) {
+                    start--;
+                }
+                while (start > 0 && lines.get(start - 1).isBlank()) {
+                    start--;
+                }
+                for (int i = start; i < end; i++) {
+                    drop.add(i);
+                }
+            }
+        }
         List<String> kept = new ArrayList<>();
         for (int i = 0; i < lines.size(); i++) {
             if (!drop.contains(i)) {
                 kept.add(lines.get(i));
             }
-        }
-        for (int at = find(kept); at >= 0; at = find(kept)) {
-            int end = at + 1;
-            while (end < kept.size() && !TOP_LEVEL.matcher(kept.get(end)).matches()) {
-                end++;
-            }
-            int start = at;
-            while (start > 0 && CANVAS_COMMENT.matcher(kept.get(start - 1)).matches()) {
-                start--;
-            }
-            while (start > 0 && kept.get(start - 1).isBlank()) {
-                start--;
-            }
-            kept.subList(start, end).clear();
         }
         String out = String.join("\n", kept);
         int end = out.length();
@@ -164,13 +172,36 @@ public final class CanvasNotes {
         return out.substring(0, end) + "\n";
     }
 
-    private static int find(List<String> lines) {
-        for (int i = 0; i < lines.size(); i++) {
-            if (CANVAS_KEY.matcher(lines.get(i)).matches()) {
-                return i;
+    /**
+     * The root mapping when it is written as blocks: every top-level key at the start of a line of its
+     * own. Null for YAML that cannot be read, a root in braces, or anything else.
+     */
+    private static YamlReader.Mapping blockRoot(String text, List<String> lines) {
+        YamlReader.Node root;
+        try {
+            root = YamlReader.read(text);
+        } catch (YamlReader.Failure f) {
+            return null;
+        }
+        if (!(root instanceof YamlReader.Mapping top)) {
+            return null;
+        }
+        // A mapping in braces starts at its brace; one written as blocks at its first key.
+        int rootLine = top.position().line() - 1;
+        int rootColumn = top.position().column() - 1;
+        if (rootLine < 0 || rootLine >= lines.size() || rootColumn >= lines.get(rootLine).length()
+            || lines.get(rootLine).charAt(rootColumn) == '{') {
+            return null;
+        }
+        Set<Integer> seen = new HashSet<>();
+        for (YamlReader.Entry e : top.entries().values()) {
+            int line = e.keyPosition().line() - 1;
+            if (e.keyPosition().column() != 1 || line >= lines.size() || !seen.add(line)
+                || !lines.get(line).startsWith(e.key())) {
+                return null;
             }
         }
-        return -1;
+        return top;
     }
 
     /**
@@ -178,17 +209,8 @@ public final class CanvasNotes {
      * the lines under it indented further. A note sharing its line with something else (the node's
      * {@code - }, or a mapping in braces) is left in: then a change to it counts as a change.
      */
-    private static Set<Integer> nodeNoteLines(String text, List<String> lines) {
+    private static Set<Integer> nodeNoteLines(YamlReader.Mapping top, List<String> lines) {
         Set<Integer> out = new HashSet<>();
-        YamlReader.Node root;
-        try {
-            root = YamlReader.read(text);
-        } catch (YamlReader.Failure f) {
-            return out;
-        }
-        if (!(root instanceof YamlReader.Mapping top)) {
-            return out;
-        }
         YamlReader.Entry nodes = top.entries().containsKey("nodes") ? top.entries().get("nodes") : top.entries().get("steps");
         if (nodes == null || !(nodes.value() instanceof YamlReader.Sequence list)) {
             return out;

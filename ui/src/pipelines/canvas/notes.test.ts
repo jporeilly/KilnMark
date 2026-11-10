@@ -81,6 +81,15 @@ describe("notes on the canvas, as YAML", () => {
     expect(notesOf(ok(addNote(PIPELINE, note({ text: "x".repeat(3000) }), COMMENT)))[0].text.length).toBe(2000);
   });
 
+  test("a comment after a note's text never becomes part of it; odd first lines stay as typed", () => {
+    const commented = PIPELINE + "notes:\n  - text: hi # a comment\n    x: 1\n";
+    const two = ok(updateNote(commented, 0, { text: "two\nlines" }));
+    expect(notesOf(two)[0]).toMatchObject({ text: "two\nlines", x: 1 });
+    expect(ok(updateNote(commented, 0, { text: "one line" }))).toContain("text: one line # a comment");
+    const indented = ok(addNote(PIPELINE, note({ text: "\n\n  code\nplain" }), COMMENT));
+    expect(notesOf(indented)[0].text).toBe("  code\nplain");
+  });
+
   test("at most 50 notes; a note written in flow style is changed whole", () => {
     let text = PIPELINE;
     for (let i = 0; i < MAX_NOTES; i++) text = ok(addNote(text, note({ text: `n${i}` }), COMMENT));
@@ -143,6 +152,15 @@ describe("comparing versions without the canvas", () => {
     expect(withoutCanvas(laid)).toBe(bare);
     expect(withoutCanvas(laid.replace(/\n/g, "\r\n"))).toBe(bare);
     expect(withoutCanvas(PIPELINE.replace("out.csv", "other.csv"))).not.toBe(bare);
+    // A root in braces may go on over lines at column 1: compared as written, so nothing is hidden.
+    const braces = "{kilnmark: pipeline/v1, name: t,\nnotes: [], nodes: [{id: a, type: read, path: one.csv}]}\n";
+    expect(withoutCanvas(braces)).not.toBe(withoutCanvas(braces.replace("one.csv", "two.csv")));
+    const braces2 = "{\nkilnmark: pipeline/v1,\nlayout: {},\nrun: {retries: 1}}\n";
+    expect(withoutCanvas(braces2)).not.toBe(withoutCanvas(braces2.replace("1}}", "2}}")));
+    // A lone CR ends a line, as the parser counts them.
+    const cr = PIPELINE.replace("name: tidy-people\n", "name: tidy-people\r").replace("    type: write\n", "    type: write\n    note: x\n");
+    expect(withoutCanvas(cr)).toBe(withoutCanvas(PIPELINE.replace("name: tidy-people\n", "name: tidy-people\r")));
+    expect(withoutCanvas(cr.replace("out.csv", "other.csv"))).not.toBe(withoutCanvas(cr));
     // A node note over several lines, with a blank line in it.
     expect(withoutCanvas(PIPELINE.replace("    type: write\n", "    type: write\n    note: |\n      One\n\n      Two\n"))).toBe(bare);
   });
