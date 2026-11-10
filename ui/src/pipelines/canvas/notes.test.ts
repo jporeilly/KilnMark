@@ -157,6 +157,9 @@ describe("comparing versions without the canvas", () => {
     expect(withoutCanvas(braces)).not.toBe(withoutCanvas(braces.replace("one.csv", "two.csv")));
     const braces2 = "{\nkilnmark: pipeline/v1,\nlayout: {},\nrun: {retries: 1}}\n";
     expect(withoutCanvas(braces2)).not.toBe(withoutCanvas(braces2.replace("1}}", "2}}")));
+    // A node in braces over several lines: its note is left in, and so is what shares its line.
+    const braced = PIPELINE.replace("  - id: out\n    type: write\n    input: people\n    path: out.csv\n", "  - {id: out, type: write,\n     note: hi, path: out.csv}\n");
+    expect(withoutCanvas(braced)).not.toBe(withoutCanvas(braced.replace("out.csv", "two.csv")));
     // A lone CR ends a line, as the parser counts them.
     const cr = PIPELINE.replace("name: tidy-people\n", "name: tidy-people\r").replace("    type: write\n", "    type: write\n    note: x\n");
     expect(withoutCanvas(cr)).toBe(withoutCanvas(PIPELINE.replace("name: tidy-people\n", "name: tidy-people\r")));

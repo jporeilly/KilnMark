@@ -216,6 +216,10 @@ class CanvasNotesTest {
         assertFalse(CanvasNotes.withoutCanvas(braces).equals(CanvasNotes.withoutCanvas(braces.replace("one.csv", "two.csv"))));
         String braces2 = "{\nkilnmark: pipeline/v1,\nlayout: {},\nrun: {retries: 1}}\n";
         assertFalse(CanvasNotes.withoutCanvas(braces2).equals(CanvasNotes.withoutCanvas(braces2.replace("1}}", "2}}"))));
+        // A node in braces over several lines: its note is left in, and so is what shares its line.
+        String braced = PIPELINE.replace("  - id: out\n    type: sink\n    input: keep\n    path: out.csv\n",
+            "  - {id: out, type: sink, input: keep,\n     note: hi, path: out.csv}\n");
+        assertFalse(CanvasNotes.withoutCanvas(braced).equals(CanvasNotes.withoutCanvas(braced.replace("out.csv", "two.csv"))));
         // A lone CR ends a line, as the parser counts lines: the note's line goes, the next stays.
         String cr = PIPELINE.replace("name: toy\n", "name: toy\r").replace("    batches: 4\n", "    note: x\n    batches: 4\n");
         assertEquals(bare, CanvasNotes.withoutCanvas(cr));

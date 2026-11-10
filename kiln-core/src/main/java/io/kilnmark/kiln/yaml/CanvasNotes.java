@@ -219,6 +219,13 @@ public final class CanvasNotes {
             if (!(item instanceof YamlReader.Mapping m) || !(m.entries().get(NODE_KEY) instanceof YamlReader.Entry note)) {
                 continue;
             }
+            // A node in braces may go on over several lines: its note is left in, so nothing else goes with it.
+            int nodeLine = m.position().line() - 1;
+            int nodeColumn = m.position().column() - 1;
+            if (nodeLine < 0 || nodeLine >= lines.size() || nodeColumn >= lines.get(nodeLine).length()
+                || lines.get(nodeLine).charAt(nodeColumn) == '{') {
+                continue;
+            }
             int line = note.keyPosition().line() - 1;
             int column = note.keyPosition().column() - 1;
             if (line < 0 || line >= lines.size() || column > lines.get(line).length()

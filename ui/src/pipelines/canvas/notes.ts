@@ -360,6 +360,8 @@ function blockRoot(text: string, lines: string[]): { top: YAMLMap; keyLines: Map
 function nodeNoteLines(top: YAMLMap, counter: LineCounter, lines: string[]): Set<number> {
   const out = new Set<number>();
   for (const map of nodeMaps(top)) {
+    // A node in braces may go on over several lines: its note is left in, so nothing else goes with it.
+    if (map.flow) continue;
     const pair = pairOf(map, "note");
     const key = pair?.key as (Scalar & Ranged) | undefined;
     if (!key?.range) continue;
