@@ -64,6 +64,20 @@ cleanup() {
   [ -z "$starter_work" ] || rm -rf "$starter_work"
   [ -z "$run_secrets" ] || rm -rf "$run_secrets"
   [ -z "${images_tmp:-}" ] || rm -rf "$images_tmp"
+  undo_install
+}
+# An install that stops before its data folder is the account's takes away what it made: the
+# program folder, and the data folder while that is still root's. Left there, they would be an
+# install that can be neither run again (it is "installed already") nor uninstalled (it has no
+# data folder). install names them as it makes them, and forgets them once the install is whole.
+undo_root="" undo_data=""
+undo_install() {
+  [ -n "$undo_root$undo_data" ] || return 0
+  local gone="$undo_root"
+  if [ -n "$undo_data" ] && [ ! -L "$undo_data" ]; then rm -rf "${undo_data:?}" && gone="$gone and $undo_data"; fi
+  [ -z "$undo_root" ] || rm -rf "${undo_root:?}"
+  undo_root="" undo_data=""
+  echo "Install did not finish, so it removed what it had made ($gone). The account${ins_user:+ $ins_user} is kept. Fix the problem above, then run install again." >&2
 }
 trap cleanup EXIT
 trap 'exit 129' HUP
@@ -1877,6 +1891,8 @@ cmd_install() {
   make_account "$ins_user"
   step_ok
   step "Place Kilnmark $v in $root"
+  # absent, or an empty folder of root's (above): from here a failed install removes it (undo_install)
+  undo_root="$root"
   (umask 022; mkdir -p "$(dirname "$root")") && { [ -d "$root" ] || mkdir -m 755 "$root"; } && mkdir -m 755 "$root/versions" \
     || die "$root could not be made."
   chmod 755 "$root"
@@ -1887,11 +1903,16 @@ cmd_install() {
   step_ok
   step "Check the account's Podman (rootless: its cgroups, its memory, where it keeps the logs)"
   account_step "$root/kilnmark.sh" _podman-logs < /dev/null
-  account_step "$root/kilnmark.sh" check < /dev/null
+  # There is no config/.env yet for the account's check to read the ports from, so it is handed the
+  # answers' (as_account passes NAME=value words to env): else it would test the default ports.
+  account_step KILNMARK_PORT="$(answer_of port)" KILNMARK_HTTPS_PORT="$(answer_of https_port)" KILNMARK_DB_PORT="$(answer_of db_port)" \
+    "$root/kilnmark.sh" check < /dev/null
   step_ok
   step "Make the data folder $data, with new secrets"
-  (umask 022; mkdir -p "$(dirname "$data")") && mkdir -m 700 "$data" && mkdir -m 700 "$data/config" "$data/backups" "$data/logs" "$data/certs" \
-    && mkdir -m 755 "$data/certs/https" || die "$data could not be made."
+  (umask 022; mkdir -p "$(dirname "$data")") && mkdir -m 700 "$data" || die "$data could not be made."
+  # this install made it (mkdir refuses one that is there): a failed install removes it while it is root's
+  undo_data="$data"
+  mkdir -m 700 "$data/config" "$data/backups" "$data/logs" "$data/certs" && mkdir -m 755 "$data/certs/https" || die "$data could not be made."
   cp "$root/current/.env.example" "$data/config/.env.example"
   write_env
   write_answers "$data/config/install.conf"
@@ -1901,6 +1922,8 @@ cmd_install() {
   chown -R -h "$ins_user:$(id -gn "$ins_user")" "$data" || die "$data could not be made $ins_user's."
   echo "Wrote $data/config/.env with new secrets ($ins_user's alone) and $data/config/install.conf (the answers)."
   step_ok
+  # From here it is an install uninstall can remove, and its commands can finish: nothing is undone.
+  undo_root="" undo_data=""
   # what install says from here, in the data folder's logs, written by the account
   start_log install
   step "Get the images"
@@ -2127,7 +2150,9 @@ cmd_uninstall() {
     [ ! -L "$data" ] || die "$data is a link: nothing more was removed."
     rm -rf "${data:?}" || die "$data could not be removed."
     step_ok
-    echo "Kilnmark is uninstalled, and its data deleted. The account $ins_user is kept; remove it with: sudo userdel -r $ins_user"
+    echo "Kilnmark is uninstalled, and its data deleted. The account $ins_user is kept, with its Podman settings and lingering."
+    echo "To remove the account too, end what it still runs first (lingering keeps its session, and userdel refuses an account in use):"
+    echo "  sudo loginctl disable-linger $ins_user; sudo pkill -u $ins_user; sleep 3; sudo userdel -r $ins_user"
   else
     echo "Kilnmark is uninstalled. Its data (volumes) and $data (settings, backups, logs) are kept: uninstall --purge deletes them, or install afresh with another data folder."
   fi
