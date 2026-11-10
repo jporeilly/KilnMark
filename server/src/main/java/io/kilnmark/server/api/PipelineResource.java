@@ -116,6 +116,27 @@ public class PipelineResource {
     }
 
     @POST
+    @Path("read-sql")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Operation(summary = "Show a read's SQL", description = "The SQL one read node sends to its database as the "
+        + "pipeline stands, saved or not: the table's chosen columns, the part of where the database applies (a ? "
+        + "for each value, bound as the read runs) and the row limit, worked out as a run sets the read up but "
+        + "without connecting, from the table's columns as last scanned. For a read that runs a query, the query "
+        + "as it is sent. sql is null, with a note saying why, when there is none to show: a file, a table not yet "
+        + "scanned, or settings with problems. Role: viewer.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "The SQL, or why there is none"),
+        @APIResponse(responseCode = "400", description = "No YAML or node, YAML over the size limit, or a node that "
+            + "is not there or is not a read"),
+        @APIResponse(responseCode = "401", description = "Not signed in")})
+    public PipelineViews.ReadSql readSql(PipelineViews.ReadSqlRequest body) {
+        if (body == null) {
+            throw new IllegalArgumentException("Send {\"yaml\": \"...\", \"node\": \"...\"}");
+        }
+        return pipelines.readSql(body.yaml(), body.node());
+    }
+
+    @POST
     @Path("predict")
     @Consumes(MediaType.APPLICATION_JSON)
     @Operation(summary = "Predict a pipeline's quality", description = "Estimates the quality of each write and gate "

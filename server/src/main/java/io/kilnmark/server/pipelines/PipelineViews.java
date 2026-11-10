@@ -38,6 +38,18 @@ public final class PipelineViews {
     public record PreviewRequest(String yaml, String node, String port, Integer rows) {
     }
 
+    /** {@code POST /api/v1/pipelines/read-sql}: the pipeline as it stands and the read node to explain. */
+    public record ReadSqlRequest(String yaml, String node) {
+    }
+
+    /**
+     * The SQL a read node sends to its database: {@code sql} with {@code ?} for each of {@code values}
+     * bound from its where, or null with {@code note} saying why; a note beside a statement says what
+     * else may run.
+     */
+    public record ReadSql(String node, String sql, int values, String note) {
+    }
+
     // ---- previews ----
 
     /** A column of a preview: its name and the engine's kind of value; {@code sourceType} is always null here. */

@@ -24,6 +24,13 @@ group("the audit log page", () => {
     expect(describe(event("token.created", { name: "ci", role: "designer", unmask: true, expiresAt: null }))).toBe(
       "ci: designer, sees unmasked values, never expires",
     );
+    expect(describe(event("file.downloaded", { node: "out", source: "files", path: "out/a.csv", bytes: 2048 }))).toBe(
+      "out/a.csv in files, 2.0 KB",
+    );
+    expect(
+      describe(event("file.download_refused", { node: "out", source: "files", path: "out/a.csv", bytes: 10, refused: "sensitive", status: 403 })),
+    ).toBe("out/a.csv in files, 10 B: refused, sensitive (403)");
+    expect(describe(event("file.download_refused", { refused: "no_run", status: 404 }))).toBe("A file: refused, no_run (404)");
     expect(describe(event("api.refused", { method: "GET", status: 403 }))).toBe("GET 403");
     expect(describe(event("api.refused", { method: "POST", status: 401, client: "10.0.0.9", notKeptBefore: 12 }))).toBe(
       "POST 401, from 10.0.0.9, 12 more not kept before this",
@@ -113,6 +120,8 @@ group("the audit log page", () => {
         "samples.refused",
         "starter.people",
         "flow.sql",
+        "file.downloaded",
+        "file.download_refused",
         "mark.cleared",
         "mark.set",
         "source.allow_sql",

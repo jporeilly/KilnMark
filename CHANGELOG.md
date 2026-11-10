@@ -7,6 +7,16 @@ details.
 
 ### What's new
 
+- **Download the files a run wrote.** A pipeline run's page lists each CSV or Parquet file its
+  write nodes wrote to a folder source, with a **Download** button. The server sends the file from
+  Kilnmark's own files folder, so it works the same on Windows (where the folder is inside the
+  Podman machine) and Linux. You choose a file of the run, never a path; only the file the run
+  wrote is sent, while it is still there as the run wrote it (a deleted or replaced file says so).
+  A file holding a column marked sensitive, or whose columns are not in the catalogue, is only for
+  designers with the unmask grant; viewers see no values, so they cannot download files; the button
+  says why when it is off. Every download and refusal is in the audit log (`file.downloaded`,
+  `file.download_refused`). `GET /api/v1/pipeline-runs/{id}/files` and `.../files/{index}`
+  (ADR 0055).
 - **A guided install, into the folders the operating system keeps for a program and its data**:
   `sudo ./kilnmark.sh install` (Linux) or `kilnmark.cmd install` (Windows) asks the questions (the
   mode, how people sign in, the email domain, the host name, the ports, TLS, the first admin), each
@@ -821,6 +831,41 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
   running, so a run never stops the samples going; a sample still busy is named, and the rest go
   on. A production install never has it
   ([A Starter Pack install](docs/guide/install/starter-pack.md#the-example-schedule)).
+- **A read shows the SQL it runs.** A `read` node's **Query** box showed only `SELECT ... FROM
+  schema.table`. Under it, **SQL Kilnmark runs** now shows, read-only, the statement the read sends
+  for the table, columns, `where` and row limit chosen (a `?` for each value of `where`, bound as
+  it runs), or a query as it is sent. The server works it out with the same code that sets the read
+  up when it runs, from the table as last scanned, without connecting
+  (`POST /api/v1/pipelines/read-sql`, any role), so what is shown is what runs; a file, a table not yet
+  scanned or settings with problems say why there is none. The **Query** box is editable only by a
+  designer whose token may see unmasked values, the only people the server lets save a query
+  (ADR 0028): everyone else, admins included, sees it read-only with why, and a designer who may
+  not write one can choose **Remove the query**, since the server saves no pipeline holding a query
+  from them. Viewers and stewards see
+  the whole canvas read-only, as before; the YAML tab now says designers and admins edit a
+  pipeline, not stewards ([Settings](docs/guide/pipelines.md#settings)).
+- **Change owners is laid out as a form.** On a pipeline's or flow's page the **Owners** card
+  lists each owner on a line by a readable name (a token by its name, `token 1 (KILNMARK_ADMIN_TOKEN)`
+  as `KILNMARK_ADMIN_TOKEN` with the full record on hover) and whether it is a person or a team
+  address. **Change owners** shows the label above a box across the card, the hint under it, then
+  the buttons, as the app's other forms do; it still takes one owner a line.
+- **Settings spaces the Samples card from the Administration tiles** by the same gap as the page's
+  other sections, in every theme, density and width.
+- **Conditions say how to write them.** Under a filter's condition, a read's `where`, a route's
+  conditions and a compute's columns, chips put operators in at the cursor as the column chips do
+  (compare, `in`, `between`, `like`, `is null`, `and`, `or`, `not`, brackets and arithmetic), and
+  **How to write it** gives the operators, how to nest (`and` binds tighter than `or`; brackets
+  group), worked examples such as `is_active and (loyalty_tier = 'gold' or (loyalty_tier =
+  'silver' and amount >= 500))` and `price * qty > 1000`, and a link to
+  [Expressions](docs/guide/expressions.md#operators). A server test parses and checks every
+  example shown. **Columns leaving this node** lists each output port (out, rejected, errors) with
+  its columns and their types, a long list folded, in place of one line of text.
+- **The panel under the canvas is taller**: 38% of the window's height (at least 260px, at most
+  540px) in place of 32%, so a node's settings, such as a read's **Where**, **Row limit** and the
+  note under them, need less scrolling; on a 900px laptop screen it is 342px, not 288px. The canvas
+  above it may now be as short as 300px, not 360px, so the page stays about the screen's height. A
+  read's **Where** reference starts folded, being optional. On a phone the panel still takes its
+  content's height, up to 70% of the screen.
 - **Smaller things**: the Library's **Look for when it runs** and the other parts of a sample's
   explanation start with a capital, unless they start with something to type; the Pipeline choice
   on a flow's node is wider, so long names are not cut off, and no longer offers `sample-tables`,
@@ -830,6 +875,11 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
   "The system cannot find the path specified" and returned 1: Command Prompt reads a batch file
   line by line as it runs it, and uninstall had just deleted it. It now ends with no error and
   returns 0 once the program folder is gone, and the Command Prompt window stays open.
+- **Windows says how to get a prompt that is not elevated.** A day-to-day command refused an
+  elevated prompt with only "open one without Run as administrator", but in Windows Terminal
+  every tab of a window opened as administrator is elevated too, Command Prompt tabs included,
+  and a profile set to Run this profile as Administrator always opens one. The message now says
+  to open a new window from the Start menu, and why.
 - **A connector's card names the driver to install, with its version.** **Add a connection** said
   only "Needs its driver"; the Oracle card now says **Tested with `ojdbc11 23.26.3.0.0`**, the exact
   version Kilnmark downloads under Settings › Drivers, and names the driver once it is installed
