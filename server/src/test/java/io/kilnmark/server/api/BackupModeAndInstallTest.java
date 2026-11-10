@@ -180,7 +180,9 @@ class BackupModeAndInstallTest {
             Files.writeString(v.resolve("compose.yaml"), "services:\n  kilnmark:\n    image: ghcr.io/jporeilly/kilnmark-server:9.9.9\n");
             Files.writeString(root.resolve("current.txt"), "9.9.9\n");
             Files.createDirectories(root.resolve("config"));
-            Files.writeString(root.resolve("config/.env"), "KILNMARK_MODE=" + mode + "\nCOMPOSE_PROFILES=auth\n");
+            // with the two secrets install writes, throwaway ones: compose's commands are refused without them
+            Files.writeString(root.resolve("config/.env"), "KILNMARK_MODE=" + mode + "\nCOMPOSE_PROFILES=auth\n"
+                + "KILNMARK_DB_PASSWORD=db-0123456789\nKILNMARK_ADMIN_TOKEN=km_x\n");
             Files.writeString(root.resolve("data-folder.txt"), root + "\n");
             Path backup = backup(fileMode, fileId);
             Map<String, String> env = a.env();

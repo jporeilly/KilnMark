@@ -5,8 +5,8 @@
 # copy for analytics and the load record, and says it is done. If the pseudonymised copy's checks
 # fail, it sends a notice and stops before the load record.
 # Why it matters: Onboarding feeds KYC, customer reporting and analytics, so a nightly load that has
-# gone wrong must stop and say so before anything downstream uses it. The notice gives the share
-# set aside, and the steward reviews the quarantined rows the next morning.
+# gone wrong must stop and say so before anything downstream uses it. The notice names the file of
+# rows set aside, quarantined_customers.csv, which the steward reviews the next morning.
 # Look for: the two check-source nodes, the condition on merge.quarantined_share, the notify and stop
 # nodes, and the run's diagram, which shows which way the flow went. Give it a schedule (designers
 # and admins, under Schedules) to run it every night. It runs no SQL, so the Starter Pack adds it
@@ -49,8 +49,8 @@ nodes:
 
   - id: done
     type: notify
-    title: "Customer onboarding done: ${merge.quarantined_share} of rows set aside for review"
-    message: The golden customers, the analytics copy and the load record are written.
+    title: "Customer onboarding done: any rows set aside are in quarantined_customers.csv"
+    message: The golden customers, the analytics copy and the load record are written. The merge's run says how many rows were set aside and why.
 
   - id: not_ready
     type: notify
@@ -61,8 +61,8 @@ nodes:
   - id: quality
     type: notify
     severity: medium
-    title: "Customer onboarding stopped: ${merge.quarantined_share} of rows set aside, more than ${limit_share}"
-    message: The analytics copy and the load record did not run. Review the quarantined customers, then run the flow again.
+    title: "Customer onboarding stopped: too many rows set aside, see quarantined_customers.csv"
+    message: More of the customer rows were set aside than the flow's limit_share allows, so the analytics copy and the load record did not run. Review the rows in quarantined_customers.csv, then run the flow again.
 
   - id: failed
     type: notify

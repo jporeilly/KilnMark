@@ -760,11 +760,19 @@ details.
 
 ### Fixed
 
-- **The Windows install log no longer shows a database error on a fresh install.** Before
-  Kilnmark's first start has made its settings table, the control script's look for the recorded
-  mode and install id now asks whether the table is there, rather than leaving
-  `relation "kilnmark.server_setting" does not exist` in the log. Nothing else changes: the
-  answer was, and is, "nothing recorded yet".
+- **The Windows logs no longer show the error text of checks that find nothing.** Windows
+  PowerShell's transcript, which writes the control script's logs, keeps what a program writes to
+  its error output even when the script discards it. So a fresh install's log showed
+  `relation "kilnmark.server_setting" does not exist` (the recorded mode and install id, before
+  Kilnmark's first start), `image not known` (the images, before they are built or loaded) and
+  `ERROR: The system cannot find the file specified.` (the hourly task, before it is set up), which
+  read like failures. Every such check now runs its program through one helper, `Invoke-Quiet`,
+  which reads and drops the error output outside PowerShell, keeps the exit code and the output,
+  and closes the program's input: the recorded settings, the images, the hourly task, the engine's
+  version, machine, cgroups and memory, WSL's version, the database's readiness, the containers'
+  states, and restore's checks of the backup. The answers are the same. A compose command or a
+  signature check is logged in full as before, and when restore cannot check Keycloak's database
+  in a backup, it now shows why on the screen as well as in the log.
 - **Windows commands in messages and guides can be pasted into PowerShell.** The control script's
   messages and the install guides wrote `"C:\Program Files\Kilnmark\kilnmark.cmd" starter people`,
   which PowerShell refuses ("Unexpected token"), and some messages left the path unquoted, which
@@ -866,6 +874,11 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
   above it may now be as short as 300px, not 360px, so the page stays about the screen's height. A
   read's **Where** reference starts folded, being optional. On a phone the panel still takes its
   content's height, up to 70% of the screen.
+- **The sample flows' notices read well.** The onboarding, supplier intake and quality-decides
+  flows put the share of rows set aside straight into their notices' titles, which showed as
+  "0.011881188118811881 of rows set aside". A flow cannot format a number in text, so the titles
+  now name the files to open instead: `quarantined_customers.csv`, `quarantined_rows.csv` and
+  `price_review.csv`, or `customers_aside.csv`. When each flow goes on or stops is unchanged.
 - **Smaller things**: the Library's **Look for when it runs** and the other parts of a sample's
   explanation start with a capital, unless they start with something to type; the Pipeline choice
   on a flow's node is wider, so long names are not cut off, and no longer offers `sample-tables`,
