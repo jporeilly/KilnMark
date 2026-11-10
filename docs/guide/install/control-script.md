@@ -32,7 +32,7 @@ the operator: on Windows the Podman machine is theirs, on Linux the account's ro
 | `down` | Stops it. Every volume, so all data, is kept |
 | `restart [service]` | Restarts everything (a stop, then `up`, so `keycloak-setup` and `samples-db` run again), or one service |
 | `status` | Version, folders, containers, health, the last backup, and, with the bundled Keycloak, the hourly expiry of unused temporary passwords |
-| `logs [service] [-f]` | The last 200 lines of the logs, or follows them ([Reading the logs](../backup-and-restore.md#reading-the-logs)) |
+| `logs [service] [-f]` | The last 200 lines of each service's logs, or follows them ([Reading the logs](../backup-and-restore.md#reading-the-logs)) |
 | `compose ARGS` | Runs compose as Kilnmark runs it, with the install's project, settings, secrets and profiles, for a command by hand: `compose ps`, `compose exec postgres ...` |
 | `check` | Checks the machine and the install, for its mode, and prints the command that fixes each problem (below). Changes nothing |
 | `configure [KEY=VALUE ...]` | Shows the install's answers, or changes them (below) |
@@ -47,8 +47,9 @@ the operator: on Windows the Podman machine is theirs, on Linux the account's ro
 | `people add`, `import FILE`, `activate EMAIL`, `list`, `expire` | People of your own in the bundled Keycloak ([Adding people](production-bundled-keycloak.md#adding-people-to-the-bundled-keycloak)) |
 | `starter people [--new-password \| --remove]` | The Starter Pack's example people ([A Starter Pack install](starter-pack.md#the-example-people)) |
 
-Every command writes what it said to the data folder's `logs`, and ends with a failure code when it
-fails, so it can be scheduled. No command prints a secret. Without cosign, `install`, `upgrade`,
+`install`, `up`, `down`, `restart`, `configure`, `backup`, `restore`, `people`, `starter`,
+`uninstall` and the hourly expiry write what they said to the data folder's `logs`. Every command ends with a failure code when it fails, so it can be
+scheduled. No command prints a secret. Without cosign, `install`, `upgrade`,
 `load-images` and `pull` refuse to go on unless given `--skip-verify` (`-SkipVerify`), which the
 log records. Commands whose names start with `_` are the parts of install, upgrade and uninstall
 that run as another account; run them only through those three.

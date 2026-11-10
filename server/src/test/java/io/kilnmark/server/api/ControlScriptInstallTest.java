@@ -919,10 +919,81 @@ class ControlScriptInstallTest {
         String sh = Files.readString(LAUNCH.resolve("kilnmark.sh"));
         // install sets it as the account, before the account's check; and never as root
         String install = sh.substring(sh.indexOf("\ncmd_install() {"), sh.indexOf("\ninstalled_user() {"));
-        assertTrue(install.contains("account_step \"$root/kilnmark.sh\" _podman-logs < /dev/null\n  account_step \"$root/kilnmark.sh\" check < /dev/null"),
+        assertTrue(install.indexOf("account_step \"$root/kilnmark.sh\" _podman-logs < /dev/null\n") > 0
+            && install.indexOf("account_step \"$root/kilnmark.sh\" _podman-logs < /dev/null\n") < install.indexOf("\"$root/kilnmark.sh\" check < /dev/null"),
             "install, as the account");
         String fn = sh.substring(sh.indexOf("\nset_podman_log_driver() {"), sh.indexOf("\nrecreate_for_log_driver() {"));
         assertTrue(fn.contains("[[ \"$engine\" != *docker* ]] && [ \"$(my_uid)\" -ne 0 ] || return 0"), "never as root");
+    }
+
+    /**
+     * install's check as the account comes before there is a config/.env, so install hands it the
+     * answers' ports: it tests those, never the defaults, and a busy one's fix names the answer to
+     * change. And an install that fails before its data folder is the account's removes the folders
+     * it made, so install can be run again: left there, they could be neither installed over nor
+     * uninstalled.
+     */
+    @Test
+    void theLinuxEditionsInstallChecksTheAnswersPortsAndUndoesAFailedInstall() throws Exception {
+        Edition e = linux();
+        Path engine = ControlScriptStarterTest.fakeEngine(false, true);
+        // as install leaves it at that step: the program folder names a data folder that is not there yet
+        Path root = Files.createTempDirectory("kilnmark-half");
+        Files.writeString(root.resolve("data-folder.txt"), root.resolve("no-data-yet").toString().replace('\\', '/') + "\n");
+        try (ServerSocket busy = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            String port = String.valueOf(busy.getLocalPort());
+            // found while that one is held, so none of them is it
+            List<String> free = fourPorts();
+            String out = run(e, launcher(e), List.of("check"), root, engine, checkEnv(e, "2.7.11.0",
+                Map.of("KILNMARK_PORT", port, "KILNMARK_HTTPS_PORT", free.get(1), "KILNMARK_DB_PORT", free.get(2))), "");
+            assertTrue(out.contains("Checking this machine for a Kilnmark install"), out);
+            assertTrue(out.contains("Problem: Port " + port + " is in use."), out);
+            assertTrue(fixFor(out, "Port " + port + " is in use.").matches("answer [0-9]+ for port \\(in an answers file: port=[0-9]+\\)"), out);
+            assertTrue(out.contains("OK: port " + free.get(1) + " is free") && out.contains("OK: port " + free.get(2) + " is free"), out);
+            // never the defaults, busy or free
+            for (String standard : List.of("8780", "8443", "5442")) {
+                assertFalse(out.contains("ort " + standard + " "), out);
+            }
+        }
+        String sh = Files.readString(LAUNCH.resolve("kilnmark.sh"));
+        String install = sh.substring(sh.indexOf("\ncmd_install() {"), sh.indexOf("\ninstalled_user() {"));
+        assertTrue(install.contains("account_step KILNMARK_PORT=\"$(answer_of port)\" KILNMARK_HTTPS_PORT=\"$(answer_of https_port)\" "
+            + "KILNMARK_DB_PORT=\"$(answer_of db_port)\" \\\n    \"$root/kilnmark.sh\" check < /dev/null"), "the account's check, with the answers' ports");
+        // what a failed install removes: named as it is made, before anything can fail in it, and
+        // forgotten only once the data folder is the account's
+        int place = install.indexOf("undo_root=\"$root\"\n");
+        int check = install.indexOf("\"$root/kilnmark.sh\" check < /dev/null");
+        int made = install.indexOf("mkdir -m 700 \"$data\" || die");
+        int data = install.indexOf("undo_data=\"$data\"\n");
+        int owned = install.indexOf("chown -R -h \"$ins_user:$(id -gn \"$ins_user\")\" \"$data\"");
+        int whole = install.indexOf("undo_root=\"\" undo_data=\"\"\n");
+        assertTrue(place > 0 && place < install.indexOf("mkdir -m 755 \"$root/versions\"") && place < check, "the program folder, as it is made");
+        // and only once it is sure to be this install's: asked again after the folder above it is made,
+        // when a path that named nothing before may name a folder that is there
+        int above = install.indexOf("mkdir -p \"$(dirname \"$root\")\")");
+        int again = install.indexOf("! program_folder_taken || die", above);
+        assertTrue(above > 0 && again > above && again < place, "the program folder, asked again before it is this install's to remove");
+        assertTrue(sh.contains("\nprogram_folder_taken() {\n  [ -L \"$root\" ] || { [ -e \"$root\" ] && { [ ! -d \"$root\" ] || "
+            + "[ \"$(stat -c %u \"$root\")\" != 0 ] || [ -n \"$(ls -A \"$root\")\" ]; }; }\n}"), "a link, not a folder, not root's, or not empty");
+        assertTrue(made > check && data > made && data < owned, "the data folder, once this install has made it");
+        assertTrue(whole > owned && whole < install.indexOf("start_log install"), "nothing is undone once the install is whole");
+        assertEquals(2, install.split("undo_root=", -1).length - 1, "set once, cleared once");
+        // it runs however install ends, and never follows a link
+        String undo = sh.substring(sh.indexOf("\nundo_install() {"), sh.indexOf("\ntrap cleanup EXIT"));
+        assertTrue(sh.substring(sh.indexOf("\ncleanup() {"), sh.indexOf("\nundo_install() {")).contains("\n  undo_install\n}"), "from cleanup");
+        assertTrue(undo.contains("for f in \"$undo_root\" \"$undo_data\"; do") && undo.contains("if [ ! -L \"$f\" ] && rm -rf \"${f:?}\" 2> /dev/null; then"), undo);
+        // a path with a . or .. part could name a folder other than the one install checked: refused as an answer
+        Path release = e.release();
+        Path none = Files.createTempDirectory("kilnmark-none");
+        Map<String, String> env = checkEnv(e, "2.7.11.0", Map.of());
+        for (String path : List.of("/opt/x/../kilnmark", "/opt/kilnmark/.", "/opt//kilnmark")) {
+            String dots = run(e, release.resolve("kilnmark.sh"), List.of("install", "--answers",
+                answersFile(goodAnswers(fourPorts()) + "program_dir=" + path + "\n").toString(), "--dry-run"), none, engine, env, "");
+            assertTrue(dots.contains("program_dir is a plain path, with no //, . or .. part") && dots.contains("[1/2] FAILED"), path + ": " + dots);
+        }
+        // removing the kept account: its session ended first, and waited for, as userdel refuses an account in use
+        assertTrue(sh.contains("sudo loginctl disable-linger $ins_user; sudo systemctl stop user@\\$(id -u $ins_user); "
+                + "sudo pkill -KILL -u $ins_user; sudo userdel -r $ins_user"), "the account");
     }
 
     /**

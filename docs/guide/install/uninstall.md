@@ -31,6 +31,16 @@ there already, so to install afresh, either `uninstall --purge` first, or give t
 another data folder. Restore a backup kept elsewhere into a new install of the same mode
 ([Backing up and restoring Kilnmark](../backup-and-restore.md)).
 
-On Linux the account that ran Kilnmark is kept, as it may be someone's own: `sudo userdel -r
-kilnmark` removes it, with its home folder and its rootless Podman's images. On Windows the
-Podman machine is the operator's, and stays.
+On Linux the account that ran Kilnmark is kept, as it may be someone's own, and with it what
+install set up for it: lingering, and its Podman's settings (`containers.conf`) and images. To
+remove the account too, with its home folder and its rootless Podman's images, end what it still
+runs first: lingering keeps its session running, and `userdel` refuses an account in use. The
+second command waits until the session has stopped, which can take a few seconds.
+
+```
+sudo loginctl disable-linger kilnmark; sudo systemctl stop user@$(id -u kilnmark); sudo pkill -KILL -u kilnmark; sudo userdel -r kilnmark
+```
+
+Uninstall with `--purge` ends by printing the same line, with the account's name.
+
+On Windows the Podman machine is the operator's, and stays.

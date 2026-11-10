@@ -201,13 +201,22 @@ kilnmark.sh compose exec postgres dropdb -U kilnmark kilnmark_before_<time>
 kilnmark.sh compose exec kilnmark rm -rf /var/lib/kilnmark/before-restore-<time>
 ```
 
+If you went back instead, what the restore had put in is kept under the name `kilnmark_restored`,
+and the folder `before-restore-<time>` is left empty. Remove them the same way:
+
+```
+kilnmark.sh compose exec postgres dropdb -U kilnmark kilnmark_restored
+kilnmark.sh compose exec kilnmark rm -rf /var/lib/kilnmark/before-restore-<time>
+```
+
 A restore with `--without-keys` keeps the keys volume as it was.
 
 With the bundled Keycloak restored too, Keycloak's previous database is kept the same way. To go
 back to it, `kilnmark.sh down` and `kilnmark.sh compose up -d keycloak-db`, then rename `keycloak`
 to `keycloak_restored` and `keycloak_before_<time>` to `keycloak` with `kilnmark.sh compose exec
 keycloak-db psql -U keycloak -d postgres -c "..."`, and `kilnmark.sh up --no-browser`. To remove it:
-`kilnmark.sh compose exec keycloak-db dropdb -U keycloak keycloak_before_<time>`.
+`kilnmark.sh compose exec keycloak-db dropdb -U keycloak keycloak_before_<time>`, or
+`keycloak_restored` if you went back.
 
 ## Test a restore
 

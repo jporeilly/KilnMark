@@ -117,17 +117,23 @@ line saying why. On Linux:
 3. Make the account `kilnmark` (or keep it, when it is there), with rootless Podman's id ranges and
    lingering, so its containers start at boot.
 4. Place the release in the program folder, `/opt/kilnmark`, root's and read-only to everyone else.
-5. Make the data folder, `/var/opt/kilnmark`, the account's alone, with `config/.env` (new secrets,
+5. Check the account's Podman, as the account: `check` again, with the ports you answered, and
+   where rootless Podman keeps the containers' logs.
+6. Make the data folder, `/var/opt/kilnmark`, the account's alone, with `config/.env` (new secrets,
    readable by the account only) and `config/install.conf` (the answers, no secrets).
-6. Get the images: load the offline file, pull them (checking their signatures), or build them
+7. Get the images: load the offline file, pull them (checking their signatures), or build them
    with `--build`.
-7. Start Kilnmark and wait until it answers, setting up the hourly expiry of unused temporary
+8. Start Kilnmark and wait until it answers, setting up the hourly expiry of unused temporary
    passwords with the bundled Keycloak.
-8. Add the first admin, with the bundled Keycloak and a first admin.
-9. Turn the Starter Pack on, on a Starter Pack install.
+9. Add the first admin, with the bundled Keycloak and a first admin.
+10. Turn the Starter Pack on, on a Starter Pack install.
 
-Windows does the same, with the folders' step (3 to 5 on Linux) as one step run as an
-administrator: `C:\Program Files\Kilnmark`, the Administrators', read-only to everyone else, and
+On Linux, an install that fails before step 7 removes the program folder and the data folder it
+made, and says so: fix the problem, then run install again. The account is kept. From step 7 on
+the folders stay, and `uninstall --purge` removes them, to install afresh.
+
+Windows takes the same steps, without the account's check, and with the folders' step (3 to 6 on
+Linux) as one step run as an administrator: `C:\Program Files\Kilnmark`, the Administrators', read-only to everyone else, and
 `C:\ProgramData\Kilnmark`, the operator's, SYSTEM's and the Administrators', nobody else's.
 
 A fresh install only: install refuses a program folder that already holds Kilnmark, and a data

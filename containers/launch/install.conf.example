@@ -67,7 +67,7 @@ admin_last_name=Lovelace
 # install on one machine (with its own folders and ports). Fixed at install.
 project=kilnmark
 
-# The folders, fixed at install. A space in a path is fine.
+# The folders, fixed at install. A space in a path is fine; on Linux a //, . or .. part is not.
 #   Linux:   program_dir=/opt/kilnmark (root's)   data_dir=/var/opt/kilnmark (the account's)
 #   Windows: program_dir=C:\Program Files\Kilnmark   data_dir=C:\ProgramData\Kilnmark (on the same drive)
 # program_dir=/opt/kilnmark
