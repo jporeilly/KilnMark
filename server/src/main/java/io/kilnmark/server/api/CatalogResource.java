@@ -155,7 +155,9 @@ public class CatalogResource {
             .values()).filter(c.capabilities()::contains).map(x -> x.name().toLowerCase(java.util.Locale.ROOT)).toList();
         return new Views.Connector(c.kind(), c.displayName(), java.util.List.copyOf(settings), kind.setting(),
             kind.label(), kind.counted(), c.category(), c.family(), capabilities, c.formats(), c.icon(),
-            c.monogram(), c.docsAnchor(), addressFields(c), c.driver() == null, driverState(c, drivers));
+            c.monogram(), c.docsAnchor(), addressFields(c), c.driver() == null, driverState(c, drivers),
+            c.driver() == null ? null : c.driver().coordinates().substring(c.driver().coordinates().lastIndexOf(':') + 1),
+            c.driver() == null ? null : c.driver().version());
     }
 
     /**

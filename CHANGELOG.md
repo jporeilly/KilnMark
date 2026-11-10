@@ -900,6 +900,13 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
   every tab of a window opened as administrator is elevated too, Command Prompt tabs included,
   and a profile set to Run this profile as Administrator always opens one. The message now says
   to open a new window from the Start menu, and why.
+- **A connector's card names the driver to install, with its version.** **Add a connection** said
+  only "Needs its driver"; the Oracle card now says **Tested with `ojdbc11 23.26.3.0.0`**, the exact
+  version Kilnmark downloads under Settings › Drivers, and names the driver once it is installed
+  (`driverName` and `driverVersion` in `GET /api/v1/connectors`).
+- **The MySQL and MariaDB driver's source ships with it.** LGPL 2.1 asks that whoever ships the
+  library also makes its source available: the release now has MariaDB Connector/J's sources jar,
+  as MariaDB published it, in `licenses/` beside the licence (ADR 0007).
 
 ## 0.1.1 (6 November 2026)
 

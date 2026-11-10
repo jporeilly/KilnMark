@@ -81,6 +81,14 @@ subprojects {
 // compose.yaml, made from containers/compose.release.yaml, not the developer one at the root, and
 // a .env.example listing the secrets it requires: nothing that ships has a default password.
 val releaseVersion = project.version.toString()
+
+// The source of the one LGPL library the release ships, the MySQL and MariaDB driver (ADR 0007):
+// LGPL 2.1 asks that whoever ships the library also makes its source available, so its sources jar,
+// exactly as MariaDB published it with the version shipped, goes into licenses/ beside the licence.
+repositories { mavenCentral() }
+val lgplSources: Configuration by configurations.creating { isTransitive = false }
+dependencies { lgplSources(variantOf(libs.mariadb.java.client) { classifier("sources") }) }
+
 tasks.register<Sync>("assembleRelease") {
     group = "distribution"
     description = "Copies the release's files into dist/release (release also checks them)."
@@ -127,6 +135,8 @@ tasks.register<Sync>("assembleRelease") {
     from("LICENSE", "NOTICE")
     // The full text of licences NOTICE names, such as the LGPL of the MySQL and MariaDB driver.
     from("config/licenses") { into("licenses") }
+    // and that library's own source (LGPL 2.1, see lgplSources above)
+    from(lgplSources) { into("licenses") }
     from(distDir.dir("licenses")) { include("THIRD-PARTY-NOTICES.md") }
     // CycloneDX SBOMs of the server's libraries and the web UI's packages (docs/design/supply-chain.md).
     from(distDir.file("build/server/sbom/kilnmark-server.cdx.json")) { into("sbom") }

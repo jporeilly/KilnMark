@@ -49,12 +49,15 @@ public final class Views {
      * {@code containerCounted} what their counts count. {@code driver} says whether its driver is
      * there: {@code bundled} (it ships with Kilnmark), {@code ready} (installed by the customer and
      * verified), or {@code missing}, {@code mismatch} or {@code unreadable}, when the source needs
-     * its driver installed under Settings › Drivers.
+     * its driver installed under Settings › Drivers. {@code driverName} and {@code driverVersion}
+     * name the driver a customer installs (such as {@code ojdbc11}, {@code 23.26.3.0.0}): the exact
+     * version Kilnmark is tested with and downloads; null for a driver Kilnmark ships.
      */
     public record Connector(String kind, String displayName, List<Setting> settings, String containerSetting,
                             String containerLabel, String containerCounted, String category, String family,
                             List<String> capabilities, List<String> formats, String icon, String monogram,
-                            String docsAnchor, boolean addressFields, boolean driverBundled, String driver) {
+                            String docsAnchor, boolean addressFields, boolean driverBundled, String driver,
+                            String driverName, String driverVersion) {
     }
 
     /**
