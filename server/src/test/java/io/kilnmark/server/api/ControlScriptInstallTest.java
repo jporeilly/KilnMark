@@ -985,19 +985,42 @@ class ControlScriptInstallTest {
     /**
      * status gives up on a Kilnmark that does not answer within a few seconds: with WSL's mirrored
      * networking a closed port does not refuse, it hangs. Here Kilnmark's port takes the connection
-     * and never answers; it lets go after 40 seconds, so a status with no time limit ends, late.
+     * and never answers: curl must hang up itself, soon after connecting. The port lets go after two
+     * minutes, so a status with no time limit ends, late, and fails.
      */
     @Test
     void theLinuxEditionsStatusNeverHangsOnAStoppedKilnmark() throws Exception {
         Edition e = linux();
         Path engine = ControlScriptStarterTest.fakeEngine(false, true);
         List<java.net.Socket> held = java.util.Collections.synchronizedList(new ArrayList<>());
+        // how long after connecting curl hung up on the port, for each connection it hung up on itself
+        List<Long> gaveUpAfter = java.util.Collections.synchronizedList(new ArrayList<>());
         ServerSocket hangs = new ServerSocket(0, 50, InetAddress.getLoopbackAddress());
         try {
             Thread taker = new Thread(() -> {
                 try {
                     while (true) {
-                        held.add(hangs.accept());
+                        java.net.Socket s = hangs.accept();
+                        long at = System.nanoTime();
+                        held.add(s);
+                        Thread reader = new Thread(() -> {
+                            // not closed here: the test closes every socket it took, at the end
+                            try {
+                                var in = s.getInputStream();
+                                byte[] b = new byte[1024];
+                                while (in.read(b) >= 0) {
+                                    // the request: read, never answered
+                                }
+                                gaveUpAfter.add(TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - at));
+                            } catch (IOException x) {
+                                // reset by curl, rather than closed by the test
+                                if (!s.isClosed()) {
+                                    gaveUpAfter.add(TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - at));
+                                }
+                            }
+                        });
+                        reader.setDaemon(true);
+                        reader.start();
                     }
                 } catch (IOException x) {
                     // closed: the test is over
@@ -1007,7 +1030,7 @@ class ControlScriptInstallTest {
             taker.start();
             Thread letGo = new Thread(() -> {
                 try {
-                    Thread.sleep(40_000);
+                    Thread.sleep(120_000);
                     hangs.close();
                     synchronized (held) {
                         for (java.net.Socket s : held) {
@@ -1027,7 +1050,11 @@ class ControlScriptInstallTest {
             String out = run(e, launcher(e), List.of("status"), root, engine, Map.of(), "");
             long took = TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - began);
             assertTrue(out.contains("Health: not answering at"), out);
-            assertTrue(took < 35, "status took " + took + " s: " + out);
+            // curl gave up itself, soon after it connected (its own time limit, whatever the machine's
+            // load), rather than waiting until the port let go
+            assertFalse(gaveUpAfter.isEmpty(), "curl never hung up on the silent port; status took " + took + " s: " + out);
+            assertTrue(gaveUpAfter.get(0) < 30, "curl hung up only after " + gaveUpAfter + " s: " + out);
+            assertTrue(took < 110, "status took " + took + " s: " + out);
             letGo.interrupt();
         } finally {
             hangs.close();
