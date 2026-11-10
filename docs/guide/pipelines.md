@@ -61,9 +61,11 @@ matters, what to look for when it runs and what it needs, as the Library shows t
 this guide. Once the pipeline has been changed since it was added (more than moving its nodes), it
 is labelled **Based on a sample; changed since**: what it says is about the sample as it was added.
 
+![The page of the sample pipeline sample-gate-quarantine: under its name and description, About this sample with What it shows, Why it matters, Look for when it runs and Needs, a link to the samples in the guide and the sample's file; then its version, its last run and its Owners](images/pipeline-about-sample.png)
+
 ## Building on the canvas
 
-![A pipeline on the canvas: a read node, a quality gate setting aside 10 rows, and two writes, each with its rows and quality from the last run](images/pipeline-canvas.png)
+![A pipeline on the canvas: a read node, a quality gate setting aside 10 rows, and two writes, each with its rows, quality and predicted quality from the last run; a green note above the read node says that failing rows are set aside, not dropped, and Add a note is in the toolbar](images/pipeline-canvas.png)
 
 The **Canvas** and **YAML** tabs show the same pipeline: a change on the canvas rewrites only the
 lines it changes in the YAML, so your comments, layout and every other setting stay exactly as
@@ -219,6 +221,8 @@ viewers and stewards see its canvas and settings read-only.
   go in where the cursor is, and **How to write it**: the operators, how to nest a test in brackets
   (`and` binds tighter than `or`), worked examples, and a link to
   [Expressions](expressions.md#operators). It starts open when a condition the node needs is still empty, and folded otherwise.
+
+  ![The Where box of a read node, holding status in ${statuses} and shipping_fee >= ${min_fee}: under it a button for each column, one for each parameter (${statuses}, ${min_fee}, ${label}), and the operators in the groups Compare, Test, Combine and Arithmetic; then How to write it, folded, and Row limit](images/where-chips.png)
 - A `read` node shows **SQL Kilnmark runs** under its **Query** box, read-only: the statement it
   sends to the database for the table, columns, **Where** and row limit chosen, with a `?` for each
   value of **Where**, bound as it runs. The server works it out as a run sets the read up, from the
@@ -229,6 +233,8 @@ viewers and stewards see its canvas and settings read-only.
   only by a designer whose token may see unmasked values; everyone else sees it read-only, with
   why. A designer who may not write a query cannot save or preview a pipeline while a read has one,
   and can choose **Remove the query** to read a table instead.
+
+  ![The Settings tab of the read node orders: an empty Query box, saying that only a designer whose token may see unmasked values writes a query here; under it SQL Kilnmark runs, read-only, a SELECT of five columns from public.shop_orders with WHERE status IN (?) AND shipping_fee >= ?, and a note that each ? is a value from Where, bound as the read runs; then Columns, with the chosen columns ticked](images/read-sql-kilnmark-runs.png)
 - **Columns leaving this node**, beside the settings, lists each output (out, and rejected or
   errors where the node has them) with its columns and their types. An output with more than ten
   columns starts folded: choose its name to open it.
@@ -453,6 +459,10 @@ On a PostgreSQL source with **Allow SQL** on, a read can run one `SELECT` in pla
 - Each run records the tables the query reads, as the database plans it, so lineage shows them as
   the inputs of what the pipeline writes.
 
+![The read node accounts_per_customer of the sample sample-read-query, as a designer who may see unmasked values sees it: the Query box holds a SELECT counting the accounts of each customer from public.crm_customers and public.crm_accounts, and can be changed; SQL Kilnmark runs shows it wrapped in SELECT * FROM ( ... ) AS kilnmark_query LIMIT 1000, with the note that it is sent on a read-only connection and that a row limit wraps it](images/read-query-editable.png)
+
+![The same node as a designer without that grant sees it: the Query box is read-only, and under it says that only a designer whose token may see unmasked values writes or changes a query, and that while this read has one only they can save or preview the pipeline; Remove the query is under that](images/read-query-read-only.png)
+
 The sample `sample-read-query` shows one; adding the samples skips it unless `crm-db` is a
 PostgreSQL source with Allow SQL on.
 
@@ -564,10 +574,16 @@ Designers and admins change them there:
 
 Viewers and stewards see the table read-only.
 
+![The Settings tab under the canvas of sample-orders-by-status with no node chosen: the Parameters table lists statuses (text list, default delivered), min_fee (number, default 0) and label (text, default delivered), each with its description, the node that puts it in, and Change and Remove; Add a parameter is under the table](images/pipeline-parameters.png)
+
 ### Running with values
 
 On the pipeline's page, **Run now** on a pipeline with parameters opens the **Run** tab under the
-canvas, with a field for each parameter of the saved version, filled with its default. Change what
+canvas, with a field for each parameter of the saved version, filled with its default.
+
+![The Run tab under the canvas of sample-orders-by-status after Run now: Values for the next run, with a field for each of statuses, min_fee and label, filled with its default and with its description and default under it; then Run with these values and Back to the defaults, and the last run below them](images/run-with-values.png)
+
+Change what
 you need and choose **Run with these values**: a field left as its default, or empty, runs with the
 default (for a default that is a server variable, the variable's value), and lists are separated by
 commas. Only the values you changed are sent, with the version whose parameters were shown, so
@@ -771,7 +787,7 @@ status changes.
   it ended, its start, first row, last row and end, its share of the run, rows in and out, peak
   memory, quality and error. **Show the timeline as a table** gives the same as figures.
 
-  ![The Run timeline panel of a pipeline run: the run's row, then customers, check, clean and aside, each bar lighter while it waits for its first row, with its time and the gate's or write's quality after it in words, and the details of the chosen node check below: a gate that finished, first row at 288 ms, 240 rows in and out, quarantined 10](images/pipeline-run-timeline.png)
+  ![The Run timeline panel of a pipeline run: the run's row, then customers, check, clean and aside, each bar lighter while it waits for its first row, with its time and the gate's or write's quality after it in words, and the details of the chosen node check below: a gate that finished, first row at 89 ms, 240 rows in and out, quarantined 10](images/pipeline-run-timeline.png)
 - **Rows per second through the run:** a line per node of the rows it handled each second, from
   the snapshots taken every two seconds, with its peak at the right. Under it, an amber band shows
   how full its output queue was (**Held up**: the taller and stronger, the fuller; full means the
@@ -812,6 +828,8 @@ status changes.
   Pointing at or focusing a box picks out its lines. On a phone the graph scrolls sideways inside
   its frame. **Show the lineage as a list** gives the same as sentences.
 
+  ![The Lineage part of a run of sample-gate-quarantine: under Inputs, the table public.crm_customers in starter-samples-db; a band in the middle naming the pipeline; under Outputs, the files customers_clean.csv and customers_aside.csv in starter-samples-files, each joined to the table by a line; under the graph, "1 input went through the pipeline sample-gate-quarantine into 2 outputs" and Show the lineage as a list](images/run-lineage.png)
+
 ## Downloading the files a run wrote
 
 A pipeline that writes CSV or Parquet files to a folder source puts them in that source's folder on
@@ -821,6 +839,8 @@ your desktop. Download the file from the run instead: open the run (from the pip
 from a flow run, which links to each pipeline run it started) and choose **Download** beside the
 file under **What it wrote**. The server sends the file, so it works the same on Windows and Linux.
 
+![What it wrote on a run of sample-gate-quarantine: the two files it wrote, each a link to the catalogue, with its rows; then Files to download, each file with its source, node, format, size and rows, the mark As the run wrote it, and a Download button; a note under them says that every download is in the audit log](images/run-files-to-download.png)
+
 The button is off, with the reason beside it, when you may not have the file or it is no longer the
 run's:
 
@@ -828,6 +848,8 @@ run's:
   carried from what it read, can be downloaded only by people who may see sensitive values
   unmasked (a designer with the unmask grant; see [People and access](people-and-access.md#downloading-files-a-run-wrote)).
   Admins see it masked everywhere else, so they cannot download it either.
+
+  ![Files to download on a run of sample-read-query, as someone who may not see sensitive values unmasked sees it: the Download button beside accounts_per_customer.csv is greyed, and under the file it says "Holds sensitive columns: only people who may see sensitive values unmasked can download it."](images/run-download-refused.png)
 - **Columns not in the catalogue.** When Kilnmark does not know a file's columns (the run did not
   catalogue it, for example because it failed after the file was written), it is treated as
   sensitive.
@@ -873,6 +895,8 @@ kept even if the pipeline is later deleted, so the next pipeline that reads the 
 starts from what is known about it. An asset's page shows its lineage under **Lineage** on its
 **Overview** tab, as a graph: what it came from on the left, what was made from it on the right,
 each line naming the pipelines that recorded it.
+
+![The Overview tab of the file customers_clean.csv in the catalogue: its rows, columns, last scan and source, then Relationships, then Lineage, a graph with the table public.crm_customers on the left joined to customers_clean.csv on the right by a line naming the pipeline sample-gate-quarantine; under it, "customers_clean.csv came from 1 asset, and 0 assets were made from it" and Show the lineage as a list](images/asset-lineage.png)
 
 **Marks follow the data.** A column the run writes from a column marked sensitive is marked
 sensitive where it is written too, whoever ran it and however the run ended: a column passed on

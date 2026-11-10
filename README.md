@@ -90,12 +90,12 @@ A pipeline's page: its owners, the canvas with each node's rows and the quality 
 under it a panel with the latest run, its nodes, suggestions, every run, its schedules and every
 version.
 
-![The page of the sample pipeline sample-gate-quarantine: its owners, then a canvas reading customers, checking them with a quality gate and writing the clean rows and the set-aside rows to two files, each node showing its rows, quality and predicted quality; under it the Run tab with the latest run's status, who asked for it, times, rows read and written, and quality](docs/images/pipeline-page.png)
+![The page of the sample pipeline sample-gate-quarantine: About this sample, saying what it shows, why it matters, what to look for when it runs and what it needs; its owners; then a canvas, with a note saying that failing rows are set aside, reading customers, checking them with a quality gate and writing the clean rows and the set-aside rows to two files, each node showing its rows, quality and predicted quality; under it the Run tab with the latest run's status, who asked for it, times, rows read and written, and quality](docs/images/pipeline-page.png)
 
 A flow's page: its diagram, connections labelled with when they are taken, and the same panel, here
 listing each node with what it runs after and how it went in the latest run.
 
-![The page of the sample flow sample-quality-decides, with Run now and Delete beside its name: a diagram running a pipeline, then either a second pipeline or a notice and a stop, depending on the share of customers set aside, with a red dashed connection on failure; under it the Nodes tab, a table of each node, what it runs after, and its status, start, time and result in the latest run](docs/images/flow-page.png)
+![The page of the sample flow sample-quality-decides, with Run now and Delete beside its name: an About this sample part saying what it shows, why it matters, what to look for when it runs and what it needs; a diagram running a pipeline, then either a second pipeline or a notice and a stop, depending on the share of customers set aside, with a red dashed connection on failure; under it the Nodes tab, a table of each node, what it runs after, and its status, start, time and result in the latest run](docs/images/flow-page.png)
 
 ## Quick start
 

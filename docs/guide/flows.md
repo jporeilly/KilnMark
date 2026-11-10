@@ -234,12 +234,12 @@ connections:
   has `for`, and `notify` and `stop` nodes end at once.
 - On the diagram, choose the node and set **Timeout** on its Settings tab; leave it blank for none.
 
-![The diagram of the flow nightly-takings with the run-pipeline node takings chosen: its Settings tab shows Pipeline sample-volume, a blank Version, Timeout 2s with the hint "Stopped and failed past it: 30m, 2h, 1d. Blank for none.", Priority Normal, and blank Tries again and Wait before trying again](images/flow-node-timeout.png)
+![The diagram of the flow nightly-takings with the run-pipeline node takings chosen: its Settings tab shows a blank Note, Pipeline sample-volume, a blank Version, Timeout 2s with the hint "Stopped and failed past it: 30m, 2h, 1d. Blank for none.", Priority Normal, and blank Tries again and Wait before trying again; Add a note is under the diagram](images/flow-node-timeout.png)
 
 On the run's page the node shows **Failed** with **Timed out** beside it, and its message says how
 long it was allowed:
 
-![A run of nightly-takings in which the takings node timed out: the diagram outlines takings red as Failed, its notice node too-slow green as Succeeded through the on failure connection, and done as Skipped; the run timeline has a red bar for takings, chosen, with its details below (Failed, took 2.9 s, "Took longer than 2s and was stopped; its pipeline run was cancelled", reported timed_out true); the Nodes table shows takings as Failed and Timed out, with a link to its pipeline run](images/flow-run-timed-out.png)
+![A run of nightly-takings in which the takings node timed out: the diagram outlines takings red as Failed, its notice node too-slow green as Succeeded through the on failure connection, and done as Skipped; the run timeline has a red bar for takings, chosen, with its details below (Failed, took 3.0 s, "Took longer than 2s and was stopped; its pipeline run was cancelled", reported timed_out true); the Nodes table shows takings as Failed and Timed out, with a link to its pipeline run](images/flow-run-timed-out.png)
 
 ## Trying a node again after a failure
 
@@ -597,6 +597,8 @@ A flow's diagram has notes as a pipeline's canvas does ([Notes on the
 canvas](pipelines.md#notes-on-the-canvas)): sticky notes anywhere on the diagram, and a short note
 on any node, shown under its name. Kilnmark ignores them when it runs the flow, so a note never
 changes a run or its check.
+
+![The diagram of the sample flow sample-onboarding-nightly: a blue note above its first node, crm_ready, saying "Nightly onboarding. Checks the customer tables, merges them, then writes the analytics copy and the load record. Give it a schedule under Schedules to run it every night."; the node merge has a note of its own in italics under its name; Add a note is under the diagram](images/flow-canvas-note.png)
 
 - **Add a note**, under the diagram beside **Undo**, adds one above the chosen node, attached to it,
   or above the diagram when no node is chosen, and opens its editor. Type what it says, then press

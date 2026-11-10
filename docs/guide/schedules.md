@@ -112,7 +112,7 @@ shows:
 The line under the pipeline's or flow's name says when it next runs on a schedule; choosing it
 shows the tab.
 
-![The Schedules tab under the canvas of sample-orders-by-status, with Add a schedule: two schedules, both on. The first runs on weekdays at 07:15 in Europe/London with the defaults, set by Dana Reyes, who signs in through the identity provider, to run as steward; its next run is Monday at 07:15 and it has not run yet. The second runs every 15 minutes in UTC with its values, set by an admin token; its next run is shown in the viewer's time and in UTC, and last time it Started, with a link to its pipeline run. The table scrolls sideways to each row's Edit, Pause and Delete](images/schedules-section.png)
+![The Schedules tab under the canvas of sample-orders-by-status, with Add a schedule: two schedules, both on. The first runs on weekdays at 07:15 in Europe/London with the defaults, set by Dana Reyes, who signs in through the identity provider, to run as steward; its next run is Wednesday at 07:15 and it has not run yet. The second runs every 15 minutes in UTC with its values, set by Alex Morgan, an admin who signs in the same way; its next run is shown in the viewer's time and in UTC, and last time it Started, with a link to its pipeline run. The table scrolls sideways to each row's Edit, Pause and Delete](images/schedules-section.png)
 
 ## Adding a schedule
 
@@ -134,7 +134,7 @@ shows the tab.
    without it running yet.
 9. Choose **Add schedule**.
 
-![The form to add a schedule to a pipeline: Repeats set to weekdays at a time, at 07:15, which fills in the cron expression 15 7 * * MON-FRI; the time zone Europe/London, marked as yours; the next five runs, Monday to Friday at 07:15. Under them the pipeline's three parameters with their defaults and descriptions, Runs as steward, a description, Paused, and Add schedule](images/schedule-form.png)
+![The form to add a schedule to a pipeline: Repeats set to weekdays at a time, at 07:15, which fills in the cron expression 15 7 * * MON-FRI; the time zone Europe/London, marked as yours; the next five runs, each on a weekday at 07:15. Under them the pipeline's three parameters with their defaults and descriptions, Runs as steward, a description, Paused, and Add schedule](images/schedule-form.png)
 
 Kilnmark checks everything before saving: the expression must fire, the zone must be known, and the
 values must suit the latest version, as Run now would check them. A mistake is refused at once,
@@ -268,7 +268,7 @@ on, its next run and what happened last time. Choose **On**, **Paused**, **Pause
 schedule that is off, whoever paused it; **Paused by Kilnmark** only those Kilnmark paused because
 whoever set them lost the role or has not signed in for 30 days.
 
-![The Schedules page, as an admin sees it: filters for All 4, On 3, Paused 1, Paused by Kilnmark 0 and Failed last time 0; a note for access reviews saying the 4 schedules run in the name of 2 people, that Kilnmark pauses the schedules of someone whose token is revoked or who loses their role, or who has not signed in for 30 days, and that a team's designer token suits work that must outlive any one person; and a table of every schedule with when it runs, the pipeline or flow it runs, linked, who set it and its role, and its state and next run, one of them paused. The table scrolls sideways to the last time each was due and to Edit, Pause or Resume, and Delete](images/schedules-page.png)
+![The Schedules page, as an admin sees it: filters for All 4, On 3, Paused 1, Paused by Kilnmark 0 and Failed last time 0; a note for access reviews saying the 4 schedules run in the name of 3 people, that Kilnmark pauses the schedules of someone whose token is revoked or who loses their role, or who has not signed in for 30 days, and that a team's designer token suits work that must outlive any one person; and a table of every schedule with when it runs, the pipeline or flow it runs, linked, who set it and its role, and its state and next run, one of them paused. The table scrolls sideways to the last time each was due and to Edit, Pause or Resume, and Delete](images/schedules-page.png)
 
 **For access reviews**, admins see a note saying how many people the schedules run in the name of.
 Read the **Set by** column. When someone's token is revoked or expires, or they lose their role,
