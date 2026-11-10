@@ -184,6 +184,20 @@ public class AuditLog {
      * try's number, from 1), version. Target: the run's id.
      */
     public static final String FLOW_RUN_AGAIN = "flow.run_again";
+    /**
+     * A file a pipeline run wrote was downloaded (ADR 0055); detail: node, source, path (in the
+     * source), bytes, and unrecorded when the run recorded no size for it. Never its contents.
+     * Target: {@code pipeline-run/<id>}.
+     */
+    public static final String FILE_DOWNLOADED = "file.downloaded";
+    /**
+     * A download of a file a pipeline run wrote was refused (ADR 0055); detail as
+     * {@link #FILE_DOWNLOADED} where known, with refused (why: sensitive, no_values, deleted,
+     * changed, ...) and the status. A 403 is also an {@link #API_REFUSED} event, as every 403 is. Any viewer
+     * may ask, so, as {@link #API_REFUSED} is, at most 30 a
+     * minute are kept in the table for each caller.
+     */
+    public static final String FILE_DOWNLOAD_REFUSED = "file.download_refused";
 
     /** Every kind of event, for the API's filter. */
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
@@ -191,7 +205,7 @@ public class AuditLog {
         SIGN_OUT, PERSON_ADDED, PEOPLE_IMPORTED, PERSON_ACTIVATED, PERSON_DISABLED, START_REFUSED, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED, SCHEDULE_SET,
         SCHEDULE_DELETED, SCHEDULE_PAUSED, STARTER_PACK_ADDED, STARTER_PACK_REMOVED, SAMPLES_REFUSED, STARTER_PEOPLE, INSTALL_ID_MADE, MODE_RECORDED, REALM_STAMPED,
         PIPELINE_OWNERS_SET,
-        FLOW_OWNERS_SET, FLOW_RUN_AGAIN);
+        FLOW_OWNERS_SET, FLOW_RUN_AGAIN, FILE_DOWNLOADED, FILE_DOWNLOAD_REFUSED);
 
     /** The most events one request returns. */
     public static final int MAX_LIMIT = 500;
@@ -479,12 +493,13 @@ public class AuditLog {
             throw new IllegalArgumentException("not an audit action: " + action);
         }
         boolean keep = true;
-        if (API_REFUSED.equals(action) || SAMPLES_REFUSED.equals(action)) {
+        if (API_REFUSED.equals(action) || SAMPLES_REFUSED.equals(action) || FILE_DOWNLOAD_REFUSED.equals(action)) {
             // Each token, each provider sign-in (its sso: name), and everyone not signed in together
             String who = actor.tokenId() != null ? "token " + actor.tokenId()
                 : actor.name() != null && actor.name().startsWith(OidcIdentityAugmentor.PREFIX) ? actor.name()
                 : ANONYMOUS;
-            Integer skipped = refusalSkips(who);
+            // a share of its own for download refusals, so they cannot crowd out the other refusals
+            Integer skipped = refusalSkips(FILE_DOWNLOAD_REFUSED.equals(action) ? "files " + who : who);
             keep = skipped != null; // over this minute's share: the JSON line only, counted for the next row kept
             if (skipped != null && skipped > 0) {
                 Map<String, Object> more = new LinkedHashMap<>(detail == null ? Map.of() : detail);

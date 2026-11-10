@@ -1395,6 +1395,10 @@ public class PipelineService {
                     n.put("rows", rows);
                 }
                 n.put("registered", registered);
+                ObjectNode file = WrittenFiles.recorded(o.events(), w.urn(), w.target(), json);
+                if (file != null) {
+                    n.set("file", file);
+                }
             }
             result.put("rowsWritten", total);
             result.set("notes", notes);

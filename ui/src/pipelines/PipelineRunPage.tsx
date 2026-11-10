@@ -16,6 +16,7 @@ import { RunTimeSpent } from "./RunTimeSpent";
 import { RunTimeline } from "./RunTimeline";
 import { RunRates } from "./RunRates";
 import { RunLogPanel } from "./RunLogPanel";
+import { WrittenFilesList } from "./WrittenFilesList";
 import { runOrigin } from "./timeline";
 import { RunFacts, RunNodes, ScoreChip, useRunDetail } from "./RunSummary";
 import { retrying, RunTriesList } from "../components/RunTries";
@@ -340,6 +341,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
             ))}
           </ul>
         )}
+        <WrittenFilesList runId={r.id} finished={!unfinished} />
         {detail.lineage.length > 0 && (
           <>
             <h3>Lineage</h3>

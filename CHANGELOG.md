@@ -7,6 +7,16 @@ details.
 
 ### What's new
 
+- **Download the files a run wrote.** A pipeline run's page lists each CSV or Parquet file its
+  write nodes wrote to a folder source, with a **Download** button. The server sends the file from
+  Kilnmark's own files folder, so it works the same on Windows (where the folder is inside the
+  Podman machine) and Linux. You choose a file of the run, never a path; only the file the run
+  wrote is sent, while it is still there as the run wrote it (a deleted or replaced file says so).
+  A file holding a column marked sensitive, or whose columns are not in the catalogue, is only for
+  designers with the unmask grant; viewers see no values, so they cannot download files; the button
+  says why when it is off. Every download and refusal is in the audit log (`file.downloaded`,
+  `file.download_refused`). `GET /api/v1/pipeline-runs/{id}/files` and `.../files/{index}`
+  (ADR 0055).
 - **A guided install, into the folders the operating system keeps for a program and its data**:
   `sudo ./kilnmark.sh install` (Linux) or `kilnmark.cmd install` (Windows) asks the questions (the
   mode, how people sign in, the email domain, the host name, the ports, TLS, the first admin), each

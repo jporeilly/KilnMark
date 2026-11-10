@@ -700,8 +700,55 @@ status changes.
   failed (stewards and above, or only designers when the run touched columns marked sensitive); others see that it
   was held back. A run keeps up to 10,000 events; the log says if it was cut short.
 - **What it wrote:** each table or file a write node wrote, with its mode and rows. Choose one to
-  open it in the catalogue.
+  open it in the catalogue. Under **Files to download**, each file the run wrote to a folder source
+  has a **Download** button (see below).
 - **Lineage:** which assets each written asset came from.
+
+## Downloading the files a run wrote
+
+A pipeline that writes CSV or Parquet files to a folder source puts them in that source's folder on
+the Kilnmark server. On an installed release that is Kilnmark's own files folder inside its
+container (`/srv/files`), which on Windows is inside the Podman machine, so you cannot open it from
+your desktop. Download the file from the run instead: open the run (from the pipeline's page, or
+from a flow run, which links to each pipeline run it started) and choose **Download** beside the
+file under **What it wrote**. The server sends the file, so it works the same on Windows and Linux.
+
+The button is off, with the reason beside it, when you may not have the file or it is no longer the
+run's:
+
+- **Holds sensitive columns.** A file holding a column marked sensitive, including a mark the run
+  carried from what it read, can be downloaded only by people who may see sensitive values
+  unmasked (a designer with the unmask grant; see [People and access](people-and-access.md#downloading-files-a-run-wrote)).
+  Admins see it masked everywhere else, so they cannot download it either.
+- **Columns not in the catalogue.** When Kilnmark does not know a file's columns (the run did not
+  catalogue it, for example because it failed after the file was written), it is treated as
+  sensitive.
+- **Marked since the run.** When a column of something the run read has been marked sensitive since
+  the run started, the run could not carry that mark, so the file is treated as sensitive.
+- **Viewers** see no values from the data, so they cannot download files; stewards and above can.
+- **Deleted**, or **changed since**: the file was deleted, or written again or replaced (by a later
+  run, say). Kilnmark checks the file's place, size and time against what the run recorded when it
+  wrote it, and never sends a file that is not the run's. Download it from the run that wrote it
+  last, or run the pipeline again. Runs from before this release recorded no size, so Kilnmark
+  cannot be sure the file there is theirs: those files are treated as sensitive, with a note that
+  they may have changed.
+
+Only files in a folder on the Kilnmark server can be downloaded; a file written to a bucket is read
+from the bucket. Kilnmark finds the file only where its write put it: you choose a file of a run,
+never a path, and nothing reached through a link is sent. Every download, and every refusal, is in
+the [audit log](audit-log.md). Signed in with your organisation's identity provider, the browser
+saves the file as it arrives; Kilnmark must then be on HTTPS or localhost (as sign-in through your organisation
+needs anyway), since browsers say which page asked for a download only to secure sites, and a
+download whose browser does not say so is refused. Signed in with an API token, the page fetches the file and then saves
+it, so for a very large file use the API with your token instead:
+
+```sh
+curl -H "Authorization: Bearer $KILNMARK_TOKEN" -OJ \
+  https://kilnmark.example.com/api/v1/pipeline-runs/42/files/0
+```
+
+`GET /api/v1/pipeline-runs/{id}/files` lists the files a run wrote, with each one's index, state
+and whether you may download it.
 
 ## What Kilnmark records about what you write
 

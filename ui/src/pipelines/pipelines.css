@@ -260,6 +260,31 @@ button.pl-problem:hover {
   gap: 6px;
 }
 
+/* The files a run wrote, each with its Download button and, when it is off, why. */
+.pl-files {
+  list-style: none;
+  padding-left: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.pl-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.pl-file-what {
+  flex: 1 1 24em;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pl-file-why {
+  flex-basis: 100%;
+}
+
 /* A run's measured quality: each gate and output, its score, dimensions and rules. */
 .pl-quality {
   list-style: none;

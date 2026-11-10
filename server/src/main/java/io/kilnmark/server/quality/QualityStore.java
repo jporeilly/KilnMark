@@ -448,6 +448,18 @@ public class QualityStore {
             ps -> ps.setArray(1, ps.getConnection().createArrayOf("text", urns.toArray())), rs -> rs.getString(1)));
     }
 
+    /** Whether any of {@code urns} has a column marked sensitive after {@code since}, by a steward or a pipeline. */
+    public boolean markedSince(java.util.Collection<String> urns, java.time.Instant since) {
+        if (urns.isEmpty()) {
+            return false;
+        }
+        return !query("SELECT 1 FROM kilnmark.sensitive_column WHERE asset_urn = ANY (?) AND marked_at > ? LIMIT 1",
+            ps -> {
+                ps.setArray(1, ps.getConnection().createArrayOf("text", urns.toArray()));
+                ps.setTimestamp(2, java.sql.Timestamp.from(since));
+            }, rs -> 1).isEmpty();
+    }
+
     /** Whether any asset of the source has a column marked sensitive. */
     public boolean sourceHasMarks(String source) {
         return !query("SELECT 1 FROM kilnmark.sensitive_column m JOIN kilnmark.asset a ON a.urn = m.asset_urn "

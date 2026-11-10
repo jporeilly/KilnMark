@@ -144,8 +144,39 @@ final class FileOutput implements Node {
                 // the input's kinds, then; the next scan corrects them
             }
         }
-        report.emit(context.metadata(), columns, kinds, types, Map.of("target", target.path(),
+        Map<String, String> details = new java.util.LinkedHashMap<>(Map.of("target", target.path(),
             "format", target.format(), "location", store.describe(storePath)));
+        details.putAll(onDisk(store, storePath));
+        report.emit(context.metadata(), columns, kinds, types, details);
+    }
+
+    /**
+     * Where a file written to a folder on this server is, and its size and time, read just after it
+     * was put in place: what a person downloading it later is checked against, so they get this
+     * run's file or nothing. Empty for a bucket, and when they cannot be read (the file is still
+     * written; the download then says it may have changed).
+     */
+    static Map<String, String> onDisk(FileStore store, String storePath) {
+        try {
+            java.nio.file.Path local = store.localPath(storePath);
+            if (local == null) {
+                return Map.of();
+            }
+            java.nio.file.attribute.BasicFileAttributes a = java.nio.file.Files.readAttributes(local,
+                java.nio.file.attribute.BasicFileAttributes.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            if (!a.isRegularFile()) {
+                return Map.of();
+            }
+            Map<String, String> out = new java.util.LinkedHashMap<>(Map.of(FilesConnector.WRITTEN_FILE,
+                local.toString(), FilesConnector.WRITTEN_BYTES, Long.toString(a.size()),
+                FilesConnector.WRITTEN_MODIFIED, a.lastModifiedTime().toInstant().toString()));
+            if (a.fileKey() != null) {
+                out.put(FilesConnector.WRITTEN_KEY, a.fileKey().toString());
+            }
+            return out;
+        } catch (IOException | RuntimeException e) {
+            return Map.of();
+        }
     }
 
     @Override
