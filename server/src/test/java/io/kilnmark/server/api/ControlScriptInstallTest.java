@@ -991,8 +991,9 @@ class ControlScriptInstallTest {
                 answersFile(goodAnswers(fourPorts()) + "program_dir=" + path + "\n").toString(), "--dry-run"), none, engine, env, "");
             assertTrue(dots.contains("program_dir is a plain path, with no //, . or .. part") && dots.contains("[1/2] FAILED"), path + ": " + dots);
         }
-        // removing the kept account: its session ended first, as userdel refuses an account in use
-        assertTrue(sh.contains("sudo loginctl disable-linger $ins_user; sudo pkill -u $ins_user; sleep 3; sudo userdel -r $ins_user"), "the account");
+        // removing the kept account: its session ended first, and waited for, as userdel refuses an account in use
+        assertTrue(sh.contains("sudo loginctl disable-linger $ins_user; sudo systemctl stop user@\\$(id -u $ins_user); "
+                + "sudo pkill -KILL -u $ins_user; sudo userdel -r $ins_user"), "the account");
     }
 
     /**

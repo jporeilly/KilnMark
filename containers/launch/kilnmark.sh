@@ -2161,7 +2161,7 @@ cmd_uninstall() {
     step_ok
     echo "Kilnmark is uninstalled, and its data deleted. The account $ins_user is kept, with its Podman settings and lingering."
     echo "To remove the account too, end what it still runs first (lingering keeps its session, and userdel refuses an account in use):"
-    echo "  sudo loginctl disable-linger $ins_user; sudo pkill -u $ins_user; sleep 3; sudo userdel -r $ins_user"
+    echo "  sudo loginctl disable-linger $ins_user; sudo systemctl stop user@\$(id -u $ins_user); sudo pkill -KILL -u $ins_user; sudo userdel -r $ins_user"
   else
     echo "Kilnmark is uninstalled. Its data (volumes) and $data (settings, backups, logs) are kept: uninstall --purge deletes them, or install afresh with another data folder."
   fi
