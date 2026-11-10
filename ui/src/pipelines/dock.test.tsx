@@ -294,14 +294,21 @@ const page = () => (
 );
 const nodeEl = (id: string) => host.querySelector<HTMLElement>(`.react-flow__node[data-id="${id}"]`)!;
 const wait = (ms: number) => act(async () => new Promise((r) => setTimeout(r, ms)));
-/** Waits (in real time) until the canvas has drawn its nodes and the run is shown. */
+/**
+ * Waits (in real time) until the canvas has drawn its nodes and the run is shown. Up to 10 s: under
+ * a full run's load (CI, or the whole suite at once) drawing took over the 2 s this used to allow,
+ * and a test then clicked a node not drawn yet. Says so if it never gets there.
+ */
 async function ready() {
-  for (let i = 0; i < 100 && !(nodeEl("out") && host.querySelector(".cv-run-legend") && host.textContent?.includes("No problems")); i++) await wait(20);
+  const drawn = () => !!(nodeEl("people") && nodeEl("out") && host.querySelector(".cv-run-legend")
+    && host.textContent?.includes("No problems"));
+  for (let i = 0; i < 500 && !drawn(); i++) await wait(20);
+  if (!drawn()) throw new Error("the canvas did not draw its nodes and run within 10 s");
   await wait(20);
 }
 const click = (el: Element, type = "click") => act(async () => void el.dispatchEvent(new MouseEvent(type, { bubbles: true })));
 
-describe("the pipeline page's panel", () => {
+describe("the pipeline page's panel", { timeout: 20_000 }, () => {
   test("a click on a node shows its Settings without moving the focus; the node's tabs go when nothing is selected", async () => {
     server();
     await show(page());
