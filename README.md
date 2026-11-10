@@ -11,8 +11,12 @@ Status: version 0.1.2, early and moving fast; see the [changelog](CHANGELOG.md).
 
 - **Two ways to deploy, chosen once at install.** **Production** is for real work. A **Starter
   Pack** install is for training, demonstrations and development: example data in a database of
-  its own, every sample ready to run, and five example people, one per role. An install never
-  changes mode ([Choosing a deployment](INSTALL.md#choosing-a-deployment)).
+  its own, every sample ready to run, an example schedule, and five example people, one per role.
+  An install never changes mode ([Choosing a deployment](INSTALL.md#choosing-a-deployment)). A
+  guided install puts the program where the operating system keeps programs (`C:\Program
+  Files\Kilnmark`, `/opt/kilnmark`) and the data where it keeps data (`C:\ProgramData\Kilnmark`,
+  `/var/opt/kilnmark`), each locked to who should change it, with `check` and `configure` after
+  ([INSTALL.md](INSTALL.md)).
 - **People.** Sign in with your organisation's identity provider (OpenID Connect, with a second
   factor), the Keycloak that comes with Kilnmark, or an API token. With the bundled Keycloak, the
   control script adds people: `kilnmark.sh people add` for one, `people import FILE` for a class or
@@ -39,7 +43,14 @@ Status: version 0.1.2, early and moving fast; see the [changelog](CHANGELOG.md).
     ([Rows that fail](docs/guide/rows-that-fail.md)).
   - **Expressions** with functions for text, numbers, dates, `if`, window values and a `sha256`
     that keeps a sensitive column marked ([Expressions](docs/guide/expressions.md)).
-  - Parameters, server variables, previews at any node, and a version for every save.
+  - Parameters, shown and edited on the canvas and asked for when a run starts, server variables,
+    previews at any node, and a version for every save
+    ([Parameters in the canvas](docs/guide/pipelines.md#parameters-in-the-canvas)).
+  - **Lineage as a graph** on each run and each asset's page: what every table or file written
+    came from ([Reading a run](docs/guide/pipelines.md#reading-a-run)).
+  - **Download** a file a run wrote from the run's page; a file with sensitive columns only by
+    someone allowed to see them, and every download in the audit log
+    ([Downloading the files a run wrote](docs/guide/pipelines.md#downloading-the-files-a-run-wrote)).
 - **Runs that recover.** A `run:` block tries a failed run again, only when it is safe, with a
   timeout for each try and a warning to the owners when a run is slow
   ([Trying a run again](docs/guide/pipelines.md#trying-a-run-again)). Owners are told when a run
@@ -55,12 +66,19 @@ Status: version 0.1.2, early and moving fast; see the [changelog](CHANGELOG.md).
   issues, notifications in the app and by email, sent out as OpenLineage and ODCS 3.1
   ([Quality rules](docs/guide/quality-rules.md), [Quality gates](docs/guide/quality-gates.md)).
 - **Samples that explain themselves:** small pipelines and flows, one idea each, in the Library,
-  each saying what it shows, why it matters, what to look for and what it needs; and templates to
-  start your own work from ([The Library](docs/guide/library.md)).
-- **Ask Kilnmark:** a chat panel that answers from the guides, with a local or hosted model
-  ([Asking Kilnmark](docs/guide/assistant.md)).
+  each saying what it shows, why it matters, what to look for and what it needs, on the Library
+  and on the sample's own page; and templates to start your own work from
+  ([The Library](docs/guide/library.md)).
+- **Business scenarios:** customer onboarding, a supplier's file arriving and the month-end close,
+  each several pipelines and a flow, with the steward's part in each: the rows set aside, the
+  sensitive columns, the exceptions to work through
+  ([Business scenarios](docs/guide/scenarios.md)).
+- **Ask Kilnmark:** a chat panel that answers from the guides, with a local or hosted model;
+  Ollama or LM Studio on the same computer is found by itself
+  ([Asking Kilnmark](docs/guide/assistant.md),
+  [A model server on this computer](docs/guide/install/models-on-this-computer.md)).
 - **For regulated organisations:** an append-only audit log that can go to your SIEM, an access
-  review with a CSV for auditors, two people for unmasking, HTTPS and encrypted connections to
+  review of everyone, what each role can do and the rules in force, with a CSV for auditors, two people for unmasking, HTTPS and encrypted connections to
   sources, and backup and restore scripts that keep Keycloak's people too
   ([Audit log](docs/guide/audit-log.md), [People and access](docs/guide/people-and-access.md),
   [Backup and restore](docs/guide/backup-and-restore.md),
