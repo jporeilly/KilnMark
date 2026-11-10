@@ -133,8 +133,8 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
     static final int MAX_CONNECTIONS = 1_000;
 
     static final Set<String> TOP_LEVEL_KEYS = Set.of("kilnmark", "name", "description", "parameters", "queue_timeout",
-        "max_parallel", "run", "nodes", "connections", "layout");
-    static final Set<String> NODE_KEYS = Set.of("id", "type");
+        "max_parallel", "run", "nodes", "connections", "layout", CanvasNotes.KEY);
+    static final Set<String> NODE_KEYS = Set.of("id", "type", CanvasNotes.NODE_KEY);
     /**
      * The settings each node type takes, besides {@code id} and {@code type}: what reading a flow
      * accepts, and what the components reference (docs/guide/reference-flow-nodes.md) documents.
@@ -415,7 +415,7 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
                 problems.add(Problem.at(e.keyPosition(), null, "Unknown key '" + Suggest.clip(e.key()) + "'"
                     + Suggest.hint(e.key(), TOP_LEVEL_KEYS)
                     + ": a flow has kilnmark, name, description, parameters, queue_timeout, max_parallel, run, nodes, "
-                    + "connections and layout"));
+                    + "connections, layout and notes"));
             }
         }
         String name = text(top.entries().get("name"), "name", problems);
@@ -432,6 +432,7 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
             "max_parallel is how many of the flow's nodes run at once", problems);
         List<Parameters.Parameter> parameters = Parameters.read(top.entries().get("parameters"), "flow", false, problems);
         RunOptions run = RunOptions.read(top.entries().get("run"), problems);
+        CanvasNotes.read(top.entries().get(CanvasNotes.KEY), problems);
         Set<String> names = new LinkedHashSet<>();
         parameters.forEach(p -> names.add(p.name()));
         Map<String, Parameters.Parameter> declared = new LinkedHashMap<>();
@@ -556,6 +557,7 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         }
         Map<String, Position> keys = new LinkedHashMap<>();
         m.entries().values().forEach(e -> keys.put(e.key(), e.keyPosition()));
+        CanvasNotes.readNodeNote(m.entries().get(CanvasNotes.NODE_KEY), id, problems);
         YamlReader.Entry typeEntry = m.entries().get("type");
         String type = typeEntry == null ? null : text(typeEntry, "type", problems);
         if (typeEntry == null) {

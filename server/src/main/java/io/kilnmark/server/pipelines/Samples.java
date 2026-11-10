@@ -200,8 +200,8 @@ public class Samples {
      * What a pipeline or flow added from the samples says about itself, for its own page: the sample's
      * file under samples/, its explanation (the comment its file starts with, read from the bundled
      * file, so the page and the Library never differ), and whether it has been changed since it was
-     * added (a later version whose YAML, leaving out where the canvas draws the nodes, is not the one
-     * added).
+     * added (a later version whose YAML, leaving out where the canvas draws the nodes and its notes, is
+     * not the one added).
      */
     public record About(String file, Explanation explanation, boolean changed) {
     }
@@ -225,54 +225,18 @@ public class Samples {
         boolean changed = false;
         if (latestVersion > 1) {
             String added = first.get();
-            changed = added == null || latestYaml == null || !withoutLayout(added).equals(withoutLayout(latestYaml));
+            changed = added == null || latestYaml == null || !withoutCanvas(added).equals(withoutCanvas(latestYaml));
         }
         return new About(s.file(), s.explanation(), changed);
     }
 
-    /** The top-level {@code layout:} key, where the canvas draws each node. */
-    private static final Pattern LAYOUT_KEY = Pattern.compile("^layout\\s*:.*");
-
     /**
-     * The YAML without its {@code layout:} block, the comment the canvas writes above it and the blank
-     * lines before them, as the pipeline page compares versions (ui/src/pipelines/template.ts): moving
-     * nodes on the canvas changes nothing a run does.
+     * The YAML without what only the canvas reads: where it draws each node ({@code layout:}), its
+     * notes ({@code notes:}) and each node's {@code note:}, as the pipeline page compares versions
+     * (ui/src/pipelines/template.ts). Moving nodes and writing notes changes nothing a run does.
      */
-    static String withoutLayout(String yaml) {
-        String[] lines = yaml.replace("\r\n", "\n").split("\n", -1);
-        int at = -1;
-        for (int i = 0; i < lines.length; i++) {
-            if (LAYOUT_KEY.matcher(lines[i]).matches()) {
-                at = i;
-                break;
-            }
-        }
-        if (at < 0) {
-            return oneLineEnd(yaml.replace("\r\n", "\n"));
-        }
-        int end = at + 1;
-        while (end < lines.length && !lines[end].matches("^[^\\s#].*")) {
-            end++;
-        }
-        int start = at;
-        while (start > 0 && lines[start - 1].matches("^#.*Kilnmark ignores this.*")) {
-            start--;
-        }
-        while (start > 0 && lines[start - 1].isBlank()) {
-            start--;
-        }
-        List<String> kept = new ArrayList<>(List.of(lines).subList(0, start));
-        kept.addAll(List.of(lines).subList(end, lines.length));
-        return oneLineEnd(String.join("\n", kept));
-    }
-
-    /** The text ending in exactly one line break. */
-    private static String oneLineEnd(String text) {
-        int end = text.length();
-        while (end > 0 && text.charAt(end - 1) == '\n') {
-            end--;
-        }
-        return text.substring(0, end) + "\n";
+    static String withoutCanvas(String yaml) {
+        return io.kilnmark.kiln.yaml.CanvasNotes.withoutCanvas(yaml);
     }
 
     /** The bundled files, read once: they are the server's own resources and never change while it runs. */

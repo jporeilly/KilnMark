@@ -16,6 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -803,6 +804,336 @@ class ControlScriptInstallTest {
             + "    if ($Value -match '[$`]') { Fail ($Key + ' was not written to config\\.env: its value holds $ or `"), "Set-Line refuses it first");
         assertTrue(sh.contains("plain_value \"$secret_value\" || { secret_value=\"\"; die \"The client secret holds a space, a quote mark"));
         assertTrue(ps.contains("if (-not (Test-PlainValue $script:SecretValue)) { $script:SecretValue = ''; Fail 'The client secret holds a space, a quote mark"));
+    }
+
+    // ---- what a Production install walk on Linux found ----
+
+    /**
+     * Linux, rootless Podman: journald files a system account's container logs in the system
+     * journal, which that account cannot read, so logs showed nothing. The account's own Podman keeps
+     * them in files instead (log_driver = "k8s-file" in its containers.conf), merged into the file it
+     * has, every other line kept; never through a link, nor a file Podman would not read; and only
+     * where the driver is journald (or Podman does not say), never over another the account chose.
+     */
+    @Test
+    void theLinuxEditionKeepsTheContainersLogsWhereLogsCanReadThem() throws Exception {
+        Edition e = linux();
+        Path engine = ControlScriptStarterTest.fakeEngine(false, true);
+        Path root = installed(e, fourPorts(), Map.of());
+        Path dir = Files.createTempDirectory("kilnmark-containers-conf");
+        Path conf = dir.resolve("containers.conf");
+        java.util.function.BiFunction<Map<String, String>, Path, String> set = (more, eng) -> {
+            Map<String, String> env = new LinkedHashMap<>(Map.of("KILNMARK_TEST_CONTAINERS_DIR", dir.toString().replace('\\', '/'),
+                "FAKE_LOG_DRIVER", "journald"));
+            env.putAll(more);
+            try {
+                return run(e, launcher(e), List.of("_podman-logs"), root, eng, env, "");
+            } catch (Exception x) {
+                throw new IllegalStateException(x);
+            }
+        };
+        String size = "log_size_max = 52428800\n";
+        // none yet: made, with the driver and a limit
+        String made = set.apply(Map.of(), engine);
+        assertTrue(made.contains("now keeps the containers' logs in files"), made);
+        assertEquals("[containers]\nlog_driver = \"k8s-file\"\n" + size, Files.readString(conf));
+        // journald and no limit: the driver replaced where it was, the limit added at the table's end
+        String bare = "[containers]\nlog_driver = \"journald\"\ntz = \"UTC\"\n";
+        Files.writeString(conf, bare);
+        assertTrue(set.apply(Map.of(), engine).contains("now keeps the containers' logs in files"));
+        assertEquals("[containers]\nlog_driver = \"k8s-file\"\ntz = \"UTC\"\n" + size, Files.readString(conf));
+        // what is added goes before the blank lines that end the table
+        Files.writeString(conf, "[containers]\nlog_driver = \"journald\"\n\n\n[engine]\nx = 1\n");
+        assertTrue(set.apply(Map.of(), engine).contains("now keeps the containers' logs in files"));
+        assertEquals("[containers]\nlog_driver = \"k8s-file\"\n" + size + "\n\n[engine]\nx = 1\n", Files.readString(conf));
+        // a containers.conf.d file that sets another driver: the file put back as it was, and said
+        Files.writeString(conf, bare);
+        String dropIn = set.apply(Map.of("FAKE_DROPIN", "yes"), engine);
+        assertTrue(dropIn.contains("still gives journald") && dropIn.contains("was put back as it was"), dropIn);
+        assertEquals(bare, Files.readString(conf));
+        // journald set in the account's [containers] table, with its own limit: that line replaced, every other kept
+        String own = "# the account's own\n[containers]\nlog_driver = \"journald\"   # was\nlog_size_max = 1048576\n\n"
+            + "[engine]\nevents_logger = \"file\"\n";
+        Files.writeString(conf, own);
+        assertTrue(set.apply(Map.of(), engine).contains("now keeps the containers' logs in files"));
+        assertEquals(own.replace("log_driver = \"journald\"   # was", "log_driver = \"k8s-file\""), Files.readString(conf));
+        // a [containers] table without it: added at that table's end, before the next one
+        String table = "[containers]\nlog_size_max = 1048576\nvolumes = [\n  \"/srv:/srv\",\n]\n[engine]\nevents_logger = \"file\"\n";
+        Files.writeString(conf, table);
+        assertTrue(set.apply(Map.of(), engine).contains("now keeps the containers' logs in files"));
+        assertEquals(table.replace("]\n[engine]", "]\nlog_driver = \"k8s-file\"\n[engine]"), Files.readString(conf));
+        // no [containers] table: one added at the end
+        String other = "[engine]\nevents_logger = \"file\"\n";
+        Files.writeString(conf, other);
+        assertTrue(set.apply(Map.of(), engine).contains("now keeps the containers' logs in files"));
+        assertEquals(other + "\n[containers]\nlog_driver = \"k8s-file\"\n" + size, Files.readString(conf));
+        // a file Podman would not read with it, or keys with dots it could not take a table beside: left as they are
+        Files.writeString(conf, table);
+        String unread = set.apply(Map.of("FAKE_BAD_CONF", "yes"), engine);
+        assertTrue(unread.contains("Podman could not read") && unread.contains("log_driver = \"k8s-file\" under [containers]"), unread);
+        assertEquals(table, Files.readString(conf));
+        String broken = "[containers]\nvolumes = [\n  \"/a:/a\"\n";
+        Files.writeString(conf, broken);
+        String silent = set.apply(Map.of("FAKE_INFO_FAILS", "yes"), engine);
+        assertTrue(silent.contains("this account's Podman does not answer (podman info fails)"), silent);
+        assertEquals(broken, Files.readString(conf));
+        Files.writeString(conf, "containers.log_driver = \"journald\"\n");
+        assertTrue(set.apply(Map.of(), engine).contains("sets containers. keys with dots"));
+        assertEquals("containers.log_driver = \"journald\"\n", Files.readString(conf));
+        try (var left = Files.list(dir)) {
+            assertEquals(List.of(conf), left.toList(), "no file left beside it");
+        }
+        // a link: never followed, nor replaced
+        Files.delete(conf);
+        Path elsewhere = Files.createTempFile("kilnmark-elsewhere", ".conf");
+        Files.writeString(elsewhere, other);
+        boolean linked = true;
+        try {
+            Files.createSymbolicLink(conf, elsewhere);
+        } catch (IOException | UnsupportedOperationException x) {
+            // Windows without the privilege to make one
+            linked = false;
+        }
+        if (linked) {
+            String link = set.apply(Map.of(), engine);
+            assertTrue(link.contains("is a link, or not a file, so it was left as it is"), link);
+            assertEquals(other, Files.readString(elsewhere));
+            Files.delete(conf);
+        }
+        // in files already, or a driver the account chose: nothing written
+        for (String driver : List.of("k8s-file", "none")) {
+            String out = set.apply(Map.of("FAKE_LOG_DRIVER", driver), engine);
+            assertFalse(Files.exists(conf), driver + ": " + out);
+            assertEquals(driver.equals("none"), out.contains("with the none log driver, which install leaves as it is"), out);
+        }
+        // Docker: never
+        Path docker = Files.copy(engine, Files.createTempDirectory("kilnmark-docker").resolve("docker-engine-ok.sh"));
+        assertFalse(set.apply(Map.of(), docker).contains("log_driver"));
+        assertFalse(Files.exists(conf), "Docker's own settings are left alone");
+        // the tests' own account is never touched: without the tests' folder it writes nothing, wherever HOME is
+        Path home = Files.createTempDirectory("kilnmark-home");
+        String homeWords = home.toString().replace('\\', '/');
+        String untouched = run(e, launcher(e), List.of("_podman-logs"), root, engine,
+            Map.of("FAKE_LOG_DRIVER", "journald", "HOME", homeWords, "XDG_CONFIG_HOME", homeWords + "/.config"), "");
+        assertFalse(Files.exists(home.resolve(".config")), untouched);
+        String sh = Files.readString(LAUNCH.resolve("kilnmark.sh"));
+        // install sets it as the account, before the account's check; and never as root
+        String install = sh.substring(sh.indexOf("\ncmd_install() {"), sh.indexOf("\ninstalled_user() {"));
+        assertTrue(install.contains("account_step \"$root/kilnmark.sh\" _podman-logs < /dev/null\n  account_step \"$root/kilnmark.sh\" check < /dev/null"),
+            "install, as the account");
+        String fn = sh.substring(sh.indexOf("\nset_podman_log_driver() {"), sh.indexOf("\nrecreate_for_log_driver() {"));
+        assertTrue(fn.contains("[[ \"$engine\" != *docker* ]] && [ \"$(my_uid)\" -ne 0 ] || return 0"), "never as root");
+    }
+
+    /**
+     * up makes Kilnmark's containers again, once (a down, then the start), where those of the services
+     * it runs were made with another log driver than the account's Podman now gives (they keep the one
+     * they were made with); never for a container of another profile, which that down would not
+     * remove, so every start would go round again; and else it leaves them.
+     */
+    @Test
+    void theLinuxEditionsUpMakesTheContainersAgainForTheirLogs() throws Exception {
+        Edition e = linux();
+        Path engine = ControlScriptStarterTest.fakeEngine(false, true);
+        Path dir = Files.createTempDirectory("kilnmark-containers-conf");
+        try (ControlScriptStarterTest.Api api = ControlScriptStarterTest.Api.start()) {
+            Path root = ControlScriptStarterTest.installRoot(false);
+            ControlScriptStarterTest.writeEnv(root, Map.of("KILNMARK_MODE", "production", "KILNMARK_PORT", String.valueOf(api.port())));
+            Path upLog = root.resolve("up.log");
+            Map<String, String> env = new LinkedHashMap<>(Map.of("KILNMARK_TEST_CONTAINERS_DIR", dir.toString().replace('\\', '/'),
+                "FAKE_LOG_DRIVER", "k8s-file", "FAKE_CONTAINER_LOG_DRIVER", "journald", "FAKE_CONTAINERS", "c1 kilnmark"));
+            String again = run(e, launcher(e), List.of("up", "--no-browser"), root, engine, env, "");
+            assertTrue(again.contains("Making Kilnmark's containers again, once") && again.contains("is ready at"), again);
+            List<String> ran = Files.readAllLines(upLog).stream().map(String::strip).toList();
+            assertTrue(ran.indexOf("down") >= 0 && ran.indexOf("down") < ran.size() - 1 && ran.get(ran.size() - 1).startsWith("install id"),
+                "a down, then the start: " + ran);
+            // a container of another profile (started by hand), made with journald: left, and no down
+            Files.delete(upLog);
+            env.put("FAKE_CONTAINERS", "c2 ai");
+            String other = run(e, launcher(e), List.of("up", "--no-browser"), root, engine, env, "");
+            assertTrue(!other.contains("Making Kilnmark's containers again") && other.contains("is ready at"), other);
+            assertFalse(Files.readAllLines(upLog).contains("down"), other);
+            // made with k8s-file already: left
+            env.put("FAKE_CONTAINERS", "c1 kilnmark");
+            env.put("FAKE_CONTAINER_LOG_DRIVER", "k8s-file");
+            String kept = run(e, launcher(e), List.of("up", "--no-browser"), root, engine, env, "");
+            assertTrue(!kept.contains("Making Kilnmark's containers again") && kept.contains("is ready at"), kept);
+        }
+    }
+
+    /** check warns where the containers' logs go to a journal the account cannot read, with the fix. */
+    @Test
+    void theLinuxEditionsCheckWarnsOfLogsItCannotRead() throws Exception {
+        Edition e = linux();
+        Path engine = ControlScriptStarterTest.fakeEngine(false, true);
+        Path root = installed(e, fourPorts(), Map.of());
+        // the account in no group that may read the journal (whatever the tests' own account is in)
+        String journal = run(e, launcher(e), List.of("check"), root, engine,
+            checkEnv(e, "2.7.11.0", Map.of("FAKE_LOG_DRIVER", "journald", "KILNMARK_TEST_GROUPS", "kmtest-nobody")), "");
+        assertTrue(journal.contains("Warning: Podman keeps the containers' logs in the system journal, which ")
+            && journal.contains("restart sets log_driver = \"k8s-file\""), journal);
+        // the fix a command alone, to paste
+        assertTrue(fixFor(journal, "Podman keeps the containers' logs in the system journal").endsWith("kilnmark.sh restart"), journal);
+        // in adm, which may read it: fine
+        String adm = run(e, launcher(e), List.of("check"), root, engine,
+            checkEnv(e, "2.7.11.0", Map.of("FAKE_LOG_DRIVER", "journald", "KILNMARK_TEST_GROUPS", "kmtest-nobody adm")), "");
+        assertTrue(adm.contains("OK: Podman keeps the containers' logs in the journal, which this account may read"), adm);
+        String files = run(e, launcher(e), List.of("check"), root, engine, checkEnv(e, "2.7.11.0", Map.of("FAKE_LOG_DRIVER", "k8s-file")), "");
+        assertTrue(files.contains("OK: Podman keeps the containers' logs in files logs can read") && !files.contains("system journal"), files);
+    }
+
+    /**
+     * status gives up on a Kilnmark that does not answer within a few seconds: with WSL's mirrored
+     * networking a closed port does not refuse, it hangs. Here Kilnmark's port takes the connection
+     * and never answers: curl must hang up itself, soon after connecting. The port lets go after two
+     * minutes, so a status with no time limit ends, late, and fails.
+     */
+    @Test
+    void theLinuxEditionsStatusNeverHangsOnAStoppedKilnmark() throws Exception {
+        Edition e = linux();
+        Path engine = ControlScriptStarterTest.fakeEngine(false, true);
+        List<java.net.Socket> held = java.util.Collections.synchronizedList(new ArrayList<>());
+        // how long after connecting curl hung up on the port, for each connection it hung up on itself
+        List<Long> gaveUpAfter = java.util.Collections.synchronizedList(new ArrayList<>());
+        ServerSocket hangs = new ServerSocket(0, 50, InetAddress.getLoopbackAddress());
+        try {
+            Thread taker = new Thread(() -> {
+                try {
+                    while (true) {
+                        java.net.Socket s = hangs.accept();
+                        long at = System.nanoTime();
+                        held.add(s);
+                        Thread reader = new Thread(() -> {
+                            // not closed here: the test closes every socket it took, at the end
+                            try {
+                                var in = s.getInputStream();
+                                byte[] b = new byte[1024];
+                                while (in.read(b) >= 0) {
+                                    // the request: read, never answered
+                                }
+                                gaveUpAfter.add(TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - at));
+                            } catch (IOException x) {
+                                // reset by curl, rather than closed by the test
+                                if (!s.isClosed()) {
+                                    gaveUpAfter.add(TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - at));
+                                }
+                            }
+                        });
+                        reader.setDaemon(true);
+                        reader.start();
+                    }
+                } catch (IOException x) {
+                    // closed: the test is over
+                }
+            });
+            taker.setDaemon(true);
+            taker.start();
+            Thread letGo = new Thread(() -> {
+                try {
+                    Thread.sleep(120_000);
+                    hangs.close();
+                    synchronized (held) {
+                        for (java.net.Socket s : held) {
+                            s.close();
+                        }
+                    }
+                } catch (InterruptedException | IOException x) {
+                    // the test is over
+                }
+            });
+            letGo.setDaemon(true);
+            letGo.start();
+            List<String> ports = new ArrayList<>(fourPorts());
+            ports.set(0, String.valueOf(hangs.getLocalPort()));
+            Path root = installed(e, ports, Map.of());
+            long began = System.nanoTime();
+            String out = run(e, launcher(e), List.of("status"), root, engine, Map.of(), "");
+            long took = TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - began);
+            assertTrue(out.contains("Health: not answering at"), out);
+            // curl gave up itself, soon after it connected (its own time limit, whatever the machine's
+            // load), rather than waiting until the port let go
+            assertFalse(gaveUpAfter.isEmpty(), "curl never hung up on the silent port; status took " + took + " s: " + out);
+            assertTrue(gaveUpAfter.get(0) < 30, "curl hung up only after " + gaveUpAfter + " s: " + out);
+            assertTrue(took < 110, "status took " + took + " s: " + out);
+            letGo.interrupt();
+        } finally {
+            hangs.close();
+            synchronized (held) {
+                for (java.net.Socket s : held) {
+                    s.close();
+                }
+            }
+        }
+    }
+
+    /**
+     * restore says the commands the operator runs next as the control script: to go on with --yes
+     * (-Yes), and compose through it to drop the databases it kept, never restore.sh or a plain
+     * podman compose, which lacks the install's settings and secrets.
+     */
+    @Test
+    void theLinuxEditionsRestoreSaysTheControlScriptsCommands() throws Exception {
+        Edition e = linux();
+        Path engine = ControlScriptStarterTest.fakeEngine(false, true);
+        Path root = installed(e, fourPorts(), Map.of());
+        Files.copy(Path.of("../containers/restore.sh"), root.resolve("versions/9.9.9/restore.sh"));
+        Path backup = BackupModeAndInstallTest.backup("production", BackupModeAndInstallTest.ID);
+        String src = backup.toString().replace('\\', '/');
+        String asked = run(e, launcher(e), List.of("restore", src), root, engine, Map.of(), "");
+        assertTrue(asked.contains("/kilnmark.sh restore " + src + " --yes") && !asked.contains("./restore.sh"), asked);
+        // as it was asked: without the keys, and a folder with a space in quotes
+        String withoutKeys = run(e, launcher(e), List.of("restore", src, "--without-keys"), root, engine, Map.of(), "");
+        assertTrue(withoutKeys.contains("/kilnmark.sh restore " + src + " --without-keys --yes"), withoutKeys);
+        Path spaced = Files.move(backup, Files.createTempDirectory("kilnmark backups").resolve("kilnmark-20261110T080000Z"));
+        String spacedSrc = spaced.toString().replace('\\', '/');
+        String quoted = run(e, launcher(e), List.of("restore", spacedSrc), root, engine, Map.of(), "");
+        assertTrue(quoted.contains("/kilnmark.sh restore \"" + spacedSrc + "\" --yes"), quoted);
+        assertEquals(backup, Files.move(spaced, backup));
+        String none = run(e, launcher(e), List.of("restore"), root, engine, Map.of(), "");
+        assertTrue(none.contains("/kilnmark.sh restore /path/to/backups/kilnmark-<time> --yes"), none);
+        // with --yes, to its end: restore.sh as the control script runs it, with a compose that answers as this install
+        Path compose = Files.createTempDirectory("kilnmark-fake-compose").resolve("compose.sh");
+        Files.writeString(compose, "#!/bin/bash\n"
+            + "case \"$*\" in\n"
+            + "  *\"exec -T kilnmark true\"*) exit 1 ;;\n"
+            + "  *keycloak_restoring*kilnmark_install_id*|*install_id*) echo " + BackupModeAndInstallTest.ID + " ;;\n"
+            + "  *keycloak_restoring*\"'kilnmark_mode'\"*|*deployment_mode*) echo production ;;\n"
+            + "  *keycloak_restoring*) echo 0 ;;\n"
+            + "esac\nexit 0\n");
+        try {
+            Files.setPosixFilePermissions(compose, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+        } catch (UnsupportedOperationException notPosix) {
+            // Windows: Git Bash runs it by its first line
+        }
+        Path release = Files.createTempDirectory("kilnmark-release");
+        Files.writeString(release.resolve("compose.yaml"), "services:\n  kilnmark:\n    image: ghcr.io/jporeilly/kilnmark-server:9.9.9\n");
+        ProcessBuilder pb = new ProcessBuilder(e.command(Path.of("../containers/restore.sh"), List.of(src, "--yes")))
+            .directory(release.toFile()).redirectErrorStream(true);
+        pb.command().set(1, pb.command().get(1).replace('\\', '/'));
+        pb.environment().putAll(Map.of("KILNMARK_COMPOSE", compose.toString().replace('\\', '/'), "KILNMARK_KEYCLOAK", "on",
+            "KILNMARK_EXPECTED_MODE", "production", "KILNMARK_CONTROL", "/opt/kilnmark/kilnmark.sh"));
+        Process p = pb.start();
+        p.getOutputStream().close();
+        String done = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertTrue(p.waitFor(120, TimeUnit.SECONDS), "it stopped");
+        assertTrue(done.contains("Restored Kilnmark to the backup"), done);
+        assertTrue(done.contains("drop the previous database: /opt/kilnmark/kilnmark.sh compose exec postgres dropdb -U kilnmark kilnmark_before_"), done);
+        assertTrue(done.contains("    /opt/kilnmark/kilnmark.sh compose exec keycloak-db dropdb -U keycloak keycloak_before_"), done);
+        assertFalse(done.contains("podman compose") || done.contains("restore.sh"), done);
+    }
+
+    @Test
+    void theWindowsEditionsRestoreSaysTheControlScriptsCommand() throws Exception {
+        Edition e = windowsEdition();
+        Path engine = ControlScriptStarterTest.fakeEngine(true, true);
+        Path root = installed(e, fourPorts(), Map.of());
+        Path backup = BackupModeAndInstallTest.backup("production", BackupModeAndInstallTest.ID);
+        String asked = run(e, launcher(e), List.of("restore", backup.toString()), root, engine, Map.of(), "");
+        assertTrue(asked.contains("To go on: & \"" + root.resolve("kilnmark.cmd") + "\" restore \"" + backup + "\" -Yes"), asked);
+        String withoutKeys = run(e, launcher(e), List.of("restore", backup.toString(), "-WithoutKeys"), root, engine, Map.of(), "");
+        assertTrue(withoutKeys.contains("restore \"" + backup + "\" -WithoutKeys -Yes"), withoutKeys);
+        String none = run(e, launcher(e), List.of("restore"), root, engine, Map.of(), "");
+        assertTrue(none.contains("& \"" + root.resolve("kilnmark.cmd") + "\" restore \"C:\\ProgramData\\Kilnmark\\backups\\kilnmark-<time>\" -Yes"), none);
     }
 
     /** The test file is ASCII-clean and keeps its own words: nothing here names a real secret. */

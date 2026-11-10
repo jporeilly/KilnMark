@@ -13,6 +13,7 @@
 import { isMap, isScalar, isSeq, LineCounter, parseDocument, Scalar, type Document, type Pair, type YAMLMap } from "yaml";
 import type { NodeType } from "../../api";
 import { flowYaml, isBlockMap, isBlockSeq, Patch, scalarYaml, writeLayoutBlock } from "./patch.ts";
+import { nodeNoteOf, readNotes, renameNoteNode, type CanvasNote } from "./notes.ts";
 
 export type Catalogue = ReadonlyMap<string, NodeType>;
 export const catalogueOf = (types: NodeType[]): Catalogue => new Map(types.map((t) => [t.type, t]));
@@ -26,8 +27,10 @@ export type InputLink = { port: string | null; from: string; fromPort: string };
 export type GraphNode = {
   id: string;
   type: string | null;
-  /** Every key but id, type, input and inputs, in the order written. */
+  /** Every key but id, type, input, inputs and note, in the order written. */
   settings: Record<string, Value>;
+  /** Its own note, shown on its card (notes.ts), or null. */
+  note?: string | null;
   /** For scalar settings, the text as written (`007` stays `007`). */
   texts: Record<string, string>;
   inputs: InputLink[];
@@ -45,6 +48,8 @@ export type Graph = {
   nodes: GraphNode[];
   edges: GraphEdge[];
   positions: Record<string, Point>;
+  /** The notes on the canvas (notes.ts): never nodes, never counted as nodes. */
+  notes: CanvasNote[];
   /** The names of the parameters the pipeline declares, for `${name}` in its settings. */
   parameters: string[];
   /** The parameters the pipeline declares, each as written: for the Parameters panel and `${name}`'s details. */
@@ -76,7 +81,7 @@ export type DeclaredParameter = {
 export type ReadResult = { ok: true; graph: Graph } | { ok: false; error: string; line: number };
 
 export const NODE_ID = /^[a-z][a-z0-9_-]{0,63}$/;
-const NODE_KEYS = new Set(["id", "type", "input", "inputs"]);
+const NODE_KEYS = new Set(["id", "type", "input", "inputs", "note"]);
 export const LAYOUT = "layout";
 const LAYOUT_COMMENT = " Where the canvas draws each node. Kilnmark ignores this when it runs the pipeline.";
 /** Setting kinds whose text is an expression: written double-quoted, as the guides write them. */
@@ -208,6 +213,7 @@ export function readGraph(text: string, catalogue: Catalogue = new Map()): ReadR
       id,
       type: isScalar(typeNode) && typeNode.value != null ? String(typeNode.value) : null,
       settings,
+      note: nodeNoteOf(map),
       texts,
       inputs: linksOf(map),
       line: lineOf(lines, map),
@@ -235,7 +241,7 @@ export function readGraph(text: string, catalogue: Catalogue = new Map()): ReadR
   const parameters = isMap(declaredMap) ? declaredMap.items.map((p) => scalarText(p.key)).filter((k): k is string => !!k) : [];
   const declared = isMap(declaredMap) ? readParameters(declaredMap, lines) : [];
   const top = (k: string) => scalarText(doc.get(k, true));
-  return { ok: true, graph: { name: top("name"), description: top("description"), nodes, edges, positions, parameters, declared } };
+  return { ok: true, graph: { name: top("name"), description: top("description"), nodes, edges, positions, notes: readNotes(doc), parameters, declared } };
 }
 
 /** `${vars.name}` as a whole value: the server variable a default is. */
@@ -666,6 +672,8 @@ export function renameNode(text: string, id: string, to: string): Change {
       }
       if (mine && isScalar(mine.key)) p.scalar(mine.key, scalarYaml(to));
     }
+    // Notes attached to the node stay attached to it.
+    renameNoteNode(doc, p, id, to);
     return to;
   });
 }

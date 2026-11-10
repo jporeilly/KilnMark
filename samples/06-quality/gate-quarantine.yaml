@@ -17,6 +17,7 @@ nodes:
 
   - id: check
     type: gate
+    note: More than 20% failing stops the run
     input: customers
     on_fail: quarantine
     rules:
@@ -37,3 +38,14 @@ nodes:
     source: files
     path: samples/quality/customers_aside.csv
     mode: replace
+
+# Notes on the canvas, for people. Kilnmark ignores this list when it runs the pipeline.
+notes:
+  - text: |-
+      **Failing rows are set aside, not dropped.** Run it, then open the run: the gate's chips say how many rows passed and how many went to the quarantine file.
+    node: customers
+    x: 0
+    y: -160
+    width: 300
+    height: 130
+    colour: green

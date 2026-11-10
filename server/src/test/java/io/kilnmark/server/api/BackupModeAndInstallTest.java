@@ -211,7 +211,7 @@ class BackupModeAndInstallTest {
     }
 
     /** A whole backup folder, its checksums right, its backup.txt naming this mode and id ("-": not at all). */
-    private static Path backup(String mode, String id) throws Exception {
+    static Path backup(String mode, String id) throws Exception {
         Path dir = Files.createTempDirectory("kilnmark-backup");
         Files.writeString(dir.resolve("kilnmark-db.dump"), "dump");
         Files.writeString(dir.resolve("kilnmark-keys.tar"), "keys");

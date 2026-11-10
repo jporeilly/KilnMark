@@ -1420,3 +1420,206 @@ button.cv-danger {
     outline-color: Highlight;
   }
 }
+
+/* ---- notes on the canvas (CanvasNotes.tsx), pipelines' and flows' alike ----
+   Drawn in the canvas's own coordinates, under its nodes. Each colour is one of the theme's tint
+   pairs (letters on a light tint, light letters on a dark one), which the contrast check covers in
+   every theme; the border is the tint's letters. */
+
+.cv-notes {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+}
+
+.cv-note {
+  --cv-note-bg: var(--km-tint-amber-bg);
+  --cv-note-fg: var(--km-tint-amber-fg);
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px;
+  background: var(--cv-note-bg);
+  color: var(--cv-note-fg);
+  border: 1px solid var(--cv-note-fg);
+  border-radius: var(--km-radius-sm);
+  box-shadow: var(--km-shadow-card);
+  font-size: 13px;
+  line-height: 1.4;
+  pointer-events: all;
+  user-select: text;
+}
+
+.cv-note-yellow {
+  --cv-note-bg: var(--km-tint-amber-bg);
+  --cv-note-fg: var(--km-tint-amber-fg);
+}
+
+.cv-note-blue {
+  --cv-note-bg: var(--km-tint-sky-bg);
+  --cv-note-fg: var(--km-tint-sky-fg);
+}
+
+.cv-note-green {
+  --cv-note-bg: var(--km-tint-green-bg);
+  --cv-note-fg: var(--km-tint-green-fg);
+}
+
+.cv-note-pink {
+  --cv-note-bg: var(--km-tint-pink-bg);
+  --cv-note-fg: var(--km-tint-pink-fg);
+}
+
+.cv-note-grey {
+  --cv-note-bg: var(--km-tint-slate-bg);
+  --cv-note-fg: var(--km-tint-slate-fg);
+}
+
+.cv-note.is-editable {
+  cursor: grab;
+  /* Dragged, not selected: its text is changed in its editor. Read-only notes can be selected and copied. */
+  user-select: none;
+}
+
+.cv-note:focus-visible {
+  outline: 3px solid var(--km-focus);
+  outline-offset: 3px;
+}
+
+.cv-note.is-editing {
+  z-index: 1;
+}
+
+.cv-note-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+
+.cv-note-body > :first-child {
+  margin-top: 0;
+}
+
+.cv-note-body > :last-child {
+  margin-bottom: 0;
+}
+
+.cv-note-body p,
+.cv-note-body ul,
+.cv-note-body ol {
+  margin: 0 0 6px;
+}
+
+.cv-note-body ul,
+.cv-note-body ol {
+  padding-left: 18px;
+}
+
+.cv-note-plain {
+  white-space: pre-wrap;
+}
+
+.cv-note-link {
+  color: inherit;
+  text-decoration: underline;
+  font-weight: 600;
+}
+
+.cv-note-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, var(--cv-note-fg) 50%);
+  border-bottom-right-radius: var(--km-radius-sm);
+}
+
+/* The editor: beside the note, over the page (CanvasNotes places it), whatever the canvas's zoom. */
+.cv-note-editor {
+  position: fixed;
+  z-index: 40;
+  width: 320px;
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  box-sizing: border-box;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--km-surface);
+  color: var(--km-ink);
+  border: 1px solid var(--km-border-control);
+  border-radius: var(--km-radius-card);
+  box-shadow: var(--km-shadow-raised);
+  cursor: auto;
+}
+
+.cv-note-editor textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+}
+
+.cv-note-editor .hint {
+  margin: 0;
+}
+
+.cv-note-colours {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.cv-note-colours legend {
+  margin-bottom: 4px;
+}
+
+.cv-note-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: var(--cv-note-bg);
+  color: var(--cv-note-fg);
+  border: 1px solid var(--cv-note-fg);
+  border-radius: var(--km-radius-pill);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* A node's own note on its card: one line, all of it on hover and while the card has the focus. */
+.cv-node-note {
+  box-sizing: border-box;
+  min-height: 18px;
+  padding: 2px 10px 0;
+  font-size: 12px;
+  line-height: 16px;
+  font-style: italic;
+  color: var(--km-ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.react-flow__node:hover .cv-node-note,
+.react-flow__node:focus-visible .cv-node-note,
+.react-flow__node:focus .cv-node-note {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.cv-node-note-field {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+}

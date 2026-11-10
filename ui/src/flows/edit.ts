@@ -12,6 +12,7 @@ import { isMap, isScalar, isSeq, parseDocument, Scalar, type Document, type Pair
 import type { Change } from "../pipelines/canvas/model";
 import { freshId } from "../pipelines/canvas/model";
 import { isBlockSeq, Patch, scalarYaml, writeLayoutBlock } from "../pipelines/canvas/patch";
+import { detachNotes } from "../pipelines/canvas/notes";
 import { kindOf, readFlowGraph, type FlowGraph, type Point } from "./graph";
 
 export type { Change };
@@ -24,6 +25,8 @@ export const runsPipeline = (type: string) => type === "run-pipeline" || type ==
 export type NodeTypeName = (typeof NODE_TYPES)[number];
 
 const LAYOUT_COMMENT = " Where the diagram draws each node. Kilnmark ignores this when it runs the flow.";
+/** The comment written above the notes on the diagram: they are for people, never for a run. */
+export const NOTES_COMMENT = " Notes on the canvas, for people. Kilnmark ignores this list when it runs the flow.";
 const CANNOT_READ = "The YAML cannot be read, so the diagram cannot change it. Fix the YAML first.";
 /** As the server: a condition is at most 1,000 characters. */
 const MOST_CONDITION = 1000;
@@ -174,8 +177,18 @@ export function addNode(text: string, type: NodeTypeName, opts: { pipeline?: str
   });
 }
 
-/** Removes a node, every connection to or from it, and its position. */
-export function removeNode(text: string, id: string): Change {
+/**
+ * Removes a node, every connection to or from it, and its position. Notes attached to it stay where
+ * they are drawn (`at`, the node's corner on the diagram), on their own.
+ */
+export function removeNode(text: string, id: string, at?: Point | null): Change {
+  const c = removeNodeOnly(text, id);
+  if ("error" in c) return c;
+  const read = readFlowGraph(text);
+  return read.ok && read.graph.notes.some((n) => n.node === id) ? detachNotes(c.text, id, at ?? read.graph.positions[id] ?? null) : c;
+}
+
+function removeNodeOnly(text: string, id: string): Change {
   return change(text, (ctx) => {
     const nodes = listOf(ctx.top, "nodes");
     const item = nodes?.items.find((m) => idOf(m) === id);

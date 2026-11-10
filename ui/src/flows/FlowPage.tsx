@@ -26,8 +26,9 @@ import { PipelineDock, useDock, type DockTab } from "../pipelines/PipelineDock";
 import type { FlowSelection } from "./FlowDiagram";
 import { FlowAddTools, FlowNodesTable, FlowSettings, usePipelineNames } from "./FlowCanvasTools";
 import { FlowRunFacts, took } from "./FlowRunSummary";
-import { connect, setPositions, type Change } from "./edit";
-import { readFlowGraph, type FlowGraph } from "./graph";
+import { connect, NOTES_COMMENT, setPositions, type Change } from "./edit";
+import { readFlowGraph, type FlowGraph, type Point } from "./graph";
+import { addNote, MAX_NOTES, NOTE_SIZE, removeNote, updateNote } from "../pipelines/canvas/notes";
 import { FlowRunStatus, RunFlowButton } from "./RunFlow";
 import { DELETE_BUTTON_ID, DeleteFlowButton, DeleteFlowConfirm } from "./DeleteFlow";
 import { starterFlow } from "./template";
@@ -305,6 +306,27 @@ export function FlowPage({
         : g.connections.some((c) => c.index === selected.connection && c.from === selected.from && c.to === selected.to);
     if (!there) choose(null);
   }, [selected, live, choose]);
+
+  // Notes on the diagram: added here, changed on the diagram itself; each change one undo step.
+  const [noteFocus, setNoteFocus] = useState<{ index: number; n: number } | null>(null);
+  // Where the diagram draws each node: a note is added beside them, and a removed node's notes stay there.
+  const [placed, setPlaced] = useState<Record<string, Point>>({});
+  const addNoteHere = () => {
+    if (!live?.ok) return;
+    const g = live.graph;
+    const on = selected && "node" in selected && g.nodes.some((n) => n.id === selected.node) ? selected.node : null;
+    const ps = Object.values(placed);
+    const left = ps.length ? Math.min(...ps.map((p) => p.x)) : 0;
+    const top = ps.length ? Math.min(...ps.map((p) => p.y)) : 0;
+    // Above the chosen node and attached to it; else above the diagram, each new one a little to the right.
+    const place = on ? { x: 0, y: -(NOTE_SIZE.height + 24) } : { x: left + g.notes.length * 24, y: top - NOTE_SIZE.height - 24 };
+    const c = addNote(yaml, { text: "", node: on, ...place, ...NOTE_SIZE, colour: "yellow" }, NOTES_COMMENT);
+    const n = g.notes.length + 1;
+    if (applyEdit(c, on ? `Added note ${n} on ${on}. Type what it says.` : `Added note ${n}. Type what it says.`) && "id" in c && c.id) {
+      const index = Number(c.id);
+      setNoteFocus((f) => ({ index, n: (f?.n ?? 0) + 1 }));
+    }
+  };
 
   // Undo is offered while the text is still what the last change left; typing in the YAML ends it.
   const lastChange = undos.current.at(-1);
@@ -602,6 +624,11 @@ export function FlowPage({
                       onSelect={choose}
                       onMove={(positions) => applyEdit(setPositions(yaml, positions), "Moved a node.")}
                       onConnect={(from, to) => applyEdit(connect(yaml, from, to), `Connected ${from} to ${to}.`)}
+                      onNoteUpdate={(i, patch, words) => applyEdit(updateNote(yaml, i, patch), words)}
+                      onNoteRemove={(i, words) => applyEdit(removeNote(yaml, i, NOTES_COMMENT), words)}
+                      noteFocus={noteFocus}
+                      onNoteFocused={() => setNoteFocus(null)}
+                      onPlaced={setPlaced}
                     />
                   </Suspense>
                 </div>
@@ -614,6 +641,14 @@ export function FlowPage({
                     <p id="fd-note" tabIndex={-1} role="status" className={canvasNote?.bad ? "error small" : "small muted"}>
                       {canvasNote?.text ?? ""}
                     </p>
+                    <button
+                      type="button"
+                      onClick={addNoteHere}
+                      disabled={!live?.ok || live.graph.notes.length >= MAX_NOTES}
+                      title="Add a note on the chosen node, or above the diagram"
+                    >
+                      Add a note
+                    </button>
                     {canUndo && (
                       <button type="button" onClick={undoChange}>
                         Undo
@@ -702,7 +737,7 @@ export function FlowPage({
                 </button>
               </p>
             ) : live?.ok ? (
-              <FlowSettings graph={live.graph} text={yaml} pipelines={pipelines} selected={selected} onSelect={choose} apply={applyEdit} />
+              <FlowSettings graph={live.graph} text={yaml} pipelines={pipelines} selected={selected} onSelect={choose} apply={applyEdit} placed={placed} />
             ) : (
               <p className="small muted">The settings can be changed again once the YAML can be read.</p>
             ))}

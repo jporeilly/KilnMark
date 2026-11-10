@@ -19,6 +19,9 @@ import {
 } from "./edit";
 import { connectionSentence, kindOf, TYPE_WORDS, whenWords, type FlowGraph, type FlowGraphNode } from "./graph";
 import { FlowStatus } from "./RunFlow";
+import { NodeNoteField } from "../pipelines/canvas/CanvasNotes";
+import { setNodeNote } from "../pipelines/canvas/notes";
+import type { Point } from "./graph";
 import { reportedWords } from "./runFacts";
 
 /** The ways a connection is taken, as the form offers them. */
@@ -385,12 +388,14 @@ function NodeSettings({
   pipelines,
   onSelect,
   apply,
+  placed,
 }: {
   node: FlowGraphNode;
   text: string;
   pipelines: string[] | null;
   onSelect: (s: FlowSelection | null) => void;
   apply: (c: Change, label: string) => boolean;
+  placed?: Record<string, Point>;
 }) {
   const id = useId();
   const fields = FIELDS[node.type] ?? [];
@@ -425,6 +430,14 @@ function NodeSettings({
       <p className="small fd-tools-wide">
         {TYPE_WORDS[node.type] ?? node.type}: {node.summary}.
       </p>
+      <div className="fd-tools-wide">
+        <NodeNoteField
+          id={`${id}-note`}
+          note={node.note ?? null}
+          readOnly={false}
+          onNote={(t) => apply(setNodeNote(text, node.id, t), t ? `Changed the note of ${node.id}.` : `Removed the note of ${node.id}.`)}
+        />
+      </div>
       {fields.map((f) => {
         const fid = `${id}-${f.key}`;
         const v = valueOf(f);
@@ -486,7 +499,7 @@ function NodeSettings({
           type="button"
           className="danger"
           onClick={() => {
-            if (apply(removeNode(text, node.id), `Removed node ${node.id} and its connections.`)) {
+            if (apply(removeNode(text, node.id, placed?.[node.id]), `Removed node ${node.id} and its connections.`)) {
               onSelect(null);
             }
           }}
@@ -511,6 +524,7 @@ export function FlowSettings({
   selected,
   onSelect,
   apply,
+  placed,
 }: {
   graph: FlowGraph;
   text: string;
@@ -518,6 +532,8 @@ export function FlowSettings({
   selected: FlowSelection | null;
   onSelect: (s: FlowSelection | null) => void;
   apply: (c: Change, label: string) => boolean;
+  /** Where the diagram draws each node: a removed node's notes stay there. */
+  placed?: Record<string, Point>;
 }) {
   const id = useId();
   const [editChoice, setEditChoice] = useState<WhenChoice>("success");
@@ -538,7 +554,7 @@ export function FlowSettings({
   }, [chosenConnection?.index, chosenConnection?.when]);
 
   if (chosenNode) {
-    return <NodeSettings key={chosenNode.id} node={chosenNode} text={text} pipelines={pipelines} onSelect={onSelect} apply={apply} />;
+    return <NodeSettings key={chosenNode.id} node={chosenNode} text={text} pipelines={pipelines} onSelect={onSelect} apply={apply} placed={placed} />;
   }
   if (!chosenConnection) return <p className="muted">Choose a node or a connection on the diagram to change it here.</p>;
   return (

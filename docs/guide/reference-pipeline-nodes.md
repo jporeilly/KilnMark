@@ -21,6 +21,7 @@ variables](pipelines.md#parameters-and-server-variables) explains.
 | `type` | The node's type: one of the entries below. Required. |
 | `input` | The node that feeds this one: `input: tidy` reads the `out` port of `tidy`, `input: tidy.rejected` its `rejected` port. A `union` lists several: `input: [north, south]`. |
 | `inputs` | For a node with named inputs, each input and the node feeding it: `inputs: { main: orders, lookup: customers }`. |
+| `note` | A short note for people, shown under the node's name on the canvas: plain text, at most 280 characters. Kilnmark ignores it when it runs the pipeline. Never put data values in it: notes are not masked ([Notes on the canvas](pipelines.md#notes-on-the-canvas)). |
 
 Every other key of a node is one of its settings; a key the node does not take is a problem, with
 its line.
@@ -45,7 +46,10 @@ nothing connected to it, a row that fails stops the run ([Rows that fail](rows-t
 A pipeline's own keys are `kilnmark` (always `pipeline/v1`), `name`, `description`, `parameters`
 ([Parameters and server variables](pipelines.md#parameters-and-server-variables)), `quality`
 (`min_score`, [Quality of what a run writes](quality-gates.md#quality-of-what-a-run-writes)), `run`
-(below), `nodes` and `layout` (where the canvas draws each node).
+(below), `nodes`, `layout` (where the canvas draws each node) and `notes` (the notes on the canvas,
+at most 50, each with `text` of at most 2,000 characters and optionally `node`, `x`, `y`, `width`,
+`height` and `colour`: [Notes on the canvas](pipelines.md#notes-on-the-canvas)). Kilnmark ignores
+`layout` and `notes` when it runs the pipeline.
 
 `run:` says how each run of the pipeline is tried, as in `run: { retries: 2, retry_delay: 5m }`
 ([Trying a run again](pipelines.md#trying-a-run-again)):

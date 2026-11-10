@@ -32,7 +32,7 @@ the operator: on Windows the Podman machine is theirs, on Linux the account's ro
 | `down` | Stops it. Every volume, so all data, is kept |
 | `restart [service]` | Restarts everything (a stop, then `up`, so `keycloak-setup` and `samples-db` run again), or one service |
 | `status` | Version, folders, containers, health, the last backup, and, with the bundled Keycloak, the hourly expiry of unused temporary passwords |
-| `logs [service] [-f]` | The last 200 lines of the logs, or follows them |
+| `logs [service] [-f]` | The last 200 lines of the logs, or follows them ([Reading the logs](../backup-and-restore.md#reading-the-logs)) |
 | `compose ARGS` | Runs compose as Kilnmark runs it, with the install's project, settings, secrets and profiles, for a command by hand: `compose ps`, `compose exec postgres ...` |
 | `check` | Checks the machine and the install, for its mode, and prints the command that fixes each problem (below). Changes nothing |
 | `configure [KEY=VALUE ...]` | Shows the install's answers, or changes them (below) |
@@ -105,6 +105,7 @@ fixes it. It ends with a failure code when there is a problem.
 | The mode: production or starter-pack, and the one Kilnmark recorded | The line to put back in `config/.env` |
 | A Starter Pack install has the bundled Keycloak and `KILNMARK_STARTER=allowed`; production has no `KILNMARK_STARTER`, and your identity provider's settings | The line to add or delete |
 | Kilnmark and Keycloak answer; the hourly expiry is set up | `kilnmark.sh up`; `kilnmark.sh restart` |
+| Linux: the account may read the containers' logs (Podman keeps them in files, not in a system journal it cannot read) | `kilnmark.sh restart` ([Reading the logs](../backup-and-restore.md#reading-the-logs)) |
 | HTTPS from other machines | `kilnmark.sh configure tls=on ...` or `tls=proxy` |
 | A backup from the last day | `kilnmark.sh backup` |
 
