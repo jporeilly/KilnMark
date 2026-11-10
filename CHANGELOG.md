@@ -235,6 +235,21 @@ Each was found in Kilnmark's own reviews and walks of 0.1.2. The most severe com
     failing statement included.
   - The control scripts never show or log the podman command lines podman-compose 1.0.x prints,
     logging or not.
+- **A column worked out from a computed column lost its sensitive mark.** Severity **High**: a
+  designer without the unmask grant could write a sensitive value into a table unmarked, where
+  anyone who may see that table, viewers included, would see it unmasked. In 0.1.1. A `compute`
+  node's columns may each use the ones computed before them, but a column was marked only when it
+  used a marked input column: with `a: upper(ssn)` and then `b: a`, `b` was not marked where the
+  pipeline wrote it. A mark now carries down the node's list of columns.
+- **Windows: other accounts could change the installed program.** Severity **High**: any account
+  that could sign in to the computer could change the scripts and `compose.yaml` the operator
+  runs, and so run its own program as the operator, with the admin token to hand. In 0.1.1, which
+  installed into `C:\Kilnmark` and protected only `config`, `certs` and `backups` there: `versions`
+  and the launchers kept what a folder under `C:\` inherits, which lets any signed-in account
+  change what is in it. 0.1.2 installs the program into `C:\Program Files\Kilnmark` (full control
+  for the Administrators and SYSTEM, read and run for Users, nothing inherited) and the data into
+  `C:\ProgramData\Kilnmark` (the operator, SYSTEM and the Administrators only), each made with
+  those permissions from its first moment.
 - **Linux: root followed links in the account's data folder.** Severity **High**: the service
   account could have planted a link that root then wrote through, during install, upgrade or
   uninstall, and so changed any file on the machine. Not in any release: in 0.1.1 root ran only
@@ -583,8 +598,10 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
   review a new `example` column.
 - **A route can no longer be called `errors`**: it is the name of the new errors port.
 - **Settings**: `KILNMARK_MODE` is new, and required. `KILNMARK_PROJECT` must be lower-case
-  letters, digits, `-` and `_`. `KILNMARK_FILES_DIR` must be a full path, and Kilnmark now sees it
-  read-only at `/srv/share`, while `/srv/files` is a volume Kilnmark writes. The one-offs' per-run
+  letters, digits, `-` and `_`. Your own folder of files is now `KILNMARK_FILES_DIR`, a full path,
+  which Kilnmark sees read-only at `/srv/share`, while `/srv/files` is a volume Kilnmark writes: a
+  files source on your own folder uses the path `/srv/share`, not `/srv/files` as in 0.1.1, where
+  you mounted it yourself in `compose.yaml`. The one-offs' per-run
   folder setting is `KILNMARK_RUN_DIR`. The OIDC group mappings and `KILNMARK_KEYCLOAK_BIND` come
   from `config/.env` only, and a host other than `localhost` with the bundled Keycloak needs
   `tls=proxy`.
@@ -598,6 +615,14 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
 - **On production**, a sign-in at kilnmark.com, by user name or email, or in the group
   `kilnmark-starter-pack` is refused and recorded, a source of kind `sample-data` is refused, and
   the samples are refused.
+- **In the bundled Keycloak**, people can no longer change their own email address or first or
+  last name (admins can), and user names are fixed.
+- **A node's retries** wait at most an hour each, as a run's do.
+- **What `check` looks for** includes WSL 2.7.11 (3.0.x breaks crun's pids controller) and 5 GB
+  of memory with the bundled Keycloak.
+- **On Windows, `host.containers.internal` and `host.docker.internal`** now point at the
+  computer's network address, so a model server or database on the same computer can be reached
+  under WSL's mirrored networking; `KILNMARK_HOST_ADDRESS` in `config/.env` chooses the address.
 
 ### Details
 
@@ -868,14 +893,15 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
   sensitive.
 - **Control script**: `install --starter` (`-Starter`) makes a Starter Pack install, with the
   bundled Keycloak, and turns the pack on; `install` asks how people sign in on production
-  (`--auth`: the bundled Keycloak) and, with the bundled Keycloak, offers the first admin;
+  (the `identity` answer: `bundled` for the bundled Keycloak, or `own`) and, with the bundled
+  Keycloak, offers the first admin;
   `starter people [--new-password | --remove]`; `people add | import FILE | list`. `up` adds
   secrets a newer version needs to `config/.env` before starting, and refuses a one-run setting
   (`KILNMARK_PEOPLE_ACTION`, `KILNMARK_PERSON_*`, `KILNMARK_STARTER_PEOPLE_ACTION`) written there.
   The control scripts ignore the mode and those settings in the shell's environment, read `export`
   lines in `config/.env` as compose does, and read a setting's name with its case exactly.
-  `install --auth` with other ports now also sets `KILNMARK_KEYCLOAK_URL` and `KILNMARK_URL` to
-  match them, so a second install's sign-in never goes to the first one's Keycloak. The server
+  An install with the bundled Keycloak on other ports also sets `KILNMARK_KEYCLOAK_URL` and
+  `KILNMARK_URL` to match them, so a second install's sign-in never goes to the first one's Keycloak. The server
   image makes `/srv/files` its user's, and the database image carries `kilnmark-samples-db.sh`.
   `keycloak-setup` finds groups by path, so a subgroup named like one of its groups is never taken
   for it. `uninstall --purge` keeps, and names, an image another install on the machine still
@@ -1020,9 +1046,8 @@ From walking a 0.1.2 Starter Pack install, in the web UI:
   as a login, and `SignInEvents` now passes over it); it pauses the schedules set above a role the
   provider has lowered since, and nothing when the role is the same. Signing out asks the provider
   to revoke the refresh token (RFC 7009) where the provider offers that (Keycloak and Okta do, Entra
-  ID does not), so a copy of the session cookie cannot renew afterwards;
-  with the bundled Keycloak this ends its session too, so signing in again asks for the password
-  and code. A session that can no longer sign anyone in is answered 401 "Your sign-in has ended.
+  ID does not), so a copy of the session cookie cannot renew afterwards. Revoking it does not end
+  the provider's own session: signing out now does that too (see Security). A session that can no longer sign anyone in is answered 401 "Your sign-in has ended.
   Sign in again." with its cookie cleared, so later requests do not ask the provider again.
   New `KILNMARK_OIDC_SCOPES` (`quarkus.oidc.authentication.scopes`) for providers that issue a
   refresh token only for `offline_access`. The bundled Keycloak keeps its 5-minute tokens.

@@ -18,7 +18,8 @@ controls regulators expect are in
   (`docs/guide`), the design notes (`docs/design`), an ADR for a decision (`docs/adr`), and a
   CHANGELOG entry under Unreleased.
 - Each PR's CHANGELOG entry goes under Unreleased in the right section: What's new, Security (with
-  its severity), Fixed, Changed (anything a customer must act on) or Details.
+  its severity, and whether the flaw was in a release), Fixed, Changed (anything a customer must
+  act on, or that behaves differently) or Details.
 - Ask before deleting data, rewriting history, force-pushing, or changing repository settings.
 - Stacked PRs: when a PR is moved onto `main` after the one under it merges, GitHub can report a
   conflict that is not there until the branch gets a new push. Merge `main` into the branch
