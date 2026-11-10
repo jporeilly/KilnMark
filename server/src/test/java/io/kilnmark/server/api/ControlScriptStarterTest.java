@@ -1753,7 +1753,7 @@ class ControlScriptStarterTest {
             + "    else echo \"${FAKE_LOG_DRIVER-}\"; fi ;; esac; exit 0; fi\n"
             // the containers there (FAKE_CONTAINERS: "id service" a line), the log driver they were made with, the
             // services this start runs (FAKE_SERVICES), and each down, in FAKE_UP_LOG
-            + "case \"$*\" in ps*compose.service*) [ -z \"${FAKE_CONTAINERS-}\" ] || printf '%s\\n' \"$FAKE_CONTAINERS\"; exit 0 ;;\n"
+            + "case \"$*\" in ps*\"{{index .Labels\"*) [ -z \"${FAKE_CONTAINERS-}\" ] || printf '%s\\n' \"$FAKE_CONTAINERS\"; exit 0 ;;\n"
             + "  *\"config --services\"*) printf '%s\\n' ${FAKE_SERVICES:-kilnmark postgres}; exit 0 ;;\n"
             + "  *\" down\"*) echo down >> \"${FAKE_UP_LOG:-/dev/null}\" ;; esac\n"
             + "case \"$1\" in inspect) echo \"${FAKE_CONTAINER_LOG_DRIVER:-k8s-file}\"; exit 0 ;; esac\n"
