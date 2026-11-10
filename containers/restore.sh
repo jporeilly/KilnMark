@@ -112,7 +112,10 @@ fi
 if ! $yes; then
   echo "This puts Kilnmark back to the backup taken at $taken (Kilnmark $from)."
   if $restore_keycloak; then echo "The bundled Keycloak goes back to it too: its people, groups and one-time code setups."; fi
-  echo "The database and keys it replaces are kept, to go back to. To go on: $again $src --yes"
+  # the command as given, the backup's folder in quotes where it has a space
+  case "$src" in *" "*) shown="\"$src\"" ;; *) shown=$src ;; esac
+  if $keys; then also=""; else also=" --without-keys"; fi
+  echo "The database and keys it replaces are kept, to go back to. To go on: $again $shown$also --yes"
   exit 2
 fi
 

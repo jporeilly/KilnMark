@@ -390,9 +390,10 @@ Each was found in Kilnmark's own reviews and walks of 0.1.2. The most severe com
   journald, which files the lines of a system account, such as `kilnmark`, in the system journal,
   where that account cannot read them: `kilnmark.sh logs` and `podman logs` printed nothing. Install,
   and every `up` (so an upgrade too), now sets `log_driver = "k8s-file"` under `[containers]` in the
-  account's own `~/.config/containers/containers.conf`, as the account, adding it to the settings
-  already there; a file that is a link, or that Podman would not read with it, is left as it is,
-  with what to do. A container keeps the driver it was made with, so `up` makes Kilnmark's
+  account's own `~/.config/containers/containers.conf`, as the account, with `log_size_max` at 50 MB
+  where it sets no limit, adding them to the settings already there. The file is kept only when
+  Podman reads it and then keeps logs in files; a link, or a file Podman cannot read, is left as it
+  is, with what to do. A container keeps the driver it was made with, so `up` makes Kilnmark's
   containers again, once, where they were made with journald (all data is kept). `check` warns,
   with the fix (`kilnmark.sh restart`), when the containers' logs go to a journal the account cannot
   read. Docker, and Windows' Podman machine, are unchanged; `compose.yaml` names no log driver.
@@ -404,7 +405,8 @@ Each was found in Kilnmark's own reviews and walks of 0.1.2. The most severe com
   to run `./restore.sh <dir> --yes`; it now says `/opt/kilnmark/kilnmark.sh restore <dir> --yes`
   (Windows: `& "C:\Program Files\Kilnmark\kilnmark.cmd" restore "<dir>" -Yes`). At the end it said
   to drop the kept databases with `podman compose exec ...`, which lacks the install's settings and
-  secrets and stops; it now says `kilnmark.sh compose exec ...`.
+  secrets and stops; it now says `kilnmark.sh compose exec ...`. It keeps `--without-keys` when it
+  was given.
 - **Backing up and restoring Kilnmark** describes the 0.1.2 layout: the program in `/opt/kilnmark`
   or `C:\Program Files\Kilnmark`; settings, backups and logs in `/var/opt/kilnmark` or
   `C:\ProgramData\Kilnmark`; each command run as the account that runs Kilnmark, or on Windows from

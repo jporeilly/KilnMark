@@ -1743,11 +1743,19 @@ class ControlScriptStarterTest {
             + "if [ \"$1 $2\" = \"version --format\" ]; then echo \"${FAKE_PODMAN_VERSION:-5.4.2}\"; exit 0; fi\n"
             + "if [ \"$1\" = info ]; then case \"$*\" in *CgroupsVersion*) echo v2 ;; *CgroupControllers*) echo \"${FAKE_CGROUPS:-[cpu memory pids]}\" ;;\n"
             + "  *MemTotal*) echo 8589934592 ;;\n"
-            // the log driver a new container gets (FAKE_LOG_DRIVER); FAKE_BAD_CONF: Podman cannot read the containers.conf
-            // given it; FAKE_INFO_FAILS: nor the one it has
+            // the log driver a new container gets: FAKE_LOG_DRIVER, or k8s-file once the tests' containers.conf says so,
+            // as Podman would (unless FAKE_DROPIN: a containers.conf.d file sets another); FAKE_BAD_CONF: Podman cannot
+            // read the containers.conf given it; FAKE_INFO_FAILS: nor the one it has
             + "  *LogDriver*) [ -z \"${FAKE_INFO_FAILS-}\" ] || exit 125\n"
-            + "    [ -z \"${CONTAINERS_CONF-}\" ] || [ -z \"${FAKE_BAD_CONF-}\" ] || exit 125; echo \"${FAKE_LOG_DRIVER-}\" ;; esac; exit 0; fi\n"
-            // the log driver the containers there were made with
+            + "    [ -z \"${CONTAINERS_CONF-}\" ] || [ -z \"${FAKE_BAD_CONF-}\" ] || exit 125\n"
+            + "    if [ -z \"${CONTAINERS_CONF-}\" ] && [ -z \"${FAKE_DROPIN-}\" ] && [ -n \"${KILNMARK_TEST_CONTAINERS_DIR-}\" ]"
+            + " && grep -qs '^log_driver = \"k8s-file\"$' \"$KILNMARK_TEST_CONTAINERS_DIR/containers.conf\"; then echo k8s-file\n"
+            + "    else echo \"${FAKE_LOG_DRIVER-}\"; fi ;; esac; exit 0; fi\n"
+            // the containers there (FAKE_CONTAINERS: "id service" a line), the log driver they were made with, the
+            // services this start runs (FAKE_SERVICES), and each down, in FAKE_UP_LOG
+            + "case \"$*\" in ps*compose.service*) [ -z \"${FAKE_CONTAINERS-}\" ] || printf '%s\\n' \"$FAKE_CONTAINERS\"; exit 0 ;;\n"
+            + "  *\"config --services\"*) printf '%s\\n' ${FAKE_SERVICES:-kilnmark postgres}; exit 0 ;;\n"
+            + "  *\" down\"*) echo down >> \"${FAKE_UP_LOG:-/dev/null}\" ;; esac\n"
             + "case \"$1\" in inspect) echo \"${FAKE_CONTAINER_LOG_DRIVER:-k8s-file}\"; exit 0 ;; esac\n"
             + "case \"$*\" in *install_id*) echo 0e38a49e-ee00-4b1e-98f9-fe3c44e6fa09; exit 0 ;; *psql*) [ \"${FAKE_RECORDED_MODE-}\" != none ] || exit 1\n"
             + "  echo \"${FAKE_RECORDED_MODE:-starter-pack}\"; exit 0 ;; esac\n"

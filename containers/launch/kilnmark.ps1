@@ -3194,7 +3194,7 @@ function Invoke-Restore([string[]]$Options) {
     if (-not $yes) {
         Write-Host ('This puts Kilnmark back to the backup taken at ' + $taken + ' (Kilnmark ' + $from + ').')
         if ($restoreKeycloak) { Write-Host 'The bundled Keycloak goes back to it too: its people, groups and one-time code setups.' }
-        Write-Host ('The database and keys it replaces are kept, to go back to. To go on: ' + (Get-SelfCall $script:Root) + ' restore "' + $src + '" -Yes')
+        Write-Host ('The database and keys it replaces are kept, to go back to. To go on: ' + (Get-SelfCall $script:Root) + ' restore "' + $src + '"' + $(if ($keys) { '' } else { ' -WithoutKeys' }) + ' -Yes')
         exit 2
     }
     $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')

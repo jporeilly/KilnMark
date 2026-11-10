@@ -228,18 +228,19 @@ A backup is proven only by restoring it. Every quarter, or as your policy asks:
 
 ## Reading the logs
 
-`kilnmark.sh logs SERVICE` shows the last 200 lines a service wrote: `kilnmark`, `postgres`, and with
-the bundled Keycloak `keycloak`, `keycloak-db` and `keycloak-setup`. Without a service it shows them
+`kilnmark.sh logs SERVICE` shows the last 200 lines a service wrote: `kilnmark`, `postgres`, and
+with the bundled Keycloak `keycloak`, `keycloak-db` and `keycloak-setup`. Without a service it shows them
 all; `-f` follows them as they come. What the control script itself said, each run of a command, is
 in the data folder's `logs`.
 
-On Linux, the account's rootless Podman keeps the containers' logs in files: install, and every `up`, sets
-`log_driver = "k8s-file"` under `[containers]` in the account's own
-`~/.config/containers/containers.conf`, adding it to the settings already there. Podman's usual
-default, the system journal, files a system account's lines where that account cannot read them,
-and `logs` would show nothing. A container keeps the log driver it was made with, so `up` makes
-Kilnmark's containers again, once, where they were made with another (all data is kept: it is in
-the volumes). Each container's log file goes with the container, at the next `restart` or `down`.
+On Linux, the account's rootless Podman keeps the containers' logs in files: install, and every
+`up`, set `log_driver = "k8s-file"` under `[containers]` in the account's own
+`~/.config/containers/containers.conf`, with `log_size_max = 52428800` (50 MB a container) where
+it sets no limit of its own, adding them to the settings already there. Podman's usual default, the
+system journal, files a system account's lines where that account cannot read them, and `logs`
+would show nothing. A container keeps the log driver it was made with, so `up` makes Kilnmark's
+containers again, once, where they were made with another (all data is kept: it is in the
+volumes). Each container's log file goes with the container, at the next `restart` or `down`.
 `check` warns when the containers' logs go to a journal the account cannot read, with the fix,
 `kilnmark.sh restart`. Docker, and Podman on Windows, are left as they are.
 

@@ -832,11 +832,26 @@ class ControlScriptInstallTest {
                 throw new IllegalStateException(x);
             }
         };
-        // none yet: made, with the one setting
+        String size = "log_size_max = 52428800\n";
+        // none yet: made, with the driver and a limit
         String made = set.apply(Map.of(), engine);
         assertTrue(made.contains("now keeps the containers' logs in files"), made);
-        assertEquals("[containers]\nlog_driver = \"k8s-file\"\n", Files.readString(conf));
-        // journald set in the account's [containers] table: that line replaced, every other kept
+        assertEquals("[containers]\nlog_driver = \"k8s-file\"\n" + size, Files.readString(conf));
+        // journald and no limit: the driver replaced where it was, the limit added at the table's end
+        String bare = "[containers]\nlog_driver = \"journald\"\ntz = \"UTC\"\n";
+        Files.writeString(conf, bare);
+        assertTrue(set.apply(Map.of(), engine).contains("now keeps the containers' logs in files"));
+        assertEquals("[containers]\nlog_driver = \"k8s-file\"\ntz = \"UTC\"\n" + size, Files.readString(conf));
+        // what is added goes before the blank lines that end the table
+        Files.writeString(conf, "[containers]\nlog_driver = \"journald\"\n\n\n[engine]\nx = 1\n");
+        assertTrue(set.apply(Map.of(), engine).contains("now keeps the containers' logs in files"));
+        assertEquals("[containers]\nlog_driver = \"k8s-file\"\n" + size + "\n\n[engine]\nx = 1\n", Files.readString(conf));
+        // a containers.conf.d file that sets another driver: the file put back as it was, and said
+        Files.writeString(conf, bare);
+        String dropIn = set.apply(Map.of("FAKE_DROPIN", "yes"), engine);
+        assertTrue(dropIn.contains("still gives journald") && dropIn.contains("was put back as it was"), dropIn);
+        assertEquals(bare, Files.readString(conf));
+        // journald set in the account's [containers] table, with its own limit: that line replaced, every other kept
         String own = "# the account's own\n[containers]\nlog_driver = \"journald\"   # was\nlog_size_max = 1048576\n\n"
             + "[engine]\nevents_logger = \"file\"\n";
         Files.writeString(conf, own);
@@ -851,7 +866,7 @@ class ControlScriptInstallTest {
         String other = "[engine]\nevents_logger = \"file\"\n";
         Files.writeString(conf, other);
         assertTrue(set.apply(Map.of(), engine).contains("now keeps the containers' logs in files"));
-        assertEquals(other + "\n[containers]\nlog_driver = \"k8s-file\"\n", Files.readString(conf));
+        assertEquals(other + "\n[containers]\nlog_driver = \"k8s-file\"\n" + size, Files.readString(conf));
         // a file Podman would not read with it, or keys with dots it could not take a table beside: left as they are
         Files.writeString(conf, table);
         String unread = set.apply(Map.of("FAKE_BAD_CONF", "yes"), engine);
@@ -895,9 +910,13 @@ class ControlScriptInstallTest {
         Path docker = Files.copy(engine, Files.createTempDirectory("kilnmark-docker").resolve("docker-engine-ok.sh"));
         assertFalse(set.apply(Map.of(), docker).contains("log_driver"));
         assertFalse(Files.exists(conf), "Docker's own settings are left alone");
-        // the tests' own account is never touched: without the tests' folder it writes nothing
+        // the tests' own account is never touched: without the tests' folder it writes nothing, wherever HOME is
+        Path home = Files.createTempDirectory("kilnmark-home");
+        String homeWords = home.toString().replace('\\', '/');
+        String untouched = run(e, launcher(e), List.of("_podman-logs"), root, engine,
+            Map.of("FAKE_LOG_DRIVER", "journald", "HOME", homeWords, "XDG_CONFIG_HOME", homeWords + "/.config"), "");
+        assertFalse(Files.exists(home.resolve(".config")), untouched);
         String sh = Files.readString(LAUNCH.resolve("kilnmark.sh"));
-        assertTrue(sh.contains("if test_hooks; then [ -n \"${KILNMARK_TEST_CONTAINERS_DIR:-}\" ] && printf"), "the tests' folder only");
         // install sets it as the account, before the account's check; and never as root
         String install = sh.substring(sh.indexOf("\ncmd_install() {"), sh.indexOf("\ninstalled_user() {"));
         assertTrue(install.contains("account_step \"$root/kilnmark.sh\" _podman-logs < /dev/null\n  account_step \"$root/kilnmark.sh\" check < /dev/null"),
@@ -907,8 +926,10 @@ class ControlScriptInstallTest {
     }
 
     /**
-     * up makes Kilnmark's containers again, once, where they were made with another log driver than
-     * the account's Podman now gives (they keep the one they were made with); else it leaves them.
+     * up makes Kilnmark's containers again, once (a down, then the start), where those of the services
+     * it runs were made with another log driver than the account's Podman now gives (they keep the one
+     * they were made with); never for a container of another profile, which that down would not
+     * remove, so every start would go round again; and else it leaves them.
      */
     @Test
     void theLinuxEditionsUpMakesTheContainersAgainForTheirLogs() throws Exception {
@@ -918,10 +939,22 @@ class ControlScriptInstallTest {
         try (ControlScriptStarterTest.Api api = ControlScriptStarterTest.Api.start()) {
             Path root = ControlScriptStarterTest.installRoot(false);
             ControlScriptStarterTest.writeEnv(root, Map.of("KILNMARK_MODE", "production", "KILNMARK_PORT", String.valueOf(api.port())));
+            Path upLog = root.resolve("up.log");
             Map<String, String> env = new LinkedHashMap<>(Map.of("KILNMARK_TEST_CONTAINERS_DIR", dir.toString().replace('\\', '/'),
-                "FAKE_LOG_DRIVER", "k8s-file", "FAKE_CONTAINER_LOG_DRIVER", "journald"));
+                "FAKE_LOG_DRIVER", "k8s-file", "FAKE_CONTAINER_LOG_DRIVER", "journald", "FAKE_CONTAINERS", "c1 kilnmark"));
             String again = run(e, launcher(e), List.of("up", "--no-browser"), root, engine, env, "");
             assertTrue(again.contains("Making Kilnmark's containers again, once") && again.contains("is ready at"), again);
+            List<String> ran = Files.readAllLines(upLog).stream().map(String::strip).toList();
+            assertTrue(ran.indexOf("down") >= 0 && ran.indexOf("down") < ran.size() - 1 && ran.get(ran.size() - 1).startsWith("install id"),
+                "a down, then the start: " + ran);
+            // a container of another profile (started by hand), made with journald: left, and no down
+            Files.delete(upLog);
+            env.put("FAKE_CONTAINERS", "c2 ai");
+            String other = run(e, launcher(e), List.of("up", "--no-browser"), root, engine, env, "");
+            assertTrue(!other.contains("Making Kilnmark's containers again") && other.contains("is ready at"), other);
+            assertFalse(Files.readAllLines(upLog).contains("down"), other);
+            // made with k8s-file already: left
+            env.put("FAKE_CONTAINERS", "c1 kilnmark");
             env.put("FAKE_CONTAINER_LOG_DRIVER", "k8s-file");
             String kept = run(e, launcher(e), List.of("up", "--no-browser"), root, engine, env, "");
             assertTrue(!kept.contains("Making Kilnmark's containers again") && kept.contains("is ready at"), kept);
@@ -934,10 +967,17 @@ class ControlScriptInstallTest {
         Edition e = linux();
         Path engine = ControlScriptStarterTest.fakeEngine(false, true);
         Path root = installed(e, fourPorts(), Map.of());
-        String journal = run(e, launcher(e), List.of("check"), root, engine, checkEnv(e, "2.7.11.0", Map.of("FAKE_LOG_DRIVER", "journald")), "");
-        assertTrue(journal.contains("Warning: Podman keeps the containers' logs in the system journal, which "), journal);
-        String fix = fixFor(journal, "Podman keeps the containers' logs in the system journal");
-        assertTrue(fix.contains("kilnmark.sh restart") && fix.contains("log_driver = \"k8s-file\""), journal);
+        // the account in no group that may read the journal (whatever the tests' own account is in)
+        String journal = run(e, launcher(e), List.of("check"), root, engine,
+            checkEnv(e, "2.7.11.0", Map.of("FAKE_LOG_DRIVER", "journald", "KILNMARK_TEST_GROUPS", "kmtest-nobody")), "");
+        assertTrue(journal.contains("Warning: Podman keeps the containers' logs in the system journal, which ")
+            && journal.contains("restart sets log_driver = \"k8s-file\""), journal);
+        // the fix a command alone, to paste
+        assertTrue(fixFor(journal, "Podman keeps the containers' logs in the system journal").endsWith("kilnmark.sh restart"), journal);
+        // in adm, which may read it: fine
+        String adm = run(e, launcher(e), List.of("check"), root, engine,
+            checkEnv(e, "2.7.11.0", Map.of("FAKE_LOG_DRIVER", "journald", "KILNMARK_TEST_GROUPS", "kmtest-nobody adm")), "");
+        assertTrue(adm.contains("OK: Podman keeps the containers' logs in the journal, which this account may read"), adm);
         String files = run(e, launcher(e), List.of("check"), root, engine, checkEnv(e, "2.7.11.0", Map.of("FAKE_LOG_DRIVER", "k8s-file")), "");
         assertTrue(files.contains("OK: Podman keeps the containers' logs in files logs can read") && !files.contains("system journal"), files);
     }
@@ -1014,6 +1054,14 @@ class ControlScriptInstallTest {
         String src = backup.toString().replace('\\', '/');
         String asked = run(e, launcher(e), List.of("restore", src), root, engine, Map.of(), "");
         assertTrue(asked.contains("/kilnmark.sh restore " + src + " --yes") && !asked.contains("./restore.sh"), asked);
+        // as it was asked: without the keys, and a folder with a space in quotes
+        String withoutKeys = run(e, launcher(e), List.of("restore", src, "--without-keys"), root, engine, Map.of(), "");
+        assertTrue(withoutKeys.contains("/kilnmark.sh restore " + src + " --without-keys --yes"), withoutKeys);
+        Path spaced = Files.move(backup, Files.createTempDirectory("kilnmark backups").resolve("kilnmark-20261110T080000Z"));
+        String spacedSrc = spaced.toString().replace('\\', '/');
+        String quoted = run(e, launcher(e), List.of("restore", spacedSrc), root, engine, Map.of(), "");
+        assertTrue(quoted.contains("/kilnmark.sh restore \"" + spacedSrc + "\" --yes"), quoted);
+        assertEquals(backup, Files.move(spaced, backup));
         String none = run(e, launcher(e), List.of("restore"), root, engine, Map.of(), "");
         assertTrue(none.contains("/kilnmark.sh restore /path/to/backups/kilnmark-<time> --yes"), none);
         // with --yes, to its end: restore.sh as the control script runs it, with a compose that answers as this install
@@ -1050,6 +1098,8 @@ class ControlScriptInstallTest {
         Path backup = BackupModeAndInstallTest.backup("production", BackupModeAndInstallTest.ID);
         String asked = run(e, launcher(e), List.of("restore", backup.toString()), root, engine, Map.of(), "");
         assertTrue(asked.contains("To go on: & \"" + root.resolve("kilnmark.cmd") + "\" restore \"" + backup + "\" -Yes"), asked);
+        String withoutKeys = run(e, launcher(e), List.of("restore", backup.toString(), "-WithoutKeys"), root, engine, Map.of(), "");
+        assertTrue(withoutKeys.contains("restore \"" + backup + "\" -WithoutKeys -Yes"), withoutKeys);
         String none = run(e, launcher(e), List.of("restore"), root, engine, Map.of(), "");
         assertTrue(none.contains("& \"" + root.resolve("kilnmark.cmd") + "\" restore \"C:\\ProgramData\\Kilnmark\\backups\\kilnmark-<time>\" -Yes"), none);
     }
