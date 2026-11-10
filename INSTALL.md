@@ -128,12 +128,12 @@ line saying why. On Linux:
 9. Add the first admin, with the bundled Keycloak and a first admin.
 10. Turn the Starter Pack on, on a Starter Pack install.
 
-An install that fails before step 7 removes the program folder and the data folder it made, and
-says so: fix the problem, then run install again. The account is kept. From step 7 on the folders
-stay, and `uninstall --purge` removes them, to install afresh.
+On Linux, an install that fails before step 7 removes the program folder and the data folder it
+made, and says so: fix the problem, then run install again. The account is kept. From step 7 on
+the folders stay, and `uninstall --purge` removes them, to install afresh.
 
-Windows does the same, without the account's check, and with the folders' step (3 to 6 on Linux)
-as one step run as an administrator: `C:\Program Files\Kilnmark`, the Administrators', read-only to everyone else, and
+Windows takes the same steps, without the account's check, and with the folders' step (3 to 6 on
+Linux) as one step run as an administrator: `C:\Program Files\Kilnmark`, the Administrators', read-only to everyone else, and
 `C:\ProgramData\Kilnmark`, the operator's, SYSTEM's and the Administrators', nobody else's.
 
 A fresh install only: install refuses a program folder that already holds Kilnmark, and a data

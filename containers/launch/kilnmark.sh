@@ -73,11 +73,14 @@ cleanup() {
 undo_root="" undo_data=""
 undo_install() {
   [ -n "$undo_root$undo_data" ] || return 0
-  local gone="$undo_root"
-  if [ -n "$undo_data" ] && [ ! -L "$undo_data" ]; then rm -rf "${undo_data:?}" && gone="$gone and $undo_data"; fi
-  [ -z "$undo_root" ] || rm -rf "${undo_root:?}"
+  local f gone="" left=""
+  for f in "$undo_root" "$undo_data"; do
+    [ -n "$f" ] || continue
+    if [ ! -L "$f" ] && rm -rf "${f:?}" 2> /dev/null; then gone="${gone:+$gone and }$f"; else left="${left:+$left and }$f"; fi
+  done
   undo_root="" undo_data=""
-  echo "Install did not finish, so it removed what it had made ($gone). The account${ins_user:+ $ins_user} is kept. Fix the problem above, then run install again." >&2
+  [ -z "$gone" ] || echo "Install did not finish, so it removed what it had made ($gone). The account${ins_user:+ $ins_user} is kept. Fix the problem above, then run install again." >&2
+  [ -z "$left" ] || echo "Install did not finish, and could not remove what it had made ($left): remove it (sudo rm -rf), then run install again." >&2
 }
 trap cleanup EXIT
 trap 'exit 129' HUP
@@ -1262,6 +1265,7 @@ answer_problem() {
     program_dir|data_dir)
       if [[ "$v" != /* ]] || [ "$v" = / ]; then echo "$k is a full path, starting with /"
       elif ! [[ "$v" =~ ^/[A-Za-z0-9._/+@,=\ -]*$ ]]; then echo "$k may hold letters, digits, spaces and . _ / + @ , = - only: compose and systemd read anything else as more than a path"
+      elif [[ "${v%/}/" == *//* || "${v%/}/" == */./* || "${v%/}/" == */../* ]]; then echo "$k is a plain path, with no //, . or .. part: install checks the folder as it is written"
       fi ;;
     user) [[ "$v" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] && [ "$v" != root ] || echo "user is the name of the account that runs Kilnmark, in lower case, never root" ;;
   esac
@@ -1804,6 +1808,10 @@ make_account() {
   echo "$user runs rootless Podman, and its containers start at boot (lingering on)."
 }
 
+# The program folder is someone's already: a link, not a folder, not root's, or with anything in it.
+program_folder_taken() {
+  [ -L "$root" ] || { [ -e "$root" ] && { [ ! -d "$root" ] || [ "$(stat -c %u "$root")" != 0 ] || [ -n "$(ls -A "$root")" ]; }; }
+}
 cmd_install() {
   local start=true dry=false answers="" opt_starter=false v n=0 t k
   local -a opts=("$@")
@@ -1884,17 +1892,18 @@ cmd_install() {
   if [ -e "$data" ] || [ -L "$data" ]; then
     die "$data is there already: uninstall the earlier install with --purge, or remove it, or choose another data folder (--data-dir). Nothing was changed."
   fi
-  if [ -L "$root" ] || { [ -e "$root" ] && { [ "$(stat -c %u "$root")" != 0 ] || [ -n "$(ls -A "$root")" ]; }; }; then
-    die "$root is there already and is not an empty folder of root's: choose another program folder (--program-dir). Nothing was changed."
-  fi
+  ! program_folder_taken || die "$root is there already and is not an empty folder of root's: choose another program folder (--program-dir). Nothing was changed."
   step "Make the account $ins_user, which runs Kilnmark"
   make_account "$ins_user"
   step_ok
   step "Place Kilnmark $v in $root"
-  # absent, or an empty folder of root's (above): from here a failed install removes it (undo_install)
+  (umask 022; mkdir -p "$(dirname "$root")") || die "$root could not be made."
+  # Asked again now that the folder above it is there, so that the path names what it will go on
+  # naming: only a folder that is absent, or an empty one of root's, is this install's to fill,
+  # and to remove if it fails (undo_install).
+  ! program_folder_taken || die "$root is there already and is not an empty folder of root's: choose another program folder (--program-dir)."
   undo_root="$root"
-  (umask 022; mkdir -p "$(dirname "$root")") && { [ -d "$root" ] || mkdir -m 755 "$root"; } && mkdir -m 755 "$root/versions" \
-    || die "$root could not be made."
+  { [ -d "$root" ] || mkdir -m 755 "$root"; } && mkdir -m 755 "$root/versions" || die "$root could not be made."
   chmod 755 "$root"
   place_version "$here" "$v"
   use_version "$v"

@@ -940,9 +940,10 @@ class ControlScriptInstallTest {
         // as install leaves it at that step: the program folder names a data folder that is not there yet
         Path root = Files.createTempDirectory("kilnmark-half");
         Files.writeString(root.resolve("data-folder.txt"), root.resolve("no-data-yet").toString().replace('\\', '/') + "\n");
-        List<String> free = fourPorts();
         try (ServerSocket busy = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
             String port = String.valueOf(busy.getLocalPort());
+            // found while that one is held, so none of them is it
+            List<String> free = fourPorts();
             String out = run(e, launcher(e), List.of("check"), root, engine, checkEnv(e, "2.7.11.0",
                 Map.of("KILNMARK_PORT", port, "KILNMARK_HTTPS_PORT", free.get(1), "KILNMARK_DB_PORT", free.get(2))), "");
             assertTrue(out.contains("Checking this machine for a Kilnmark install"), out);
@@ -967,13 +968,29 @@ class ControlScriptInstallTest {
         int owned = install.indexOf("chown -R -h \"$ins_user:$(id -gn \"$ins_user\")\" \"$data\"");
         int whole = install.indexOf("undo_root=\"\" undo_data=\"\"\n");
         assertTrue(place > 0 && place < install.indexOf("mkdir -m 755 \"$root/versions\"") && place < check, "the program folder, as it is made");
+        // and only once it is sure to be this install's: asked again after the folder above it is made,
+        // when a path that named nothing before may name a folder that is there
+        int above = install.indexOf("mkdir -p \"$(dirname \"$root\")\")");
+        int again = install.indexOf("! program_folder_taken || die", above);
+        assertTrue(above > 0 && again > above && again < place, "the program folder, asked again before it is this install's to remove");
+        assertTrue(sh.contains("\nprogram_folder_taken() {\n  [ -L \"$root\" ] || { [ -e \"$root\" ] && { [ ! -d \"$root\" ] || "
+            + "[ \"$(stat -c %u \"$root\")\" != 0 ] || [ -n \"$(ls -A \"$root\")\" ]; }; }\n}"), "a link, not a folder, not root's, or not empty");
         assertTrue(made > check && data > made && data < owned, "the data folder, once this install has made it");
         assertTrue(whole > owned && whole < install.indexOf("start_log install"), "nothing is undone once the install is whole");
         assertEquals(2, install.split("undo_root=", -1).length - 1, "set once, cleared once");
         // it runs however install ends, and never follows a link
         String undo = sh.substring(sh.indexOf("\nundo_install() {"), sh.indexOf("\ntrap cleanup EXIT"));
         assertTrue(sh.substring(sh.indexOf("\ncleanup() {"), sh.indexOf("\nundo_install() {")).contains("\n  undo_install\n}"), "from cleanup");
-        assertTrue(undo.contains("[ ! -L \"$undo_data\" ]; then rm -rf \"${undo_data:?}\"") && undo.contains("rm -rf \"${undo_root:?}\""), undo);
+        assertTrue(undo.contains("for f in \"$undo_root\" \"$undo_data\"; do") && undo.contains("if [ ! -L \"$f\" ] && rm -rf \"${f:?}\" 2> /dev/null; then"), undo);
+        // a path with a . or .. part could name a folder other than the one install checked: refused as an answer
+        Path release = e.release();
+        Path none = Files.createTempDirectory("kilnmark-none");
+        Map<String, String> env = checkEnv(e, "2.7.11.0", Map.of());
+        for (String path : List.of("/opt/x/../kilnmark", "/opt/kilnmark/.", "/opt//kilnmark")) {
+            String dots = run(e, release.resolve("kilnmark.sh"), List.of("install", "--answers",
+                answersFile(goodAnswers(fourPorts()) + "program_dir=" + path + "\n").toString(), "--dry-run"), none, engine, env, "");
+            assertTrue(dots.contains("program_dir is a plain path, with no //, . or .. part") && dots.contains("[1/2] FAILED"), path + ": " + dots);
+        }
         // removing the kept account: its session ended first, as userdel refuses an account in use
         assertTrue(sh.contains("sudo loginctl disable-linger $ins_user; sudo pkill -u $ins_user; sleep 3; sudo userdel -r $ins_user"), "the account");
     }

@@ -47,8 +47,8 @@ the operator: on Windows the Podman machine is theirs, on Linux the account's ro
 | `people add`, `import FILE`, `activate EMAIL`, `list`, `expire` | People of your own in the bundled Keycloak ([Adding people](production-bundled-keycloak.md#adding-people-to-the-bundled-keycloak)) |
 | `starter people [--new-password \| --remove]` | The Starter Pack's example people ([A Starter Pack install](starter-pack.md#the-example-people)) |
 
-`install`, `up`, `down`, `backup`, `restore`, `people` and the hourly expiry write what they said
-to the data folder's `logs`. Every command ends with a failure code when it fails, so it can be
+`install`, `up`, `down`, `restart`, `configure`, `backup`, `restore`, `people`, `starter`,
+`uninstall` and the hourly expiry write what they said to the data folder's `logs`. Every command ends with a failure code when it fails, so it can be
 scheduled. No command prints a secret. Without cosign, `install`, `upgrade`,
 `load-images` and `pull` refuse to go on unless given `--skip-verify` (`-SkipVerify`), which the
 log records. Commands whose names start with `_` are the parts of install, upgrade and uninstall

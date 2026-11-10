@@ -408,8 +408,10 @@ Each was found in Kilnmark's own reviews and walks of 0.1.2. The most severe com
   refused it, with no data folder. Install now removes the program folder and the data folder it
   made when it fails before the data folder is ready, and says so.
 - **Uninstall says how to remove the kept account on Linux.** `sudo userdel -r kilnmark` alone was
-  refused, as lingering keeps the account's session running: uninstall and
+  refused, as lingering keeps the account's session running: `uninstall --purge` and
   [Uninstalling](docs/guide/install/uninstall.md) give the commands that end it first.
+- **A program or data folder is a plain path.** Install refuses `program_dir` and `data_dir` with
+  a `//`, `.` or `..` part, which could name a folder other than the one it had checked.
 - **`logs` shows the containers' logs on Linux.** Podman's default log driver there is usually
   journald, which files the lines of a system account, such as `kilnmark`, in the system journal,
   where that account cannot read them: `kilnmark.sh logs` and `podman logs` printed nothing. Install,
