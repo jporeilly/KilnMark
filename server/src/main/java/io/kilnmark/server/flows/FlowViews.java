@@ -47,6 +47,21 @@ public final class FlowViews {
     }
 
     /**
+     * Declared parameters as the API shows them, for a flow or a pipeline: a default that is a server
+     * variable by its name only, never its value. None for null (YAML that could not be read).
+     */
+    public static List<Parameter> parameters(List<io.kilnmark.kiln.yaml.Parameters.Parameter> declared) {
+        if (declared == null) {
+            return List.of();
+        }
+        return declared.stream().map(p -> {
+            String variable = p.defaultValue() instanceof io.kilnmark.kiln.yaml.Parameters.VarRef v ? v.variable() : null;
+            Object value = variable == null ? p.defaultValue() : null;
+            return new Parameter(p.name(), p.kind(), value, variable, value == null && variable == null, p.description());
+        }).toList();
+    }
+
+    /**
      * A flow run, without its nodes. {@code parameters} are the values it started with, for stewards
      * and above; null for viewers, since they can hold server variables. {@code error} is in
      * Kilnmark's words and the flow's own, never a pipeline's error. {@code pipelineRuns} is how many
@@ -81,7 +96,8 @@ public final class FlowViews {
     /** A flow with its latest version. Its ETag is the latest version's number. */
     public record FlowDetail(String name, String displayName, String description, int latestVersion,
                              String createdBy, Instant createdAt, String updatedBy, Instant updatedAt,
-                             VersionDetail latest, RunSummary lastRun, String library) {
+                             VersionDetail latest, RunSummary lastRun, String library,
+                             io.kilnmark.server.pipelines.Samples.About sample) {
     }
 
     /**

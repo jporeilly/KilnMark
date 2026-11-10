@@ -1,0 +1,54 @@
+/* A sample's or template's explanation, in the Library and on the page of a pipeline or flow added from
+   the samples. Colours from tokens.css only. */
+
+.lib-explain {
+  margin: 6px 0 0;
+}
+
+.lib-explain div + div {
+  margin-top: 6px;
+}
+
+.lib-explain dt {
+  font-weight: 600;
+  font-size: var(--km-text-sm);
+}
+
+.lib-explain dd {
+  margin: 0;
+  /* an example to copy keeps a line of its own */
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.lib-sample-about {
+  margin: 12px 0;
+  padding: 12px 16px;
+  max-width: 80ch;
+  border: 1px solid var(--km-border);
+  border-radius: 8px;
+  background: var(--km-surface);
+}
+
+.lib-sample-about-h {
+  margin: 0;
+  font-size: var(--km-text-md);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.lib-sample-about p {
+  margin: 6px 0 0;
+}
+
+/* Changed since it was added: a label in words, never colour alone. */
+.lib-changed {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--km-border);
+  font-size: var(--km-text-sm);
+  font-weight: 600;
+}

@@ -1,10 +1,12 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { allows, type AccessRole, type PipelineColumn, type Source, type NodeTypeSetting } from "../../api";
 import { Switch } from "../../components/ui";
 import { useRole, useUnmask } from "../../components/role";
 import { defaultText } from "./insight";
 import { ExpressionReference, OperatorButtons } from "./ExpressionHelp";
-import type { Value } from "./model";
+import type { DeclaredParameter, Value } from "./model";
+import { ParameterChip, ParameterChips } from "./ParameterChip";
+import { namesInValue } from "./parameters";
 
 /** What a control needs besides its setting: the columns it can offer, sources, and assets. */
 export type ControlContext = {
@@ -20,7 +22,15 @@ export type ControlContext = {
   nodeType: string | null;
   /** The parameters the pipeline declares, offered as `${name}` in expressions. */
   parameters?: string[];
+  /** The parameters as declared (type, default, description), for what each `${name}` chip says. */
+  declared?: DeclaredParameter[];
 };
+
+/**
+ * The parameters and server variables the setting being drawn puts in, shown under its box as chips
+ * that say what each is; null when it names none, or when its control offers them already.
+ */
+const NamesUsed = createContext<{ names: string[]; declared: DeclaredParameter[]; label: string } | null>(null);
 
 export type ControlProps = {
   spec: NodeTypeSetting;
@@ -63,6 +73,7 @@ function Field({
   wide?: boolean;
 }) {
   const def = defaultText(spec);
+  const used = useContext(NamesUsed);
   const described = [`${id}-help`, problems.length ? `${id}-problems` : null].filter(Boolean).join(" ");
   const label = (
     <>
@@ -75,6 +86,7 @@ function Field({
   const body = (
     <>
       {children(described, problems.length > 0)}
+      {used && <ParameterChips names={used.names} declared={used.declared} label={used.label} />}
       {problems.length > 0 && (
         <ul id={`${id}-problems`} className="cv-field-problems">
           {problems.map((p, i) => (
@@ -383,15 +395,27 @@ function ColumnButtons({ columns, onPick, label }: { columns: PipelineColumn[] |
   );
 }
 
-/** Buttons that put a parameter, as `${name}`, into an expression at the caret. */
-function ParameterButtons({ names, onPick, label }: { names: string[]; onPick: (word: string) => void; label: string }) {
+/**
+ * Buttons that put a parameter, as `${name}`, into an expression at the caret: the parameters the
+ * pipeline declares, then any other name the expression puts in already (a server variable, say).
+ * Each says what it is on hover and on keyboard focus.
+ */
+function ParameterButtons({
+  names,
+  declared,
+  onPick,
+  label,
+}: {
+  names: string[];
+  declared: DeclaredParameter[];
+  onPick: (word: string) => void;
+  label: string;
+}) {
   if (names.length === 0) return null;
   return (
     <div className="cv-column-buttons" role="group" aria-label={label}>
       {names.map((n) => (
-        <button key={n} type="button" className="cv-chip cv-chip-param mono" onClick={() => onPick(`\${${n}}`)} title="A parameter: its value goes in as a value">
-          {`\${${n}}`}
-        </button>
+        <ParameterChip key={n} name={n} declared={declared} onPick={onPick} />
       ))}
     </div>
   );
@@ -445,7 +469,12 @@ function ExpressionControl(p: ControlProps) {
           {!p.readOnly && (
             <>
               <ColumnButtons columns={cols} label={`Insert a column into ${p.spec.label}`} onPick={(name) => insert(quoteColumn(name))} />
-              <ParameterButtons names={p.context.parameters ?? []} label={`Insert a parameter into ${p.spec.label}`} onPick={insert} />
+              <ParameterButtons
+                names={[...new Set([...(p.context.parameters ?? []), ...namesInValue(draft)])]}
+                declared={p.context.declared ?? []}
+                label={`Insert a parameter into ${p.spec.label}`}
+                onPick={insert}
+              />
               <OperatorButtons label={`Insert an operator into ${p.spec.label}`} onPick={insert} />
             </>
           )}
@@ -1322,8 +1351,24 @@ function RulesControl(p: ControlProps) {
   );
 }
 
-/** The control for one setting, chosen by its kind (SettingSpec.Kind). */
+/**
+ * One setting's control, by its kind. Under its box, the parameters and server variables its value
+ * puts in, each saying what it is (an expression being edited offers them as buttons instead).
+ */
 export function SettingControl(p: ControlProps) {
+  const offered = !p.readOnly && p.spec.kind === "expression";
+  const names = offered ? [] : namesInValue(p.value);
+  const control = settingControl(p);
+  if (names.length === 0) return control;
+  return (
+    <NamesUsed.Provider value={{ names, declared: p.context.declared ?? [], label: `Parameters and variables ${p.spec.label} puts in` }}>
+      {control}
+    </NamesUsed.Provider>
+  );
+}
+
+/** The control for one setting, chosen by its kind (SettingSpec.Kind). */
+function settingControl(p: ControlProps) {
   switch (p.spec.kind) {
     case "boolean":
       return <BooleanControl {...p} />;

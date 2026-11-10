@@ -460,12 +460,14 @@ public class PipelineService {
                                                 PipelineStore.Run last, Sights sights) {
         return new PipelineViews.PipelineDetail(p.name(), p.displayName(), p.description(), p.latestVersion(),
             p.createdBy(), p.createdAt(), p.updatedBy(), p.updatedAt(), v == null ? null : version(v), summary(last, sights),
-            p.library());
+            p.library(), Samples.about(p.library(), p.name(), "pipeline", p.latestVersion(), v == null ? null : v.yaml(),
+                () -> store.version(p.name(), 1).map(PipelineStore.Version::yaml).orElse(null)));
     }
 
     private PipelineViews.VersionDetail version(PipelineStore.Version v) {
+        io.kilnmark.kiln.yaml.PipelineDefinition def = io.kilnmark.kiln.yaml.PipelineDefinition.parse(v.yaml()).definition();
         return new PipelineViews.VersionDetail(v.n(), v.yaml(), v.message(), v.author(), v.createdAt(), v.valid(),
-            problems(v.problems()));
+            problems(v.problems()), io.kilnmark.server.flows.FlowViews.parameters(def == null ? null : def.parameters()));
     }
 
     /**

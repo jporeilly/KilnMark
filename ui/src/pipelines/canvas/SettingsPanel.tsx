@@ -5,7 +5,7 @@ import type { PredictedQuality } from "../prediction";
 import { PredictedSection } from "./PredictedSection";
 import { browseApi } from "../../browse/browseApi";
 import { arrivingColumns, columnSide, kindWord, problemSetting, problemWords, shownSettings } from "./insight";
-import { portOfLink, portsOf, refText, type Catalogue, type GraphEdge, type GraphNode, type Value } from "./model";
+import { portOfLink, portsOf, refText, type Catalogue, type DeclaredParameter, type GraphEdge, type GraphNode, type Value } from "./model";
 import { SettingControl } from "./SettingControls";
 import { runWords, NodeIcon, type NodeRunInfo } from "./NodeCard";
 import { NodeMetricsList } from "../NodeMetricsList";
@@ -97,6 +97,7 @@ export function SettingsPanel({
   predicted = null,
   metrics = null,
   parameters = [],
+  declared = [],
   yaml,
   onSetting,
   onRename,
@@ -121,6 +122,8 @@ export function SettingsPanel({
   metrics?: NodeMetrics | null;
   /** The parameters the pipeline declares, offered as `${name}` in expressions. */
   parameters?: string[];
+  /** The parameters as declared, for what each `${name}` chip says. */
+  declared?: DeclaredParameter[];
   /** The pipeline's YAML as it stands, for the server to work out a read's SQL from; none: not shown. */
   yaml?: string;
   onSetting: (key: string, value: Value | undefined, kind: string) => void;
@@ -299,6 +302,7 @@ export function SettingsPanel({
                   assets: spec.kind === "asset" ? assets : null,
                   nodeType: node.type,
                   parameters,
+                  declared,
                 }}
               />
               {/* What the read sends to its database, under the box where a person's own query would go. */}
@@ -333,7 +337,7 @@ export function SettingsPanel({
               readOnly={readOnly || typeof node.settings[k] === "object"}
               problems={bySetting.get(k) ?? []}
               onChange={(v) => onSetting(k, v, "text")}
-              context={{ columns, side: null, sources, writing: false, assets: null, nodeType: node.type }}
+              context={{ columns, side: null, sources, writing: false, assets: null, nodeType: node.type, declared }}
             />
           ))}
         </section>

@@ -196,8 +196,102 @@ public class Samples {
         return everything().stream().filter(s -> s.file().startsWith(TEMPLATES)).toList();
     }
 
+    /**
+     * What a pipeline or flow added from the samples says about itself, for its own page: the sample's
+     * file under samples/, its explanation (the comment its file starts with, read from the bundled
+     * file, so the page and the Library never differ), and whether it has been changed since it was
+     * added (a later version whose YAML, leaving out where the canvas draws the nodes, is not the one
+     * added).
+     */
+    public record About(String file, Explanation explanation, boolean changed) {
+    }
+
+    /**
+     * The {@link About} of a saved pipeline or flow, or null when it was not added from the samples:
+     * marked {@link #LIBRARY} when it was added, and named as a bundled sample of its type is. A sample
+     * no longer bundled (a later release dropped it) has none. {@code first} gives version 1's YAML,
+     * asked for only when there are later versions; null when it cannot be read, which counts as changed.
+     */
+    public static About about(String library, String name, String type, int latestVersion, String latestYaml,
+                              java.util.function.Supplier<String> first) {
+        if (!LIBRARY.equals(library) || name == null) {
+            return null;
+        }
+        Sample s = bundled().stream().filter(x -> name.equals(x.name()) && type.equals(x.type())).findFirst()
+            .orElse(null);
+        if (s == null) {
+            return null;
+        }
+        boolean changed = false;
+        if (latestVersion > 1) {
+            String added = first.get();
+            changed = added == null || latestYaml == null || !withoutLayout(added).equals(withoutLayout(latestYaml));
+        }
+        return new About(s.file(), s.explanation(), changed);
+    }
+
+    /** The top-level {@code layout:} key, where the canvas draws each node. */
+    private static final Pattern LAYOUT_KEY = Pattern.compile("^layout\\s*:.*");
+
+    /**
+     * The YAML without its {@code layout:} block, the comment the canvas writes above it and the blank
+     * lines before them, as the pipeline page compares versions (ui/src/pipelines/template.ts): moving
+     * nodes on the canvas changes nothing a run does.
+     */
+    static String withoutLayout(String yaml) {
+        String[] lines = yaml.replace("\r\n", "\n").split("\n", -1);
+        int at = -1;
+        for (int i = 0; i < lines.length; i++) {
+            if (LAYOUT_KEY.matcher(lines[i]).matches()) {
+                at = i;
+                break;
+            }
+        }
+        if (at < 0) {
+            return oneLineEnd(yaml.replace("\r\n", "\n"));
+        }
+        int end = at + 1;
+        while (end < lines.length && !lines[end].matches("^[^\\s#].*")) {
+            end++;
+        }
+        int start = at;
+        while (start > 0 && lines[start - 1].matches("^#.*Kilnmark ignores this.*")) {
+            start--;
+        }
+        while (start > 0 && lines[start - 1].isBlank()) {
+            start--;
+        }
+        List<String> kept = new ArrayList<>(List.of(lines).subList(0, start));
+        kept.addAll(List.of(lines).subList(end, lines.length));
+        return oneLineEnd(String.join("\n", kept));
+    }
+
+    /** The text ending in exactly one line break. */
+    private static String oneLineEnd(String text) {
+        int end = text.length();
+        while (end > 0 && text.charAt(end - 1) == '\n') {
+            end--;
+        }
+        return text.substring(0, end) + "\n";
+    }
+
+    /** The bundled files, read once: they are the server's own resources and never change while it runs. */
+    private static volatile List<Sample> everythingRead;
+
     /** Every bundled file, samples and templates, in the list's order. Missing resources give an empty list. */
     private static List<Sample> everything() {
+        List<Sample> read = everythingRead;
+        if (read != null) {
+            return read;
+        }
+        List<Sample> out = readEverything();
+        if (!out.isEmpty()) {
+            everythingRead = List.copyOf(out);
+        }
+        return out;
+    }
+
+    private static List<Sample> readEverything() {
         String list = read(ROOT + "samples.list");
         List<Sample> out = new ArrayList<>();
         if (list == null) {

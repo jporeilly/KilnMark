@@ -201,8 +201,27 @@ details.
   closes the month. [Business scenarios](docs/guide/scenarios.md) walks through each with the
   Starter Pack's example people: who builds, who reviews, who sees the results and who sees
   sensitive values unmasked.
+- **Parameters you can see and set in the canvas**: each `${name}` in a node's settings says what
+  it is when you point at it or move to it with Tab: its type, default and description, or for a
+  server variable that it is one, and its value for stewards and above. With no node selected, the
+  canvas's **Settings** shows the pipeline's **Parameters** as a table; designers and admins add,
+  change and remove them there, checked as the server checks them and written to the YAML as by
+  hand. **Run now** on a pipeline with parameters asks for their values in the **Run** tab, filled
+  with the defaults, and sends what you changed. See
+  [Parameters in the canvas](docs/guide/pipelines.md#parameters-in-the-canvas).
+- **About this sample on a sample's own page**: a pipeline or flow added from the samples (the
+  Starter Pack adds them all) shows what its sample shows, why it matters, what to look for when it
+  runs and what it needs, as the Library does, read from the sample's file. One changed since it
+  was added says so: **Based on a sample; changed since**.
 
 ### Details
+
+- **Parameters and About this sample, in the API**: a pipeline's versions
+  (`GET /api/v1/pipelines/{name}` and `.../versions/{n}`) list the `parameters` they declare, as a
+  flow's do: name, type, default (or the server variable it is) and description. A pipeline or
+  flow added from the samples gives `sample`: the sample's `file`, its `explanation` from the
+  bundled file, and `changed`, true once a later version differs from the one added other than in
+  where the canvas draws the nodes. Others give none.
 
 - **The business scenarios** (`samples/10-scenarios`, ADR 0051, decision 4): eight pipelines and
   three flows. Two sample tables are new, made by `generate.py` with a random generator of their

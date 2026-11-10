@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { NodeType, PipelineNodeRun, PipelineRun, PipelineRunDetail, PipelineRunProgress } from "../api";
+import type { FlowParameter, NodeType, PipelineNodeRun, PipelineRun, PipelineRunDetail, PipelineRunProgress, SampleAbout } from "../api";
 import { useTabsId } from "../components/ui";
 import { RoleContext } from "../components/role";
 import { DOCK_OPEN_KEY, PipelineDock, useDock, type DockTab } from "./PipelineDock";
@@ -232,6 +232,12 @@ function server() {
     runs: [run(7, "succeeded")] as PipelineRun[],
     details: new Map<number, PipelineRunDetail[]>([[7, [runDetail(run(7, "succeeded"), [nodeRun("people", "read", null, 1200), nodeRun("out", "write", 1200, null)])]]]),
     asked: [] as string[],
+    /** The parameters the saved version declares, and what the sample it came from explains. */
+    parameters: [] as FlowParameter[],
+    sample: null as SampleAbout | null,
+    /** The bodies of the runs asked for, and the server's refusal of the next, if any. */
+    runBodies: [] as unknown[],
+    refuse: null as string | null,
   };
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     const u = String(url);
@@ -243,6 +249,8 @@ function server() {
     if (u.includes("/schedules")) return json([]);
     if (u.endsWith("/validate")) return json(VALIDATION);
     if (u.endsWith("/pipelines/people-out/runs") && method === "POST") {
+      state.runBodies.push(JSON.parse(String(init?.body)));
+      if (state.refuse) return json({ error: state.refuse }, 400);
       const r = run(8, "queued");
       state.runs = [r, ...state.runs];
       return json(r);
@@ -250,7 +258,7 @@ function server() {
     if (u.includes("/pipelines/people-out/runs")) return json(state.runs);
     if (u.endsWith("/pipelines/people-out/versions")) return json([VERSION]);
     if (u.endsWith("/pipelines/people-out"))
-      return json({ name: "people-out", displayName: "People out", description: null, latestVersion: 3, createdBy: "jp", createdAt: AT, updatedBy: "jp", updatedAt: AT, latest: VERSION, lastRun: state.runs[0] });
+      return json({ name: "people-out", displayName: "People out", description: null, latestVersion: 3, createdBy: "jp", createdAt: AT, updatedBy: "jp", updatedAt: AT, latest: { ...VERSION, parameters: state.parameters }, lastRun: state.runs[0], library: state.sample ? "sample" : null, sample: state.sample });
     const m = /pipeline-runs\/(\d+)$/.exec(u);
     if (m) {
       const list = state.details.get(Number(m[1])) ?? [];
@@ -298,8 +306,8 @@ describe("the pipeline page's panel", () => {
     server();
     await show(page());
     await ready();
-    // Nothing selected: only the pipeline's tabs, and Nodes shown.
-    expect(tabNames()).toEqual(["Nodes", "Run", "Suggestions", "History", "Schedules", "Versions"]);
+    // Nothing selected: the pipeline's tabs (Settings its own), and Nodes shown.
+    expect(tabNames()).toEqual(["Nodes", "Settings", "Run", "Suggestions", "History", "Schedules", "Versions"]);
     expect(selectedTab().textContent).toBe("Nodes");
     expect(host.querySelector(".cv-drawer")).toBeNull();
 
@@ -318,10 +326,10 @@ describe("the pipeline page's panel", () => {
     expect(selectedTab().textContent).toBe("Settings");
     expect(panel().querySelector("h3")?.textContent).toBe("out");
 
-    // Escape clears the selection: Settings and Preview go, Nodes is shown, the focus stays on the node.
+    // Escape clears the selection: Preview goes, Nodes is shown, the focus stays on the node.
     nodeEl("out").focus();
     await key(nodeEl("out"), "Escape");
-    expect(tabNames()).toEqual(["Nodes", "Run", "Suggestions", "History", "Schedules", "Versions"]);
+    expect(tabNames()).toEqual(["Nodes", "Settings", "Run", "Suggestions", "History", "Schedules", "Versions"]);
     expect(selectedTab().textContent).toBe("Nodes");
     expect(document.activeElement).toBe(nodeEl("out"));
     expect(tabs().every((t) => t.getAttribute("aria-controls") === panel().id)).toBe(true);
@@ -409,6 +417,102 @@ describe("the pipeline page's panel", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("the pipeline's own settings and the values a run is given", () => {
+  const PARAMS: FlowParameter[] = [
+    { name: "statuses", type: "text list", defaultValue: ["delivered"], defaultVariable: null, required: false, description: "The order statuses to keep" },
+    { name: "min_fee", type: "number", defaultValue: 0, defaultVariable: null, required: false, description: null },
+    { name: "label", type: "text", defaultValue: null, defaultVariable: "default_label", required: false, description: null },
+  ];
+  const SAMPLE: SampleAbout = {
+    file: "07-parameters/orders-by-status.yaml",
+    explanation: { title: "Parameters", shows: "Reads the shop orders in the statuses asked for.", why: "One pipeline replaces many near-copies.", lookFor: "the note under the read node.", needs: "shop-db and files." },
+    changed: false,
+  };
+  const field = (name: string) => document.getElementById(`pl-run-values-${name}`) as HTMLInputElement;
+  function type(el: HTMLInputElement, value: string) {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  test("with no node selected, Settings shows what the sample explains, then the parameters", async () => {
+    const state = server();
+    state.sample = { ...SAMPLE, changed: true };
+    await show(page());
+    await ready();
+    // On the page, from the server's sample registry, with the guide.
+    const about = host.querySelector<HTMLElement>('section[aria-labelledby="pl-sample-about"]')!;
+    expect(about.querySelector("h2")?.textContent).toBe("About this sample" + "Based on a sample; changed since");
+    expect([...about.querySelectorAll("dt")].map((d) => d.textContent)).toEqual(["What it shows", "Why it matters", "Look for when it runs", "Needs"]);
+    expect(about.querySelector("dd")?.textContent).toBe("Reads the shop orders in the statuses asked for.");
+    expect(about.querySelector<HTMLAnchorElement>('a[href="#/docs/library/samples"]')).toBeTruthy();
+
+    await act(async () => tab("Settings").click());
+    expect(selectedTab().textContent).toBe("Settings");
+    expect(panel().querySelector("#cv-sample-about")?.textContent).toContain("About this sample");
+    expect(panel().querySelector("#cv-params-h")?.textContent).toBe("Parameters");
+    expect(panel().textContent).toContain("This pipeline declares no parameters.");
+    expect(panel().querySelector("#cv-params-add")).toBeTruthy();
+    // A node chosen shows its settings; deselected, the panel goes back to Nodes.
+    await click(nodeEl("people"));
+    expect(panel().querySelector("h3")?.textContent).toBe("people");
+    nodeEl("people").focus();
+    await key(nodeEl("people"), "Escape");
+    expect(selectedTab().textContent).toBe("Nodes");
+  });
+
+  test("Run now asks for the values in the Run tab, filled with the defaults, and sends what was changed", async () => {
+    const state = server();
+    state.parameters = PARAMS;
+    state.details.set(8, [runDetail(run(8, "queued"))]);
+    await show(page());
+    await ready();
+    const runNow = [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "Run now")!;
+    await act(async () => runNow.click());
+    await wait(10);
+    expect(selectedTab().textContent).toBe("Run");
+    expect(state.runBodies).toEqual([]);
+    expect(field("statuses").value).toBe("delivered");
+    expect(field("min_fee").value).toBe("0");
+    expect(field("label").value).toBe("");
+    expect(document.activeElement).toBe(field("statuses"));
+
+    // A value of the wrong kind is caught before anything is sent.
+    await act(async () => type(field("min_fee"), "five"));
+    const submit = [...panel().querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "Run with these values")!;
+    await act(async () => submit.click());
+    expect(state.runBodies).toEqual([]);
+    expect(field("min_fee").getAttribute("aria-invalid")).toBe("true");
+
+    // The server's refusal is shown beside the values.
+    await act(async () => type(field("min_fee"), "5"));
+    await act(async () => type(field("statuses"), "shipped, delivered"));
+    state.refuse = "parameters: min_fee must be a number of at most 15 digits before the point and 30 in all";
+    await act(async () => submit.click());
+    await wait(10);
+    expect(panel().querySelector('[role="alert"]')?.textContent).toBe(state.refuse);
+
+    // Exactly what was changed, and nothing else: the label is left to its server variable.
+    state.refuse = null;
+    await act(async () => submit.click());
+    await wait(10);
+    // The version whose parameters were asked for, so values never go to one saved since.
+    expect(state.runBodies.at(-1)).toEqual({ version: 3, parameters: { statuses: ["shipped", "delivered"], min_fee: 5 } });
+    expect(panel().querySelector("h3")?.textContent).toContain("Values for the next run");
+    expect(panel().textContent).toContain("Run 8 of version 3");
+  });
+
+  test("a pipeline without parameters runs at once, sending none", async () => {
+    const state = server();
+    await show(page());
+    await ready();
+    const runNow = [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "Run now")!;
+    await act(async () => runNow.click());
+    await wait(10);
+    expect(state.runBodies).toEqual([{ version: null }]);
+    expect(panel().querySelector(".pl-run-values")).toBeNull();
   });
 });
 
