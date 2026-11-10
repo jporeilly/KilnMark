@@ -1,8 +1,19 @@
 # Backing up and restoring Kilnmark
 
 This is the runbook for keeping Kilnmark recoverable: what to back up, how, how to restore, and how
-to test a restore. It covers a release installed with compose (INSTALL.md, A). Why it works this way
-is in [ADR 0039](../adr/0039-backup-and-restore.md).
+to test a restore. It covers an install made by the control script
+([Installing Kilnmark](../../INSTALL.md#install)). Why it works this way is in
+[ADR 0039](../adr/0039-backup-and-restore.md).
+
+The program is in `/opt/kilnmark` (Windows: `C:\Program Files\Kilnmark`). Everything the install
+keeps for itself is in the data folder, `/var/opt/kilnmark` (Windows: `C:\ProgramData\Kilnmark`):
+its settings and secrets in `config`, the backups in `backups` and what each command said in `logs`
+([Where things are](install/control-script.md#where-things-are-and-who-may-change-them)).
+
+Every command here runs through the control script, as the operator: on Linux as the account that
+runs Kilnmark, never as root (`sudo -iu kilnmark /opt/kilnmark/kilnmark.sh backup`); on Windows from
+a prompt that is not elevated (`& "C:\Program Files\Kilnmark\kilnmark.cmd" backup`). Below,
+`kilnmark.sh` stands for either.
 
 ## What to back up
 
@@ -11,36 +22,45 @@ is in [ADR 0039](../adr/0039-backup-and-restore.md).
 | The database: sources and their sealed passwords, pipelines and their versions, flows, runs, profiles, rules, tokens, notifications, the audit log | The `pgdata` volume | The backup dumps it |
 | The keys: `secret.key`, which opens the stored source passwords, and the drivers registered under **Settings › Drivers** | The `keys` volume | The backup copies it |
 | With the bundled Keycloak: its people, groups and one-time code setups, without which nobody could sign in to a restored install | The `keycloak-pgdata` volume | The backup dumps it, while the `auth` profile is on |
-| The settings: `.env` (the database password, the admin token, the sign-in settings) | The release folder | Your secrets store, once and after each change |
-| Your own files: `tls/`, `branding/`, and the certificate for the database if you gave it one | The release folder, and the `pgdata` volume's `tls` folder | Your usual file backups |
+| The settings: `config/.env` (the database password, the admin token, the sign-in settings) | The data folder | Your secrets store, once and after each change |
+| The install's answers: `config/install.conf` (no secrets) | The data folder | With your backups: `install --answers` takes it to install the same way again |
+| Your own files: HTTPS's certificate and key, a branding folder, and the certificate for the database if you gave it one | The data folder's `certs/https`, wherever you keep the branding folder, and the `pgdata` volume's `tls` folder | Your usual file backups |
 
-The AI models volume needs no backup: download the models again. The release folder itself can be
-fetched again, but keep the version you run.
+The AI models volume needs no backup: download the models again. The program folder can be fetched
+again, but keep the release you run.
 
 **Keep the keys apart from the database dumps.** A dump holds the source passwords sealed, and the
 key opens them: one copy holding both gives an attacker every password. Put the keys file in a
 different place (a secrets store or a separate vault), and encrypt both. If the keys file is lost
-for good, `restore.sh --without-keys` restores the database alone, and every stored password must be
-entered again.
+for good, `restore BACKUP --without-keys` (`-WithoutKeys` on Windows) restores the database alone,
+and every stored password must be entered again.
 
 Backups are as sensitive as the database: they hold the audit log, people's names, and what
 Kilnmark keeps about your sources' data. Limit who can read them as you limit who can reach the
 database. Keep them where only the backup job can write: a restore runs the dump with full rights
 on Kilnmark's database, so a dump someone could change, with its checksums, is a way in.
 
-If you gave the bundled database a certificate of your own (INSTALL.md, "Kilnmark's own
-database"), keep a copy of it: it lives in the database volume, not in the dump. A new volume makes
-its own certificate again.
+If you gave the bundled database a certificate of your own
+([TLS to Kilnmark's own database](install/https.md#tls-to-kilnmarks-own-database)), keep a copy of
+it: it lives in the database volume, not in the dump. A new volume makes its own certificate again.
 
 ## Back up
 
-From the install root, while Kilnmark runs (INSTALL.md, "The control script"):
+While Kilnmark runs ([The control script](install/control-script.md)):
 
 ```
-./kilnmark.sh backup /path/to/backups       (Windows: kilnmark.cmd backup D:\backups)
+sudo -iu kilnmark /opt/kilnmark/kilnmark.sh backup
 ```
 
-Without a folder it uses the install root's `backups`. It writes a new folder, `kilnmark-<UTC time>`, holding:
+On Windows, from a prompt that is not elevated:
+
+```
+& "C:\Program Files\Kilnmark\kilnmark.cmd" backup
+```
+
+Without a folder it writes into the data folder's `backups` (`/var/opt/kilnmark/backups`,
+`C:\ProgramData\Kilnmark\backups`); `backup DIR` writes into `DIR` instead, a folder the operator
+may write. It writes a new folder, `kilnmark-<UTC time>`, holding:
 
 - `kilnmark-db.dump`: the database, as one consistent snapshot, in PostgreSQL's custom format;
 - `kilnmark-keys.tar`: the keys volume;
@@ -61,16 +81,17 @@ the control script does the same itself, and writes the same files, so a backup 
 either. Then move `kilnmark-keys.tar` to where you keep keys, and the rest
 to your backup store.
 
-**How often.** Daily is a sensible start: you lose at most a day of changes. Run it from cron or a
-systemd timer, for example at 02:00 (it keeps its own log in the install root's `logs`, and fails
-with a non-zero exit code):
+**How often.** Daily is a sensible start: you lose at most a day of changes. Run it from the
+account's own crontab (`sudo crontab -u kilnmark -e`), never root's, for example at 02:00. It keeps
+its own log in the data folder's `logs`, and fails with a non-zero exit code:
 
 ```
-0 2 * * * /opt/kilnmark/kilnmark.sh backup /srv/backups
+0 2 * * * /opt/kilnmark/kilnmark.sh backup
 ```
 
-On Windows, a Task Scheduler task running `"C:\Program Files\Kilnmark\kilnmark.cmd" backup D:\backups`, run as the operator, does the
-same.
+On Windows, a Task Scheduler task running `"C:\Program Files\Kilnmark\kilnmark.cmd" backup`, run as
+the operator and not with the highest privileges, does the same. `check` warns when the last backup
+is more than a day old.
 
 Keep as many as your retention policy asks, and at least one copy off the machine. Back up again
 before every upgrade.
@@ -85,24 +106,34 @@ A restore puts Kilnmark back as it was when the backup was taken. Everything sin
 
 ![The restore's steps: files checked, the backup restored into a database of its own while Kilnmark runs, then the old database and keys kept aside and the restored ones put in place](images/restore-steps.svg)
 
-1. **Install the release** you ran, or a later one (INSTALL.md, A), with your `.env`. A later
-   release updates the database at its first start, as an upgrade does; an earlier one cannot run a
-   newer database, and the script refuses it.
-2. **Restore**, from the install root:
+1. **Have the release** you ran, or a later one, installed in the same mode: the install you have,
+   or a new one ([Installing Kilnmark](../../INSTALL.md#install); `install --answers` with the
+   backed-up `config/install.conf` installs it the same way). A later release updates the database
+   at its first start, as an upgrade does; an earlier one cannot run a newer database, and the
+   restore refuses it.
+2. **Restore.** Put `kilnmark-keys.tar` back in the backup's folder first, a folder the operator
+   may read (the data folder's `backups` is). Then:
 
    ```
-   ./kilnmark.sh restore /path/to/backups/kilnmark-<time>     (Windows: kilnmark.cmd restore ...)
+   sudo -iu kilnmark /opt/kilnmark/kilnmark.sh restore /var/opt/kilnmark/backups/kilnmark-<time>
    ```
 
-   Put `kilnmark-keys.tar` back in the backup's folder first. The script checks each of the backup's
-   files against `SHA256SUMS`, then says what it will do and asks you to run it again with `--yes` (`-Yes` on Windows).
+   On Windows, from a prompt that is not elevated:
+
+   ```
+   & "C:\Program Files\Kilnmark\kilnmark.cmd" restore "C:\ProgramData\Kilnmark\backups\kilnmark-<time>"
+   ```
+
+   The restore checks each of the backup's files against `SHA256SUMS`, then says what it will do and
+   the command to go on with: the same with `--yes` at the end (`-Yes` on Windows).
    It takes a backup only into an install of the same deployment mode (production, or a Starter
    Pack install), and only a whole one: before anything is stopped, it refuses a backup whose
    `backup.txt` names another mode or install than its dump does (or neither: a backup taken before
    they were recorded), a Keycloak database whose realm names another install or mode, and, on
    production, a Keycloak database whose realm does not say which install it is of (take a new
-   backup with this version), or holding the Starter Pack's group or example people. Run by hand,
-   `restore.sh` refuses when neither the database nor `.env` says this install's mode.
+   backup with this version), or holding the Starter Pack's group or example people. The release's
+   `restore.sh`, which the control script runs on Linux, refuses when run by hand where neither the
+   database nor `.env` says this install's mode: restore through the control script.
    A backup's checksums show it is whole, not who made it: there is no signature or MAC, so a
    restore trusts whoever can write the backup's files. Keep backups where only your operators can
    write. Restore Keycloak's database with Kilnmark's, from the same install: Keycloak's realm
@@ -122,7 +153,8 @@ A restore puts Kilnmark back as it was when the backup was taken. Everything sin
      it restores Kilnmark alone, and Keycloak's people stay as they are;
    - starts Kilnmark and waits until it is ready.
 
-   If it stops part way, it says how far it got and what it left.
+   If it stops part way, it says how far it got and what it left. At the end it prints the commands
+   that drop the databases it kept, through the control script: run them once all is well (below).
 3. **Redo what security changes were made since the backup.** The restored database is from before
    them:
    - **Tokens revoked since then work again.** Find them in your SIEM's copy of the audit log
@@ -181,8 +213,9 @@ keycloak-db psql -U keycloak -d postgres -c "..."`, and `kilnmark.sh up --no-bro
 
 A backup is proven only by restoring it. Every quarter, or as your policy asks:
 
-1. On a spare machine, install the same release with a copy of `.env` (a different admin token is
-   fine), and restore the latest backup with `restore.sh`.
+1. On a spare machine, install the same release in the same mode (its own secrets are fine), copy
+   the latest backup and its keys file into its data folder's `backups`, and restore it with
+   `kilnmark.sh restore`, as above.
 2. Check that:
    - Kilnmark starts, and you can sign in;
    - **Sources** lists your sources, and **Test** on one with a stored password succeeds (the key
@@ -192,6 +225,24 @@ A backup is proven only by restoring it. Every quarter, or as your policy asks:
 3. Write down how long the restore took (your recovery time) and the backup's age (your recovery
    point), and anything that did not work.
 4. Remove the spare machine's copy: it holds the same sensitive data as the backup.
+
+## Reading the logs
+
+`kilnmark.sh logs SERVICE` shows the last 200 lines a service wrote: `kilnmark`, `postgres`, and
+with the bundled Keycloak `keycloak`, `keycloak-db` and `keycloak-setup`. Without a service it shows them
+all; `-f` follows them as they come. What the control script itself said, each run of a command, is
+in the data folder's `logs`.
+
+On Linux, the account's rootless Podman keeps the containers' logs in files: install, and every
+`up`, set `log_driver = "k8s-file"` under `[containers]` in the account's own
+`~/.config/containers/containers.conf`, with `log_size_max = 52428800` (50 MB a container) where
+it sets no limit of its own, adding them to the settings already there. Podman's usual default, the
+system journal, files a system account's lines where that account cannot read them, and `logs`
+would show nothing. A container keeps the log driver it was made with, so `up` makes Kilnmark's
+containers again, once, where they were made with another (all data is kept: it is in the
+volumes). Each container's log file goes with the container, at the next `restart` or `down`.
+`check` warns when the containers' logs go to a journal the account cannot read, with the fix,
+`kilnmark.sh restart`. Docker, and Podman on Windows, are left as they are.
 
 ## When something goes wrong
 

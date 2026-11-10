@@ -3154,7 +3154,7 @@ function Invoke-Restore([string[]]$Options) {
         switch ($o) { '-Yes' { $yes = $true } '-WithoutKeys' { $keys = $false } default { if ($o.StartsWith('-')) { Fail ('Unknown option ' + $o + ': only -Yes and -WithoutKeys.') } else { $src = $o } } }
     }
     if (-not ($src -and (Test-Path (Join-Path $src 'backup.txt')) -and (Test-Path (Join-Path $src 'SHA256SUMS')))) {
-        Fail 'Say which backup to restore, a folder made by backup: kilnmark.cmd restore C:\ProgramData\Kilnmark\backups\kilnmark-<time> -Yes'
+        Fail ('Say which backup to restore, a folder made by backup: ' + (Get-SelfCall $script:Root) + ' restore "C:\ProgramData\Kilnmark\backups\kilnmark-<time>" -Yes')
     }
     $src = (Resolve-Path $src).Path
     # The backup must be whole, and no newer than this release.
@@ -3194,7 +3194,7 @@ function Invoke-Restore([string[]]$Options) {
     if (-not $yes) {
         Write-Host ('This puts Kilnmark back to the backup taken at ' + $taken + ' (Kilnmark ' + $from + ').')
         if ($restoreKeycloak) { Write-Host 'The bundled Keycloak goes back to it too: its people, groups and one-time code setups.' }
-        Write-Host ('The database and keys it replaces are kept, to go back to. To go on: kilnmark.cmd restore ' + $src + ' -Yes')
+        Write-Host ('The database and keys it replaces are kept, to go back to. To go on: ' + (Get-SelfCall $script:Root) + ' restore "' + $src + '"' + $(if ($keys) { '' } else { ' -WithoutKeys' }) + ' -Yes')
         exit 2
     }
     $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')

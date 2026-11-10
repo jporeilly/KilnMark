@@ -834,6 +834,17 @@ check_install() {
   elif [ "$(id -un)" != "$user" ]; then
     warning "Kilnmark runs as $user, not as $(id -un), so this account cannot start or change it." "sudo -iu $user \"$root/kilnmark.sh\" check"
   fi
+  # where rootless Podman keeps the containers' logs: the system journal is not the account's to read
+  if [ "$(my_uid)" -ne 0 ] && [ -n "$engine" ] && [[ "$engine" != *docker* ]]; then
+    case "$(podman_log_driver)" in
+      journald)
+        if journal_readable; then passed "Podman keeps the containers' logs in the journal, which this account may read"
+        else warning "Podman keeps the containers' logs in the system journal, which $(id -un) cannot read, so logs shows nothing: restart sets log_driver = \"k8s-file\" in this account's containers.conf, and makes the containers again." \
+          "$root/kilnmark.sh restart"
+        fi ;;
+      k8s-file|json-file) passed "Podman keeps the containers' logs in files logs can read" ;;
+    esac
+  fi
   # the program folder root's, written by nobody else; the data folder the account's alone
   why="$(folder_problem "$root" 0 755)"
   if [ -z "$why" ]; then passed "the program folder is root's, and nobody else may change it"
@@ -1042,6 +1053,9 @@ cmd_up() {
   v="$(current_version)"; ensure_settings; set_compose
   images_present "$v" || die "The images of Kilnmark $v are not here. Get them with one of: ./kilnmark.sh pull, ./kilnmark.sh load-images FILE, ./kilnmark.sh build"
   echo "Starting Kilnmark $v ..."
+  # rootless Podman keeps the containers' logs where logs can read them, the containers made so
+  set_podman_log_driver
+  recreate_for_log_driver
   write_run_secrets
   hand_install_id
   compose_quietly up -d || die "Kilnmark could not start. See why with: ./kilnmark.sh logs"
@@ -1131,7 +1145,8 @@ cmd_status() {
   v="$(current_version)"; set_compose
   echo "Kilnmark $v in $root, with $engine"
   "${compose[@]}" ps || true
-  if curl -k -s -f -o /dev/null "$(local_url)/q/health/ready"; then echo "Health: ready at $(local_url)"
+  # a time limit: with WSL's mirrored networking a closed port does not refuse, it hangs
+  if curl -k -s -f -o /dev/null --max-time 5 "$(local_url)/q/health/ready"; then echo "Health: ready at $(local_url)"
   else echo "Health: not answering at $(local_url)"; fi
   ! auth_on || echo "People expiry: $(expiry_timer_state)"
   last="$(ls -1d "$data"/backups/kilnmark-* 2> /dev/null | tail -n 1 || true)"
@@ -1602,6 +1617,150 @@ boot_start() {
   fi
 }
 
+# --- where rootless Podman keeps the containers' logs ---------------------------------------------
+
+# Podman's default log driver on most distributions is journald, which files a system account's
+# messages in the system journal, where that account cannot read them (it is in neither adm nor
+# systemd-journal): logs, and podman logs, then show nothing. So the account's own Podman keeps
+# them in files (k8s-file), each at most 50 MB, in its containers.conf, set at install and by every
+# up (upgrade runs up). Never in compose.yaml: k8s-file is Podman's alone, and Docker would refuse
+# it. Docker, and Podman as root, are left as they are. KILNMARK_TEST_CONTAINERS_DIR and
+# KILNMARK_TEST_GROUPS are the tests' (with their marker): without the first the tests never touch
+# their own account's containers.conf.
+containers_conf_dir() {
+  if test_hooks; then [ -n "${KILNMARK_TEST_CONTAINERS_DIR:-}" ] && printf '%s' "$KILNMARK_TEST_CONTAINERS_DIR"; return; fi
+  printf '%s/containers' "${XDG_CONFIG_HOME:-$HOME/.config}"
+}
+# The log driver this account's Podman gives a new container; empty when Podman does not say.
+podman_log_driver() { "$engine" info --format '{{.Host.LogDriver}}' 2> /dev/null | head -n 1 | tr -d '[:space:]' || true; }
+# Whether this account may read the system journal: root, or a member of a group journald lets read.
+journal_readable() {
+  local groups
+  [ "$(my_uid)" -eq 0 ] && return 0
+  if test_hooks && [ -n "${KILNMARK_TEST_GROUPS+x}" ]; then groups="$KILNMARK_TEST_GROUPS"; else groups="$(id -Gn 2> /dev/null || true)"; fi
+  [[ " $groups " =~ [[:space:]](systemd-journal|adm|wheel)[[:space:]] ]]
+}
+# containers.conf ($1) with log_driver = "k8s-file" in its [containers] table, and log_size_max
+# (50 MB) where that table sets none, on standard output: every other line as it was. A log_driver
+# line in that table is replaced; what it lacks is added at the table's end; with no such table,
+# the table is added at the end of the file.
+merge_log_driver() {
+  awk '
+    # a table header: a name of letters, digits, _ - . quotes and spaces (never a comma, as in an array)
+    function header(l) { return l ~ /^[[:space:]]*\[\[?[A-Za-z0-9_." -]+\]\]?[[:space:]]*(#.*)?$/ }
+    function finish() {
+      if (!driver) print want
+      if (!size) print "log_size_max = 52428800"
+      done = 1
+    }
+    BEGIN { inside = 0; done = 0; driver = 0; size = 0; blanks = ""; want = "log_driver = \"k8s-file\"" }
+    # blank lines in the table are held back, so what is added goes before them, not after
+    inside && !done && /^[[:space:]]*$/ { blanks = blanks $0 "\n"; next }
+    header($0) {
+      if (inside && !done) finish()
+      printf "%s", blanks; blanks = ""
+      inside = ($0 ~ /^[[:space:]]*\[[[:space:]]*containers[[:space:]]*\][[:space:]]*(#.*)?$/)
+      print; next
+    }
+    { printf "%s", blanks; blanks = "" }
+    inside && !done && /^[[:space:]]*log_driver[[:space:]]*=/ { print want; driver = 1; next }
+    inside && !done && /^[[:space:]]*log_size_max[[:space:]]*=/ { size = 1 }
+    { print }
+    END {
+      if (inside && !done) finish()
+      printf "%s", blanks
+      if (!done) { print ""; print "[containers]"; finish() }
+    }' "$1"
+}
+# Sets this account's Podman to keep the containers' logs in files, as above; run as the account
+# (install runs it so), never as root. Changes nothing when they are kept in files already, or when
+# the account chose another driver than journald ($1 "say": says so, as install does). The new file
+# is made beside the old one, read by Podman first, and kept only when Podman then gives k8s-file;
+# else the old one is put back. Says what it did, or what to do by hand.
+set_podman_log_driver() {
+  local dir conf eff tmp orig="" now
+  [[ "$engine" != *docker* ]] && [ "$(my_uid)" -ne 0 ] || return 0
+  dir="$(containers_conf_dir)" || return 0
+  [ -n "$dir" ] || return 0
+  conf="$dir/containers.conf"
+  local by_hand="set log_driver = \"k8s-file\" under [containers] in $conf yourself, then $root/kilnmark.sh restart"
+  # a Podman that does not answer (its settings unreadable, say) is left as it is: check says why
+  if ! eff="$("$engine" info --format '{{.Host.LogDriver}}' 2> /dev/null)"; then
+    echo "Warning: this account's Podman does not answer (podman info fails), so where it keeps the containers' logs was left as it is: run $root/kilnmark.sh check, then $by_hand." >&2
+    return 0
+  fi
+  eff="$(printf '%s' "$eff" | head -n 1 | tr -d '[:space:]')"
+  case "$eff" in
+    k8s-file|json-file) return 0 ;;
+    ""|journald) ;;
+    *) [ "${1:-}" != say ] || echo "Note: this account's Podman keeps the containers' logs with the $eff log driver, which install leaves as it is: kilnmark.sh logs shows them only where that driver keeps them."
+      return 0 ;;
+  esac
+  if [ -L "$conf" ] || { [ -e "$conf" ] && [ ! -f "$conf" ]; }; then
+    echo "Warning: $conf is a link, or not a file, so it was left as it is, and kilnmark.sh logs may show nothing: $by_hand." >&2
+    return 0
+  fi
+  # a key written containers.log_driver, or any dotted containers. key, cannot take a [containers] table beside it
+  if [ -f "$conf" ] && grep -qE '^[[:space:]]*"?containers"?[[:space:]]*\.' "$conf"; then
+    echo "Warning: $conf sets containers. keys with dots, so it was left as it is, and kilnmark.sh logs may show nothing: $by_hand." >&2
+    return 0
+  fi
+  if ! mkdir -p "$dir" || ! tmp="$(mktemp "$dir/.containers.conf.XXXXXX")"; then
+    echo "Warning: $dir could not be written, so kilnmark.sh logs may show nothing: $by_hand." >&2
+    return 0
+  fi
+  if [ -f "$conf" ]; then
+    # every line kept: the new file is whole, and no shorter
+    if ! merge_log_driver "$conf" > "$tmp" || [ "$(wc -l < "$tmp")" -lt "$(wc -l < "$conf")" ] \
+      || ! orig="$(mktemp "$dir/.containers.conf.was.XXXXXX")" || ! cp -p "$conf" "$orig"; then
+      rm -f "$tmp" ${orig:+"$orig"}
+      echo "Warning: $conf could not be read or copied, so it was left as it is, and kilnmark.sh logs may show nothing: $by_hand." >&2
+      return 0
+    fi
+    chmod --reference="$conf" "$tmp" 2> /dev/null || chmod 644 "$tmp"
+  else
+    printf '[containers]\nlog_driver = "k8s-file"\nlog_size_max = 52428800\n' > "$tmp" && chmod 644 "$tmp"
+  fi
+  # Podman must read the new file, before it takes the old one's place
+  if ! CONTAINERS_CONF="$tmp" "$engine" info --format '{{.Host.LogDriver}}' > /dev/null 2>&1; then
+    rm -f "$tmp" ${orig:+"$orig"}
+    echo "Warning: Podman could not read $conf with log_driver added, so it was left as it is, and kilnmark.sh logs may show nothing: $by_hand." >&2
+    return 0
+  fi
+  mv -f "$tmp" "$conf" || { rm -f "$tmp" ${orig:+"$orig"}; echo "Warning: $conf could not be written, so kilnmark.sh logs may show nothing: $by_hand." >&2; return 0; }
+  # and Podman must now give k8s-file (a file in containers.conf.d may set another): else as it was
+  now="$(podman_log_driver)"
+  if [ "$now" != k8s-file ] && [ "$now" != json-file ]; then
+    if [ -n "$orig" ]; then mv -f "$orig" "$conf"; else rm -f "$conf"; fi
+    echo "Warning: with log_driver = \"k8s-file\" in $conf this account's Podman still gives ${now:-no log driver} (a file in $dir/containers.conf.d may set another), so $conf was put back as it was, and kilnmark.sh logs may show nothing: set log_driver = \"k8s-file\" where Podman takes it, then $root/kilnmark.sh restart." >&2
+    return 0
+  fi
+  [ -z "$orig" ] || rm -f "$orig"
+  echo "This account's Podman now keeps the containers' logs in files of at most 50 MB each (log_driver = \"k8s-file\" in $conf), so kilnmark.sh logs shows them: the system journal, its default, is not this account's to read."
+}
+# A container keeps the log driver it was made with. Where those of the services this start runs
+# (its profiles) were made with another than the account's Podman now gives, they are made again,
+# once: a compose down, every volume, so all data, kept. A container of another profile, which this
+# down would not remove, is never counted.
+recreate_for_log_driver() {
+  local want services id svc stale=""
+  [[ "$engine" != *docker* ]] && [ "$(my_uid)" -ne 0 ] || return 0
+  want="$(podman_log_driver)"
+  [ "$want" = k8s-file ] || return 0
+  services=" $("${compose[@]}" config --services 2> /dev/null | tr '\n' ' ' || true) "
+  while read -r id svc; do
+    [ -n "$id" ] && [[ "$services" == *" $svc "* ]] || continue
+    case "$("$engine" inspect --format '{{.HostConfig.LogConfig.Type}}' "$id" 2> /dev/null || true)" in
+      k8s-file|json-file) ;;
+      *) stale="$stale $svc" ;;
+    esac
+  done < <("$engine" ps -a --filter "label=com.docker.compose.project=$project" \
+    --format '{{.ID}} {{index .Labels "com.docker.compose.service"}}' 2> /dev/null || true)
+  [ -n "$stale" ] || return 0
+  echo "Making Kilnmark's containers again, once, so they keep their logs in files kilnmark.sh logs can read (all data is kept: it is in the volumes) ..."
+  compose_quietly down || die "Kilnmark's containers could not be stopped to make them again. See: ./kilnmark.sh status"
+}
+
 # The account Kilnmark runs as: made (a system account, no password), or kept when it is there,
 # with what rootless Podman needs (id ranges, lingering) or the docker group.
 make_account() {
@@ -1726,7 +1885,8 @@ cmd_install() {
   printf '%s\n' "$data" > "$root/data-folder.txt"
   chown -h root:root "$root" "$root/versions" "$root/current" "$root"/*.sh "$root/data-folder.txt" && chmod 644 "$root/data-folder.txt"
   step_ok
-  step "Check the account's Podman (rootless: its cgroups, its memory)"
+  step "Check the account's Podman (rootless: its cgroups, its memory, where it keeps the logs)"
+  account_step "$root/kilnmark.sh" _podman-logs < /dev/null
   account_step "$root/kilnmark.sh" check < /dev/null
   step_ok
   step "Make the data folder $data, with new secrets"
@@ -2615,12 +2775,18 @@ cmd_backup() {
   (cd "$root/current" && KILNMARK_COMPOSE_LINES="$(compose_lines)" KILNMARK_KEYCLOAK="$(keycloak_on)" sh ./backup.sh "$dest")
 }
 
+# This script as the operator runs it, for the commands restore.sh tells them to run next: in
+# quotes when its folder has a space in it.
+self_call() {
+  if [[ "$root" == *" "* ]]; then printf '"%s/kilnmark.sh"' "$root"; else printf '%s/kilnmark.sh' "$root"; fi
+}
+
 cmd_restore() {
   current_version > /dev/null; set_compose
   # its last step starts Kilnmark: the one-offs get their secrets for that run only
   write_run_secrets
   (cd "$root/current" && KILNMARK_COMPOSE_LINES="$(compose_lines)" KILNMARK_KEYCLOAK="$(keycloak_on)" \
-    KILNMARK_EXPECTED_MODE="$(setting KILNMARK_MODE)" sh ./restore.sh "$@")
+    KILNMARK_EXPECTED_MODE="$(setting KILNMARK_MODE)" KILNMARK_CONTROL="$(self_call)" sh ./restore.sh "$@")
   case " $* " in *" --yes "*) after_one_offs ;; esac
   drop_run_secrets
 }
@@ -2703,6 +2869,8 @@ case "$command" in
     done
     get_images "$v" ;;
   _starter-on) current_version > /dev/null; starter_on ;;
+  # best effort: an engine that does not work is the account's check's to report, in full
+  _podman-logs) if (pick_engine) > /dev/null 2>&1; then pick_engine; set_podman_log_driver say; fi ;;
   _recorded-mode) current_version > /dev/null; ensure_settings; set_compose; recorded_mode ;;
   _stop-for-uninstall) start_log uninstall; cmd_stop_for_uninstall "$@" ;;
   version) if [ -n "$root" ] && [ -n "$data" ]; then echo "Kilnmark $(current_version)"; else echo "Kilnmark $(version_of "$here") (not installed)"; fi ;;
