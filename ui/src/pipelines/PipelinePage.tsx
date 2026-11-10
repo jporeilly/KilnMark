@@ -25,7 +25,7 @@ import { nodeMetrics, shareOf, splitWords } from "./nodeMetrics";
 import { rateWords } from "./live";
 import { columnsText } from "./outline";
 import { nodeQualityWords } from "./quality";
-import { emptyYaml, findStarterPicks, renamed, starterYaml, withoutLayout } from "./template";
+import { emptyYaml, findStarterPicks, renamed, starterYaml, withoutCanvas } from "./template";
 import { YamlEditor, type YamlEditorHandle } from "./YamlEditor";
 import { CANVAS_TABS, NODE_TABS, PipelineDock, useDock, type DockControl, type DockTab } from "./PipelineDock";
 import { RunFacts, RunNodes, rowsRead, useRunDetail } from "./RunSummary";
@@ -60,7 +60,8 @@ function savedView(): View {
   }
 }
 type Undo = { text: string; label: string; key?: string; at: number };
-const MOVED = "Moved nodes";
+/** The message offered when only the canvas changed: where nodes are drawn, or its notes. */
+const MOVED = "Moved nodes or changed notes";
 
 /**
  * One pipeline, built on the canvas or written as YAML: two views of one document. The canvas
@@ -364,7 +365,7 @@ export function PipelinePage({
   const problemNodes = useMemo(() => new Set(problems.map((p) => p.node).filter((s): s is string => !!s)), [problems]);
   const dirty = !viewing && (isNew || (savedYaml != null && yaml !== savedYaml));
   // Moving nodes changes only the layout block: that is no reason to warn before a run.
-  const contentDirty = dirty && !isNew && savedYaml != null && withoutLayout(yaml) !== withoutLayout(savedYaml);
+  const contentDirty = dirty && !isNew && savedYaml != null && withoutCanvas(yaml) !== withoutCanvas(savedYaml);
   const layoutOnly = dirty && !isNew && !contentDirty;
   useEffect(() => {
     setMessage((m) => (layoutOnly && m.trim() === "" ? MOVED : !layoutOnly && m === MOVED ? "" : m));
@@ -471,7 +472,7 @@ export function PipelinePage({
       return;
     }
     // From the text as it is now: a setting typed a moment ago may not have been drawn yet.
-    const unsaved = savedYaml != null && withoutLayout(yamlNow.current) !== withoutLayout(savedYaml);
+    const unsaved = savedYaml != null && withoutCanvas(yamlNow.current) !== withoutCanvas(savedYaml);
     if (unsaved && !confirmRun) {
       setConfirmRun(true);
       return;

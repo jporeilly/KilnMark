@@ -32,6 +32,7 @@ import { rateWords, type LiveNode } from "../live";
 import { kindWord, nodeLabel } from "./insight";
 import type { BadgeRows } from "./layout";
 import type { GraphNode } from "./model";
+import { NodeNoteLine } from "./CanvasNotes";
 
 export type NodeRunInfo = {
   rowsIn: number | null;
@@ -278,6 +279,7 @@ function NodeBox({ data, selected }: NodeProps<NodeCardType>) {
         </span>
       </div>
       <div className="cv-node-id mono">{node.id}</div>
+      <NodeNoteLine note={node.note} />
       <div className="cv-node-summary" title={summary || undefined}>
         {summary || <span className="muted">No settings yet</span>}
       </div>

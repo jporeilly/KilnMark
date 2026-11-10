@@ -23,6 +23,7 @@ import {
   IconLayoutDistributeHorizontal,
   IconLayoutSidebarLeftCollapse,
   IconLayoutSidebarLeftExpand,
+  IconNote,
   IconPlug,
   IconSparkles,
   IconTextSize,
@@ -85,6 +86,8 @@ import { NodePreviewPanel, type PreviewAsk, type PreviewResult } from "./NodePre
 import { CANVAS_TABS, NODE_TABS, type DockControl } from "../PipelineDock";
 import { useRole } from "../../components/role";
 import { NodeCard, badgeRows, runWords, type NodeCardType, type NodeRunInfo } from "./NodeCard";
+import { CanvasNotes } from "./CanvasNotes";
+import { addNote, detachNotes, MAX_NOTES, NOTE_SIZE, placeOf, removeNote, setNodeNote, updateNote, type NotePatch } from "./notes";
 import { nodeMetrics, type NodeMetrics } from "../nodeMetrics";
 import "./canvas.css";
 
@@ -148,6 +151,8 @@ const fromHandles = (c: { source: string | null; sourceHandle?: string | null; t
     ? { from: c.source, fromPort: (c.sourceHandle ?? "out:out").replace(/^out:/, ""), to: c.target, toPort: (c.targetHandle ?? "in:in").replace(/^in:/, "") }
     : null;
 const edgeWords = (e: GraphEdge) => `${refText(e.from, e.fromPort)} to ${e.to}.${e.toPort}`;
+/** The comment written above the notes: they are for people, never for a run. */
+const NOTES_COMMENT = " Notes on the canvas, for people. Kilnmark ignores this list when it runs the pipeline.";
 
 const SHORTCUTS: [string, string][] = [
   ["Tab, Shift+Tab", "Move between nodes (and on to the settings)"],
@@ -166,6 +171,10 @@ const SHORTCUTS: [string, string][] = [
   ["F", "Fit the whole pipeline in view"],
   ["R", "Readable size: the first nodes at a size you can read"],
   ["L", "Lay the nodes out again, left to right"],
+  ["N", "Add a note: on the selected node, or in the middle of the view, and start writing it"],
+  ["Enter on a note (or a double-click)", "Edit the note; Escape or Ctrl+Enter stops editing"],
+  ["Delete on a note", "Remove the note"],
+  ["Shift+Arrow keys on a note", "Move the note; with Ctrl as well, resize it"],
   ["?", "These shortcuts"],
   ["Escape", "Clear the selection, or close a menu"],
 ];
@@ -453,7 +462,8 @@ function Canvas(props: CanvasProps) {
     let text = yamlRef.current;
     let last: { id: string; key: string } | null = null;
     for (const w of pending.current.values()) {
-      const c = setSetting(text, w.id, w.key, w.value, w.kind);
+      // A node's note is not one of its settings: it is written by itself.
+      const c = w.kind === "note" ? setNodeNote(text, w.id, typeof w.value === "string" ? w.value : "") : setSetting(text, w.id, w.key, w.value, w.kind);
       if ("error" in c) {
         setRefusal(c.error);
         continue;
@@ -463,7 +473,7 @@ function Canvas(props: CanvasProps) {
     }
     pending.current.clear();
     if (last && text !== yamlRef.current) {
-      apply({ text }, `Changed ${last.key} of ${last.id}.`, { coalesce: `${last.id}:${last.key}` });
+      apply({ text }, last.key === "note" ? `Changed the note of ${last.id}.` : `Changed ${last.key} of ${last.id}.`, { coalesce: `${last.id}:${last.key}` });
     }
   }, [apply]);
   const flushRef = useRef(flush);
@@ -499,7 +509,9 @@ function Canvas(props: CanvasProps) {
     flush();
     const order = graph.nodes.map((s) => s.id);
     const next = order[order.indexOf(id) + 1] ?? order[order.indexOf(id) - 1] ?? null;
-    const c = removeNode(yamlRef.current, id, catalogue);
+    const removed = removeNode(yamlRef.current, id, catalogue);
+    // Its notes stay where they are drawn, on their own.
+    const c = "error" in removed || !graph.notes.some((n) => n.node === id) ? removed : detachNotes(removed.text, id, shown[id] ?? null);
     apply(c, `Removed node ${id} and its connections.`, { pin: true });
     if (!("error" in c)) {
       if (next) {
@@ -590,6 +602,39 @@ function Canvas(props: CanvasProps) {
     return null;
   };
 
+  // ---- notes on the canvas ----
+
+  const [noteFocus, setNoteFocus] = useState<{ index: number; n: number } | null>(null);
+  const notes = graph?.notes ?? [];
+  /**
+   * Adds a note: above the selected node and attached to it, else in the middle of the part of the
+   * canvas in view. Its editor opens, so the words can be typed at once.
+   */
+  const addNoteHere = () => {
+    if (readOnly || !graph) return;
+    flush();
+    const sel = selected && graph.nodes.some((s) => s.id === selected) ? selected : null;
+    let place = { x: 0, y: -(NOTE_SIZE.height + 24) };
+    if (!sel) {
+      const box = flowBox.current?.getBoundingClientRect();
+      const area = visibleArea();
+      const centre = box && area ? flow.screenToFlowPosition({ x: box.left + area.left + area.width / 2, y: box.top + area.height / 2 }) : { x: 0, y: 0 };
+      place = { x: centre.x - NOTE_SIZE.width / 2, y: centre.y - NOTE_SIZE.height / 2 };
+    }
+    const c = addNote(yamlRef.current, { text: "", node: sel, ...place, ...NOTE_SIZE, colour: "yellow" }, NOTES_COMMENT);
+    const made = apply(c, sel ? `Added note ${notes.length + 1} on ${sel}. Type what it says.` : `Added note ${notes.length + 1}. Type what it says.`);
+    if (made != null) setNoteFocus((f) => ({ index: Number(made), n: (f?.n ?? 0) + 1 }));
+  };
+  const changeNote = (index: number, patch: NotePatch, label: string) => {
+    if (readOnly) return;
+    flush();
+    apply(updateNote(yamlRef.current, index, patch), label);
+  };
+  const dropNote = (index: number, label: string) => {
+    if (readOnly) return;
+    flush();
+    apply(removeNote(yamlRef.current, index, NOTES_COMMENT), label);
+  };
   const layOut = () => {
     if (readOnly || !graph) return;
     flush();
@@ -634,6 +679,7 @@ function Canvas(props: CanvasProps) {
         ariaLabel: [
           `Node ${s.id}, ${kindWord(t?.kind)}: ${nodeLabel(s, t?.label ?? s.type ?? "no type")}`,
           summary,
+          s.note ? `Note: ${s.note}` : "",
           s.inputs.length ? `reads from ${s.inputs.map((l) => refText(l.from, l.fromPort)).join(" and ")}` : "",
           n ? `${plural(n, "problem")}` : "",
           runInfo ? `${runInfo.live ? "running now" : "last run"}: ${runWords(runInfo)}` : "",
@@ -660,6 +706,12 @@ function Canvas(props: CanvasProps) {
       }),
     );
   }, [derived]);
+
+  // Where each node is drawn now, as it is dragged too: the notes attached to it go with it.
+  const anchors = useMemo(() => Object.fromEntries(flowNodes.map((n) => [n.id, n.position])), [flowNodes]);
+  // The notes' boxes, so fitting the view takes them in too.
+  const noteBoxes = useRef<{ x: number; y: number; width: number; height: number }[]>([]);
+  noteBoxes.current = notes.map((n) => ({ ...placeOf(n, anchors), width: n.width, height: n.height }));
 
   const onNodesChange = useCallback((changes: NodeChange<NodeCardType>[]) => {
     // Selection is the page's; React Flow's own select and remove changes are not applied.
@@ -703,7 +755,16 @@ function Canvas(props: CanvasProps) {
       const area = visibleArea();
       const all = flow.getNodes();
       if (!area || all.length === 0) return;
-      const b = getNodesBounds(all);
+      const nb = getNodesBounds(all);
+      const boxes = [nb, ...noteBoxes.current];
+      const x0 = Math.min(...boxes.map((r) => r.x));
+      const y0 = Math.min(...boxes.map((r) => r.y));
+      const b = {
+        x: x0,
+        y: y0,
+        width: Math.max(...boxes.map((r) => r.x + r.width)) - x0,
+        height: Math.max(...boxes.map((r) => r.y + r.height)) - y0,
+      };
       const pad = FIT_PAD;
       // The overview map covers the bottom-right corner: the nodes are fitted beside it, never under it.
       const map = minimapBox();
@@ -920,6 +981,11 @@ function Canvas(props: CanvasProps) {
     if ((k === "l" || k === "L") && !mod) {
       done();
       layOut();
+      return;
+    }
+    if ((k === "n" || k === "N") && !mod && !readOnly) {
+      done();
+      addNoteHere();
       return;
     }
     if ((k === "a" || k === "A") && !mod && !readOnly) {
@@ -1147,6 +1213,7 @@ function Canvas(props: CanvasProps) {
           declared={graph?.declared ?? []}
           yaml={yaml}
           onSetting={(key, value, kind) => setOne(selectedNode.id, key, value, kind)}
+          onNote={(text) => setOne(selectedNode.id, "note", text, "note")}
           onRename={(to) => rename(selectedNode.id, to)}
           onDisconnect={unlink}
           onConnectMenu={() => openConnect(selectedNode.id)}
@@ -1224,6 +1291,16 @@ function Canvas(props: CanvasProps) {
           <IconLayoutDistributeHorizontal size={18} stroke={1.8} aria-hidden="true" />
           Auto-layout
         </button>
+        <button
+          type="button"
+          className="cv-tool"
+          onClick={addNoteHere}
+          disabled={readOnly || !graph || notes.length >= MAX_NOTES}
+          title={notes.length >= MAX_NOTES ? `A canvas has at most ${MAX_NOTES} notes` : "Add a note on the selected node, or in the middle of the view (N)"}
+        >
+          <IconNote size={18} stroke={1.8} aria-hidden="true" />
+          Add a note
+        </button>
         <span className="cv-tool-sep" aria-hidden="true" />
         <button type="button" className="cv-tool" onClick={() => selected && openConnect(selected)} disabled={readOnly || !selected}>
           <IconPlug size={18} stroke={1.8} aria-hidden="true" />
@@ -1297,7 +1374,7 @@ function Canvas(props: CanvasProps) {
             if (id && id !== selected) selectNode(id);
           }}
           role="region"
-          aria-label={`Canvas of ${props.title}: ${plural(graph?.nodes.length ?? 0, "node")}. Press question mark for keyboard shortcuts.`}
+          aria-label={`Canvas of ${props.title}: ${plural(graph?.nodes.length ?? 0, "node")}${notes.length ? ` and ${plural(notes.length, "note")}` : ""}. Press question mark for keyboard shortcuts.`}
         >
           <ReactFlow<NodeCardType, Edge>
             nodes={flowNodes}
@@ -1353,6 +1430,17 @@ function Canvas(props: CanvasProps) {
             proOptions={{ hideAttribution: false }}
           >
             <Background gap={20} size={1} />
+            <CanvasNotes
+              notes={notes}
+              anchors={anchors}
+              nodeIds={graph?.nodes.map((s) => s.id) ?? []}
+              editable={!readOnly}
+              what="pipeline"
+              onUpdate={changeNote}
+              onRemove={dropNote}
+              focusRequest={noteFocus}
+              onRemoved={() => flowBox.current?.focus()}
+            />
             <MiniMap
               pannable
               zoomable

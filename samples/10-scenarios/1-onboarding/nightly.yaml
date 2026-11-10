@@ -35,6 +35,7 @@ nodes:
 
   - id: merge
     type: run-pipeline
+    note: Goes on only while few rows are set aside
     pipeline: sample-onboarding-merge
     timeout: 30m
 
@@ -90,3 +91,16 @@ connections:
   - { from: record, to: done }
   - { from: record, to: failed, when: failure }
   - { from: failed, to: halt }
+
+# Notes on the canvas, for people. Kilnmark ignores this list when it runs the flow.
+notes:
+  - text: |-
+      **Nightly onboarding.** Checks the customer tables, merges them, then writes the analytics copy and the load record.
+
+      Give it a schedule under **Schedules** to run it every night.
+    node: crm_ready
+    x: 0
+    y: -190
+    width: 260
+    height: 160
+    colour: blue

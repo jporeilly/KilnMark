@@ -24,6 +24,8 @@ import { FlowStatus, flowStatusWords } from "./RunFlow";
 import { bowOffsets, connectionSentence, TYPE_WORDS, whenWords, type ConnectionKind, type FlowGraph, type FlowGraphNode, type Point } from "./graph";
 import { inColumn, roundedPath, steps, type Columns } from "./route";
 import { FlowNodeIcon } from "./nodeIcons";
+import { CanvasNotes, NodeNoteLine } from "../pipelines/canvas/CanvasNotes";
+import { placeOf, type NotePatch } from "../pipelines/canvas/notes";
 import "../pipelines/canvas/canvas.css";
 import "./flows.css";
 
@@ -34,6 +36,8 @@ const HEIGHT = 118;
 const STATUS_ROW = 29;
 /** How far down a card its `in` and `out` connectors are: the middle of its ports row. */
 const PORT_Y = 102;
+/** The row under a node's name that holds its own note, when any node of the flow has one. */
+const NOTE_ROW = 18;
 const LABEL_HEIGHT = 20;
 /** How round a connection's corners are, as on a pipeline's canvas. */
 const CORNER = 8;
@@ -47,7 +51,8 @@ const labelWidth = (text: string) => Math.ceil(text.length * 6.6) + 16;
  */
 export type FlowSelection = { node: string } | { connection: number; from: string; to: string };
 
-type NodeData = { node: FlowGraphNode; status: FlowNodeStatus | null };
+/** `noteRow`: whether cards keep a row for a node's note (any node of the flow has one), so all line up. */
+type NodeData = { node: FlowGraphNode; status: FlowNodeStatus | null; noteRow: boolean };
 type FlowCard = Node<NodeData, "flowNode">;
 /** An unseen point at a corner of the routes, so fitting the view takes in every connection, not only the nodes. */
 type FitAnchor = Node<Record<string, never>, "fitAnchor">;
@@ -68,7 +73,7 @@ type BowedEdge = Edge<BowData, "bowed">;
  * is in the foot.
  */
 function FlowNodeBox({ data, selected }: NodeProps<FlowCard>) {
-  const { node, status } = data;
+  const { node, status, noteRow } = data;
   return (
     <div className={`cv-node fd-card fd-type-${node.type}${status ? ` fd-status-${status}` : ""}${selected ? " is-selected" : ""}`}>
       <div className="cv-node-head">
@@ -78,6 +83,7 @@ function FlowNodeBox({ data, selected }: NodeProps<FlowCard>) {
         <span className="cv-node-kind">{TYPE_WORDS[node.type] ?? node.type}</span>
       </div>
       <div className="cv-node-id mono">{node.id}</div>
+      {node.note ? <NodeNoteLine note={node.note} /> : noteRow && <div className="cv-node-note fd-note-space" aria-hidden="true" />}
       <div className="cv-node-summary" title={node.summary}>
         {node.summary}
       </div>
@@ -198,6 +204,10 @@ export default function FlowDiagram({
   onSelect,
   onMove,
   onConnect,
+  onNoteUpdate,
+  onNoteRemove,
+  noteFocus = null,
+  onPlaced,
 }: {
   graph: FlowGraph;
   statuses?: Record<string, FlowNodeStatus>;
@@ -207,9 +217,18 @@ export default function FlowDiagram({
   onSelect?: (s: FlowSelection | null) => void;
   onMove?: (positions: Record<string, Point>) => void;
   onConnect?: (from: string, to: string) => void;
+  /** Changes to the notes on the diagram, each one undo step (editable only). */
+  onNoteUpdate?: (index: number, patch: NotePatch, label: string) => void;
+  onNoteRemove?: (index: number, label: string) => void;
+  /** Set by Add a note: focus that note and open its editor. */
+  noteFocus?: { index: number; n: number } | null;
+  /** Where the diagram draws each node (its top-left corner), whenever that changes. */
+  onPlaced?: (where: Record<string, Point>) => void;
 }) {
   const scheme = useColourScheme();
-  const height = HEIGHT + (statuses ? STATUS_ROW : 0);
+  const noteRow = graph.nodes.some((n) => !!n.note);
+  const height = HEIGHT + (statuses ? STATUS_ROW : 0) + (noteRow ? NOTE_ROW : 0);
+  const portY = PORT_Y + (noteRow ? NOTE_ROW : 0);
   const byHand = Object.keys(graph.positions).length > 0;
   const [moving, setMoving] = useState(false);
   // The layout depends only on the flow: a run's page asks for statuses every two seconds, and
@@ -230,7 +249,7 @@ export default function FlowDiagram({
     // Dagre routes from the middle of each box; the connectors are lower, in the ports row. The bends
     // in the gaps between columns, where the labels are, move down by as much, so a label stays on
     // its line; a bend beside a column's nodes keeps the height dagre gave it to clear them.
-    const down = PORT_Y - height / 2;
+    const down = portY - height / 2;
     const columns: Columns = graph.nodes.map((n) => [where[n.id].x, where[n.id].x + WIDTH]);
     const routes = graph.connections.map((c, i) => {
       const r = g.edge({ v: c.from, w: c.to, name: `c${i}` }) as { points: Point[]; x: number; y: number };
@@ -238,7 +257,7 @@ export default function FlowDiagram({
       return { points, x: r.x, y: inColumn(r.x, columns) ? r.y : r.y + down };
     });
     return { where, routes, columns };
-  }, [graph, height]);
+  }, [graph, height, portY]);
 
   const links = useMemo(() => {
     const offsets = bowOffsets(graph.connections);
@@ -264,8 +283,12 @@ export default function FlowDiagram({
   // The layout may take a connection round the outside of the nodes: two unseen points at the corners
   // of every route make fitting the view take them in.
   const anchors = useMemo((): FitAnchor[] => {
-    if (byHand) return [];
-    const all = routes.flatMap((r) => r.points);
+    // The notes are taken in too, so fitting the view never cuts one off.
+    const notes = graph.notes.flatMap((n) => {
+      const at = placeOf(n, where);
+      return [at, { x: at.x + n.width, y: at.y + n.height }];
+    });
+    const all = [...(byHand ? [] : routes.flatMap((r) => r.points)), ...notes];
     if (all.length === 0) return [];
     const xs = all.map((p) => p.x);
     const ys = all.map((p) => p.y);
@@ -281,7 +304,7 @@ export default function FlowDiagram({
       focusable: false,
     });
     return [corner("__fit-min", Math.min(...xs), Math.min(...ys)), corner("__fit-max", Math.max(...xs), Math.max(...ys))];
-  }, [routes, byHand]);
+  }, [routes, byHand, graph.notes, where]);
 
   const cards = useMemo(
     () =>
@@ -291,17 +314,20 @@ export default function FlowDiagram({
           id: n.id,
           type: "flowNode",
           position: where[n.id],
-          data: { node: n, status },
+          data: { node: n, status, noteRow },
           draggable: editable,
           selected: !!selected && "node" in selected && selected.node === n.id,
-          ariaLabel: `Node ${n.id}, ${TYPE_WORDS[n.type] ?? n.type}: ${n.summary}${status ? `. ${flowStatusWords(status)}` : ""}`,
+          ariaLabel: `Node ${n.id}, ${TYPE_WORDS[n.type] ?? n.type}: ${n.summary}${n.note ? `. Note: ${n.note}` : ""}${status ? `. ${flowStatusWords(status)}` : ""}`,
         };
       }),
-    [graph, statuses, where, editable, selected],
+    [graph, statuses, where, editable, selected, noteRow],
   );
   // React Flow moves a node while it is dragged through these; the YAML takes the place it is dropped at.
   const [nodes, setNodes] = useState(cards);
   useEffect(() => setNodes(cards), [cards]);
+  useEffect(() => onPlaced?.(where), [where, onPlaced]);
+  // Where each node is drawn now, as it is dragged too: the notes attached to it go with it.
+  const noteAnchors = useMemo(() => Object.fromEntries(nodes.map((n) => [n.id, n.position])), [nodes]);
   // A drag is written when it stops (onNodeDragStop). A chosen node moved with the arrow keys is
   // written once the keys have been still for a moment, so each press is not a change of its own.
   const dragging = useRef(false);
@@ -384,6 +410,16 @@ export default function FlowDiagram({
           }}
         >
           <Background gap={20} size={1} />
+          <CanvasNotes
+            notes={graph.notes}
+            anchors={noteAnchors}
+            nodeIds={graph.nodes.map((n) => n.id)}
+            editable={editable && !!onNoteUpdate && !!onNoteRemove}
+            what="flow"
+            onUpdate={(i, p, l) => onNoteUpdate?.(i, p, l)}
+            onRemove={(i, l) => onNoteRemove?.(i, l)}
+            focusRequest={noteFocus}
+          />
           <Controls showInteractive={false} />
         </ReactFlow>
       </div>

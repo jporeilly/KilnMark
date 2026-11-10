@@ -135,7 +135,7 @@ you chose):
 Where each node is drawn is kept at the end of the YAML, in a `layout` block. Kilnmark ignores it
 when it runs the pipeline, so moving nodes never changes what a pipeline does, and **Run now** does
 not ask about unsaved changes that only move nodes (saving them suggests the message "Moved
-nodes"):
+nodes or changed notes"):
 
 ```yaml
 # Where the canvas draws each node. Kilnmark ignores this when it runs the pipeline.
@@ -143,6 +143,57 @@ layout:
   customers: {x: 40, y: 120}
   tidy: {x: 320, y: 120}
 ```
+
+### Notes on the canvas
+
+Notes say what a pipeline is for, give an instruction or warn about something, where everyone who
+opens the canvas sees them. Kilnmark ignores them when it runs the pipeline: a note never changes a
+run, its check, its prediction or its lineage, and **Run now** does not ask about unsaved changes
+that only change notes.
+
+- **A note on the canvas** is a sticky note anywhere on the canvas. Choose **Add a note** in the
+  toolbar (or press N): with a node selected, the note goes above it and is attached to it, so it
+  moves with the node; otherwise it goes in the middle of the view. Type what it says, then press
+  Escape or choose **Done**. Double-click a note, or press Enter on it, to edit it again; in its
+  editor choose its colour (yellow, blue, green, pink or grey) and the node it is attached to, if
+  any. Drag a note to move it and its corner to resize it, or use Shift and the arrow keys (with Ctrl
+  as well to resize). Delete removes it; removing a node leaves its notes where they are.
+- **A node's note** is one line under the node's name on its card: the whole of it shows when you
+  point at the card or move to it. Write it in **Note** in the node's settings.
+
+Each change is one step for **Undo**. A note's text is plain text with a little Markdown:
+`**bold**`, `*italic*`, lists (`- ` or `1. `) and links to `https://` addresses, which open in a new
+tab. Anything else, such as HTML or a picture, is shown as you typed it. A note on the canvas holds
+at most 2,000 characters, a node's note 280, and a canvas at most 50 notes; past those the check
+says so.
+
+Notes are free text, never masked like the values of sensitive columns: **never paste data values
+into a note**, such as a customer's details, an account number or a password. Designers and admins
+add, change and remove notes; everyone else reads them. The YAML keeps them after the nodes, in a
+`notes:` list, and each node's in its `note:`:
+
+```yaml
+nodes:
+  - id: check
+    type: gate
+    note: More than 20% failing stops the run
+    input: customers
+
+# Notes on the canvas, for people. Kilnmark ignores this list when it runs the pipeline.
+notes:
+  - text: |-
+      **Failing rows are set aside, not dropped.** Open the run to see how many.
+    node: customers     # attached: x and y are from the node's top-left corner
+    x: 0
+    y: -160
+    width: 300          # 120 to 1,200
+    height: 130         # 60 to 1,200
+    colour: green       # yellow (the default), blue, green, pink or grey
+```
+
+Only `text` is needed; a note with no `node` is placed from the canvas's origin. Samples and
+templates keep their notes when you add them, and a pipeline added from the samples still counts as
+unchanged after you move its nodes or change its notes.
 
 ### Settings
 
@@ -261,7 +312,8 @@ out of date; choose **Preview again**.
 ### Using the keyboard
 
 Everything on the canvas can be done without a mouse. Press Tab to move from node to node (each
-node is described when it gets the focus), and on to the panel under the canvas. Press `?` on the canvas for this
+node is described when it gets the focus), then to the notes, each announced as a note, and on to
+the panel under the canvas. Press `?` on the canvas for this
 list:
 
 | Keys | What they do |
@@ -282,6 +334,10 @@ list:
 | F | Fit the whole pipeline in view |
 | R | Readable size |
 | L | Lay the nodes out again |
+| N | **Add a note**: on the selected node, or in the middle of the view |
+| Enter on a note (or a double-click) | Edit the note; Escape or Ctrl+Enter stops editing |
+| Delete on a note | Remove the note |
+| Shift+arrow keys on a note | Move the note; with Ctrl as well, resize it |
 | Escape | Clear the selection, or close a list |
 
 On a Mac, use Cmd for Ctrl. These keys work on the canvas and its tools, not while you are in the
