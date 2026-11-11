@@ -199,9 +199,10 @@ function ShowTheStart() {
   const done = useRef(false);
   useEffect(() => {
     if (!drawn || done.current) return;
-    done.current = true;
-    // After the first fit, which the nodes' sizes set off.
+    // After the first fit, which the nodes' sizes set off. Done only once the move is made: a
+    // frame cancelled by a re-run of this effect is asked for again.
     const frame = window.requestAnimationFrame(() => {
+      done.current = true;
       const nodes = flow.getNodes();
       if (nodes.length === 0) return;
       const view = flow.getViewport();

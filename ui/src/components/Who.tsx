@@ -29,12 +29,11 @@ export function wrapPieces(name: string): string[] {
 }
 
 /**
- * Whether a recorded name is an API token's rather than a person's: a person signs in through the
- * identity provider and is recorded as sso: and a name; anything else that did something is a token.
+ * Whether a recorded name is surely an API token's: the server's "token 1 (name)" form. A bare name
+ * may be a token's or a sign-in name someone typed (an owner, say), so it is not called a token.
  */
 export function isToken(recorded: string | null | undefined): boolean {
-  const full = (recorded ?? "").trim();
-  return full !== "" && !full.startsWith("sso:");
+  return /^token \d+ \(.+\)$/.test((recorded ?? "").trim());
 }
 
 /** The short name, as whoParts gives it, with the full record as its tooltip when they differ. */
