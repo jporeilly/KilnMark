@@ -218,6 +218,10 @@ before a load, say, or refresh a summary after one. It changes data and returns 
 put into SQL could change what it does. Each must start with `TRUNCATE`, `INSERT`, `UPDATE`,
 `DELETE`, `MERGE`, `CREATE`, `DROP`, `ALTER`, `CALL`, `ANALYZE`, `REFRESH`, `COMMENT`, `REINDEX`,
 `CLUSTER` or `LOCK`; never a query, transaction control, `SET`, `COPY`, `DO`, `GRANT` or `REVOKE`.
+A statement may total rows with `GROUP BY` (`INSERT INTO totals SELECT status, count(*) FROM orders
+GROUP BY status`). Words that create or change accounts, rights or code that runs later are refused
+where they stand unquoted, such as `ROLE`, `USER`, `FUNCTION`, `VIEW`, `FOREIGN` and `GROUP`
+anywhere but in `GROUP BY`; quote a column or table that has such a name (`"role"`).
 If one fails, all roll back, and the node's message names which one and its SQLSTATE, never the
 database's words.
 

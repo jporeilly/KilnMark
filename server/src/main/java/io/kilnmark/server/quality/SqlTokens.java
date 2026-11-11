@@ -329,7 +329,8 @@ public final class SqlTokens {
         "drop", "alter", "call", "analyze", "refresh", "comment", "reindex", "cluster", "lock");
     /**
      * Words a sql node's statement never holds, unquoted: they create, change or drop logins, rights,
-     * code that runs later, or ways out of the database, or they return rows.
+     * code that runs later, or ways out of the database, or they return rows. One exception:
+     * {@code group} before {@code BY} is the clause, not the account (see {@code groupBy}).
      */
     static final Set<String> ACTION_FORBIDDEN_WORDS = Set.of("role", "user", "group", "extension", "server", "foreign",
         "mapping", "subscription", "publication", "database", "tablespace", "system", "language", "event",
@@ -342,6 +343,38 @@ public final class SqlTokens {
         // a schema named as the login comes first on its search path ("$user"), and changes what every
         // unqualified name later means
         "schema");
+    /**
+     * Words that, straight before {@code GROUP}, make it an account: {@code CREATE}, {@code ALTER} and
+     * {@code DROP GROUP}, and the places a statement names who is given a right or whose members an
+     * account joins ({@code TO GROUP}, {@code FROM GROUP}, {@code IN GROUP}), or what it is about
+     * ({@code ON GROUP}; PostgreSQL has no such form today). No query has
+     * {@code GROUP BY} straight after one of them, nor after a comma (a list of accounts).
+     */
+    static final Set<String> BEFORE_A_GROUP_ACCOUNT = Set.of("create", "alter", "drop", "to", "from", "in", "on");
+
+    /**
+     * Whether the {@code GROUP} at {@code i} starts a {@code GROUP BY} clause, the one use of the word
+     * a sql node takes: an unquoted {@code BY} is the next token (comments and whitespace are not
+     * tokens, so they may stand between the two as PostgreSQL allows), and what stands before it does
+     * not make it an account. PostgreSQL lets an account be called {@code by}, so the word after is
+     * not enough: {@code CREATE GROUP by} and {@code DROP GROUP by} are refused by the word before.
+     * Every other use stays refused, the ordered-set form ({@code WITHIN GROUP}) among them.
+     */
+    private static boolean groupBy(List<Token> tokens, int i) {
+        if (i == 0 || i + 1 >= tokens.size()) {
+            return false;
+        }
+        Token next = tokens.get(i + 1);
+        if (next.kind() != Kind.WORD || !next.text().equals("by")) {
+            return false;
+        }
+        Token before = tokens.get(i - 1);
+        if (before.kind() == Kind.WORD) {
+            return !BEFORE_A_GROUP_ACCOUNT.contains(before.text());
+        }
+        return !(before.kind() == Kind.SYMBOL && before.text().equals(","));
+    }
+
     /** {@link #FORBIDDEN_FUNCTIONS} less those a statement that writes may need: sequences. */
     static final List<String> ACTION_FORBIDDEN_FUNCTIONS = FORBIDDEN_FUNCTIONS.stream()
         .filter(f -> !Set.of("nextval", "setval", "currval", "lastval").contains(f)).toList();
@@ -381,7 +414,8 @@ public final class SqlTokens {
         if (problem != null) {
             throw new IllegalArgumentException(problem + "; give each statement as its own item");
         }
-        for (Token t : tokens) {
+        for (int i = 0; i < tokens.size(); i++) {
+            Token t = tokens.get(i);
             if (t.kind() == Kind.PARAMETER) {
                 throw new IllegalArgumentException("parameters such as " + t.text() + " are not allowed");
             }
@@ -393,7 +427,9 @@ public final class SqlTokens {
             }
             // REFRESH MATERIALIZED VIEW only fills a view that is there
             boolean refresh = first.text().equals("refresh") && t.text().equals("view");
-            if (t.kind() == Kind.WORD && ACTION_FORBIDDEN_WORDS.contains(t.text()) && !refresh) {
+            // GROUP BY is a clause, not the account CREATE GROUP makes
+            boolean clause = t.kind() == Kind.WORD && t.text().equals("group") && groupBy(tokens, i);
+            if (t.kind() == Kind.WORD && ACTION_FORBIDDEN_WORDS.contains(t.text()) && !refresh && !clause) {
                 throw new IllegalArgumentException("'" + t.text() + "' is not allowed: a sql node does not create or "
                     + "change logins, rights, code that runs later or ways out of the database, and never returns "
                     + "rows (quote it, \"" + t.text() + "\", if it is a column or table name)");

@@ -203,6 +203,70 @@ class SafetyTest {
         assertEquals("one statement only", SqlTokens.driverSplits("INSERT INTO t VALUES (1); DELETE FROM t"));
     }
 
+    /**
+     * GROUP is two words in PostgreSQL: the clause GROUP BY, which any statement that totals rows
+     * needs, and a kind of account (CREATE GROUP and the like). A sql node takes the first and refuses
+     * the second, however the words are spaced, cased or commented. It refused both until 0.1.2, so
+     * the sample flow sample-sql-before-and-after could not run.
+     */
+    @Test
+    void aSqlNodeTakesGroupByAndRefusesAGroupAccount() {
+        for (String ok : List.of(
+            "INSERT INTO sample_order_totals SELECT status, count(*), sum(shipping_fee) FROM shop_orders GROUP BY status",
+            "insert into t select a, count(*) from s group by a",
+            "INSERT INTO t SELECT a FROM s GrOuP\r\n\t bY a",
+            "INSERT INTO t SELECT a FROM s GROUP /* by key */ BY a",
+            "INSERT INTO t SELECT a FROM s GROUP -- by key\n BY a",
+            "INSERT INTO t SELECT a FROM s WHERE b = 'x' GROUP BY a HAVING count(*) > 1",
+            "INSERT INTO t SELECT a FROM s WHERE b > 1 GROUP BY a",
+            "INSERT INTO t SELECT a FROM (SELECT a FROM s) x GROUP BY a",
+            "INSERT INTO t SELECT a FROM \"create\" GROUP BY a",
+            "CREATE TABLE totals AS SELECT a, sum(n) AS n FROM s GROUP BY a",
+            "UPDATE t SET n = (SELECT count(*) FROM s WHERE s.a = t.a GROUP BY s.a)",
+            "DELETE FROM t WHERE a IN (SELECT a FROM s GROUP BY a HAVING count(*) > 1)",
+            "MERGE INTO t USING (SELECT a, sum(n) AS n FROM s GROUP BY a) x ON t.a = x.a WHEN MATCHED THEN UPDATE "
+                + "SET n = x.n",
+            "INSERT INTO t SELECT a, b FROM s GROUP BY GROUPING SETS ((a), (b))",
+            // a column or table called group, quoted, is a name as before
+            "INSERT INTO t (\"group\") SELECT \"group\" FROM s GROUP BY \"group\"")) {
+            assertEquals(ok, SqlTokens.checkAction(ok, 10_000));
+        }
+        // The account: created, changed, dropped or renamed, also one called by, which PostgreSQL allows
+        for (String account : List.of("CREATE GROUP staff", "CREATE GROUP by", "create group By with login",
+            "CREATE GROUP \"by\"", "CREATE /* c */ GROUP /* c */ BY", "CREATE --c\rGROUP --c\nBY",
+            "CREATE\tGROUP\u000bBY", "ALTER GROUP staff ADD USER x", "ALTER GROUP by ADD USER x",
+            "ALTER GROUP by RENAME TO other", "DROP GROUP staff", "DROP GROUP by", "DROP GROUP IF EXISTS by",
+            "DROP GROUP staff, by",
+            // where a statement names who is given a right, or whose members a new account joins
+            "ALTER TABLE t RENAME TO GROUP BY", "DELETE FROM t WHERE a IN GROUP BY a", "DELETE FROM GROUP BY a",
+            "INSERT INTO t SELECT a, GROUP BY a", "COMMENT ON GROUP by IS 'staff'",
+            // the word alone, or before anything but an unquoted BY
+            "INSERT INTO t SELECT a FROM s GROUP", "INSERT INTO t SELECT a FROM s GROUP \"by\" a",
+            "INSERT INTO t SELECT a FROM s GROUP 'by' a", "INSERT INTO t SELECT a AS group FROM s",
+            "INSERT INTO t SELECT a FROM s GROUP bye",
+            // every use is checked, not only the first
+            "DROP TABLE t GROUP BY a CREATE GROUP by")) {
+            refusedAction(account, "'group' is not allowed");
+        }
+        // Words that name the account's rights are refused as before, wherever GROUP BY stands
+        refusedAction("CREATE TABLE x AS SELECT a FROM s GROUP BY a GRANT ALL ON x TO GROUP by", "'grant' is not allowed");
+        refusedAction("CREATE ROLE x IN GROUP by", "'role' is not allowed");
+        refusedAction("INSERT INTO t SELECT a FROM s GROUP BY a RETURNING a", "'returning' is not allowed");
+        // The other five words of its kind have no second meaning a statement needs: refused wherever they stand
+        refusedAction("INSERT INTO t SELECT user", "'user' is not allowed");
+        refusedAction("INSERT INTO t SELECT a FROM s GROUP BY role", "'role' is not allowed");
+        refusedAction("DROP EXTENSION IF EXISTS by", "'extension' is not allowed");
+        refusedAction("DROP SERVER by", "'server' is not allowed");
+        refusedAction("CREATE FOREIGN TABLE by (a int) SERVER s", "'foreign' is not allowed");
+        refusedAction("ALTER TABLE t ADD FOREIGN KEY (a) REFERENCES s (a)", "'foreign' is not allowed");
+        // The ordered-set form (WITHIN GROUP) stays refused: only GROUP BY is let through
+        refusedAction("INSERT INTO t SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY a) FROM s",
+            "'group' is not allowed");
+        // Custom SQL rules and wait-for queries never refused GROUP BY, and still read only
+        SqlTokens.checkCustomSql("SELECT a FROM t GROUP BY a HAVING count(*) > 1", 10_000);
+        refused("SELECT a FROM t GROUP BY a; CREATE GROUP by");
+    }
+
     @Test
     void ordinaryReadingSqlIsAccepted() {
         assertEquals("SELECT * FROM ${table} WHERE amount < 0",

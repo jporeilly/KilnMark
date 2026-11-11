@@ -418,9 +418,15 @@ reads from it. Connections follow it as any node (`success`, `failure`, a condit
   `CREATE`, `DROP`, `ALTER`, `CALL`, `ANALYZE`, `REFRESH`, `COMMENT`, `REINDEX`, `CLUSTER` or `LOCK`,
   and be one statement (`SqlTokens.checkAction`). Never a query, transaction control, `SET`, `COPY`,
   `DO`, `GRANT` or `REVOKE`; never, unquoted, `RETURNING` or the words that create or change logins,
-  rights, code that runs later or ways out of the database (`ROLE`, `USER`, `EXTENSION`, `SERVER`,
-  `FUNCTION`, `TRIGGER`, `OWNER`, `PRIVILEGES`, `SYSTEM`, `VIEW` (outside `REFRESH MATERIALIZED
-  VIEW`), `ROUTINE`, ...); and never `pg_settings` (its rules change settings) or the functions custom rules
+  rights, code that runs later or ways out of the database (`ROLE`, `USER`, `GROUP`, `EXTENSION`,
+  `SERVER`, `FOREIGN`, `FUNCTION`, `TRIGGER`, `OWNER`, `PRIVILEGES`, `SYSTEM`, `VIEW` (outside
+  `REFRESH MATERIALIZED VIEW`), `ROUTINE`, ...). `GROUP` has one exception, as the word is also a
+  clause: `GROUP BY` is taken when an unquoted `BY` is the next token (comments and whitespace are
+  not tokens) and the token before is none of `CREATE`, `ALTER`, `DROP`, `TO`, `FROM`, `IN`, `ON` or a
+  comma, the places where PostgreSQL reads an account (which may itself be called `by`, so the word
+  after is not enough). Every other use of `GROUP` stays refused, `WITHIN GROUP` among them. The
+  other words have no second meaning that quoting cannot reach, bar `FOREIGN KEY`, which stays
+  refused. Until 0.1.2 `GROUP BY` was refused too. And never `pg_settings` (its rules change settings) or the functions custom rules
   refuse (files, other sessions or databases, settings, locks, and `ts_stat` and `ts_rewrite`, which
   run a query held in a string), sequences apart. `E'...'` strings and `U&"..."` names are refused,
   and the text may hold no control character but PostgreSQL's whitespace. The tokenizer reads

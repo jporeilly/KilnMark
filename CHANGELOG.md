@@ -11,6 +11,22 @@ released.
 
 ## Unreleased
 
+### Fixed
+
+- **A flow's `sql` node takes `GROUP BY`, so the sample flow `sample-sql-before-and-after` runs.**
+  A `sql` node refused any statement holding the word `GROUP`, meant for `CREATE GROUP` and the
+  like, so a statement that totals rows (`INSERT ... SELECT ... GROUP BY`) was refused when saved
+  and by **Run now**; so since 0.0.10, and the known issue of 0.1.2. `GROUP BY` is now taken,
+  however the two words are spaced, cased or commented. `GROUP` stays refused everywhere else:
+  where it names an account (`CREATE`, `ALTER` and `DROP GROUP`, also for an account called `by`,
+  and after `TO`, `FROM`, `IN`, `ON` or a comma), alone, before a quoted `"by"`, and in `WITHIN GROUP`.
+  Nothing else a `sql` node refuses has changed. The known-issue notes are gone from
+  [The Library](docs/guide/library.md) and the samples' README.
+- **A sample that cannot run now fails the build.** Every sample flow is checked as **Run now**
+  checks it (its sources, each `sql` statement and `wait-for` query, and the pipelines it runs),
+  and the samples that run SQL a person wrote (`sample-sql-before-and-after` and
+  `sample-read-query`) are run for real in the tests, under a login that is not a superuser.
+
 ## 0.1.2 (11 November 2026)
 
 ### What's new
