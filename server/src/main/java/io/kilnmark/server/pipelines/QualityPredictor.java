@@ -448,7 +448,7 @@ final class QualityPredictor {
             case "select" -> Map.of("out", select(s, in));
             case "lookup" -> lookup(s, first(inputs, "main"), first(inputs, "lookup"));
             case "aggregate" -> Map.of("out", aggregate(s, in));
-            case "union" -> Map.of("out", union(inputs.getOrDefault("in", List.of())));
+            case "union" -> Map.of("out", comparesRows(s) ? compared(s) : union(inputs.getOrDefault("in", List.of())));
             case "dedupe" -> dedupe(s, in);
             case "route" -> route(s, in);
             case "limit" -> Map.of("out", limit(s, in));
@@ -1969,6 +1969,22 @@ final class QualityPredictor {
             }
         }
         e.assumptions.add("a group is empty in a column only when all its rows are");
+        return e;
+    }
+
+    /** Whether a union compares rows ({@code mode: except} or {@code intersect}) instead of appending them. */
+    static boolean comparesRows(PlanNode s) {
+        String mode = PipelineSources.text(s.config(), "mode");
+        return "except".equals(mode) || "intersect".equals(mode);
+    }
+
+    /**
+     * A union that compares rows: which rows of its first input the other inputs have is known only
+     * when it runs, so its rows and what its columns hold are not predicted.
+     */
+    static Est compared(PlanNode s) {
+        Est e = Est.unknownRows(s.columns().get("out"));
+        e.unknown.add("which rows of its first input the other inputs of the union have (" + s.id() + ")");
         return e;
     }
 

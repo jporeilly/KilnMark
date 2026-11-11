@@ -649,7 +649,19 @@ final class NodePreview {
                 // column's name (one an earlier node dropped, say) is masked too
                 return main;
             }
-            case "limit", "union" -> {
+            case "union" -> {
+                String mode = text(config.get("mode"));
+                if ("except".equals(mode) || "intersect".equals(mode)) {
+                    // which rows come out shows whether the other inputs hold the same values
+                    List<String> on = list(config.get("compare_on"));
+                    uses(id, t, any, on.isEmpty() ? null : on, on.isEmpty() ? "compares whole rows, which include"
+                        : "compares rows by");
+                }
+                // Every input's hidden columns, also under except and intersect, where only the first
+                // input's rows come out: more is hidden than need be, never less.
+                return any;
+            }
+            case "limit" -> {
                 return any;
             }
             default -> {
@@ -746,10 +758,16 @@ final class NodePreview {
      * ({@code JoinFactory.rightNames}): a right column whose name a left column, or an earlier right
      * column, has already left by (ignoring case) leaves as {@code right_prefix} and its name. When
      * either side's columns are not known before the run (or the names clash, so the join will not
-     * run), a hidden right column is hidden under both names.
+     * run), a hidden right column is hidden under both names. A semi or anti join keeps the left's
+     * columns alone, so nothing of the right leaves it (its keys are still checked as used, by the
+     * callers).
      */
     static Hidden joinRight(Hidden right, Map<String, Object> config, List<String> leftColumns,
                             List<String> rightColumns) {
+        Object how = config.get("how");
+        if (how != null && List.of("semi", "anti").contains(String.valueOf(how).strip())) {
+            return Hidden.NONE;
+        }
         if (right.all()) {
             return Hidden.ALL;
         }

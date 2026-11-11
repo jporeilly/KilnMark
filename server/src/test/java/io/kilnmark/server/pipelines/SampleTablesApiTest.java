@@ -250,11 +250,11 @@ class SampleTablesApiTest {
         JsonPath added = as(designer).body(Map.of("sources", Map.of("crm-db", "e2e-db", "shop-db", "e2e-db",
             "files", "e2e-files"), "schema", SCHEMA)).post("/api/v1/samples").then().statusCode(200)
             .extract().jsonPath();
-        // 33 pipelines (all but the one reading with a query), then the sample flows that run them (ADR
+        // 34 pipelines (all but the one reading with a query), then the sample flows that run them (ADR
         // 0043). The two with sql nodes, or a wait-for query, need a source with Allow SQL on, which e2e-db
         // does not have: skipped, saying so, never a draft. Those that check a source and wait for a file
         // need none.
-        assertEquals(40, added.getInt("added"), added.prettify());
+        assertEquals(41, added.getInt("added"), added.prettify());
         assertEquals(List.of("sample-checks-and-waits", "sample-for-each-region", "sample-passing-values",
                 "sample-quality-decides", "sample-retries"),
             added.getList("samples.findAll { it.outcome == 'added' && it.file.startsWith('08-flows/') }.name"),
@@ -372,6 +372,21 @@ class SampleTablesApiTest {
         // The feed lists KIT-1005 twice: 16.68, then a later delivery at 18.35, which wins.
         assertTrue(prices.stream().anyMatch(l -> l.contains(",KIT-1005,") && l.contains(",18.35,")),
             String.join("\n", prices));
+
+        // Only in one input (ADR 0056): every archived customer is only in the archive (anti) or in both (semi).
+        JsonPath only = waitForRun(designer, as(designer).body(Map.of())
+            .post("/api/v1/pipelines/sample-only-in-archived/runs").then().statusCode(202).extract().jsonPath()
+            .getLong("id"));
+        assertEquals("succeeded", only.getString("run.status"), only.prettify());
+        List<String> onlyArchive = Files.readAllLines(out.resolve("samples/combine/customers_only_in_archive.csv"));
+        List<String> inBoth = Files.readAllLines(out.resolve("samples/combine/customers_in_archive_and_current.csv"));
+        assertEquals(count(Samples.tableIn(SCHEMA, "crm.customers_archive_2023")),
+            onlyArchive.size() - 1 + inBoth.size() - 1, "the two files hold every archived customer once");
+        // Three archived customers are current ones too, by email once it is tidied (capitals and spaces).
+        assertEquals(4, inBoth.size(), String.join("\n", inBoth));
+        assertEquals(onlyArchive.get(0), inBoth.get(0), "the archive's columns, and the key");
+        assertTrue(onlyArchive.get(0).startsWith("customer_id,first_name,") && onlyArchive.get(0).endsWith(",email_key"),
+            onlyArchive.get(0));
 
         scenarios(designer, out);
 

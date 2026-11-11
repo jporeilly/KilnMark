@@ -11,6 +11,33 @@ released.
 
 ## Unreleased
 
+### What's new
+
+- **Rows in one input and not the other.** Two ways to find them, as SQL has. By key: a `join`
+  node's **Join** setting gains `semi` and `anti`, the left rows that have a match on the right,
+  or have none, with the left's columns only and each row once (SQL's `EXISTS` and `NOT EXISTS`;
+  an empty key never matches, so `anti` keeps such rows). By whole row: a `union` node gains
+  **Mode**, with `except` (the rows of the first input that no other input has) and `intersect`
+  (those every other input has), and **Compare on** to compare chosen columns only. Empty values
+  are equal to each other there, as in SQL's `EXCEPT`; unlike SQL's, repeats are not folded into
+  one. A column only one input has is refused when the pipeline is checked, with what to do, since
+  it would make every row differ. Both sort on disk past their memory limit, so either side may be
+  larger than memory. A union with no mode appends as before.
+  [Rows in one input and not the other](docs/guide/pipelines.md#rows-in-one-input-and-not-the-other)
+  says when to use which, and the new sample `sample-only-in-archived` finds the archived
+  customers who are not among today's, matching on an email tidied the same way on both sides.
+
+### Details
+
+- **Semi and anti joins, except and intersect** (ADR 0056). `JoinFactory` walks the sorted left
+  beside the sorted right without holding the right's rows; `UnionFactory.SetNode` sorts every
+  input by the compared columns (`KeyCodec.rows`: values by family, as join keys, with nulls equal)
+  and walks the first beside the others. A preview by someone who may not see unmasked values is
+  refused when an except or intersect compares a column marked sensitive, as a dedupe's is, and a
+  semi or anti join passes on nothing of its right input. Quality prediction reports the rows of an
+  except or intersect as not known. On the canvas a comparing union's card says which input's rows
+  it keeps.
+
 ## 0.1.2 (11 November 2026)
 
 ### What's new

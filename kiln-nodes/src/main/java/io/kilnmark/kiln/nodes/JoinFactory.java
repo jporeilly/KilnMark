@@ -39,6 +39,13 @@ import io.kilnmark.kiln.nodes.expr.Type;
  * {@code right_prefix} ({@code right_} by default). Columns of a side that may have no match are
  * nullable.
  *
+ * <p>{@code semi} and {@code anti} keep left rows only, with the left's columns alone (so no name
+ * can clash and {@code right_prefix} is not used): {@code semi} the left rows with at least one
+ * match on the right, {@code anti} those with none. Each left row comes out once at most, however
+ * many right rows match it. They are SQL's {@code EXISTS} and {@code NOT EXISTS}: as a null key
+ * never matches, a left row whose key has a null is never in {@code semi} and always in
+ * {@code anti}, and a null on the right hides no left row (unlike SQL's {@code NOT IN}).
+ *
  * <p>A sort-merge join: each input is sorted by its keys ({@link ExternalSorter}, sharing
  * {@code memory_limit_mb} and spilling to disk past it, so either side may be larger than memory),
  * then the two sorted streams are merged. Rows come out in order of their keys, with rows whose key
@@ -50,7 +57,7 @@ import io.kilnmark.kiln.nodes.expr.Type;
 public final class JoinFactory implements NodeFactory {
 
     public static final String TYPE = "join";
-    static final List<String> HOWS = List.of("inner", "left", "right", "full");
+    static final List<String> HOWS = List.of("inner", "left", "right", "full", "semi", "anti");
     static final String DEFAULT_PREFIX = "right_";
 
     @Override
@@ -76,6 +83,7 @@ public final class JoinFactory implements NodeFactory {
     @Override
     public String help() {
         return "Joins rows of the left and right inputs whose key columns are equal: inner, left, right or full. "
+            + "Semi and anti keep only the left rows that have a match, or have none. "
             + "Either input may be larger than memory. To add a few columns from a small table, a lookup is quicker.";
     }
 
@@ -97,10 +105,12 @@ public final class JoinFactory implements NodeFactory {
             SettingSpec.choice("how", "Join", false, "inner",
                 "Which rows are kept: inner keeps the pairs of rows that match; left also keeps left rows with no "
                     + "match, right keeps right rows with none, and full keeps both, with the other side's columns "
-                    + "empty.", HOWS),
+                    + "empty. Semi keeps each left row that has a match and anti each left row that has none, with "
+                    + "the left's columns only.", HOWS),
             SettingSpec.optional("right_prefix", "Right prefix", SettingSpec.Kind.TEXT, DEFAULT_PREFIX,
                 "Put in front of the name of a right column that the left already has (ignoring case), so both are "
-                    + "kept.").withParameters(SettingSpec.Parameters.NONE),
+                    + "kept. Not used by semi and anti, which keep no right column.")
+                .withParameters(SettingSpec.Parameters.NONE),
             SettingSpec.optional("memory_limit_mb", "Memory limit (MB)", SettingSpec.Kind.NUMBER, 256,
                 "The most memory the two inputs may take while they are sorted. Past it, they are sorted on disk."));
     }
@@ -112,6 +122,19 @@ public final class JoinFactory implements NodeFactory {
 
         boolean keepRight() {
             return how.equals("right") || how.equals("full");
+        }
+
+        boolean semi() {
+            return how.equals("semi");
+        }
+
+        boolean anti() {
+            return how.equals("anti");
+        }
+
+        /** Semi and anti: left rows come out, with the left's columns alone. */
+        boolean leftOnly() {
+            return semi() || anti();
         }
     }
 
@@ -177,6 +200,10 @@ public final class JoinFactory implements NodeFactory {
             }
             lk.add(new KeyCodec.Part(e.getKey(), lt, false, false));
             rk.add(new KeyCodec.Part(e.getValue(), rt, false, false));
+        }
+        if (s.leftOnly()) {
+            // the left's rows as they are: no right column comes out, so no name can clash
+            return new Plan(left, new KeyCodec(lk, true), new KeyCodec(rk, true));
         }
         List<Field> fields = new ArrayList<>();
         for (Field f : left.getFields()) {
@@ -330,8 +357,8 @@ public final class JoinFactory implements NodeFactory {
             boolean leftEmpty = left.atEnd() && (leftSorter == null || leftSorter.rows() == 0);
             boolean rightEmpty = right.atEnd() && (rightSorter == null || rightSorter.rows() == 0);
             return switch (settings.how()) {
-                case "inner" -> leftEmpty || rightEmpty;
-                case "left" -> leftEmpty;
+                case "inner", "semi" -> leftEmpty || rightEmpty;
+                case "left", "anti" -> leftEmpty;
                 case "right" -> rightEmpty;
                 default -> leftEmpty && rightEmpty;
             };
@@ -393,7 +420,8 @@ public final class JoinFactory implements NodeFactory {
             if (plan == null) {
                 // a side sent nothing and its columns could not be known before the run: no row can
                 // match, and its columns cannot be added
-                if (settings.keepLeft() && leftSorter != null) {
+                if ((settings.keepLeft() || settings.anti()) && leftSorter != null) {
+                    // anti: no right row came, so every left row is without a match
                     drain(leftSorter, ctx);
                 } else if (settings.keepRight() && rightSorter != null) {
                     drain(rightSorter, ctx);
@@ -408,7 +436,11 @@ public final class JoinFactory implements NodeFactory {
                  Output out = new Output(plan.out(), leftColumns, ctx);
                  Group g = new Group(r, ctx.allocator(), Math.max(1L << 20, limit() / 4))) {
                 group = g;
-                join(lc, rc, out, g);
+                if (settings.leftOnly()) {
+                    leftOnly(lc, rc, out);
+                } else {
+                    join(lc, rc, out, g);
+                }
                 out.flush();
                 groupsOnDisk = g.filesWritten;
                 groupRowsCopied = g.rowsCopied;
@@ -445,6 +477,41 @@ public final class JoinFactory implements NodeFactory {
             ExternalSorter.Sorted s = sorter.finish(ctx.allocator(), false);
             for (ExternalSorter.Chunk next = s.next(); next != null; next = s.next()) {
                 put(ctx, "out", next.rows());
+            }
+        }
+
+        /**
+         * Semi and anti: each left row, in key order, comes out when the right has a row of its key
+         * (semi) or has none (anti). The right is only walked, never held: a left row comes out once
+         * however many right rows match. Left rows whose key has a null come last and match nothing,
+         * so anti keeps them and semi does not.
+         */
+        private void leftOnly(Cursor l, Cursor r, Output out) throws NodeException, IOException, InterruptedException {
+            boolean semi = settings.semi();
+            long steps = 0;
+            while (l.has() && !l.nullKey()) {
+                if ((++steps & 0xFFFF) == 0) {
+                    ExternalSorter.checkInterrupt();
+                }
+                while (r.has() && !r.nullKey() && r.compare(l) < 0) {
+                    r.advance();
+                }
+                boolean rightLeft = r.has() && !r.nullKey();
+                if (!rightLeft && semi) {
+                    return; // nothing left on the right can match
+                }
+                // the right stays where it is: the next left row may have the same key
+                boolean matched = rightLeft && r.compare(l) == 0;
+                if (matched == semi) {
+                    out.left(l.rows(), l.pos);
+                }
+                l.advance();
+            }
+            if (!semi) {
+                while (l.has()) {
+                    out.left(l.rows(), l.pos);
+                    l.advance();
+                }
             }
         }
 

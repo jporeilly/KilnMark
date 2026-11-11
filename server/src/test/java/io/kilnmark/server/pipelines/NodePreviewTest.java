@@ -394,6 +394,18 @@ class NodePreviewTest {
               - {id: y, type: read, source: small, asset: lab.other}
               - {id: x, type: join, inputs: {left: y, right: people}, on: {id: id, name: name}, how: full}
             """, """
+              - {id: y, type: read, source: small, asset: lab.other}
+              - {id: x, type: join, inputs: {left: y, right: people}, on: {name: name}, how: semi}
+            """, """
+              - {id: y, type: read, source: small, asset: lab.other}
+              - {id: x, type: join, inputs: {left: people, right: y}, on: {name: name}, how: anti}
+            """, """
+              - {id: y, type: read, source: small, asset: lab.other}
+              - {id: x, type: union, input: [people, y], mode: except}
+            """, """
+              - {id: y, type: read, source: small, asset: lab.other}
+              - {id: x, type: union, input: [y, people], mode: intersect, compare_on: [id, name]}
+            """, """
               - {id: x, type: sort, input: people, by: [id, name desc]}
             """, """
               - {id: x, type: sort, input: people, by: [name nulls first]}
@@ -662,6 +674,15 @@ class NodePreviewTest {
         assertEquals(Set.of("name", "right_name", "email", "right_email"),
             NodePreview.joinRight(right, Map.of(), null, List.of("name", "email")).names());
         assertTrue(NodePreview.joinRight(NodePreview.Hidden.ALL, Map.of(), List.of(), List.of()).all());
+        // semi and anti keep the left's columns alone: nothing of the right leaves, hidden or not
+        for (String how : List.of("semi", "anti")) {
+            assertFalse(NodePreview.joinRight(right, Map.of("how", how), null, List.of("name", "email")).any(), how);
+            assertFalse(NodePreview.joinRight(NodePreview.Hidden.ALL, Map.of("how", how), List.of(), List.of()).any(), how);
+        }
+        PipelineViews.NodePreviewView semi = previews().preview(y.replace("on: {id: id}", "on: {id: id}, how: semi"), "x",
+            null, 3, "jo", AccessRole.STEWARD, othersHidden, () -> false);
+        assertEquals(List.of("id", "name"), semi.columns().stream().map(PipelineViews.PreviewColumn::name).toList());
+        assertEquals(List.of(), semi.masked(), "the left's name is not marked, and the right's does not come out");
         assertEquals(List.of("1", "1"), List.of(v.rows().get(0).get(0), v.rows().get(0).get(2)));
         assertEquals(List.of("Node x (join) reads every row of both its inputs before it passes any on, so every row "
             + "before it was read."), v.waits());

@@ -99,6 +99,137 @@ class JoinNodeTest {
         }
     }
 
+    /** Semi and anti: the left rows with a match, or with none, once each, with the left's columns alone. */
+    @Test
+    void semiAndAntiKeepLeftRowsWithTheLeftColumnsOnly() throws Exception {
+        try (Harness h = orders(new Harness()).connect("out")) {
+            h.run(new JoinFactory(), on("semi"));
+            // key 3: orders 2 and 5, once each though two customers match; key 7: order 1
+            assertEquals(List.of(2L, 5L, 1L), h.column("out", "order_id"));
+            assertEquals(ORDERS, h.schemas.get("out"), "the left's columns, with their types, and no right column");
+        }
+        try (Harness h = orders(new Harness()).connect("out")) {
+            h.run(new JoinFactory(), on("anti"));
+            // key 9 has no customer; then order 3, whose key is null, which matches nothing
+            assertEquals(List.of(4L, 3L), h.column("out", "order_id"));
+            assertEquals(ORDERS, h.schemas.get("out"));
+        }
+        JoinFactory f = new JoinFactory();
+        Map<String, Schema> in = Map.of("left", ORDERS, "right", CUSTOMERS);
+        assertEquals(ORDERS, f.outputSchema("out", in, on("semi")));
+        assertEquals(ORDERS, f.outputSchema("out", in, on("anti")));
+        // no right column comes out, so a name the prefix could not clear is no problem
+        Schema clash = schema(field("id", INT64), field("right_id", INT64));
+        assertEquals(clash, f.outputSchema("out", Map.of("left", clash, "right", schema(field("id", INT64))),
+            config("on", Map.of("id", "id"), "how", "anti")));
+        // the keys are still checked
+        NodeException e = assertThrows(NodeException.class,
+            () -> f.outputSchema("out", in, config("on", Map.of("customer_id", "nme"), "how", "anti")));
+        assertEquals("on: the right input has no column 'nme'; did you mean name?", e.getMessage());
+    }
+
+    /**
+     * Nulls in semi and anti, as SQL's EXISTS and NOT EXISTS: a null key never matches, so a left row
+     * whose key has a null is in anti and never in semi, and a null on the right hides no left row
+     * (SQL's NOT IN would give no row at all here).
+     */
+    @Test
+    void semiAndAntiTreatNullKeysAsExistsDoes() throws Exception {
+        Schema l = schema(field("k", UTF8), field("n", INT64), field("a", INT64));
+        Schema r = schema(field("k", UTF8), field("n", INT64));
+        for (String how : List.of("semi", "anti")) {
+            try (Harness h = new Harness()) {
+                h.input("left", h.batch(l, row(null, 1L, 1L), row("x", 1L, 2L), row("y", 1L, 3L), row("x", null, 4L),
+                        row(null, null, 5L)))
+                    .input("right", h.batch(r, row(null, 1L), row("x", 1L), row("x", null), row(null, null)))
+                    .connect("out");
+                h.run(new JoinFactory(), config("on", new LinkedHashMap<>(Map.of("k", "k", "n", "n")), "how", how));
+                assertEquals(how.equals("semi") ? List.of(2L) : List.of(3L, 1L, 4L, 5L), h.column("out", "a"), how);
+            }
+        }
+    }
+
+    @Test
+    void semiAndAntiWithAnEmptyOrUnknownSide() throws Exception {
+        Schema l = schema(field("k", INT64), field("a", INT64));
+        for (boolean declared : new boolean[] {true, false}) {
+            try (Harness h = new Harness()) {
+                h.input("left", h.batch(l, row(2L, 1L), row(1L, 2L))).input("right").connect("out");
+                if (declared) {
+                    h.declare("left", l).declare("right", l);
+                }
+                h.run(new JoinFactory(), config("on", Map.of("k", "k"), "how", "anti"));
+                assertEquals(List.of(2L, 1L), h.column("out", "a"), "no right row: every left row has no match");
+            }
+            try (Harness h = new Harness()) {
+                h.input("left", h.batch(l, row(2L, 1L))).input("right").connect("out");
+                if (declared) {
+                    h.declare("left", l).declare("right", l);
+                }
+                h.run(new JoinFactory(), config("on", Map.of("k", "k"), "how", "semi"));
+                assertEquals(List.of(), h.rows.get("out"));
+            }
+        }
+        try (Harness h = new Harness()) {
+            h.input("left").input("right", h.batch(l, row(1L, 1L))).connect("out");
+            h.declare("left", l).declare("right", l);
+            h.run(new JoinFactory(), config("on", Map.of("k", "k"), "how", "anti"));
+            assertEquals(List.of(), h.rows.get("out"));
+        }
+    }
+
+    /** Semi and anti against a plain reference, in memory and spilling to disk: together they are the left, once. */
+    @Test
+    void semiAndAntiMatchTheReference() throws Exception {
+        Random random = new Random(41);
+        for (int round = 0; round < 6; round++) {
+            boolean big = round >= 4;
+            int keys = big ? 20_000 : 12;
+            List<Object[]> left = new ArrayList<>();
+            for (int i = 0; i < (big ? 30_000 : 1 + random.nextInt(400)); i++) {
+                left.add(row((long) i, random.nextInt(8) == 0 ? null : random.nextInt(keys),
+                    random.nextInt(8) == 0 ? null : TEXTS[random.nextInt(TEXTS.length)], random.nextDouble()));
+            }
+            List<Object[]> right = new ArrayList<>();
+            for (int i = 0; i < (big ? 25_000 : 1 + random.nextInt(400)); i++) {
+                right.add(row((long) i, random.nextInt(8) == 0 ? null : java.math.BigDecimal.valueOf(random.nextInt(keys)),
+                    random.nextInt(8) == 0 ? null : TEXTS[random.nextInt(TEXTS.length)], (long) random.nextInt(100)));
+            }
+            boolean twoKeys = random.nextBoolean();
+            Map<String, Object> on = new LinkedHashMap<>();
+            on.put("k1", "k1");
+            if (twoKeys) {
+                on.put("k2", "k2");
+            }
+            java.util.Set<List<Object>> rightKeys = new java.util.HashSet<>();
+            for (Object[] r : right) {
+                if (r[1] != null && (!twoKeys || r[2] != null)) {
+                    rightKeys.add(Arrays.asList(((java.math.BigDecimal) r[1]).intValueExact(), twoKeys ? r[2] : ""));
+                }
+            }
+            List<Long> matched = new ArrayList<>();
+            List<Long> unmatched = new ArrayList<>();
+            for (Object[] l : left) {
+                boolean has = l[1] != null && (!twoKeys || l[2] != null)
+                    && rightKeys.contains(Arrays.asList(l[1], twoKeys ? l[2] : ""));
+                (has ? matched : unmatched).add((Long) l[0]);
+            }
+            for (String how : List.of("semi", "anti")) {
+                try (Harness h = new Harness()) {
+                    h.input("left", batches(h, LEFT, left)).input("right", batches(h, RIGHT, right)).connect("out");
+                    h.run(new JoinFactory(), config("on", on, "how", how, "memory_limit_mb", big ? 1 : 256));
+                    List<Object> got = new ArrayList<>(h.column("out", "lid"));
+                    got.sort(null);
+                    assertEquals(how.equals("semi") ? matched : unmatched, got, "round " + round + ": " + how);
+                    assertEquals(LEFT, h.schemas.get("out") == null ? LEFT : h.schemas.get("out"));
+                    if (big) {
+                        assertTrue(h.spilled.get() > 0, "round " + round + " should have written to disk");
+                    }
+                }
+            }
+        }
+    }
+
     @Test
     void nullKeysNeverMatchEvenEachOther() throws Exception {
         Schema l = schema(field("k", UTF8), field("a", INT64));
@@ -183,7 +314,7 @@ class JoinNodeTest {
     void settingsAndColumnsAreCheckedWithPlainWords() throws Exception {
         JoinFactory f = new JoinFactory();
         assertEquals(List.of("on: is required"), f.check(config()));
-        assertEquals(List.of("how: must be one of inner, left, right, full, not 'outer'"),
+        assertEquals(List.of("how: must be one of inner, left, right, full, semi, anti, not 'outer'"),
             f.check(config("on", Map.of("a", "b"), "how", "outer")));
         Map<String, Schema> in = Map.of("left", ORDERS, "right", CUSTOMERS);
         NodeException e = assertThrows(NodeException.class,

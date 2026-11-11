@@ -330,6 +330,232 @@ class CombiningNodesTest {
         }
     }
 
+    // ---- union: except and intersect ----
+
+    static final Schema PEOPLE = schema(field("id", INT64), field("email", UTF8), field("tier", UTF8));
+
+    private static Harness people(Harness h) {
+        return h.input("in",
+                h.batch(PEOPLE, row(1L, "a@x", "gold"), row(2L, "b@x", null), row(3L, "c@x", "new")),
+                h.batch(PEOPLE, row(2L, "b@x", null), row(4L, null, "gold"), row(5L, "e@x", "gold")))
+            .input("in", h.batch(PEOPLE, row(1L, "a@x", "gold"), row(2L, "b@x", null), row(3L, "c@x", "old"),
+                row(4L, null, "gold")));
+    }
+
+    /**
+     * Whole rows, the first input against the other: nulls are equal to each other, as SQL's EXCEPT and
+     * INTERSECT count them, and a repeat in the first input stays a repeat (SQL would fold the two).
+     */
+    @Test
+    void exceptAndIntersectCompareWholeRowsWithNullsEqual() throws Exception {
+        try (Harness h = people(new Harness()).connect("out")) {
+            h.run(new UnionFactory(), config("mode", "except"));
+            // 3 differs in tier, 5 is not there; 2 (a null tier) and 4 (a null email) are found
+            assertEquals(List.of(3L, 5L), h.column("out", "id"));
+            assertEquals(PEOPLE, h.schemas.get("out"), "the first input's columns as they are");
+        }
+        try (Harness h = people(new Harness()).connect("out")) {
+            h.run(new UnionFactory(), config("mode", "intersect"));
+            // in the order of the compared columns; row 2 is twice in the first input and comes out twice
+            assertEquals(List.of(1L, 2L, 2L, 4L), h.column("out", "id"));
+            assertEquals(Arrays.asList("gold", null, null, "gold"), h.column("out", "tier"));
+        }
+    }
+
+    @Test
+    void compareOnComparesTheChosenColumnsOnly() throws Exception {
+        try (Harness h = people(new Harness()).connect("out")) {
+            h.run(new UnionFactory(), config("mode", "except", "compare_on", List.of("id")));
+            assertEquals(List.of(5L), h.column("out", "id"));
+        }
+        try (Harness h = people(new Harness()).connect("out")) {
+            h.run(new UnionFactory(), config("mode", "intersect", "compare_on", List.of("email", "tier")));
+            assertEquals(List.of(1L, 2L, 2L, 4L), h.column("out", "id"), "a null email equals a null email");
+        }
+        // The other input has other columns and types: only the compared ones need be there, and 1 equals 1.00
+        Schema other = schema(field("note", UTF8), field("id", decimal(6, 2)));
+        try (Harness h = new Harness()) {
+            h.input("in", h.batch(PEOPLE, row(1L, "a@x", "gold"), row(2L, "b@x", null), row(null, "n@x", "gold")))
+                .input("in", h.batch(other, row("x", dec("1.00")), row("y", dec("2.50")), row("z", null))).connect("out");
+            h.run(new UnionFactory(), config("mode", "intersect", "compare_on", "id"));
+            assertEquals(Arrays.asList(1L, null), h.column("out", "id"));
+            assertEquals(PEOPLE, h.schemas.get("out"));
+        }
+    }
+
+    /** The first input against several others: except keeps rows none of them has, intersect rows all of them have. */
+    @Test
+    void exceptAndIntersectWithSeveralInputs() throws Exception {
+        Schema s = schema(field("n", INT64));
+        for (String mode : List.of("except", "intersect")) {
+            try (Harness h = new Harness()) {
+                h.input("in", h.batch(s, row(5L), row(1L), row(2L), row(3L), row(4L), row((Object) null)))
+                    .input("in", h.batch(s, row(1L), row(2L), row(2L)))
+                    .input("in", h.batch(s, row(2L), row(3L), row((Object) null))).connect("out");
+                h.run(new UnionFactory(), config("mode", mode));
+                assertEquals(mode.equals("except") ? List.of(4L, 5L) : List.of(2L), h.column("out", "n"), mode);
+            }
+        }
+    }
+
+    @Test
+    void exceptAndIntersectWithEmptyInputs() throws Exception {
+        Schema s = schema(field("n", INT64));
+        for (boolean declared : new boolean[] {true, false}) {
+            try (Harness h = new Harness()) {
+                h.input("in", h.batch(s, row(2L), row(1L))).input("in").connect("out");
+                if (declared) {
+                    h.declare("in[0]", s).declare("in[1]", s);
+                }
+                h.run(new UnionFactory(), config("mode", "except"));
+                assertEquals(List.of(1L, 2L), h.column("out", "n"), "nothing to find them in: every row");
+            }
+            try (Harness h = new Harness()) {
+                h.input("in", h.batch(s, row(2L), row(1L))).input("in").connect("out");
+                if (declared) {
+                    h.declare("in[0]", s).declare("in[1]", s);
+                }
+                h.run(new UnionFactory(), config("mode", "intersect"));
+                assertEquals(List.of(), h.rows.get("out"));
+            }
+            try (Harness h = new Harness()) {
+                h.input("in").input("in", h.batch(s, row(2L), row(1L))).connect("out");
+                if (declared) {
+                    h.declare("in[0]", s).declare("in[1]", s);
+                }
+                h.run(new UnionFactory(), config("mode", "except"));
+                assertEquals(List.of(), h.rows.get("out"));
+            }
+        }
+    }
+
+    /** The other input's batches come first, before the first input's columns are known: they wait. */
+    @Test
+    void exceptWaitsForTheFirstInputsColumns() throws Exception {
+        Schema s = schema(field("n", INT64));
+        try (Harness h = new Harness()) {
+            RowSet first = new RowSet("first", 1);
+            RowSet second = new RowSet("second", 1);
+            h.input("in", first).input("in", second).connect("out");
+            Thread upstream = Thread.ofVirtual().start(() -> {
+                try {
+                    for (long i = 0; i < 5; i++) {
+                        second.put(h.batch(s, row(i)));
+                    }
+                    second.finish();
+                    first.put(h.batch(s, row(99L), row(3L)));
+                    first.finish();
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+            });
+            assertTimeoutPreemptively(Duration.ofSeconds(20), () -> h.run(new UnionFactory(), config("mode", "except")));
+            upstream.join();
+            assertEquals(List.of(99L), h.column("out", "n"));
+        }
+    }
+
+    @Test
+    void exceptAndIntersectProblemsSayWhatToDo() throws Exception {
+        UnionFactory f = new UnionFactory();
+        assertEquals(List.of("mode: must be one of all, except, intersect, not 'minus'"), f.check(config("mode", "minus")));
+        assertEquals(List.of("compare_on: is for mode: except and mode: intersect; mode: all compares nothing"),
+            f.check(config("compare_on", List.of("id"))));
+        assertEquals(List.of(), f.check(config("mode", "except", "compare_on", List.of("id"))));
+        Schema tagged = schema(field("id", INT64), field("email", UTF8), field("tier", UTF8), field("came_from", UTF8));
+        // a column only one input has: every row would differ, so it is refused with what to do
+        NodeException extra = assertThrows(NodeException.class, () -> f.outputSchema("out",
+            new LinkedHashMap<>(Map.of("in[0]", PEOPLE, "in[1]", tagged)), config("mode", "except")));
+        assertEquals("mode: except compares whole rows, and input 2 has a column 'came_from' that input 1 lacks, so no "
+            + "row would be the same; name the columns to compare with compare_on, leaving this one out",
+            extra.getMessage());
+        NodeException missing = assertThrows(NodeException.class, () -> f.outputSchema("out",
+            new LinkedHashMap<>(Map.of("in[0]", tagged, "in[1]", PEOPLE)), config("mode", "intersect")));
+        assertEquals("mode: intersect compares whole rows, and input 2 has no column 'came_from', so no row would be "
+            + "the same; name the columns to compare with compare_on, leaving this one out", missing.getMessage());
+        assertEquals(tagged, f.outputSchema("out", new LinkedHashMap<>(Map.of("in[0]", tagged, "in[1]", PEOPLE)),
+            config("mode", "except", "compare_on", List.of("id", "email", "tier"))));
+        NodeException unknown = assertThrows(NodeException.class, () -> f.outputSchema("out",
+            new LinkedHashMap<>(Map.of("in[0]", PEOPLE, "in[1]", PEOPLE)), config("mode", "except", "compare_on", "emial")));
+        assertEquals("compare_on: input 1 has no column 'emial'; did you mean email?", unknown.getMessage());
+        NodeException other = assertThrows(NodeException.class, () -> f.outputSchema("out",
+            new LinkedHashMap<>(Map.of("in[0]", PEOPLE, "in[1]", schema(field("id", INT64)))),
+            config("mode", "except", "compare_on", "email")));
+        assertEquals("compare_on: input 2 has no column 'email'", other.getMessage());
+        NodeException types = assertThrows(NodeException.class, () -> f.outputSchema("out",
+            new LinkedHashMap<>(Map.of("in[0]", PEOPLE, "in[1]", schema(field("id", UTF8)))),
+            config("mode", "except", "compare_on", "id")));
+        assertEquals("compare_on: the column 'id' is int64 in input 1 and utf8 in input 2, which are never equal; cast "
+            + "one of them with a select node first", types.getMessage());
+        NodeException one = assertThrows(NodeException.class, () -> f.outputSchema("out",
+            new LinkedHashMap<>(Map.of("in[0]", PEOPLE)), config("mode", "except")));
+        assertTrue(one.getMessage().startsWith("mode: except compares the first input with the others"), one.getMessage());
+        // the same at run time, when the columns were not known before
+        try (Harness h = new Harness()) {
+            h.input("in", h.batch(PEOPLE, row(1L, "a@x", "gold"))).input("in", h.batch(tagged, row(1L, "a@x", "gold", "crm")))
+                .connect("out");
+            NodeException run = assertThrows(NodeException.class, () -> h.run(f, config("mode", "except")));
+            assertTrue(run.getMessage().contains("input 2 has a column 'came_from' that input 1 lacks"), run.getMessage());
+        }
+    }
+
+    /** Against a plain reference, in memory and spilling to disk. */
+    @Test
+    void exceptAndIntersectMatchTheReference() throws Exception {
+        Schema a = schema(field("k", INT32), field("t", UTF8), field("v", INT64));
+        Schema b = schema(field("t", UTF8), field("k", decimal(9, 2)), field("v", INT64));
+        java.util.Random random = new java.util.Random(19);
+        String[] texts = {"a", "b", "", "é"};
+        for (int round = 0; round < 5; round++) {
+            boolean big = round >= 3;
+            int keys = big ? 15_000 : 10;
+            List<Object[]> first = new java.util.ArrayList<>();
+            List<Object[]> second = new java.util.ArrayList<>();
+            for (int i = 0; i < (big ? 30_000 : 1 + random.nextInt(300)); i++) {
+                first.add(row(random.nextInt(8) == 0 ? null : random.nextInt(keys),
+                    random.nextInt(8) == 0 ? null : texts[random.nextInt(texts.length)], (long) i));
+            }
+            for (int i = 0; i < (big ? 30_000 : 1 + random.nextInt(300)); i++) {
+                second.add(row(random.nextInt(8) == 0 ? null : texts[random.nextInt(texts.length)],
+                    random.nextInt(8) == 0 ? null : java.math.BigDecimal.valueOf(random.nextInt(keys)), (long) i));
+            }
+            java.util.Set<List<Object>> there = new java.util.HashSet<>();
+            for (Object[] r : second) {
+                there.add(Arrays.asList(r[1] == null ? null : ((java.math.BigDecimal) r[1]).intValueExact(), r[0]));
+            }
+            List<Long> found = new java.util.ArrayList<>();
+            List<Long> lacking = new java.util.ArrayList<>();
+            for (Object[] r : first) {
+                (there.contains(Arrays.asList(r[0], r[1])) ? found : lacking).add((Long) r[2]);
+            }
+            for (String mode : List.of("except", "intersect")) {
+                try (Harness h = new Harness()) {
+                    h.input("in", chunks(h, a, first)).input("in", chunks(h, b, second)).connect("out");
+                    h.run(new UnionFactory(), config("mode", mode, "compare_on", List.of("k", "t"), "memory_limit_mb",
+                        big ? 1 : 256));
+                    List<Object> got = new java.util.ArrayList<>(h.column("out", "v"));
+                    got.sort(null);
+                    assertEquals(mode.equals("except") ? lacking : found, got, "round " + round + ": " + mode);
+                    if (big) {
+                        assertTrue(h.spilled.get() > 0, "round " + round + " should have written to disk");
+                        assertTrue(h.notes.stream().anyMatch(n -> n.contains("on disk")), h.notes.toString());
+                        for (java.nio.file.Path p : ((UnionFactory.SetNode) h.node).spillFolders()) {
+                            assertFalse(java.nio.file.Files.exists(p), "its temporary folders are deleted once it ends");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static VectorSchemaRoot[] chunks(Harness h, Schema s, List<Object[]> rows) {
+        List<VectorSchemaRoot> out = new java.util.ArrayList<>();
+        for (int from = 0; from < rows.size(); from += 1000) {
+            out.add(h.batch(s, rows.subList(from, Math.min(rows.size(), from + 1000)).toArray(Object[][]::new)));
+        }
+        return out.toArray(VectorSchemaRoot[]::new);
+    }
+
     @Test
     void unionReadsWhicheverInputHasRows() throws Exception {
         Schema s = schema(field("n", INT64));

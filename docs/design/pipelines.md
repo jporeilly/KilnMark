@@ -585,12 +585,12 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
 | `select` | `in` → `out`, `errors` | Keeps, drops, renames, reorders and casts columns |
 | `lookup` | `main`, `lookup` → `out`, `rejected` | Adds columns from the lookup side by key; unmatched rows kept (left), dropped (inner) or sent to `rejected` |
 | `aggregate` | `in` → `out` | Groups and summarises |
-| `union` | `in` (many) → `out` | Appends inputs, matching columns by name |
+| `union` | `in` (many) → `out` | Appends inputs, matching columns by name; or, with `mode`, the rows of the first input the others lack (`except`) or have too (`intersect`) |
 | `dedupe` | `in` → `out`, `rejected` | Keeps one row per key, by a stated rule (the first by default) |
 | `route` | `in` → named outputs, `out`, `errors` | Sends each row to the first matching condition's port, others to `out` |
 | `limit` | `in` → `out` | First N rows, for trying a pipeline out |
 | `sort` | `in` → `out` | Orders rows by columns, spilling to disk past its memory limit |
-| `join` | `left`, `right` → `out` | Inner, left, right or full join of two inputs of any size (sort-merge, spilling) |
+| `join` | `left`, `right` → `out` | Inner, left, right or full join of two inputs of any size (sort-merge, spilling); semi and anti keep left rows with a match, or with none |
 | `window` | `in` → `out` | Row numbers, ranks, running totals, lag and lead by partition and order, spilling to disk |
 | `gate` | `in` → `out`, `quarantine` | Checks rows against the asset's rules and its own in the stream; stops the run, quarantines failing rows or warns (docs/design/data-quality.md section 7) |
 | `write` | `in` → `errors` | Writes to a database table or a file in a saved source |
@@ -619,7 +619,8 @@ found through `ServiceLoader`. Settings, with defaults:
   seen, 8,192 rows a batch; nulls form one group. With no input batch at all the columns come
   from `NodeContext.inputSchema`, so an aggregate without `group_by` still writes SQL's one row;
   only when those are unknown is nothing written.
-- `union`: `strict` (false), `memory_limit_mb` (256). Inputs are read with `RowSet.takeAny`.
+- `union`: `mode` (`all`; or `except`, `intersect`, see "Rows in one input and not the other"
+  below), `compare_on`, `strict` (false), `memory_limit_mb` (256). Inputs are read with `RowSet.takeAny`.
   Columns are matched by name in the order first seen across the inputs as listed; a missing
   column is null; differing types widen as expressions do (int32 and int64 to int64, whole numbers
   and decimals to decimal …) or are an error naming both. The output's columns come from the
@@ -793,8 +794,9 @@ behaves as before (the same first failure, the same message).
 
 ### Joining two inputs of any size (ADR 0049)
 
-`join`: `on` (left column → right column, several allowed), `how` (`inner`, `left`, `right`,
-`full`; `inner` by default, as SQL's `join`), `right_prefix` (`right_`), `memory_limit_mb` (256).
+`join`: `on` (left column → right column, several allowed), `how` (`inner`, `left`, `right`, `full`,
+`semi`, `anti`;
+`inner` by default, as SQL's `join`), `right_prefix` (`right_`), `memory_limit_mb` (256).
 
 - **A sort-merge join, reusing sort's engine.** Each side goes into an `ExternalSorter` of its own
   as its batches arrive (both read at once with `RowSet.takeAny`, so two inputs fed by one node
@@ -844,6 +846,44 @@ behaves as before (the same first failure, the same message).
   rename the same way, so a write carries them to `right_name`.
 - **Quality predictor.** It does not yet estimate a join (rows depend on how keys repeat): the
   join's output columns are known, its rows are reported as not known.
+
+### Rows in one input and not the other (ADR 0056)
+
+Two questions, two tools, as in SQL: by key (`join` with `how: semi` or `anti`, SQL's `EXISTS` and
+`NOT EXISTS`) and by whole row (`union` with `mode: except` or `intersect`).
+
+- **Semi and anti joins** use the join's sorters and keys unchanged, and a walk of their own
+  (`JoinNode.leftOnly`): for each left row in key order the right is moved up to its key, and the
+  left row comes out when a right row of that key is there (`semi`) or is not (`anti`). The right
+  is never held, so no group is built and a left row comes out once however many right rows match.
+  The output is the left's columns as they are (`JoinFactory.plan` returns the left's schema and
+  skips the names walk, so no clash is possible). Null keys never match, as in every join: such
+  left rows sort last and are kept by `anti`, never by `semi`; this is `NOT EXISTS`, never
+  `NOT IN`. `semi` stops when the right is used up, or at once when either input ends empty;
+  `anti` with no right rows passes every left row on.
+- **Except and intersect** are a second running node of the union factory (`UnionFactory.SetNode`;
+  `mode: all` runs the union as before). Every input goes into an `ExternalSorter` of its own,
+  sharing `memory_limit_mb` (the largest spills when together they pass it), keyed by the compared
+  columns: `compare_on`, or every column of the first input. Then the first input is walked in
+  that order beside the others: each other input is moved up to the first's row, and the row comes
+  out when none has it (`except`) or all have it (`intersect`). `intersect` stops when any other
+  input is used up or ends empty. Rows of the first input are never folded (ADR 0056, point 6).
+- **Row keys.** `KeyCodec.rows` encodes each compared column by family, as a join key's part, so
+  inputs whose types differ compare by value (`1` and `1.00`); but a null has a byte of its own
+  (sorting last) instead of collapsing the key, so nulls are equal to each other, as SQL's `EXCEPT`
+  counts them. Each input is encoded knowing only its own columns.
+- **Checked before the run** (`UnionFactory.comparison`, from `outputSchema` and again at run time
+  when columns were not known): at least two inputs; without `compare_on`, the same column names in
+  every input, refused by name otherwise with "name the columns to compare with compare_on";
+  compared columns of one family in every input. `compare_on` with `mode: all` is a problem.
+- **Columns not known before the run.** A batch of another input that arrives before the first
+  input's columns are known waits, counted against the memory limit, as a union's do.
+- **Preview and marks.** A semi or anti join's keys are "used" as any join's (a preview matching on
+  a hidden column is refused); nothing of the right leaves it, so `NodePreview.joinRight` gives
+  nothing for them. An except or intersect comparing a hidden column (any, when whole rows are
+  compared) is refused in a preview, as a `dedupe` is. Its output keeps every input's hidden
+  columns and marks, though only the first's values come out: more than need be, never less.
+- **Quality predictor.** An except or intersect is reported as rows not known, as a join is.
 
 ### Window functions (ADR 0049)
 
