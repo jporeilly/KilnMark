@@ -11,6 +11,8 @@ released.
 
 ## Unreleased
 
+## 0.1.2 (11 November 2026)
+
 ### What's new
 
 - **Notes on the canvas.** Designers and admins put sticky notes on a pipeline's canvas or a
