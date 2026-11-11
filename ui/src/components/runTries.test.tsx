@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "vitest";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { retrying, RunTriesList, triedWords } from "./RunTries";
+import { retrying, RunTriesList, saysNext, triedWords } from "./RunTries";
 
 let root: Root | null = null;
 
@@ -52,6 +52,27 @@ describe("a run's tries (ADR 0053)", () => {
     expect(host.textContent).toContain("Try 1: Lost with its worker");
     expect(host.textContent).toContain("Try 2: Succeeded");
     expect(host.textContent).toContain("Tried again");
+  });
+
+  test("says once why a run was not tried again, when its last try's message says it already", async () => {
+    // As the server sends a failed run's last try: the run's error ends with why there were no more
+    // tries, and what came next is the same words.
+    const why = "Not tried again: all 2 tries were made";
+    const host = await show(
+      <RunTriesList
+        run={{ status: "failed", tryNumber: 2, tries: 2 }}
+        tries={[
+          { number: 1, status: "failed", startedAt: at, finishedAt: at, message: "Node load failed", next: "Tried again", askedBy: null },
+          { number: 2, status: "failed", startedAt: at, finishedAt: at, message: `Node load failed, after 2 tries. ${why}`, next: why, askedBy: null },
+        ]}
+      />,
+    );
+    expect(host.textContent!.split(why).length - 1).toBe(1);
+    expect(host.textContent).toContain("Tried again");
+    expect(saysNext({ message: `x. ${why}`, next: why })).toBe(true);
+    // A message that does not say it (or one held back from the reader) leaves what came next shown.
+    expect(saysNext({ message: "Node load failed", next: why })).toBe(false);
+    expect(saysNext({ message: null, next: why })).toBe(false);
   });
 
   test("shows nothing for a run tried once that is not waiting", async () => {

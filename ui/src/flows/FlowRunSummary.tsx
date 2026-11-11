@@ -1,6 +1,6 @@
 import { IconClockHour4, IconClockPause, IconHourglass, IconStack2 } from "@tabler/icons-react";
 import { formatNumber, formatTime, type FlowRunDetail } from "../api";
-import { StatTile, StatusChip } from "../components/ui";
+import { StatName, StatTile, StatusChip } from "../components/ui";
 import { href } from "../router";
 import { formatDuration } from "../pipelines/RunStatus";
 import { ScoreChip } from "../pipelines/RunSummary";
@@ -162,7 +162,7 @@ export function FlowTimeSpent({ detail, now }: { detail: FlowRunDetail; now: num
         />
         <StatTile
           label={spent.live ? "Longest node so far" : "Longest node"}
-          value={longest ? <span className="mono">{longest.node}</span> : "–"}
+          value={longest ? <StatName name={longest.node} /> : "–"}
           icon={<IconHourglass size={18} aria-hidden="true" />}
           tint="orange"
           note={longest ? `${offsetWords(longest.active)}, ${shareWords(Math.min(1, longest.active / spent.span))} of the run` : undefined}

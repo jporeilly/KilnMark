@@ -9,9 +9,10 @@
   margin-bottom: 8px;
 }
 
+/* Beside the Add button: it takes the width the button leaves, never a narrow column. */
 .sc-intro {
   margin: 0;
-  max-width: 70ch;
+  flex: 1 1 320px;
 }
 
 .sc-words {
@@ -46,8 +47,14 @@
 
 .sc-setby {
   min-width: 12ch;
-  max-width: 24ch;
+  max-width: 28ch;
 }
+
+/*
+ * Who set it breaks between its words (after _ . and @ in the name: Who puts the breaks in), not in
+ * the middle of one: at the column's narrowest, 12ch, KILNMARK_ADMIN_TOKEN reads KILNMARK_ / ADMIN_ /
+ * TOKEN. Only a word longer than the column is broken inside, so the table never widens for a name.
+ */
 
 .sc-nowrap {
   white-space: nowrap;

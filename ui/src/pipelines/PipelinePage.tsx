@@ -916,7 +916,7 @@ export function PipelinePage({
               <h3 className="visually-hidden">Nodes as a table</h3>
               {check && check.nodes.length > 0 ? (
                 <div className="table-scroll" role="region" aria-label="Nodes table" tabIndex={0}>
-                  <table className="small">
+                  <table className="small pl-nodes-table">
                     <thead>
                       <tr>
                         <th scope="col">Node</th>

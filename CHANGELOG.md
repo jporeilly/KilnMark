@@ -11,6 +11,58 @@ released.
 
 ## Unreleased
 
+### Fixed
+
+- **A long node name no longer runs past its tile on a run's page.** Under **Where each node spent
+  its time**, the **What limited this run** and **Longest node** tiles (and a flow run's **Longest
+  node**) set a node's name smaller the longer it is and wrap it after `_` and `-`, so the longest
+  name allowed, 64 characters, stays inside the tile on a desktop and on a phone; its full name is
+  shown on hover. The line under the tiles, the run timeline's row names and the log's node filter
+  keep inside the page for such a name too.
+- **The Add the samples dialog counts what it adds.** It said the sample flows were not added, and
+  counted only the sample pipelines. It now says how many sample pipelines and sample flows there
+  are, counted from the samples themselves, that the flows are added too, and that `sample-tables`
+  is one more pipeline, made by the starter pack. A sample flow in the results links to its own
+  page, and each placeholder counts the flows that use it.
+- **Run now on a flow's page shows the run.** Pressed while another tab under the diagram was
+  showing (Schedules, say), it left that tab showing. It now shows the **Run** tab, as a
+  pipeline's does.
+- **After Save new version on a flow's page**, the line saying what the last change on the diagram
+  was (such as "Changed the note of merge.") and its **Undo** button went on showing. Both now go
+  once the change is saved.
+- **A flow run's Tries no longer say twice why it was not tried again.** The last try's message
+  already ends with it ("..., after 2 tries. Not tried again: all 2 tries were made"); the same
+  words are no longer repeated on the line under it. The same on a pipeline run's page.
+- **Schedules, Set by:** `KILNMARK_ADMIN_TOKEN` and long sign-in names broke in the middle of a
+  word. Names now wrap between their words (after `_`, `.` and `@`), wherever a name is shown.
+- **Owners:** an API token among a pipeline's or flow's owners was labelled **Person**
+  ("KILNMARK_ADMIN_TOKEN Person"). It is now labelled **API token**.
+- **Settings, Drivers and JDBC drivers** named the drivers folder by its path inside Kilnmark's
+  container (`/var/lib/kilnmark/drivers`) as if it were a folder on the server's machine. The pages
+  now say the path is the server's own, inside its container on an install that runs in
+  containers, and link to the guide's steps for copying a file there.
+- **A wide flow opens at its start.** A flow too wide to show whole (the sample
+  `sample-onboarding-nightly`) opened centred, with its first node off the left edge of the
+  diagram. It now opens with its first nodes in view.
+- **The sample `sample-onboarding-merge`:** its note for the steward sat partly under the
+  `quarantine` node once a run had put its rows and quality on the node. The note is now lower.
+  Samples already added keep their note where it was: delete the sample and add it again, or drag
+  the note down.
+
+### Changed
+
+- **About this sample** (on the page of a pipeline or flow added from the samples, and in a
+  pipeline's **Settings** tab under the canvas) uses the full width of the page or panel, where it
+  was held to a narrow column, and opens and closes from its heading. It starts open; Kilnmark
+  remembers, in your browser, whether you closed it.
+- **Other text that was held to a narrow column** now uses the width it has: a sample's **About this
+  sample** and the Templates tab's introduction in the Library, the line of counts beside **Add
+  samples**, and the introduction of the **Schedules** tab under a canvas.
+- **The canvas's overview** (bottom right) is smaller, about two fifths of its old size, and closer
+  to the corner, so it covers fewer nodes.
+- **The Nodes tab under a pipeline's canvas and a flow's diagram** has its rows closer together,
+  about half the height, so more nodes show without scrolling.
+
 ## 0.1.2 (11 November 2026)
 
 ### What's new

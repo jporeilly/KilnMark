@@ -50,7 +50,8 @@ describe.each(["pipeline", "flow"] as const)("the %s's owners", (kind) => {
     const items = [...el.querySelectorAll(".owners-list li")];
     expect(items.map((li) => li.querySelector(".km-who")!.textContent)).toEqual(["KILNMARK_ADMIN_TOKEN", "sso:dana", "data-team@example.com"]);
     expect(items[0].querySelector(".km-who")!.getAttribute("title")).toBe("token 1 (KILNMARK_ADMIN_TOKEN)");
-    expect(items.map((li) => li.querySelector(".muted")!.textContent)).toEqual(["Person", "Person", "Team address"]);
+    // An API token is not a person: KILNMARK_ADMIN_TOKEN is labelled as the token it is.
+    expect(items.map((li) => li.querySelector(".muted")!.textContent)).toEqual(["API token", "Person", "Team address"]);
     expect(el.textContent).not.toContain("Change owners"); // a viewer
   });
 
