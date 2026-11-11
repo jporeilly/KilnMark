@@ -82,4 +82,5 @@ nothing); an install log listed before it existed ended a run under `set -e`; an
 re-checked the first admin against a new email domain.
 
 Not walked here: `upgrade` (it needs a second release), TLS (`tls=on` or `proxy`), your own
-identity provider, `restore`, and Docker.
+identity provider, `restore`, and Docker. Since 0.1.3 CI walks `upgrade` from the previous release
+and `restore` on every pull request: [the upgrade rehearsal](../development.md#the-upgrade-rehearsal).
