@@ -318,6 +318,9 @@ public final class RuleRunner {
             if (rule.type() == RuleType.CUSTOM_SQL) {
                 // Checked as PostgreSQL reads it with standard_conforming_strings on: never run with it off
                 io.kilnmark.kiln.plugins.jdbc.PostgresConnector.requireConformingStrings(c);
+                // The rule's SQL means what its author meant: the login's own search path, for this transaction.
+                // A library rule's SQL, which Kilnmark writes, keeps pg_catalog alone.
+                io.kilnmark.kiln.plugins.jdbc.PostgresSession.asWritten(c);
             }
             Evaluation e;
             try (Statement st = c.createStatement()) {

@@ -16,6 +16,24 @@ public final class PostgresConnector extends JdbcConnector {
         return "postgresql";
     }
 
+    /**
+     * Every connection starts with names resolving in {@code pg_catalog} alone, so nothing another
+     * database user put on the login's search path answers for a built-in in the SQL Kilnmark writes
+     * ({@link PostgresSession}). SQL a person wrote puts the login's own path back for itself.
+     */
+    @Override
+    protected java.sql.Connection open(io.kilnmark.kiln.connect.SourceConfig source, java.util.Properties p)
+        throws java.sql.SQLException {
+        java.sql.Connection c = super.open(source, p);
+        try {
+            PostgresSession.kilnmarkOnly(c);
+        } catch (java.sql.SQLException | RuntimeException e) {
+            c.close();
+            throw e;
+        }
+        return c;
+    }
+
     @Override
     public String displayName() {
         return "PostgreSQL";
@@ -111,7 +129,7 @@ public final class PostgresConnector extends JdbcConnector {
     }
 
     private static final String LOCAL_TABLE_BEFORE_12 = "SELECT 1 FROM pg_catalog.pg_class c "
-        + "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ? AND c.relname = ? "
+        + "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ?::pg_catalog.name AND c.relname = ?::pg_catalog.name "
         + "AND c.relkind = 'r' AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = c.oid)";
 
     /**
@@ -120,7 +138,7 @@ public final class PostgresConnector extends JdbcConnector {
      * of either never reaches another server.
      */
     static final String LOCAL_TABLE = "SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n "
-        + "ON n.oid = c.relnamespace WHERE n.nspname = ? AND c.relname = ? AND ("
+        + "ON n.oid = c.relnamespace WHERE n.nspname = ?::pg_catalog.name AND c.relname = ?::pg_catalog.name AND ("
         + "(c.relkind = 'r' AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = c.oid)) "
         + "OR (c.relkind = 'p' AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_partition_tree(c.oid) t "
         + "JOIN pg_catalog.pg_class k ON k.oid = t.relid WHERE k.relkind = 'f')))";
@@ -133,7 +151,7 @@ public final class PostgresConnector extends JdbcConnector {
     protected String refusedTableSql() {
         return "SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
             + "JOIN pg_catalog.pg_depend d ON d.objid = c.oid AND d.classid = 'pg_catalog.pg_class'::pg_catalog.regclass "
-            + "AND d.deptype = 'e' WHERE n.nspname = ? AND c.relname = ?";
+            + "AND d.deptype = 'e' WHERE n.nspname = ?::pg_catalog.name AND c.relname = ?::pg_catalog.name";
     }
 
     /** The driver lists an index's {@code INCLUDE} columns as keys: keep the first {@code indnkeyatts}. */
@@ -148,7 +166,7 @@ public final class PostgresConnector extends JdbcConnector {
         try (java.sql.PreparedStatement s = c.prepareStatement("SELECT i.relname, x.indnkeyatts "
             + "FROM pg_catalog.pg_index x JOIN pg_catalog.pg_class i ON i.oid = x.indexrelid "
             + "JOIN pg_catalog.pg_class t ON t.oid = x.indrelid JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace "
-            + "WHERE n.nspname = ? AND t.relname = ?")) {
+            + "WHERE n.nspname = ?::pg_catalog.name AND t.relname = ?::pg_catalog.name")) {
             s.setString(1, schema);
             s.setString(2, table);
             try (java.sql.ResultSet rs = s.executeQuery()) {

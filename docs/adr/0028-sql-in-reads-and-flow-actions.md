@@ -148,6 +148,19 @@ docs in the same release:
   only lets it `SET ROLE` (and, on PostgreSQL 16 and later, even a grant that does neither:
   `pg_has_role(..., 'MEMBER')` counts every membership). The refusal names the role and the
   `REVOKE` that removes it. Proven on PostgreSQL 13, 14, 16 and 18.
+- **Kilnmark's own SQL resolves names in pg_catalog alone** (12 November 2026, the fifth review).
+  Every connection Kilnmark opens to a PostgreSQL source (scans, explore, reads, previews, profiles,
+  counts, the library's quality rules, the write node and its checks) starts with `search_path =
+  pg_catalog, pg_temp` (`PostgresSession.kilnmarkOnly`), so nothing another database user plants on
+  the login's search path can answer for a built-in or run as the login in SQL Kilnmark writes: a
+  planted `=` for `oid` and `regclass` had let `mode: replace` drop a table with row-level security,
+  and a planted `rtrim(varchar)` had changed a library rule's count. Kilnmark names every table it
+  reads and writes with its schema, so which table is read does not change. SQL a person wrote
+  runs with the login's own search path, put back for its transaction alone
+  (`PostgresSession.asWritten`), as its author meant; a write puts it back once its checks are done
+  (`PostgresSession.loginPath`), so the table's own triggers find what they always found. Chosen
+  over qualifying every name: one rule at the connection covers the SQL nobody thought to qualify.
+  A PostgreSQL database reached through the generic JDBC connector is not covered.
 - **The login check cannot be talked out of its answer** (12 November 2026, the fourth review).
   Every function, operator and type it uses is named with `pg_catalog.`, and it runs with
   `SET LOCAL search_path = pg_catalog, pg_temp` in its own transaction, rolled back after: a

@@ -13,6 +13,20 @@ released.
 
 ### Security
 
+- **Another database user could silence a write's checks and run code as the write's login.**
+  Severity **High**: anyone who may create objects in a schema on the login's search path of a
+  source Kilnmark writes to (`public`, by default on PostgreSQL 14 and older) could plant an
+  operator, such as an `=` for `oid` and `regclass`, that matched the write node's checks better
+  than PostgreSQL's own. The check for row-level security then found nothing, so `mode: replace`
+  dropped a table with row-level security and its new table showed the rows the policies had
+  hidden to everyone its grants allow; the other checks (rights, what would break, owner, grants,
+  unique keys) could be answered the same way. The planted code ran as the write's login, which
+  the login check does not vet, inside the write's own transaction, so what it did was committed
+  with the write. In 0.0.7 to 0.1.2. Confirmed on PostgreSQL 14 and 18. Now every connection
+  Kilnmark opens to a PostgreSQL source resolves names in `pg_catalog` alone (`search_path =
+  pg_catalog, pg_temp`), and the row-level security check refuses to replace when it gets no
+  answer. Once its checks are done, a write puts the login's own search path back, so the table's
+  own triggers behave as before.
 - **On PostgreSQL 14 and older, a number written against a name hid SQL from the check.** Severity
   **High**: a designer whose token sees unmasked values could call any function the checks refuse
   (settings, other sessions of the same login, locks, `set_config('role', ...)`), in a flow's `sql`
@@ -29,6 +43,15 @@ released.
   as PostgreSQL 16 reads one (digits with single `_` between them, a point, an exponent with at
   least one digit, `0x`, `0o` and `0b`), and a number followed straight away by a letter, a digit,
   `_` or `$` is refused, as PostgreSQL 15 and later refuse it. Put a space after the number.
+- **Another database user could change what Kilnmark's own queries answered.** Severity
+  **Medium**: the same planting could make the refusal of a table an extension owns (such as
+  `pg_stat_statements`, which keeps other sessions' statements) miss it, in 0.1.1 to 0.1.2, and make
+  a library quality rule count wrongly (`public.rtrim(varchar)` turned 2 blank or missing values
+  into 1) while running as the source's login, in 0.0.7 to 0.1.2. Reads, previews, profiles,
+  counts and scans used the login's search path too. They all resolve names in `pg_catalog` alone
+  now, and names bound to the catalogue's lookups are cast to its own type. SQL a person wrote (a
+  read's query, a custom rule, a wait-for query, a flow's `sql` node) still runs with the login's
+  own search path, as its author meant.
 - **A custom SQL rule's `${column}` inside a string or a comment let a column's name add SQL.**
   Severity **Medium**: whoever could name a column of a table a rule checks (a designer with a
   `sql` node, the database's owner, or a pipeline writing a file's headers as columns) could have

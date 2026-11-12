@@ -210,6 +210,10 @@ final class JdbcTableOutput implements Node {
                     }
                 }
             }
+            // The checks are done, each resolving names in pg_catalog alone (PostgresSession). The write
+            // itself names its table with its schema and calls nothing; the table's own triggers find what
+            // they always found under the login's own search path.
+            PostgresSession.loginPath(connection);
         } catch (SQLException e) {
             throw new NodeException(explain(e, 0), e);
         }
@@ -237,7 +241,9 @@ final class JdbcTableOutput implements Node {
                 + "drops the old table and puts a new one in its place, which would break that or be refused. Change "
                 + "or drop it first, or empty the table yourself and use mode append");
         }
-        if (queryBoolean(sql.rowSecurity(target)) && !allowDroppingRowSecurity) {
+        // No answer is not "no row-level security": the table was found, so the check must say which
+        Boolean rowSecurity = queryNullableBoolean(sql.rowSecurity(target));
+        if ((rowSecurity == null || rowSecurity) && !allowDroppingRowSecurity) {
             throw new NodeException("Cannot replace " + target + ": it has row-level security, which the new table "
                 + "would not have, while its grants would be repeated, so rows the policies hide would become visible "
                 + "to those grants. Set allow_dropping_row_security: true if that is intended (and add the policies "

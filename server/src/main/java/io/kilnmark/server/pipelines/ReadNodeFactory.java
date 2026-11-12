@@ -643,6 +643,8 @@ public final class ReadNodeFactory implements NodeFactory {
                 // The query was checked as PostgreSQL reads it with this on (ADR 0028)
                 io.kilnmark.kiln.plugins.jdbc.PostgresConnector.conformingStrings(c);
                 st.execute("SET TRANSACTION READ ONLY");
+                // planned as it will run: with the login's own search path
+                io.kilnmark.kiln.plugins.jdbc.PostgresSession.asWritten(c);
                 st.setQueryTimeout(PLAN_TIMEOUT_SECONDS);
                 // As written: the driver rewrites no {...} escape in a query a person wrote
                 st.setEscapeProcessing(false);
