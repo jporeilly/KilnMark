@@ -64,6 +64,24 @@ released.
   uses braces. Write an array as `'{1,2}'`, in quotes, as before. A form that the
   `GROUP BY` change below would have opened (`CREATE {oj GROUP by}`) was found in review before
   any release.
+- **A space beyond ASCII before a closing `;` hid a refused last word.** Severity **Low**: a
+  designer whose token sees unmasked values could end a flow's `sql` node statement with a refused
+  word, such as `ENABLE ROW LEVEL SECURITY`, within the rights of the source's login. In 0.0.10 to
+  0.1.2. The check read `SECURITY` followed by an em space (U+2003) as one name, not on its list,
+  then took the `;` off and trimmed the text with Java's idea of whitespace, which includes that
+  space, and sent the text without it. Custom rules, query reads and wait-for queries were trimmed
+  the same way but run read-only. Now only PostgreSQL's own whitespace is ever taken off, the text
+  sent must read as exactly what was checked, and a space beyond ASCII (U+00A0, U+2000 to U+200B,
+  U+3000, U+FEFF and the like) outside quotes and comments is refused, as PostgreSQL reads it as
+  part of a name. Type an ordinary space instead.
+- **Housekeeping functions wrote from a read-only check.** Severity **Low**: a designer whose token
+  sees unmasked values could, in a custom rule, a query or a wait-for query, summarise a BRIN index
+  or clean a GIN index's pending list, work that a rolled-back read-only transaction keeps; and in a
+  flow's `sql` node, on PostgreSQL 18, change a table's statistics in the catalogue. In 0.0.7 to
+  0.1.2. They are now refused in every check, with others of their kind: `brin_`,
+  `gin_clean_pending_list`, `pg_clear_`, `pg_restore_`, `pg_set_`, `pg_stat_reset`, `pg_prewarm`,
+  `autoprewarm`, `pg_wal_`, `pg_truncate_` and `heap_force_`. Sequences stay refused in reads and
+  allowed in a `sql` node, as before.
 
 ### Fixed
 

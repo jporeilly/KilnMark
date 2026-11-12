@@ -495,6 +495,71 @@ class SafetyTest {
         assertTrue(SqlTokens.isSingleStatement("SELECT COUNT(*) FROM \"s\".\"t\" WHERE \"a\" < 1e3"));
     }
 
+    /** The spaces beyond ASCII the third review named, and others like them. */
+    private static final List<Character> OTHER_SPACES = java.util.stream.IntStream.of(0x00a0, 0x2000, 0x2001, 0x2002,
+        0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a, 0x200b, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
+        0xfeff).mapToObj(c -> (char) c).toList();
+
+    /**
+     * The third review: a space beyond ASCII before a trailing ; was read as part of the word before it
+     * (security and U+2003, no refused word), then Java's strip() took it off with the ;, and the text sent
+     * ended in the refused word. Now only PostgreSQL's own whitespace is taken off, the text sent must
+     * read as the tokens checked, and such a space outside quotes and comments is refused, as
+     * PostgreSQL reads it as part of a name.
+     */
+    @Test
+    void aSpaceBeyondAsciiNeverHidesAWord() {
+        String why = "a space that is not an ordinary space";
+        for (char space : OTHER_SPACES) {
+            String sp = String.valueOf(space);
+            for (String action : List.of("ALTER TABLE t ENABLE ROW LEVEL SECURITY" + sp + ";",
+                "ALTER TABLE t ENABLE ROW LEVEL SECURITY" + sp, sp + "ALTER TABLE t ENABLE ROW LEVEL SECURITY",
+                "ALTER TABLE t FORCE ROW LEVEL security" + sp + " ;", sp + "TRUNCATE t", "TRUNCATE t" + sp + ";",
+                "TRUNCATE" + sp + "t")) {
+                IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                    () -> SqlTokens.checkAction(action, 10_000), action);
+                assertTrue(e.getMessage().contains(why), (int) space + ": " + e.getMessage());
+            }
+            for (String custom : List.of("SELECT a FROM t FOR UPDATE" + sp + ";", sp + "SELECT 1", "SELECT a FROM t" + sp,
+                "SELECT a FROM t" + sp + ";", "SELECT a" + sp + "FROM t")) {
+                refusedCustom(custom, why);
+            }
+            // In strings, quoted names and comments it is text, as before
+            String ok = "UPDATE t SET note = '" + sp + "' WHERE \"a" + sp + "b\" = 1 /* " + sp + " */";
+            assertEquals(ok, SqlTokens.checkAction(ok, 10_000));
+            assertEquals("SELECT '" + sp + "' AS x", SqlTokens.checkCustomSql("SELECT '" + sp + "' AS x", 10_000));
+        }
+        // PostgreSQL's own whitespace is still taken off either end, and the text returned is what was checked
+        assertEquals("TRUNCATE t", SqlTokens.checkAction(" \t\r\n\f\u000bTRUNCATE t \t;\n ", 10_000));
+        assertEquals("SELECT 1", SqlTokens.checkCustomSql("\u000b SELECT 1 ;\f", 10_000));
+    }
+
+    /**
+     * The third review: housekeeping functions whose work survives a read-only transaction rolled back
+     * (BRIN summaries, a GIN index's pending list), and functions that change the catalogue's
+     * statistics, the server's caches or its write-ahead log, are refused in every check.
+     */
+    @Test
+    void housekeepingThatWritesFromAReadOnlyTransactionIsRefused() {
+        for (String f : List.of("brin_summarize_new_values('t_idx')", "brin_summarize_range('t_idx', 0)",
+            "brin_desummarize_range('t_idx', 0)", "gin_clean_pending_list('t_idx')",
+            "pg_clear_relation_stats('s', 't')", "pg_clear_attribute_stats('s', 't', 'a', false)",
+            "pg_restore_relation_stats('schemaname', 's')", "pg_restore_attribute_stats('schemaname', 's')",
+            "pg_set_relation_stats('s.t'::regclass, 1)", "pg_stat_reset()", "pg_stat_reset_shared('io')",
+            "pg_prewarm('t')", "autoprewarm_dump_now()", "pg_wal_replay_pause()", "pg_truncate_visibility_map('t')",
+            "heap_force_kill('t', ARRAY['(0,1)'::tid])", "pg_catalog.brin_summarize_new_values('t_idx')")) {
+            refused("SELECT " + f);
+            refusedAction("INSERT INTO t SELECT " + f, "is not allowed");
+        }
+        // Sequences: refused where only reading is meant, taken by a sql node, which writes anyway
+        refused("SELECT nextval('s')");
+        refused("SELECT setval('s', 1)");
+        assertEquals("INSERT INTO t VALUES (nextval('s'))", SqlTokens.checkAction("INSERT INTO t VALUES (nextval('s'))",
+            10_000));
+        // Names that only start alike are other names: a column called brin is quoted, as any refused name
+        SqlTokens.checkCustomSql("SELECT \"gin\", pg_size_pretty(1) FROM t", 10_000);
+    }
+
     /**
      * The second review: a custom rule's ${column} written inside a string or a comment was filled in
      * there too, so a column whose name holds a quote ended the string and added SQL that was never

@@ -134,7 +134,11 @@ docs in the same release:
   filled in only where they stand as SQL (`SqlTokens.placeholders`), refused anywhere else when the
   rule is saved, written in lower case only, and the SQL as filled in is checked again in full
   before it runs (`SqlTokens.checkFilledCustomSql`), each name filled in having to stay one quoted
-  name.
+  name. Only PostgreSQL's whitespace is taken off SQL text (never Java's `strip()`), the text
+  sent must read as the tokens checked, and a space beyond ASCII outside quotes is refused (the
+  third review: `SECURITY` plus U+2003 before a `;` was sent as `SECURITY`). Housekeeping that
+  writes despite a read-only transaction (`brin_`, `gin_clean_pending_list`) and functions that
+  change statistics, caches or the write-ahead log are refused with the other functions.
 - **Membership counts as much as the login's own rights** (decided by the owner, 12 November 2026).
   The login check looked only at the login's own attributes, so a login granted a superuser or
   role-creating role passed it, and SQL that reached `SET ROLE` (as the number flaw did) could act

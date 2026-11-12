@@ -40,7 +40,11 @@ public final class SqlTokens {
         // run a query held in a string, out of this check's sight
         "ts_stat", "ts_rewrite",
         // its rules call set_config: a session's settings, standard_conforming_strings among them
-        "pg_settings");
+        "pg_settings",
+        // housekeeping whose work survives a read-only transaction rolled back (the third review), and
+        // functions that change the catalogue's statistics, the server's caches or its write-ahead log
+        "brin_", "gin_clean_pending_list", "pg_clear_", "pg_restore_", "pg_set_", "pg_stat_reset", "pg_prewarm",
+        "autoprewarm", "pg_wal_", "pg_truncate_", "heap_force_");
 
     private SqlTokens() {
     }
@@ -146,6 +150,13 @@ public final class SqlTokens {
                 int j = i + 1;
                 while (j < n && isWordPart(sql.charAt(j))) {
                     j++;
+                }
+                for (int k = i; k < j; k++) {
+                    if (otherSpace(sql.charAt(k))) {
+                        throw new IllegalArgumentException("a space that is not an ordinary space (code " + (int) sql.charAt(k)
+                            + ") is not allowed outside quotes and comments: PostgreSQL reads it as part of a name. "
+                            + "Type an ordinary space instead");
+                    }
                 }
                 out.add(new Token(Kind.WORD, sql.substring(i, j).toLowerCase(Locale.ROOT), i));
                 i = j;
@@ -328,6 +339,45 @@ public final class SqlTokens {
             ? "E'...' strings are not allowed; write the value in plain quotes" : null;
     }
 
+    /**
+     * A character beyond ASCII that looks like a space (U+00A0, U+2000 to U+200B, U+2028, U+2029,
+     * U+202F, U+205F, U+3000, U+FEFF and the like) and that PostgreSQL reads as part of a name. Java's
+     * own idea of whitespace includes some of them, so it is never used on SQL text.
+     */
+    static boolean otherSpace(char c) {
+        return c > 127 && (Character.isWhitespace(c) || Character.isSpaceChar(c) || c == '​' || c == '‌'
+            || c == '‍' || c == '⁠' || c == '﻿' || c == '᠎');
+    }
+
+    /** {@code sql} without PostgreSQL's whitespace at either end, and nothing else taken off. */
+    static String pgStrip(String sql) {
+        int from = 0;
+        int to = sql.length();
+        while (from < to && isSpace(sql.charAt(from))) {
+            from++;
+        }
+        while (to > from && isSpace(sql.charAt(to - 1))) {
+            to--;
+        }
+        return sql.substring(from, to);
+    }
+
+    /**
+     * Throws unless {@code sent}, the text that goes to the database, reads as exactly the tokens that
+     * were checked: whatever was taken off it after the check (a trailing {@code ;}, whitespace) must
+     * have changed nothing that was read.
+     */
+    private static void sameTokens(String sent, List<Token> checked) {
+        List<Token> again = tokens(sent);
+        boolean same = again.size() == checked.size();
+        for (int k = 0; same && k < again.size(); k++) {
+            same = again.get(k).kind() == checked.get(k).kind() && again.get(k).text().equals(checked.get(k).text());
+        }
+        if (!same) {
+            throw new IllegalArgumentException("the text to run does not read as the text that was checked");
+        }
+    }
+
     /** PostgreSQL's whitespace: space, tab, newline, carriage return, form feed and vertical tab. */
     private static boolean isSpace(char c) {
         return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == 0x0b;
@@ -450,8 +500,8 @@ public final class SqlTokens {
      * names Kilnmark filled in (a rule about to run).
      */
     private static String checkCustom(String sql, int maxLength, boolean placeholders, List<Span> names) {
-        String s = sql == null ? "" : sql.strip();
-        int shift = sql == null ? 0 : sql.length() - sql.stripLeading().length();
+        String s = sql == null ? "" : pgStrip(sql);
+        int shift = sql == null ? 0 : sql.indexOf(s);
         List<Token> tokens;
         try {
             tokens = new ArrayList<>(tokens(s));
@@ -465,7 +515,7 @@ public final class SqlTokens {
             }
         }
         while (!tokens.isEmpty() && tokens.getLast().kind() == Kind.SYMBOL && tokens.getLast().text().equals(";")) {
-            s = s.substring(0, tokens.getLast().at()).strip();
+            s = pgStrip(s.substring(0, tokens.getLast().at()));
             tokens.removeLast();
         }
         if (tokens.isEmpty() || s.length() > maxLength) {
@@ -524,6 +574,11 @@ public final class SqlTokens {
                     }
                 }
             }
+        }
+        try {
+            sameTokens(s, tokens);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("params.sql: " + e.getMessage());
         }
         return s;
     }
@@ -634,7 +689,7 @@ public final class SqlTokens {
      * other databases.
      */
     public static String checkAction(String sql, int maxLength) {
-        String s = sql == null ? "" : sql.strip();
+        String s = sql == null ? "" : pgStrip(sql);
         List<Token> tokens;
         try {
             tokens = new ArrayList<>(tokens(s));
@@ -642,7 +697,7 @@ public final class SqlTokens {
             throw new IllegalArgumentException(e.getMessage());
         }
         while (!tokens.isEmpty() && tokens.getLast().kind() == Kind.SYMBOL && tokens.getLast().text().equals(";")) {
-            s = s.substring(0, tokens.getLast().at()).strip();
+            s = pgStrip(s.substring(0, tokens.getLast().at()));
             tokens.removeLast();
         }
         if (tokens.isEmpty() || s.length() > maxLength) {
@@ -700,6 +755,7 @@ public final class SqlTokens {
                 }
             }
         }
+        sameTokens(s, tokens);
         return s;
     }
 

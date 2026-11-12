@@ -442,7 +442,11 @@ reads from it. Connections follow it as any node (`success`, `failure`, a condit
   `_` between them, a point, an exponent with at least one digit, `0x`, `0o`, `0b`), and one followed
   straight away by a letter, a digit, `_` or `$` is refused: PostgreSQL 14 and older read `1e$a$` as
   `1` and the name `e$a$`, where an older reading took a `$`-quoted string, hiding a call (0.0.7 to
-  0.1.2); 15 and later refuse it as trailing junk. The tokenizer reads
+  0.1.2); 15 and later refuse it as trailing junk. Only PostgreSQL's own whitespace is taken off a
+  statement's ends (never Java's `strip()`, which also takes U+2003 and the like, so `SECURITY` plus
+  U+2003 before a `;` was checked as one name and sent as `SECURITY`; 0.0.10 to 0.1.2); the text
+  returned must read as the tokens checked; and a space beyond ASCII outside quotes and comments is
+  refused, as PostgreSQL reads it as part of a name. The tokenizer reads
   comments, whitespace, dollar-quote tags and identifiers as PostgreSQL does, and on top of it the
   PostgreSQL driver's own parser must find exactly one statement. This is a first line of defence:
   the login check and the source's opt-ins below are what hold.
