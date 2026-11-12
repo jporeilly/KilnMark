@@ -4,9 +4,17 @@ name: Upgrade rehearsal
 # upgrade rehearsal"): the previous release is downloaded and checked against Kilnmark's key,
 # installed with its own control script from its own images files, given real state, upgraded to
 # this build as the upgrade guide says, and checked afterwards. From 0.1.2 on, every release
-# upgrades from the one before it.
+# upgrades from the one before it. A run takes 35 to 45 minutes, so it runs on the pull requests
+# that change what an upgrade goes through, every night on main, and by hand on main before every
+# tag (docs/development.md, "Releasing").
 on:
   pull_request:
+    paths: ["containers/**", "graph/src/main/resources/db/migration/**", "ci/upgrade-rehearsal/**",
+            "ci/install-cosign.sh", ".github/workflows/upgrade.yml", ".github/workflows/release.yml",
+            "build.gradle.kts", "server/build.gradle.kts", "settings.gradle.kts", "gradle.properties"]
+  schedule:
+    # 02:30 UTC (02:30 or 03:30 in the UK), on the default branch, main
+    - cron: "30 2 * * *"
   workflow_dispatch:
 
 permissions:

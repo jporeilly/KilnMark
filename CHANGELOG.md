@@ -14,7 +14,9 @@ released.
 ### Details
 
 - **CI proves that the build upgrades from the previous release.** A new workflow, the upgrade
-  rehearsal (`.github/workflows/upgrade.yml`, on every pull request and by hand), downloads the
+  rehearsal (`.github/workflows/upgrade.yml`: on pull requests that change the containers, the
+  migrations, the build or the rehearsal itself, every night on main, and by hand on main before
+  every tag), downloads the
   previous published release (the newest one below the build's version, never one from before
   0.1.2), checks its files against `config/release/cosign.pub` and `SHA256SUMS`, installs it with
   its own control script from its offline images file, puts state in (people, a source, a pipeline

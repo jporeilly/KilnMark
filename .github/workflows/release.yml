@@ -177,7 +177,7 @@ jobs:
           if-no-files-found: error
 
       # Installing what is built here, upgrading to it, backing it up, restoring and uninstalling it
-      # are rehearsed on every pull request by the upgrade rehearsal (upgrade.yml), on a machine of
+      # are rehearsed by the upgrade rehearsal (upgrade.yml) on the pull requests that change them, on a machine of
       # its own, so on the local runners too.
 
       - name: Draft release

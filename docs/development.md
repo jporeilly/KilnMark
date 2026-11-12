@@ -270,6 +270,13 @@ commit of main starts `.github/workflows/release.yml`, which builds, signs and c
 and leaves a draft GitHub release to publish ([Supply chain](design/supply-chain.md),
 [ADR 0033](adr/0033-sboms-scanning-and-signed-releases.md)).
 
+Before every tag:
+
+1. CI is green on the commit of main to be tagged.
+2. Run the upgrade rehearsal by hand on that commit of main (**Actions**, **Upgrade rehearsal**,
+   **Run workflow**, branch `main`), and tag only when it passes
+   ([The upgrade rehearsal](#the-upgrade-rehearsal)).
+
 **Release candidates.** A pull request that touches the release's files rehearses the release, and
 keeps its package for three days as the workflow artifact `kilnmark-<version>-rc`, so it can be
 installed on a test machine before any tag. Fetch it with `gh run download <run id> -R
@@ -291,8 +298,7 @@ Then:
 
 On a tag the release runs where CI runs: on the local runner when `KILNMARK_RUNNER` names it (see
 "CI on a local runner"). It then builds, signs with the real key, pushes the images and drafts the
-release there too. Installing what it builds is the upgrade rehearsal's part (below), on every pull
-request.
+release there too. Installing what it builds is the upgrade rehearsal's part (below).
 
 Without them a tag fails at the **Key** step, saying what is missing. A changed key is a new
 `cosign.pub`, announced in the next release's changelog.
@@ -300,9 +306,18 @@ Without them a tag fails at the **Key** step, saying what is missing. A changed 
 ### The upgrade rehearsal
 
 From 0.1.2 on, every release upgrades from the one before it; installs from before 0.1.2 are
-installed afresh. `.github/workflows/upgrade.yml` proves it for every pull request, and by hand
-(**Actions**, **Upgrade rehearsal**, **Run workflow**): the previous published release is installed
-from its own files, given real state, upgraded to the build under test, and checked.
+installed afresh. `.github/workflows/upgrade.yml` proves it: the previous published release is
+installed from its own files, given real state, upgraded to the build under test, and checked.
+
+**When it runs.** A run takes 35 to 45 minutes of one runner, so not on every pull request:
+
+- on pull requests that change what an upgrade goes through: `containers/**`, the migrations
+  (`graph/src/main/resources/db/migration/**`), `ci/upgrade-rehearsal/**`, `ci/install-cosign.sh`,
+  `upgrade.yml`, `release.yml`, `build.gradle.kts`, `server/build.gradle.kts`,
+  `settings.gradle.kts` and `gradle.properties`;
+- every night on main, at 02:30 UTC;
+- by hand (**Actions**, **Upgrade rehearsal**, **Run workflow**), and **on main before every tag**,
+  which must pass first (see the steps under Releasing).
 
 ```mermaid
 flowchart LR
