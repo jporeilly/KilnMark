@@ -296,7 +296,9 @@ from everyone else while any table of the source has a column marked sensitive.
 
 - It runs with a time limit (`kilnmark.quality.query-timeout`, 60 seconds by default) and is rolled
   back afterwards.
-- Kilnmark refuses to run it under a database login with superuser or file and program access.
+- Kilnmark refuses to run it under a database login with superuser or file and program access, or
+  one that is a member (directly or through other roles) of a role that is a superuser or may create
+  roles.
   Give every source a **read-only login**, because a custom query can read anything that login can
   see.
 

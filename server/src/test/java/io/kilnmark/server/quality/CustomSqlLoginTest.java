@@ -65,6 +65,75 @@ class CustomSqlLoginTest {
         assertTrue(refusal != null && refusal.contains(fix), refusal);
     }
 
+    /**
+     * A login that is a member of a role that is a superuser or may create roles, directly or through
+     * another role, inherited or not, could act as that role (SET ROLE), so it is refused as such a
+     * role itself would be (owner decision, 12 November 2026). A member of an ordinary role is not.
+     */
+    @Test
+    void membersOfSuperuserOrRoleCreatingRolesAreRefused() throws Exception {
+        String sup = "login_check_super";
+        String maker = "login_check_maker";
+        String middle = "login_check_middle";
+        admin(null, "DROP DATABASE IF EXISTS " + DB, "CREATE DATABASE " + DB,
+            "DROP ROLE IF EXISTS " + READER, "CREATE ROLE " + READER + " LOGIN PASSWORD 'reader-pw'",
+            "DROP ROLE IF EXISTS " + middle, "DROP ROLE IF EXISTS " + sup, "DROP ROLE IF EXISTS " + maker,
+            "DROP ROLE IF EXISTS " + OWNER, "CREATE ROLE " + OWNER,
+            "CREATE ROLE " + sup + " SUPERUSER NOLOGIN", "CREATE ROLE " + maker + " CREATEROLE NOLOGIN",
+            "CREATE ROLE " + middle + " NOLOGIN");
+        try {
+            assertNull(refused(), "a plain read-only login may run custom SQL");
+            admin(null, "GRANT " + OWNER + " TO " + READER);
+            assertNull(refused(), "a member of an ordinary role still may");
+
+            admin(null, "GRANT " + sup + " TO " + READER);
+            String direct = refused();
+            says(direct, "it is a member of the role " + sup + ", which is a superuser or may create roles");
+            says(direct, "REVOKE " + sup + " FROM " + READER);
+            admin(null, "REVOKE " + sup + " FROM " + READER);
+            assertNull(refused());
+
+            // Not inherited: SET ROLE still makes the login that role
+            admin(null, "ALTER ROLE " + READER + " NOINHERIT", "GRANT " + maker + " TO " + READER);
+            says(refused(), "it is a member of the role " + maker);
+            admin(null, "REVOKE " + maker + " FROM " + READER, "ALTER ROLE " + READER + " INHERIT");
+            assertNull(refused());
+
+            // Through another role
+            admin(null, "GRANT " + sup + " TO " + middle, "GRANT " + middle + " TO " + READER);
+            says(refused(), "it is a member of the role " + sup);
+            admin(null, "REVOKE " + middle + " FROM " + READER);
+            assertNull(refused());
+
+            // PostgreSQL 16 and later: a grant that neither inherits nor may SET ROLE is still a membership
+            if (version() >= 160000) {
+                admin(null, "GRANT " + sup + " TO " + READER + " WITH INHERIT FALSE, SET FALSE");
+                says(refused(), "it is a member of the role " + sup);
+                admin(null, "REVOKE " + sup + " FROM " + READER);
+                admin(null, "GRANT " + maker + " TO " + READER + " WITH INHERIT FALSE, SET TRUE");
+                says(refused(), "it is a member of the role " + maker);
+                admin(null, "REVOKE " + maker + " FROM " + READER);
+            }
+            // The login's own attributes are refused as before, with their own words
+            admin(null, "ALTER ROLE " + READER + " CREATEROLE");
+            assertTrue(refused().startsWith(RuleRunner.PRIVILEGED_REFUSAL.substring(0, 40)), refused());
+            admin(null, "ALTER ROLE " + READER + " NOCREATEROLE");
+            assertNull(refused());
+        } finally {
+            admin(null, "DROP DATABASE IF EXISTS " + DB + " WITH (FORCE)", "DROP ROLE IF EXISTS " + READER,
+                "DROP ROLE IF EXISTS " + middle, "DROP ROLE IF EXISTS " + sup, "DROP ROLE IF EXISTS " + maker,
+                "DROP ROLE IF EXISTS " + OWNER);
+        }
+    }
+
+    private int version() throws SQLException {
+        try (Connection c = DriverManager.getConnection(url, user, password); Statement s = c.createStatement();
+             java.sql.ResultSet rs = s.executeQuery("SHOW server_version_num")) {
+            rs.next();
+            return Integer.parseInt(rs.getString(1));
+        }
+    }
+
     @Test
     void loginsThatMayReachOtherDatabasesAreRefused() throws Exception {
         admin(null, "DROP DATABASE IF EXISTS " + DB, "CREATE DATABASE " + DB,

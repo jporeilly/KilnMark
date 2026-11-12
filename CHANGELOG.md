@@ -23,8 +23,9 @@ released.
   ran (`1_$a$` and `1E'...'` the same way; PostgreSQL 15 and later refuse such text). Rules,
   queries and wait-for queries still ran read-only, so nothing could be written, but settings could
   be changed and the login's other sessions ended. It is High because `set_config('role', ...)`
-  becomes any role the source's login is a member of, and the login check looks only at the login's
-  own attributes: a login granted a superuser role could become a superuser. Now a number is read
+  becomes any role the source's login is a member of, and the login check looked only at the login's
+  own attributes: a login granted a superuser role could become a superuser. The login check now
+  refuses such a login too (see Changed), which closes that route to superuser. Now a number is read
   as PostgreSQL 16 reads one (digits with single `_` between them, a point, an exponent with at
   least one digit, `0x`, `0o` and `0b`), and a number followed straight away by a letter, a digit,
   `_` or `$` is refused, as PostgreSQL 15 and later refuse it. Put a space after the number.
@@ -79,6 +80,19 @@ released.
   checks it (its sources, each `sql` statement and `wait-for` query, and the pipelines it runs),
   and the samples that run SQL a person wrote (`sample-sql-before-and-after` and
   `sample-read-query`) are run for real in the tests, under a login that is not a superuser.
+
+### Changed
+
+- **A source whose login is a member of a superuser or role-creating role no longer runs SQL a
+  person wrote.** Custom SQL rules, reads with a query, wait-for queries and flow `sql` nodes are
+  refused, before anything runs, when the source's login is a member, directly or through other
+  roles, of a role that is a superuser or may create roles, whether the membership is inherited or
+  only lets the login switch to that role (owner decision, 12 November 2026). Such a login could act
+  as that role, and the check had looked only at the login's own attributes. What to do: the
+  message names the role and the statement that removes the membership (`REVOKE <role> FROM
+  <login>`); run it, or revoke the role from whichever role the login has it through, then run
+  again. Logins that are members of ordinary roles are not affected. Sources that read tables,
+  write, scan or profile are not affected either.
 
 ## 0.1.2 (11 November 2026)
 

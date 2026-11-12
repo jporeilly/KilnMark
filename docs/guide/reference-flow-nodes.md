@@ -228,7 +228,8 @@ If one fails, all roll back, and the node's message names which one and its SQLS
 database's words.
 
 **Governance.** Saved only by a designer whose token sees unmasked values. At run time the login is
-checked again: never a superuser, nor one that may read files or run programs. Each sql node that
+checked again: never a superuser, nor one that may create roles, read files or run programs, nor a
+member of a role that is a superuser or may create roles. Each sql node that
 starts is recorded in the audit log, without its statements.
 
 ```yaml
