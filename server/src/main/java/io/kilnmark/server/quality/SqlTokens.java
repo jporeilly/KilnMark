@@ -150,14 +150,14 @@ public final class SqlTokens {
                 out.add(new Token(Kind.WORD, sql.substring(i, j).toLowerCase(Locale.ROOT), i));
                 i = j;
             } else if (isDigit(c) || (c == '.' && i + 1 < n && isDigit(sql.charAt(i + 1)))) {
-                int j = i + 1;
-                // Digits, a point and an exponent only: letters after a number start a word, so a word
-                // such as RETURNING written straight after one is still seen.
-                while (j < n && (isDigit(sql.charAt(j)) || sql.charAt(j) == '.' || sql.charAt(j) == '_'
-                    || sql.charAt(j) == 'e' || sql.charAt(j) == 'E'
-                    || ((sql.charAt(j) == '+' || sql.charAt(j) == '-') && (sql.charAt(j - 1) == 'e'
-                    || sql.charAt(j - 1) == 'E')))) {
-                    j++;
+                int j = number(sql, i);
+                // A number runs straight into a name, a $ or another number only in SQL that PostgreSQL
+                // reads otherwise than this does: version 14 and older read 1e$a$ as 1 then the name
+                // e$a$, and 1E'x' as 1 then an E'' string, where this would read a $-quoted string or a
+                // plain one (versions 15 and later refuse them). So it is refused, as they do.
+                if (j < n && isWordPart(sql.charAt(j))) {
+                    throw new IllegalArgumentException("a number is followed straight away by a letter, a digit, _ "
+                        + "or $; put a space after the number");
                 }
                 out.add(new Token(Kind.NUMBER, sql.substring(i, j), i));
                 i = j;
@@ -167,6 +167,63 @@ public final class SqlTokens {
             }
         }
         return out;
+    }
+
+    /**
+     * The end (exclusive) of the number starting at {@code i}, read as PostgreSQL 16 reads one: digits,
+     * each pair of them perhaps joined by one {@code _}; then perhaps a point and more digits (or a
+     * point and digits alone); then perhaps an exponent, {@code e} or {@code E} with a sign if any
+     * and at least one digit. {@code 0x}, {@code 0o} and {@code 0b} start a hexadecimal, octal or
+     * binary number. Nothing else belongs to it: an {@code e} with no digit after it, a {@code _}
+     * not between two digits and any letter are left for the caller to refuse.
+     */
+    static int number(String sql, int i) {
+        int n = sql.length();
+        if (sql.charAt(i) == '0' && i + 1 < n && "xXoObB".indexOf(sql.charAt(i + 1)) >= 0) {
+            char base = Character.toLowerCase(sql.charAt(i + 1));
+            java.util.function.IntPredicate digit = base == 'x' ? ch -> isDigit((char) ch) || "abcdefABCDEF".indexOf(ch) >= 0
+                : base == 'o' ? ch -> ch >= '0' && ch <= '7' : ch -> ch == '0' || ch == '1';
+            int end = digits(sql, i + 2, digit, true);
+            return end > i + 2 ? end : i + 1;
+        }
+        java.util.function.IntPredicate decimal = ch -> isDigit((char) ch);
+        int j = digits(sql, i, decimal, false);
+        if (j < n && sql.charAt(j) == '.' && !(j + 1 < n && sql.charAt(j + 1) == '.')) {
+            j = digits(sql, j + 1, decimal, false);
+        }
+        if (j < n && (sql.charAt(j) == 'e' || sql.charAt(j) == 'E')) {
+            int k = j + 1;
+            if (k < n && (sql.charAt(k) == '+' || sql.charAt(k) == '-')) {
+                k++;
+            }
+            int end = digits(sql, k, decimal, false);
+            if (end > k) {
+                j = end;
+            }
+        }
+        return j;
+    }
+
+    /**
+     * The end of a run of digits from {@code from}, each pair perhaps joined by one {@code _}; with
+     * {@code underscoreFirst}, a {@code _} may also come before the first (as after {@code 0x}).
+     */
+    private static int digits(String sql, int from, java.util.function.IntPredicate digit, boolean underscoreFirst) {
+        int n = sql.length();
+        int j = from;
+        boolean any = false;
+        while (j < n) {
+            char ch = sql.charAt(j);
+            if (digit.test(ch)) {
+                j++;
+                any = true;
+            } else if (ch == '_' && (any || underscoreFirst) && j + 1 < n && digit.test(sql.charAt(j + 1))) {
+                j++;
+            } else {
+                break;
+            }
+        }
+        return j;
     }
 
     /** An ASCII digit: PostgreSQL reads no other digit as one. */
@@ -214,13 +271,13 @@ public final class SqlTokens {
      * (custom SQL rules) the two a rule may write, {@code ${table}} and {@code ${column}}, are let
      * through, exactly as written: Kilnmark replaces them with quoted names before anything is sent.
      */
-    static String braces(List<Token> tokens, boolean placeholders) {
+    static String braces(String sql, List<Token> tokens, boolean placeholders) {
         for (int i = 0; i < tokens.size(); i++) {
             Token t = tokens.get(i);
             if (t.kind() != Kind.SYMBOL || !(t.text().equals("{") || t.text().equals("}"))) {
                 continue;
             }
-            if (placeholders && t.text().equals("{") && placeholder(tokens, i)) {
+            if (placeholders && t.text().equals("{") && placeholder(sql, tokens, i)) {
                 i += 2; // the name and the closing brace
                 continue;
             }
@@ -229,8 +286,11 @@ public final class SqlTokens {
         return null;
     }
 
-    /** Whether the opening brace at {@code i} is the one of {@code ${table}} or {@code ${column}}, with nothing between. */
-    private static boolean placeholder(List<Token> tokens, int i) {
+    /**
+     * Whether the opening brace at {@code i} is the one of {@code ${table}} or {@code ${column}}, in lower
+     * case, with nothing between: the form Kilnmark fills in, and only where it stands as SQL.
+     */
+    private static boolean placeholder(String sql, List<Token> tokens, int i) {
         if (i == 0 || i + 2 >= tokens.size()) {
             return false;
         }
@@ -240,7 +300,7 @@ public final class SqlTokens {
         Token close = tokens.get(i + 2);
         return dollar.kind() == Kind.SYMBOL && dollar.text().equals("$") && dollar.at() + 1 == open.at()
             && name.kind() == Kind.WORD && (name.text().equals("table") || name.text().equals("column"))
-            && name.at() == open.at() + 1
+            && name.at() == open.at() + 1 && sql.startsWith(name.text(), name.at()) // in lower case, as written
             && close.kind() == Kind.SYMBOL && close.text().equals("}") && close.at() == name.at() + name.text().length();
     }
 
@@ -327,12 +387,82 @@ public final class SqlTokens {
      * {@link IllegalArgumentException} with a reason starting {@code params.sql:}.
      */
     public static String checkCustomSql(String sql, int maxLength) {
+        return checkCustom(sql, maxLength, true, List.of());
+    }
+
+    /** A part of a text, from {@code start} (inclusive) to {@code end} (exclusive). */
+    public record Span(int start, int end) {
+    }
+
+    /** A placeholder that stands as SQL: where it is, and which ({@code table} or {@code column}). */
+    public record Placeholder(Span at, String name) {
+    }
+
+    /**
+     * The {@code ${table}} and {@code ${column}} placeholders of custom SQL that stand as SQL, in
+     * order: never one inside a string, a quoted name, a dollar-quoted string or a comment, which is
+     * text, not a place for a name. Written in lower case, with nothing inside the braces but the
+     * word. Empty when the text cannot be read, so nothing is filled in and the check refuses it.
+     */
+    public static List<Placeholder> placeholders(String sql) {
+        List<Token> tokens;
+        try {
+            tokens = tokens(sql);
+        } catch (IllegalArgumentException e) {
+            return List.of();
+        }
+        List<Placeholder> out = new ArrayList<>();
+        for (int i = 0; i < tokens.size(); i++) {
+            if (placeholder(sql, tokens, i)) {
+                out.add(new Placeholder(new Span(tokens.get(i - 1).at(), tokens.get(i + 2).at() + 1),
+                    tokens.get(i + 1).text()));
+                i += 2;
+            }
+        }
+        return out;
+    }
+
+    /** {@code ${table}} or {@code ${column}} anywhere in a text, in any case and spacing, in code or not. */
+    private static final java.util.regex.Pattern ANY_PLACEHOLDER =
+        java.util.regex.Pattern.compile("\\$\\s*\\{\\s*(?i:table|column)\\s*}");
+
+    /**
+     * Checks custom SQL once its {@code ${table}} and {@code ${column}} have been filled in, just
+     * before it runs: every check {@link #checkCustomSql} makes, again, on the text that is sent. The
+     * names filled in (at {@code names}) must each have stayed whole quoted names, joined by points
+     * at most; they are not held to the list of refused functions, which a table may share a prefix
+     * with, since they are names, never calls. Null when it may run, else why not, in words that
+     * never quote the SQL or a name.
+     */
+    public static String checkFilledCustomSql(String filled, List<Span> names) {
+        try {
+            checkCustom(filled, Integer.MAX_VALUE, false, names);
+            return null;
+        } catch (IllegalArgumentException e) {
+            return "The rule's SQL, with its table and column filled in, is not a query Kilnmark runs: check the "
+                + "rule, and the names of the table's columns";
+        }
+    }
+
+    /**
+     * The check of custom SQL: {@code placeholders} lets {@code ${table}} and {@code ${column}} through
+     * where they stand as SQL (a rule as written); {@code names} are the parts of the text that are
+     * names Kilnmark filled in (a rule about to run).
+     */
+    private static String checkCustom(String sql, int maxLength, boolean placeholders, List<Span> names) {
         String s = sql == null ? "" : sql.strip();
+        int shift = sql == null ? 0 : sql.length() - sql.stripLeading().length();
         List<Token> tokens;
         try {
             tokens = new ArrayList<>(tokens(s));
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException("params.sql: " + e.getMessage());
+        }
+        for (Span name : names) {
+            String problem = filledName(s, tokens, name.start() - shift, name.end() - shift);
+            if (problem != null) {
+                throw new IllegalArgumentException("params.sql: " + problem);
+            }
         }
         while (!tokens.isEmpty() && tokens.getLast().kind() == Kind.SYMBOL && tokens.getLast().text().equals(";")) {
             s = s.substring(0, tokens.getLast().at()).strip();
@@ -346,7 +476,7 @@ public final class SqlTokens {
         if (first.kind() != Kind.WORD || !(first.text().equals("select") || first.text().equals("with"))) {
             throw new IllegalArgumentException("params.sql: must start with SELECT or WITH");
         }
-        String problem = braces(tokens, true);
+        String problem = braces(s, tokens, placeholders);
         if (problem == null) {
             problem = singleStatement(tokens);
         }
@@ -359,7 +489,19 @@ public final class SqlTokens {
         if (problem != null) {
             throw new IllegalArgumentException("params.sql: " + problem);
         }
+        if (placeholders) {
+            // A placeholder inside a string, a quoted name or a comment would put a name where text is
+            // read, and a name can hold a quote: refused, so a name only ever goes where a name goes.
+            long all = ANY_PLACEHOLDER.matcher(s).results().count();
+            if (all != placeholders(s).size()) {
+                throw new IllegalArgumentException("params.sql: write ${table} and ${column} in lower case, as SQL, "
+                    + "never inside quotes or a comment: Kilnmark puts a quoted name there");
+            }
+        }
         for (Token t : tokens) {
+            if (t.kind() == Kind.QUOTED_WORD && within(names, t.at() + shift)) {
+                continue; // a name Kilnmark filled in, already found to be a whole quoted name
+            }
             if (t.kind() == Kind.PARAMETER) {
                 throw new IllegalArgumentException("params.sql: parameters such as " + t.text() + " are not allowed");
             }
@@ -384,6 +526,44 @@ public final class SqlTokens {
             }
         }
         return s;
+    }
+
+    /**
+     * Why the name filled in from {@code start} to {@code end} of the text {@code tokens} were read
+     * from did not stay a name, or null when it did: tokens must start there, and be quoted names
+     * and the points between them only, the same tokens the name alone reads as, ending there.
+     */
+    private static String filledName(String text, List<Token> tokens, int start, int end) {
+        String broke = "a name filled in did not stay one name";
+        if (start < 0 || end > text.length() || start >= end
+            // a quote straight after it would make it part of a longer quoted name
+            || (end < text.length() && text.charAt(end) == '"')) {
+            return broke;
+        }
+        List<Token> inside = tokens.stream().filter(t -> t.at() >= start && t.at() < end).toList();
+        List<Token> alone;
+        try {
+            alone = tokens(text.substring(start, end));
+        } catch (IllegalArgumentException e) {
+            return broke;
+        }
+        if (inside.isEmpty() || inside.size() != alone.size()) {
+            return broke;
+        }
+        for (int k = 0; k < inside.size(); k++) {
+            Token t = inside.get(k);
+            Token a = alone.get(k);
+            boolean nameOrPoint = t.kind() == Kind.QUOTED_WORD || (t.kind() == Kind.SYMBOL && t.text().equals("."));
+            if (!nameOrPoint || t.kind() != a.kind() || t.at() != a.at() + start || !t.text().equals(a.text())) {
+                return broke;
+            }
+        }
+        return null;
+    }
+
+    /** Whether a part of {@code spans} holds position {@code at}. */
+    private static boolean within(List<Span> spans, int at) {
+        return spans.stream().anyMatch(p -> at >= p.start() && at < p.end());
     }
 
     /**
@@ -469,7 +649,7 @@ public final class SqlTokens {
             throw new IllegalArgumentException("one SQL statement, at most " + maxLength + " characters");
         }
         // Before the first word: a statement that starts with an escape is told about the braces
-        String escape = braces(tokens, false);
+        String escape = braces(s, tokens, false);
         if (escape != null) {
             throw new IllegalArgumentException(escape);
         }

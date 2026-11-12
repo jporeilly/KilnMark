@@ -438,7 +438,11 @@ reads from it. Connections follow it as any node (`success`, `failure`, a condit
   (`SqlTokens.sentAsWritten`), so what is checked is what is sent whatever escapes the driver
   learns. Turning escape processing off on the statement is no help for the sql node: a prepared
   statement is rewritten when it is prepared, before `setEscapeProcessing` can be called
-  (`FlowSqlNodeTest` shows it). The tokenizer reads
+  (`FlowSqlNodeTest` shows it). A number is read as PostgreSQL 16 reads one (digits with single
+  `_` between them, a point, an exponent with at least one digit, `0x`, `0o`, `0b`), and one followed
+  straight away by a letter, a digit, `_` or `$` is refused: PostgreSQL 14 and older read `1e$a$` as
+  `1` and the name `e$a$`, where an older reading took a `$`-quoted string, hiding a call (0.0.7 to
+  0.1.2); 15 and later refuse it as trailing junk. The tokenizer reads
   comments, whitespace, dollar-quote tags and identifiers as PostgreSQL does, and on top of it the
   PostgreSQL driver's own parser must find exactly one statement. This is a first line of defence:
   the login check and the source's opt-ins below are what hold.

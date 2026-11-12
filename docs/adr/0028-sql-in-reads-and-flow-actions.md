@@ -124,6 +124,18 @@ docs in the same release:
   database (a sql node there could change Kilnmark's own tables if its login may).
 - **Query reads stay read-only in the transaction itself** (`SET TRANSACTION READ ONLY`), not only
   through the driver, and a PostgreSQL URL may not say `readOnlyMode` or `preferQueryMode`.
+- **Read as PostgreSQL reads it, and names only where names go** (12 November 2026, the second
+  review; security fixes to 0.0.7 to 0.1.2). The tokenizer read `1e$a$` as a number and a
+  `$`-quoted string where PostgreSQL 14 reads `1` and a name, so a refused function after it ran on
+  14 and older; a number is now read as PostgreSQL 16 reads one, and one followed straight away by
+  a letter, digit, `_` or `$` is refused. A custom rule's `${table}` and `${column}` were filled in
+  inside strings and comments too, where a name holding a quote could end the string; they are now
+  filled in only where they stand as SQL (`SqlTokens.placeholders`), refused anywhere else when the
+  rule is saved, written in lower case only, and the SQL as filled in is checked again in full
+  before it runs (`SqlTokens.checkFilledCustomSql`), each name filled in having to stay one quoted
+  name. **Open owner decision:** the login check looks at the login's own attributes, not at the
+  roles it is a member of, so a login granted a superuser or role-creating role passes it, and SQL
+  that reaches `SET ROLE` (as the number flaw did) could act as that role.
 - **What is checked is what is sent** (12 November 2026, a security fix to 0.0.10 to 0.1.2). The
   PostgreSQL driver rewrites JDBC escapes (`{fn ...}`, `{oj ...}`, `{d ...}` and others) after the
   checks have read the text, so `CREATE {fn xVIEW ...}` passed the sql node's check as the word

@@ -13,6 +13,32 @@ released.
 
 ### Security
 
+- **On PostgreSQL 14 and older, a number written against a name hid SQL from the check.** Severity
+  **High**: a designer whose token sees unmasked values could call any function the checks refuse
+  (settings, other sessions of the same login, locks, `set_config('role', ...)`), in a flow's `sql`
+  node, a custom SQL rule, a read's query or a wait-for query, on a source running PostgreSQL 14 or
+  older. In 0.0.7 to 0.1.2 (custom rules from 0.0.7, the other three as they arrived). The check
+  read `1e$a$` as a number and the start of a `$`-quoted string, so a call written after it seemed
+  to be inside the string; PostgreSQL 14 reads the number `1` and then the name `e$a$`, so the call
+  ran (`1_$a$` and `1E'...'` the same way; PostgreSQL 15 and later refuse such text). Rules,
+  queries and wait-for queries still ran read-only, so nothing could be written, but settings could
+  be changed and the login's other sessions ended. It is High because `set_config('role', ...)`
+  becomes any role the source's login is a member of, and the login check looks only at the login's
+  own attributes: a login granted a superuser role could become a superuser. Now a number is read
+  as PostgreSQL 16 reads one (digits with single `_` between them, a point, an exponent with at
+  least one digit, `0x`, `0o` and `0b`), and a number followed straight away by a letter, a digit,
+  `_` or `$` is refused, as PostgreSQL 15 and later refuse it. Put a space after the number.
+- **A custom SQL rule's `${column}` inside a string or a comment let a column's name add SQL.**
+  Severity **Medium**: whoever could name a column of a table a rule checks (a designer with a
+  `sql` node, the database's owner, or a pipeline writing a file's headers as columns) could have
+  SQL run when a custom rule held `'${column}'` or `/* ${column} */`. In 0.0.7 to 0.1.2. The name was
+  filled in everywhere, inside strings and comments too, and the SQL was not checked again once
+  filled in, so a name holding a quote ended the string and its SQL ran, never checked, in the
+  rule's read-only transaction: settings, locks and the login's other sessions, not writes. Now
+  `${table}` and `${column}` are filled in only where they stand as SQL, a rule with one inside
+  quotes or a comment is refused when it is saved, they must be written in lower case (as they were
+  filled in; `${TABLE}` was taken when saved and failed when run), and the rule's SQL as filled in
+  is checked again in full just before it runs, each name filled in having to stay one quoted name.
 - **SQL a person wrote could reach the database other than as it was checked.** Severity
   **Medium**: a designer whose token sees unmasked values, writing a flow's `sql` node on a
   PostgreSQL source with Allow SQL and Allow writing on, could run statements the node's check

@@ -173,8 +173,8 @@ class SafetyTest {
         refused("SELECT * FROM ts_rewrite('a'::tsquery, 'SELECT t, s FROM aliases')");
         refusedAction("UPDATE t SET a = E'x'\n'\\' || '; COMMIT; DELETE FROM t; --'", "E'...' strings are not allowed");
         refused("SELECT E'x'\n'\\' || '; DELETE FROM t; --' AS a");
-        // A word written straight after a number is still a word
-        refusedAction("DELETE FROM t WHERE a = 1returning a", "'returning' is not allowed");
+        // A word written straight after a number is refused (it was read as a word until the second review)
+        refusedAction("DELETE FROM t WHERE a = 1returning a", "a number is followed straight away by a letter");
         // The third review: pg_settings changes a session's settings through its rules, views and
         // routines are code that runs later
         refusedAction("UPDATE pg_settings SET setting = 'off' WHERE name = 'standard_conforming_strings'",
@@ -458,6 +458,109 @@ class SafetyTest {
         assertEquals("SELECT \"${column}\" FROM \"s\".\"t\"", SqlRules.placeholders("SELECT ${column} FROM ${table}",
             "\"s\".\"t\"", "\"${column}\""), "a name holding ${column} is not filled in again");
         assertEquals("SELECT {property} FROM {object}", StandardFormats.odcsPlaceholders("SELECT ${column} FROM ${table}"));
+    }
+
+    /**
+     * The second review: a number written straight before a name or a $ (1e$a$, 1_$a$, 1E'...') is read
+     * by PostgreSQL 14 and older as the number and then a name or an E'' string, where this check
+     * read a $-quoted or plain string, hiding a call to a refused function. PostgreSQL 15 and later
+     * refuse such text; so does the check now, in every check of SQL a person wrote.
+     */
+    @Test
+    void aNumberRunningIntoANameOrADollarIsRefused() {
+        String why = "a number is followed straight away by a letter, a digit, _ or $";
+        for (String hidden : List.of("SELECT 1e$a$, pg_terminate_backend(pid) AS x$a$ FROM pg_stat_activity",
+            "SELECT 1_$a$, set_config('role', 'x', false) AS x$a$", "SELECT 1E'\\', pg_sleep(1) AS x, '' AS y",
+            "SELECT 1$a$ ? $a$", "SELECT 1.5e$a$, pg_sleep(1) AS x$a$", "SELECT .5e$a$, pg_sleep(1) AS x$a$",
+            "SELECT 1e+$a$, pg_sleep(1) AS x$a$", "SELECT 0x$a$, pg_sleep(1) AS x$a$", "SELECT 1__0", "SELECT 1e",
+            "SELECT 1abc", "SELECT 0b2", "SELECT 1.5f", "SELECT 2returning")) {
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> SqlTokens.checkCustomSql(hidden, 10_000), hidden);
+            assertTrue(e.getMessage().contains(why), hidden + " gave " + e.getMessage());
+        }
+        for (String hidden : List.of("INSERT INTO t SELECT 1e$a$, pg_terminate_backend(pid) AS x$a$ FROM pg_stat_activity",
+            "CREATE TABLE t2 AS SELECT 1e$a$, set_config('standard_conforming_strings', 'off', false) AS x$a$",
+            "UPDATE t SET c = 1$a$ {fn xROLE} $a$", "DELETE FROM t WHERE a = 1returning a")) {
+            refusedAction(hidden, why);
+        }
+        // Numbers as PostgreSQL 16 writes them are read whole, as before
+        for (String ok : List.of("SELECT 1e10, 1.5e-3, 2E+4, .5, 5., 1_000, 1_000.000_1, 0x1F, 0o17, 0b1010, 0x_FF",
+            "SELECT a FROM t WHERE b < 1e3 AND c IN (1, 2) AND d BETWEEN 1 AND 2", "SELECT 1 AS e, 2 AS x",
+            "SELECT 1::int, 2::text, a[1:2] FROM t", "SELECT $a$ 1e$b$ x $a$", "SELECT 1+2-3*4/5%6")) {
+            assertEquals(ok, SqlTokens.checkCustomSql(ok, 10_000), ok);
+        }
+        assertEquals(List.of("1e10", "1.5e-3", "1_000", "0x1F"), SqlTokens.tokens("1e10, 1.5e-3, 1_000, 0x1F").stream()
+            .filter(t -> t.kind() == SqlTokens.Kind.NUMBER).map(SqlTokens.Token::text).toList());
+        // The tokenizer is what generated SQL is checked with too: a rule's own numbers still read as one statement
+        assertTrue(SqlTokens.isSingleStatement("SELECT COUNT(*) FROM \"s\".\"t\" WHERE \"a\" < 1e3"));
+    }
+
+    /**
+     * The second review: a custom rule's ${column} written inside a string or a comment was filled in
+     * there too, so a column whose name holds a quote ended the string and added SQL that was never
+     * checked. Placeholders now count only where they stand as SQL, are refused anywhere else when the
+     * rule is saved, are filled in only where they stand as SQL, and the SQL as filled in is checked
+     * again in full before it runs. Written in lower case only, as they are filled in.
+     */
+    @Test
+    void placeholdersAreNamesWhereANameGoesAndTheFilledInSqlIsCheckedAgain() throws Exception {
+        String where = "write ${table} and ${column} in lower case, as SQL, never inside quotes or a comment";
+        for (String misplaced : List.of("SELECT * FROM ${table} WHERE '${column}' <> ''",
+            "SELECT * FROM ${table} /* ${column} */", "SELECT * FROM ${table} WHERE 1=1 -- ${column}",
+            "SELECT * FROM ${table} WHERE \"${column}\" IS NULL", "SELECT * FROM ${table} WHERE a = $q$${column}$q$",
+            "SELECT * FROM ${table} WHERE x = '${COLUMN}'", "SELECT * FROM ${table} WHERE '${ column }' <> ''")) {
+            refusedCustom(misplaced, where);
+        }
+        // Not in lower case, or not exactly as written: refused, as it would not be filled in
+        for (String odd : List.of("SELECT * FROM ${TABLE}", "SELECT * FROM ${Table} x", "SELECT * FROM ${table } x")) {
+            assertThrows(IllegalArgumentException.class, () -> SqlTokens.checkCustomSql(odd, 10_000), odd);
+        }
+        assertEquals(List.of(new SqlTokens.Placeholder(new SqlTokens.Span(14, 22), "table"),
+            new SqlTokens.Placeholder(new SqlTokens.Span(29, 38), "column")),
+            SqlTokens.placeholders("SELECT * FROM ${table} WHERE ${column} > 0 AND n = '${column}' /* ${table} */"));
+
+        // Filled in only where they stand as SQL: a rule saved before the check refused the others leaves them be
+        String crafted = "\"x'>''AND set_config('work_mem','9MB',false)>''AND'\"";
+        assertEquals("SELECT * FROM \"s\".\"t\" WHERE '${column}' <> '' /* ${table} */",
+            SqlRules.placeholders("SELECT * FROM ${table} WHERE '${column}' <> '' /* ${table} */", "\"s\".\"t\"", crafted));
+
+        // A crafted name filled in where a name goes stays one name, and the rule may run
+        RuleRunner runner = new RuleRunner(Duration.ofSeconds(5), 0, 1 << 20, true);
+        Rule rule = new RuleDraft(URN, null, null, "custom_sql", null,
+            Facts.JSON.readTree("{\"sql\":\"SELECT * FROM ${table} WHERE ${column} IS NULL\"}"), null, null, null, null,
+            null).check(context("postgresql", true, true), "admin");
+        Rule named = new Rule(rule.id(), rule.assetUrn(), "x'>''AND set_config('work_mem','9MB',false)>''AND'",
+            rule.name(), rule.type(), rule.dimension(), rule.params(), rule.thresholdUnit(), rule.warnAbove(),
+            rule.failAbove(), rule.actions(), rule.enabled(), rule.origin(), rule.originRef(), rule.createdBy(),
+            rule.createdAt(), rule.updatedAt());
+        SqlRules.Plan plan = SqlRules.plan(named, SqlDialect.POSTGRESQL, new SqlRules.Table("public", "lo_t"), Map.of(),
+            u -> null);
+        assertEquals("SELECT * FROM \"public\".\"lo_t\" WHERE " + crafted + " IS NULL", plan.failingSql());
+        assertNull(runner.customSqlRefusal(named, SqlDialect.POSTGRESQL, plan),
+            "a name, however odd, is a name, and a table may start lo_");
+        // The reviewer's rule, saved before this check: its ${column} inside a string is not filled in
+        rule.params().put("sql", "SELECT * FROM ${table} WHERE '${column}' <> ''");
+        SqlRules.Plan old = SqlRules.plan(named, SqlDialect.POSTGRESQL, new SqlRules.Table("public", "t"), Map.of(),
+            u -> null);
+        assertEquals("SELECT * FROM \"public\".\"t\" WHERE '${column}' <> ''", old.failingSql());
+
+        // The full check runs on the SQL as filled in: what was hidden is found
+        String injected = "SELECT * FROM \"public\".\"t\" WHERE '\"x'>''AND set_config('work_mem','9MB',false)>''AND'\"' <> ''";
+        assertNotNull(SqlTokens.checkFilledCustomSql(injected, List.of(new SqlTokens.Span(36, 85))));
+        assertNotNull(SqlTokens.checkFilledCustomSql(injected, List.of()), "set_config is refused wherever it stands");
+        String commented = "SELECT * FROM \"public\".\"t\" /* \"*/ WHERE pg_sleep(5) IS NULL /*\" */";
+        assertNotNull(SqlTokens.checkFilledCustomSql(commented, List.of()));
+        // A span that is not where a whole quoted name stands is refused, whatever it holds
+        String fine = "SELECT * FROM \"public\".\"t\" WHERE \"a\" IS NULL";
+        assertNull(SqlTokens.checkFilledCustomSql(fine, List.of(new SqlTokens.Span(14, 26), new SqlTokens.Span(33, 36))));
+        for (SqlTokens.Span off : List.of(new SqlTokens.Span(15, 26), new SqlTokens.Span(14, 25), new SqlTokens.Span(27, 36),
+            new SqlTokens.Span(33, 40), new SqlTokens.Span(0, 6), new SqlTokens.Span(40, 60))) {
+            assertNotNull(SqlTokens.checkFilledCustomSql(fine, List.of(off)), off.toString());
+        }
+        // A filled-in name is never held to the function list; the author's own words still are
+        assertNull(SqlTokens.checkFilledCustomSql("SELECT * FROM \"lo_t\"", List.of(new SqlTokens.Span(14, 20))));
+        assertNotNull(SqlTokens.checkFilledCustomSql("SELECT * FROM \"lo_t\"", List.of()));
+        assertNotNull(SqlTokens.checkFilledCustomSql("SELECT pg_sleep(1) FROM \"t\"", List.of(new SqlTokens.Span(24, 27))));
     }
 
     @Test

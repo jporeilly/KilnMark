@@ -286,7 +286,9 @@ from everyone else while any table of the source has a column marked sensitive.
   `kilnmark.quality.custom-sql` switch is retired and does nothing.
 - **PostgreSQL sources only.** There, Kilnmark can hold the query to a read-only transaction.
 - Write **one `SELECT` that returns the failing rows.** `${table}` is replaced with the asset's
-  table, and `${column}` with the rule's column when you give one:
+  table, and `${column}` with the rule's column when you give one. Write them in lower case where a
+  name goes, never inside quotes or a comment (a rule with one there is refused), since Kilnmark
+  puts a quoted name there:
 
   ```sql
   SELECT * FROM ${table} WHERE delivered_on < ordered_on

@@ -86,7 +86,9 @@ public final class RuleRunner {
             || SqlTokens.sentAsWritten(plan.failingSql()) != null || SqlTokens.sentAsWritten(plan.countSql()) != null) {
             return "The rule's SQL does not form a single query. Rewrite it as one SELECT.";
         }
-        return null;
+        // Every check of custom SQL again, on the text that is sent: a name filled in must stay a name,
+        // and nothing the rule's author wrote may have become something else around it.
+        return SqlTokens.checkFilledCustomSql(plan.failingSql(), plan.filledNames());
     }
 
     /**
