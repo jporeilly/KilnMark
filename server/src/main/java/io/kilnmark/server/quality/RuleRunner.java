@@ -106,33 +106,42 @@ public final class RuleRunner {
      */
     static final String PRIVILEGED_LOGIN = """
         SELECT CASE
-                 WHEN session_user::text <> current_user::text THEN 'other'
-                 WHEN pg_catalog.current_setting('session_replication_role') <> 'origin' THEN 'replication'
-                 WHEN r.rolsuper OR r.rolcreaterole OR pg_catalog.pg_has_role(current_user, 'pg_read_server_files', 'MEMBER')
+                 WHEN session_user::pg_catalog.text OPERATOR(pg_catalog.<>) current_user::pg_catalog.text THEN 'other'
+                 WHEN pg_catalog.current_setting('session_replication_role') OPERATOR(pg_catalog.<>) 'origin'
+                      THEN 'replication'
+                 WHEN r.rolsuper OR r.rolcreaterole
+                      OR pg_catalog.pg_has_role(current_user, 'pg_read_server_files', 'MEMBER')
                       OR pg_catalog.pg_has_role(current_user, 'pg_write_server_files', 'MEMBER')
                       OR pg_catalog.pg_has_role(current_user, 'pg_execute_server_program', 'MEMBER')
                       OR pg_catalog.pg_has_role(current_user, 'pg_signal_backend', 'MEMBER') THEN 'roles'
-                 WHEN m.role IS NOT NULL THEN 'member:' || m.role || chr(1) || quote_ident(current_user::text)
-                 WHEN x.schema IS NOT NULL THEN 'dblink:' || x.schema
-                 WHEN v.server IS NOT NULL THEN 'server:' || v.server
+                 WHEN r.rolreplication THEN 'replication-login'
+                 WHEN m.role IS NOT NULL THEN pg_catalog.concat('member:', m.role, pg_catalog.chr(1),
+                      pg_catalog.quote_ident(current_user::pg_catalog.text))
+                 WHEN x.schema IS NOT NULL THEN pg_catalog.concat('dblink:', x.schema)
+                 WHEN v.server IS NOT NULL THEN pg_catalog.concat('server:', v.server)
                  WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_user_mappings) THEN 'mapping'
                  WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_foreign_table) THEN 'foreign'
                END
         FROM pg_catalog.pg_roles r
-        LEFT JOIN LATERAL (SELECT string_agg(d.objid::regprocedure::text, ', ' ORDER BY d.objid::regprocedure::text)
-                                  AS schema
+        LEFT JOIN LATERAL (SELECT pg_catalog.string_agg(d.objid::pg_catalog.regprocedure::pg_catalog.text, ', '
+                                  ORDER BY d.objid::pg_catalog.regprocedure::pg_catalog.text) AS schema
                            FROM pg_catalog.pg_extension e
-                           JOIN pg_catalog.pg_depend d ON d.refclassid = 'pg_catalog.pg_extension'::regclass
-                                AND d.refobjid = e.oid AND d.classid = 'pg_catalog.pg_proc'::regclass
-                                AND d.deptype = 'e'
-                           WHERE e.extname = 'dblink' AND has_function_privilege(d.objid, 'EXECUTE')) x ON true
-        LEFT JOIN LATERAL (SELECT quote_ident(s.srvname) AS server FROM pg_catalog.pg_foreign_server s
-                           WHERE has_server_privilege(s.oid, 'USAGE') LIMIT 1) v ON true
-        LEFT JOIN LATERAL (SELECT quote_ident(s.rolname) AS role FROM pg_catalog.pg_roles s
-                           WHERE (s.rolsuper OR s.rolcreaterole) AND s.rolname <> current_user
+                           JOIN pg_catalog.pg_depend d
+                                ON d.refclassid OPERATOR(pg_catalog.=) 'pg_catalog.pg_extension'::pg_catalog.regclass
+                                AND d.refobjid OPERATOR(pg_catalog.=) e.oid
+                                AND d.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_proc'::pg_catalog.regclass
+                                AND d.deptype OPERATOR(pg_catalog.=) 'e'::pg_catalog."char"
+                           WHERE e.extname OPERATOR(pg_catalog.=) 'dblink'::pg_catalog.name
+                                 AND pg_catalog.has_function_privilege(d.objid, 'EXECUTE')) x ON true
+        LEFT JOIN LATERAL (SELECT pg_catalog.quote_ident(s.srvname::pg_catalog.text) AS server
+                           FROM pg_catalog.pg_foreign_server s
+                           WHERE pg_catalog.has_server_privilege(s.oid, 'USAGE') LIMIT 1) v ON true
+        LEFT JOIN LATERAL (SELECT pg_catalog.quote_ident(s.rolname::pg_catalog.text) AS role
+                           FROM pg_catalog.pg_roles s
+                           WHERE (s.rolsuper OR s.rolcreaterole) AND s.rolname OPERATOR(pg_catalog.<>) current_user
                                  AND pg_catalog.pg_has_role(current_user, s.oid, 'MEMBER')
                            ORDER BY s.rolname LIMIT 1) m ON true
-        WHERE r.rolname = current_user""";
+        WHERE r.rolname OPERATOR(pg_catalog.=) current_user""";
 
     /** Why custom SQL does not run, in plain words naming the fix, for a reason from {@link #PRIVILEGED_LOGIN}. */
     static String refusal(String reason) {
@@ -162,6 +171,14 @@ public final class RuleRunner {
                 + ", which reaches another database. Revoke it: REVOKE USAGE ON FOREIGN SERVER " + server + " FROM "
                 + "PUBLIC (and from the login and its roles).";
         }
+        if (reason.equals("replication-login")) {
+            // A replication login can make replication slots, which hold the server's write-ahead log without
+            // limit, also from a read-only transaction (decided by the delivery lead, 12 November 2026).
+            return "Custom SQL does not run under this source's login: it has the REPLICATION attribute, which can "
+                + "make replication slots that keep the server's write-ahead log and can fill its disk. Use a "
+                + "login without REPLICATION for SQL that people write; a source that reads changes from the "
+                + "write-ahead log would have a login of its own.";
+        }
         if (reason.equals("replication")) {
             // A login granted this superuser setting skips foreign keys and triggers for whatever it changes.
             return "Custom SQL does not run under this source's login: its session_replication_role is not origin "
@@ -187,10 +204,20 @@ public final class RuleRunner {
 
     /** Why custom SQL may not run on {@code c}'s login and database, or null; {@code c} is not in auto-commit. */
     public static String privileged(Connection c) throws SQLException {
-        try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery(PRIVILEGED_LOGIN)) {
-            return refusal(rs.next() ? rs.getString(1) : "roles");
+        try (Statement st = c.createStatement()) {
+            // Every name in the check is qualified with pg_catalog; on top of that, nothing another user
+            // put in a schema on the login's search path (public, say) may stand in for a built-in
+            // function, operator or type while it runs. Only for this transaction, rolled back below.
+            if (!c.getAutoCommit()) {
+                st.execute("SET LOCAL search_path = pg_catalog, pg_temp");
+            }
+            try (ResultSet rs = st.executeQuery(PRIVILEGED_LOGIN)) {
+                return refusal(rs.next() ? rs.getString(1) : "roles");
+            }
         } finally {
-            c.rollback();
+            if (!c.getAutoCommit()) {
+                c.rollback();
+            }
         }
     }
 

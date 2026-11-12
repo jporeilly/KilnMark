@@ -229,7 +229,7 @@ database's words.
 
 **Governance.** Saved only by a designer whose token sees unmasked values. At run time the login is
 checked again: never a superuser, nor one that may create roles, read files or run programs, nor a
-member of a role that is a superuser or may create roles. Each sql node that
+member of a role that is a superuser or may create roles, nor one with REPLICATION. Each sql node that
 starts is recorded in the audit log, without its statements.
 
 ```yaml

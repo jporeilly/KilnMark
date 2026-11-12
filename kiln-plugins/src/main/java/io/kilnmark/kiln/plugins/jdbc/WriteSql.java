@@ -541,12 +541,12 @@ abstract class WriteSql {
 
         @Override
         Sql exists(TableName t) {
-            return new Sql("SELECT to_regclass(?) IS NOT NULL", List.of(regName(t)));
+            return new Sql("SELECT pg_catalog.to_regclass(?) IS NOT NULL", List.of(regName(t)));
         }
 
         @Override
         Sql requiredColumns(TableName t) {
-            return new Sql("SELECT a.attname FROM pg_attribute a WHERE a.attrelid = to_regclass(?) AND a.attnum > 0 "
+            return new Sql("SELECT a.attname FROM pg_attribute a WHERE a.attrelid = pg_catalog.to_regclass(?) AND a.attnum > 0 "
                 + "AND NOT a.attisdropped AND a.attnotnull AND NOT a.atthasdef AND a.attidentity = '' "
                 + "AND a.attgenerated = ''", List.of(regName(t)));
         }
@@ -559,7 +559,7 @@ abstract class WriteSql {
         Sql uniqueKeys(TableName t) {
             return new Sql("SELECT i.indexrelid, a.attname FROM pg_index i JOIN pg_attribute a ON a.attrelid = "
                 + "i.indrelid AND a.attnum = ANY ((i.indkey::int2[])[0:i.indnkeyatts - 1]) WHERE i.indrelid = "
-                + "to_regclass(?) AND i.indisunique AND i.indimmediate AND i.indpred IS NULL AND i.indexprs IS NULL",
+                + "pg_catalog.to_regclass(?) AND i.indisunique AND i.indimmediate AND i.indpred IS NULL AND i.indexprs IS NULL",
                 List.of(regName(t)));
         }
 
@@ -575,48 +575,48 @@ abstract class WriteSql {
         @Override
         Sql blockers(TableName t) {
             return new Sql("WITH t AS (SELECT c.oid, c.relkind, c.relispartition, c.reltype, ty.typarray "
-                + "FROM pg_class c LEFT JOIN pg_type ty ON ty.oid = c.reltype WHERE c.oid = to_regclass(?)), "
-                + "refs AS (SELECT 'pg_class'::regclass AS cls, t.oid AS obj FROM t "
-                + "UNION ALL SELECT 'pg_type'::regclass, t.reltype FROM t WHERE t.reltype <> 0 "
-                + "UNION ALL SELECT 'pg_type'::regclass, t.typarray FROM t WHERE t.typarray <> 0 "
-                + "UNION ALL SELECT 'pg_class'::regclass, d.objid FROM pg_depend d JOIN t ON d.refobjid = t.oid "
-                + "JOIN pg_class s ON s.oid = d.objid WHERE d.classid = 'pg_class'::regclass "
-                + "AND d.refclassid = 'pg_class'::regclass AND d.deptype IN ('a', 'i') AND s.relkind = 'S') "
+                + "FROM pg_class c LEFT JOIN pg_type ty ON ty.oid = c.reltype WHERE c.oid = pg_catalog.to_regclass(?)), "
+                + "refs AS (SELECT 'pg_class'::pg_catalog.regclass AS cls, t.oid AS obj FROM t "
+                + "UNION ALL SELECT 'pg_type'::pg_catalog.regclass, t.reltype FROM t WHERE t.reltype <> 0 "
+                + "UNION ALL SELECT 'pg_type'::pg_catalog.regclass, t.typarray FROM t WHERE t.typarray <> 0 "
+                + "UNION ALL SELECT 'pg_class'::pg_catalog.regclass, d.objid FROM pg_depend d JOIN t ON d.refobjid = t.oid "
+                + "JOIN pg_class s ON s.oid = d.objid WHERE d.classid = 'pg_class'::pg_catalog.regclass "
+                + "AND d.refclassid = 'pg_class'::pg_catalog.regclass AND d.deptype IN ('a', 'i') AND s.relkind = 'S') "
                 + "SELECT 'it is ' || CASE t.relkind WHEN 'v' THEN 'a view' WHEN 'm' THEN 'a materialised view' "
                 + "WHEN 'p' THEN 'a partitioned table' WHEN 'f' THEN 'a foreign table' WHEN 'S' THEN 'a sequence' "
                 + "WHEN 'i' THEN 'an index' WHEN 'I' THEN 'a partitioned index' WHEN 'c' THEN 'a composite type' "
                 + "ELSE 'another kind of object' END || ', not a table' FROM t WHERE t.relkind <> 'r' "
                 + "UNION SELECT CASE WHEN t.relispartition THEN 'it is a partition of ' ELSE 'it inherits from ' END "
-                + "|| i.inhparent::regclass::text FROM pg_inherits i JOIN t ON i.inhrelid = t.oid "
-                + "UNION SELECT 'the table ' || i.inhrelid::regclass::text || ' inherits from it' "
+                + "|| i.inhparent::pg_catalog.regclass::text FROM pg_inherits i JOIN t ON i.inhrelid = t.oid "
+                + "UNION SELECT 'the table ' || i.inhrelid::pg_catalog.regclass::text || ' inherits from it' "
                 + "FROM pg_inherits i JOIN t ON i.inhparent = t.oid "
                 + "UNION SELECT 'the publication ' || p.pubname || ' replicates it' FROM pg_publication_rel r "
                 + "JOIN pg_publication p ON p.oid = r.prpubid JOIN t ON r.prrelid = t.oid "
-                + "UNION SELECT 'the ' || CASE WHEN d.classid = 'pg_rewrite'::regclass THEN 'view ' "
-                + "|| (SELECT w.ev_class::regclass::text FROM pg_rewrite w WHERE w.oid = d.objid) "
+                + "UNION SELECT 'the ' || CASE WHEN d.classid = 'pg_rewrite'::pg_catalog.regclass THEN 'view ' "
+                + "|| (SELECT w.ev_class::pg_catalog.regclass::text FROM pg_rewrite w WHERE w.oid = d.objid) "
                 + "ELSE pg_describe_object(d.classid, d.objid, 0) END || ' depends on it' "
                 + "FROM pg_depend d JOIN refs ON d.refclassid = refs.cls AND d.refobjid = refs.obj, t "
                 + "WHERE d.deptype = 'n' "
                 + "AND NOT EXISTS (SELECT 1 FROM pg_depend o WHERE o.classid = d.classid AND o.objid = d.objid "
-                + "AND o.refclassid = 'pg_class'::regclass AND o.refobjid = t.oid AND o.deptype IN ('a', 'i')) "
-                + "AND NOT (d.classid = 'pg_rewrite'::regclass AND EXISTS (SELECT 1 FROM pg_rewrite w "
+                + "AND o.refclassid = 'pg_class'::pg_catalog.regclass AND o.refobjid = t.oid AND o.deptype IN ('a', 'i')) "
+                + "AND NOT (d.classid = 'pg_rewrite'::pg_catalog.regclass AND EXISTS (SELECT 1 FROM pg_rewrite w "
                 + "WHERE w.oid = d.objid AND w.ev_class = t.oid)) "
-                + "AND NOT (d.classid = 'pg_class'::regclass AND d.objid = t.oid) "
-                + "AND NOT (d.classid = 'pg_class'::regclass AND EXISTS (SELECT 1 FROM pg_inherits i "
+                + "AND NOT (d.classid = 'pg_class'::pg_catalog.regclass AND d.objid = t.oid) "
+                + "AND NOT (d.classid = 'pg_class'::pg_catalog.regclass AND EXISTS (SELECT 1 FROM pg_inherits i "
                 + "WHERE i.inhrelid = d.objid AND i.inhparent = t.oid))", List.of(regName(t)));
         }
 
         @Override
         Sql rowSecurity(TableName t) {
-            return new Sql("SELECT c.relrowsecurity FROM pg_class c WHERE c.oid = to_regclass(?)", List.of(regName(t)));
+            return new Sql("SELECT c.relrowsecurity FROM pg_class c WHERE c.oid = pg_catalog.to_regclass(?)", List.of(regName(t)));
         }
 
         /** COPY FROM is refused on a table whose row-level security applies to the login. */
         @Override
         Sql copyRefused(TableName t) {
             return new Sql("SELECT c.relrowsecurity AND NOT (r.rolsuper OR r.rolbypassrls OR "
-                + "(pg_has_role(c.relowner, 'USAGE') AND NOT c.relforcerowsecurity)) FROM pg_class c, pg_roles r "
-                + "WHERE c.oid = to_regclass(?) AND r.rolname = current_user", List.of(regName(t)));
+                + "(pg_catalog.pg_has_role(c.relowner, 'USAGE') AND NOT c.relforcerowsecurity)) FROM pg_class c, pg_roles r "
+                + "WHERE c.oid = pg_catalog.to_regclass(?) AND r.rolname = current_user", List.of(regName(t)));
         }
 
         /**
@@ -626,11 +626,11 @@ abstract class WriteSql {
          */
         @Override
         Sql owner(TableName t) {
-            return new Sql("SELECT o.rolname, me.rolsuper OR ((CASE WHEN current_setting('server_version_num')::int "
-                + ">= 160000 THEN pg_has_role(c.relowner, 'SET') ELSE pg_has_role(c.relowner, 'MEMBER') END) "
-                + "AND has_schema_privilege(c.relowner, c.relnamespace, 'CREATE')) FROM pg_class c "
+            return new Sql("SELECT o.rolname, me.rolsuper OR ((CASE WHEN pg_catalog.current_setting('server_version_num')::int "
+                + ">= 160000 THEN pg_catalog.pg_has_role(c.relowner, 'SET') ELSE pg_catalog.pg_has_role(c.relowner, 'MEMBER') END) "
+                + "AND pg_catalog.has_schema_privilege(c.relowner, c.relnamespace, 'CREATE')) FROM pg_class c "
                 + "JOIN pg_roles o ON o.oid = c.relowner JOIN pg_roles me ON me.rolname = current_user "
-                + "WHERE c.oid = to_regclass(?) AND c.relowner <> me.oid", List.of(regName(t)));
+                + "WHERE c.oid = pg_catalog.to_regclass(?) AND c.relowner <> me.oid", List.of(regName(t)));
         }
 
         @Override
@@ -657,7 +657,7 @@ abstract class WriteSql {
         Sql grants(TableName t) {
             return new Sql("SELECT a.grantee = 0, r.rolname, a.privilege_type, a.is_grantable FROM pg_class c "
                 + "CROSS JOIN LATERAL aclexplode(c.relacl) a LEFT JOIN pg_roles r ON r.oid = a.grantee "
-                + "WHERE c.oid = to_regclass(?) AND a.grantee <> c.relowner", List.of(regName(t)));
+                + "WHERE c.oid = pg_catalog.to_regclass(?) AND a.grantee <> c.relowner", List.of(regName(t)));
         }
 
         @Override
@@ -684,12 +684,12 @@ abstract class WriteSql {
             List<Check> out = new ArrayList<>();
             switch (mode) {
                 case "create", "replace" -> {
-                    out.add(new Check(new Sql("SELECT has_schema_privilege(n.oid, 'CREATE') FROM pg_namespace n "
+                    out.add(new Check(new Sql("SELECT pg_catalog.has_schema_privilege(n.oid, 'CREATE') FROM pg_namespace n "
                         + "WHERE n.nspname = ?", List.of(t.schema())), "the schema " + t.schema() + " does not exist: "
                         + "ask a database administrator to create it, or write to another schema"));
                     if (exists) {
-                        out.add(new Check(new Sql("SELECT pg_has_role(c.relowner, 'USAGE') FROM pg_class c "
-                            + "WHERE c.oid = to_regclass(?)", List.of(regName(t))), null));
+                        out.add(new Check(new Sql("SELECT pg_catalog.pg_has_role(c.relowner, 'USAGE') FROM pg_class c "
+                            + "WHERE c.oid = pg_catalog.to_regclass(?)", List.of(regName(t))), null));
                     }
                 }
                 case "append" -> out.add(columnPrivilege(t, "INSERT"));
@@ -705,7 +705,7 @@ abstract class WriteSql {
 
         /** On the table or on at least one of its columns: column grants are checked by the database as rows go in. */
         private Check columnPrivilege(TableName t, String privilege) {
-            return new Check(new Sql("SELECT has_any_column_privilege(to_regclass(?), '" + privilege + "')",
+            return new Check(new Sql("SELECT pg_catalog.has_any_column_privilege(pg_catalog.to_regclass(?), '" + privilege + "')",
                 List.of(regName(t))), null);
         }
 

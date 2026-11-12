@@ -44,7 +44,9 @@ public final class SqlTokens {
         // housekeeping whose work survives a read-only transaction rolled back (the third review), and
         // functions that change the catalogue's statistics, the server's caches or its write-ahead log
         "brin_", "gin_clean_pending_list", "pg_clear_", "pg_restore_", "pg_set_", "pg_stat_reset", "pg_prewarm",
-        "autoprewarm", "pg_wal_", "pg_truncate_", "heap_force_");
+        "autoprewarm", "pg_wal_", "pg_truncate_", "heap_force_",
+        // replication slots made by copying one, kept after a read-only transaction rolls back (the fourth review)
+        "pg_copy_", "pg_sync_replication_slots");
 
     private SqlTokens() {
     }

@@ -298,7 +298,7 @@ from everyone else while any table of the source has a column marked sensitive.
   back afterwards.
 - Kilnmark refuses to run it under a database login with superuser or file and program access, or
   one that is a member (directly or through other roles) of a role that is a superuser or may create
-  roles.
+  roles, or one with REPLICATION.
   Give every source a **read-only login**, because a custom query can read anything that login can
   see.
 

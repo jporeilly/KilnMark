@@ -551,6 +551,14 @@ class SafetyTest {
             refused("SELECT " + f);
             refusedAction("INSERT INTO t SELECT " + f, "is not allowed");
         }
+        // The fourth review: copying a replication slot makes a permanent one, kept after a rollback
+        for (String f : List.of("pg_copy_physical_replication_slot('admin_slot', 'evil_p2', false)",
+            "pg_catalog.pg_copy_logical_replication_slot('admin_lslot', 'evil_l2')", "pg_sync_replication_slots()",
+            "pg_replication_slot_advance('s', '0/0')")) {
+            refused("SELECT " + f);
+            refused("SELECT * FROM " + f);
+            refusedAction("CREATE TABLE x AS SELECT " + f, "is not allowed");
+        }
         // Sequences: refused where only reading is meant, taken by a sql node, which writes anyway
         refused("SELECT nextval('s')");
         refused("SELECT setval('s', 1)");

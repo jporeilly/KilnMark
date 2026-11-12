@@ -117,7 +117,8 @@ queries run in a read-only transaction: for them, give the source a login that c
 that SQL needs. A flow `sql` node changes data, so its source also needs Allow writing and a login
 that may make those changes, and nothing more. Kilnmark refuses to run such SQL under a superuser or a login that may read files or run
 programs, or that is a member (directly or through other roles) of a role that is a superuser or may
-create roles, since it could act as that role. Upsert needs a unique key on `key`.
+create roles, since it could act as that role, or that has REPLICATION. Upsert needs a unique key on
+`key`.
 
 ```yaml
 kilnmark: pipeline/v1

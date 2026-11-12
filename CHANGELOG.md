@@ -64,6 +64,25 @@ released.
   uses braces. Write an array as `'{1,2}'`, in quotes, as before. A form that the
   `GROUP BY` change below would have opened (`CREATE {oj GROUP by}`) was found in review before
   any release.
+- **Another database user could switch the login check off by planting a function.** Severity
+  **Medium**: anyone who may create functions in a schema on the source login's search path
+  (`public` by default on PostgreSQL 14 and older) could make the login check miss a foreign
+  server the login may use, and have their function run as the login whenever Kilnmark checked
+  it, before every custom SQL rule, query read, wait-for query and `sql` node on that source. In
+  0.0.7 to 0.1.2. The check called `quote_ident` on names without saying it meant PostgreSQL's
+  own, and a `public.quote_ident(name)` matches a name exactly, so it was chosen over the built-in
+  one and could answer nothing (confirmed on PostgreSQL 14 and 18: the 0.1.2 check found
+  `server:elsewhere` without it and nothing with it). Every function, operator and type in the
+  check is now named with `pg_catalog.`, and the check runs with the search path set to
+  `pg_catalog` alone for its own transaction. Kilnmark's own catalogue queries for writes and row
+  estimates name their functions with `pg_catalog.` too.
+- **A query could make a permanent replication slot.** Severity **Medium**: a designer whose
+  token sees unmasked values could, in a custom rule, a query, a wait-for query or a `sql` node,
+  copy a replication slot (`pg_copy_physical_replication_slot`,
+  `pg_copy_logical_replication_slot`) when the source's login has REPLICATION and a slot exists to
+  copy. The new slot outlives a read-only transaction rolled back, and holds the server's
+  write-ahead log without limit, which can fill its disk. In 0.0.7 to 0.1.2. `pg_copy_` and
+  `pg_sync_replication_slots` are now refused, and so is a login with REPLICATION (see Changed).
 - **A space beyond ASCII before a closing `;` hid a refused last word.** Severity **Low**: a
   designer whose token sees unmasked values could end a flow's `sql` node statement with a refused
   word, such as `ENABLE ROW LEVEL SECURITY`, within the rights of the source's login. In 0.0.10 to
@@ -101,6 +120,13 @@ released.
 
 ### Changed
 
+- **A source whose login has REPLICATION no longer runs SQL a person wrote.** Custom SQL rules,
+  reads with a query, wait-for queries and flow `sql` nodes are refused, before anything runs, when
+  the source's login has the REPLICATION attribute, which can make replication slots that keep
+  the server's write-ahead log (decided by the delivery lead, 12 November 2026). What to do: give
+  the source a login without REPLICATION (`ALTER ROLE <login> NOREPLICATION`, or another login).
+  A source that reads changes from the write-ahead log, when Kilnmark has one, would use a login
+  of its own.
 - **A source whose login is a member of a superuser or role-creating role no longer runs SQL a
   person wrote.** Custom SQL rules, reads with a query, wait-for queries and flow `sql` nodes are
   refused, before anything runs, when the source's login is a member, directly or through other

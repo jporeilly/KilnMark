@@ -126,6 +126,46 @@ class CustomSqlLoginTest {
         }
     }
 
+    /**
+     * The fourth review: another database user could switch the check off by planting a function in a
+     * schema on the login's search path (public, by default on PostgreSQL 14 and older) that matched
+     * the check's unqualified quote_ident(name) better than the built-in one, so a membership or a
+     * foreign server read as nothing. Every name in the check is now qualified, and it runs with the
+     * search path set to pg_catalog alone. A login with REPLICATION, which can make replication slots
+     * from a read-only transaction, is refused too.
+     */
+    @Test
+    void plantedFunctionsChangeNothingAndReplicationLoginsAreRefused() throws Exception {
+        String sup = "login_check_super";
+        admin(null, "DROP DATABASE IF EXISTS " + DB, "CREATE DATABASE " + DB,
+            "DROP ROLE IF EXISTS " + READER, "CREATE ROLE " + READER + " LOGIN PASSWORD 'reader-pw'",
+            "DROP ROLE IF EXISTS " + sup, "CREATE ROLE " + sup + " SUPERUSER NOLOGIN");
+        try {
+            admin(DB, "GRANT CREATE ON SCHEMA public TO PUBLIC",
+                "CREATE FUNCTION public.quote_ident(name) RETURNS text LANGUAGE sql AS 'SELECT NULL::text'",
+                "CREATE FUNCTION public.concat(text, text, text, text) RETURNS text LANGUAGE sql AS 'SELECT NULL::text'");
+            assertNull(refused(), "the planted functions do not refuse a plain login either");
+            admin(null, "GRANT " + sup + " TO " + READER);
+            says(refused(), "it is a member of the role " + sup);
+            admin(null, "REVOKE " + sup + " FROM " + READER);
+
+            admin(DB, "CREATE EXTENSION postgres_fdw",
+                "CREATE SERVER elsewhere FOREIGN DATA WRAPPER postgres_fdw OPTIONS (dbname 'postgres')",
+                "GRANT USAGE ON FOREIGN SERVER elsewhere TO " + READER);
+            says(refused(), "REVOKE USAGE ON FOREIGN SERVER elsewhere");
+            admin(DB, "REVOKE USAGE ON FOREIGN SERVER elsewhere FROM " + READER);
+            assertNull(refused());
+
+            admin(null, "ALTER ROLE " + READER + " REPLICATION");
+            says(refused(), "it has the REPLICATION attribute");
+            admin(null, "ALTER ROLE " + READER + " NOREPLICATION");
+            assertNull(refused());
+        } finally {
+            admin(null, "DROP DATABASE IF EXISTS " + DB + " WITH (FORCE)", "DROP ROLE IF EXISTS " + READER,
+                "DROP ROLE IF EXISTS " + sup);
+        }
+    }
+
     private int version() throws SQLException {
         try (Connection c = DriverManager.getConnection(url, user, password); Statement s = c.createStatement();
              java.sql.ResultSet rs = s.executeQuery("SHOW server_version_num")) {

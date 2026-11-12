@@ -168,7 +168,8 @@ public final class PostgresConnector extends JdbcConnector {
     @Override
     protected String estimateRowsSql(io.kilnmark.kiln.connect.AssetInfo asset) {
         String name = quote(asset.hints().get("schema")) + "." + quote(asset.hints().get("table"));
-        return "SELECT reltuples::bigint FROM pg_class WHERE oid = to_regclass(" + dialect().literal(name) + ")";
+        return "SELECT reltuples::pg_catalog.int8 FROM pg_catalog.pg_class WHERE oid OPERATOR(pg_catalog.=) "
+            + "pg_catalog.to_regclass(" + dialect().literal(name) + ")";
     }
 
     /** Block sampling, repeatable: the same blocks while the table is unchanged. */

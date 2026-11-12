@@ -115,7 +115,8 @@ docs in the same release:
   functions already in the database, with their own rights, can be named; the login's grants decide
   which. A review may ask to refuse these too.
 - **The login check** refuses, before any SQL a person wrote runs: a superuser; a login that may
-  create roles, or is a member of a role that is a superuser or may (since 12 November 2026); one in a
+  create roles, or is a member of a role that is a superuser or may, or has REPLICATION (since 12
+  November 2026); one in a
   role that reads or writes the server's files, runs programs or stops other
   sessions; one acting as another role than it signed in as; one whose `session_replication_role` is
   not `origin`; one that may run dblink or use a foreign server; and a database with user mappings or
@@ -147,6 +148,16 @@ docs in the same release:
   only lets it `SET ROLE` (and, on PostgreSQL 16 and later, even a grant that does neither:
   `pg_has_role(..., 'MEMBER')` counts every membership). The refusal names the role and the
   `REVOKE` that removes it. Proven on PostgreSQL 13, 14, 16 and 18.
+- **The login check cannot be talked out of its answer** (12 November 2026, the fourth review).
+  Every function, operator and type it uses is named with `pg_catalog.`, and it runs with
+  `SET LOCAL search_path = pg_catalog, pg_temp` in its own transaction, rolled back after: a
+  function another user put in `public` that matched a name better than the built-in one (as
+  `public.quote_ident(name)` did) neither changes the answer nor runs as the login. Both, because
+  qualifying alone needs every name right, and the search path alone needs a transaction the
+  check does not own; Kilnmark's own catalogue queries for writes and row estimates name their
+  functions with `pg_catalog.` too. A login with REPLICATION is refused as well (decided by the
+  delivery lead, 12 November 2026): copying a replication slot makes a permanent slot even from a
+  read-only transaction, and `pg_copy_` and `pg_sync_replication_slots` are refused functions.
 - **What is checked is what is sent** (12 November 2026, a security fix to 0.0.10 to 0.1.2). The
   PostgreSQL driver rewrites JDBC escapes (`{fn ...}`, `{oj ...}`, `{d ...}` and others) after the
   checks have read the text, so `CREATE {fn xVIEW ...}` passed the sql node's check as the word
