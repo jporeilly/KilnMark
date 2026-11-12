@@ -124,6 +124,15 @@ docs in the same release:
   database (a sql node there could change Kilnmark's own tables if its login may).
 - **Query reads stay read-only in the transaction itself** (`SET TRANSACTION READ ONLY`), not only
   through the driver, and a PostgreSQL URL may not say `readOnlyMode` or `preferQueryMode`.
+- **What is checked is what is sent** (12 November 2026, a security fix to 0.0.10 to 0.1.2). The
+  PostgreSQL driver rewrites JDBC escapes (`{fn ...}`, `{oj ...}`, `{d ...}` and others) after the
+  checks have read the text, so `CREATE {fn xVIEW ...}` passed the sql node's check as the word
+  `xview` and was sent as `CREATE VIEW`. Every check of SQL a person writes now refuses `{` and `}`
+  outside quotes, comments and dollar-quoted strings (a custom rule's `${table}` and `${column}`
+  apart, filled in by Kilnmark), and asks the driver to confirm it would send the text unchanged.
+  Custom rules, query reads and their plans also run with escape processing off; a prepared
+  statement (the sql node, a wait-for query) cannot have it turned off before the driver rewrites
+  it, so the check is what holds there.
 - The flows design's "Not in this plan: a SQL check node" is superseded by this record. The flow
   node is an action, not a check: a check (rows in a table, say) is a pipeline with a `read` and a
   `gate`, as before.

@@ -11,6 +11,33 @@ released.
 
 ## Unreleased
 
+### Security
+
+- **SQL a person wrote could reach the database other than as it was checked.** Severity
+  **Medium**: a designer whose token sees unmasked values, writing a flow's `sql` node on a
+  PostgreSQL source with Allow SQL and Allow writing on, could run statements the node's check
+  refuses, within the rights of that source's login. In 0.0.10 to 0.1.2. The PostgreSQL driver
+  rewrites JDBC escapes (`{fn ...}`, `{oj ...}`, `{d ...}` and the like) after the check had read
+  the text, and one form drops the first letter of the word inside it, so `CREATE {fn xVIEW v AS
+  SELECT * FROM t}` was checked as the harmless `xview` and sent as `CREATE VIEW`. Through it, the
+  node could change its own login's password or settings (for every later session of that login),
+  create views and rules, change default privileges, and turn row-level security on or off. The
+  rewrite hides a word only when no `(` follows it in the statement, so no function or trigger
+  could be made and no refused function called. The login check still held: Kilnmark runs SQL only under a
+  login that is not a superuser and may not create roles, so no role could be made or given more
+  rights, and each run is in the audit log with its flow's version and author. Custom SQL rules, a
+  read's query and a wait-for query took the same rewrite, but they run in a read-only transaction:
+  every write the rewrite could reach was refused by the database, and no refused function could be
+  reached, so nothing was found there. Now every check of SQL a person wrote refuses `{` and `}`
+  outside quotes, comments and dollar-quoted strings, and asks the driver to confirm it would send
+  the text unchanged; a custom rule, a read's query and its plan go with the driver's escape
+  processing off too. The two placeholders a custom rule may hold, `${table}` and `${column}`, are
+  taken exactly as written. A flow, rule or pipeline saved with such a statement is refused when it
+  next runs, before anything is sent, and its check says why. Nothing in the samples or templates
+  uses braces. Write an array as `'{1,2}'`, in quotes, as before. A form that the
+  `GROUP BY` change below would have opened (`CREATE {oj GROUP by}`) was found in review before
+  any release.
+
 ### Fixed
 
 - **A flow's `sql` node takes `GROUP BY`, so the sample flow `sample-sql-before-and-after` runs.**

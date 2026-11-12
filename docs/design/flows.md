@@ -429,7 +429,16 @@ reads from it. Connections follow it as any node (`success`, `failure`, a condit
   refused. Until 0.1.2 `GROUP BY` was refused too. And never `pg_settings` (its rules change settings) or the functions custom rules
   refuse (files, other sessions or databases, settings, locks, and `ts_stat` and `ts_rewrite`, which
   run a query held in a string), sequences apart. `E'...'` strings and `U&"..."` names are refused,
-  and the text may hold no control character but PostgreSQL's whitespace. The tokenizer reads
+  and the text may hold no control character but PostgreSQL's whitespace, nor a `{` or `}` outside
+  quotes, comments and dollar-quoted strings: the driver rewrites JDBC escapes (`{fn ...}`,
+  `{oj ...}`, `{d ...}` ...) as it prepares a statement, after the check, and one form drops the
+  first letter of the word inside it (`CREATE {fn xVIEW ...}` was sent as `CREATE VIEW`; 0.0.10 to
+  0.1.2). PostgreSQL's own SQL needs no brace outside those. Then the driver's escape processing
+  (`Parser.replaceProcessing`) is run over the text and must change nothing
+  (`SqlTokens.sentAsWritten`), so what is checked is what is sent whatever escapes the driver
+  learns. Turning escape processing off on the statement is no help for the sql node: a prepared
+  statement is rewritten when it is prepared, before `setEscapeProcessing` can be called
+  (`FlowSqlNodeTest` shows it). The tokenizer reads
   comments, whitespace, dollar-quote tags and identifiers as PostgreSQL does, and on top of it the
   PostgreSQL driver's own parser must find exactly one statement. This is a first line of defence:
   the login check and the source's opt-ins below are what hold.

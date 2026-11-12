@@ -644,6 +644,8 @@ public final class ReadNodeFactory implements NodeFactory {
                 io.kilnmark.kiln.plugins.jdbc.PostgresConnector.conformingStrings(c);
                 st.execute("SET TRANSACTION READ ONLY");
                 st.setQueryTimeout(PLAN_TIMEOUT_SECONDS);
+                // As written: the driver rewrites no {...} escape in a query a person wrote
+                st.setEscapeProcessing(false);
                 try (ResultSet rs = st.executeQuery("EXPLAIN (VERBOSE, FORMAT JSON) " + checked)) {
                     plan = rs.next() ? rs.getString(1) : "[]";
                 }

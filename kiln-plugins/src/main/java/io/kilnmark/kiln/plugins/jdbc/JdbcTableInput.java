@@ -253,6 +253,11 @@ public final class JdbcTableInput implements Node {
             List<Object> values = values(context.settings());
             if (values.isEmpty()) {
                 statement = connection.createStatement();
+                if (written) {
+                    // As written: the driver rewrites no {...} escape in it, which would make what runs
+                    // differ from what was checked (ADR 0028). The check refuses braces too.
+                    statement.setEscapeProcessing(false);
+                }
                 if (context.settings().containsKey(SAMPLE_ABOVE)) {
                     sql = sampled(context, sql);
                 }

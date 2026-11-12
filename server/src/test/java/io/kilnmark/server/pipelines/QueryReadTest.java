@@ -68,6 +68,14 @@ class QueryReadTest {
             () -> ReadNodeFactory.checkQuery("SELECT " + "1,".repeat(6000) + "1"));
         assertTrue(long_.getMessage().startsWith("query: one SELECT, at most"), long_.getMessage());
         assertEquals("SELECT 1", ReadNodeFactory.checkQuery("SELECT 1;;"));
+        // A JDBC escape, which the driver would rewrite after the check: refused, and a rule's ${table} too
+        for (String escape : List.of("SELECT * {fn xINTO leak} FROM t", "SELECT {d '2024-01-01'}", "SELECT {fn user()}",
+            "SELECT * FROM {oj t LEFT OUTER JOIN u ON t.a = u.a}")) {
+            assertTrue(read.check(query("warehouse", escape)).get(0).startsWith("query: '{' and '}' are not allowed "
+                + "outside quotes"), escape + ": " + read.check(query("warehouse", escape)));
+        }
+        assertTrue(read.check(query("warehouse", "SELECT * FROM ${table}")).get(0).startsWith("query: "));
+        assertEquals("SELECT '{1,2}'::int[] AS a", ReadNodeFactory.checkQuery("SELECT '{1,2}'::int[] AS a"));
     }
 
     @Test

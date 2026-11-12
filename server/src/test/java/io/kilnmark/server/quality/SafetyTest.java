@@ -267,6 +267,106 @@ class SafetyTest {
         refused("SELECT a FROM t GROUP BY a; CREATE GROUP by");
     }
 
+    /** Every form of JDBC escape the driver reads, and ways of writing each: spacing, case, comments, nesting. */
+    private static final List<String> ESCAPES = List.of("{oj GROUP by}", "{OJ GROUP by}", "{ oj GROUP by }",
+        "{oj\tGROUP by}", "{oj/* c */GROUP by}", "{oj -- c\n GROUP by}", "{fn xROLE r}", "{FN  xROLE r}", "{fn\nxROLE r}",
+        "{fn/* c */xROLE r}", "{\tfn xROLE r}", "{fn user()}", "{fn concat('a', 'b')}", "{fn length({fn user()})}",
+        "{d '2024-01-01'}", "{D '2024-01-01'}", "{t '10:00:00'}", "{ts '2024-01-01 10:00:00'}",
+        "{call refresh_totals()}", "{CALL refresh_totals()}", "{?= call f()}", "{ ? = call f() }", "{escape '!'}",
+        "{limit 1}", "{limit 1 offset 2}", "{}", "{", "}", "}{", "{x}", "{table}", "{{fn xROLE r}}");
+
+    /**
+     * The database driver rewrites JDBC escapes after a check has read the text, so what ran was not
+     * what was checked: {@code {fn xWORD ...}} lost its braces, its {@code fn} and the first character
+     * of the word (every refused word passed, in 0.1.2 and earlier), and {@code {oj GROUP by}} hid the
+     * word before GROUP from the GROUP BY rule (never released). No brace is taken outside quotes.
+     */
+    @Test
+    void jdbcEscapesAreRefusedSoWhatIsCheckedIsWhatIsSent() throws Exception {
+        // What the driver made of them: why they are refused
+        assertEquals("CREATE ROLE r", org.postgresql.core.Parser.replaceProcessing("CREATE {fn xROLE r}", true, true));
+        assertEquals("CREATE GROUP by", org.postgresql.core.Parser.replaceProcessing("CREATE {oj GROUP by}", true, true));
+        // The sql node: the bypasses found, then every escape form wherever it stands
+        for (String bypass : List.of("CREATE {fn xROLE r}", "CREATE {fn xVIEW v AS SELECT 1 AS a}",
+            "CREATE {fn xRULE r AS ON INSERT TO t DO ALSO DELETE FROM t}", "ALTER {fn xROLE me SET search_path = x}",
+            "ALTER {fn xDEFAULT PRIVILEGES GRANT SELECT ON TABLES TO PUBLIC}", "ALTER TABLE t {fn xOWNER TO x}",
+            "DELETE FROM t {fn xRETURNING a}", "INSERT INTO t VALUES (2) {fn xRETURNING a}",
+            "{fn xGRANT ALL ON TABLE t TO PUBLIC}", "CREATE {oj GROUP by}", "DROP {oj GROUP by}, other",
+            "ALTER {oj GROUP by} RENAME TO other", "CREATE {oj GROUP by} WITH LOGIN", "CREATE {d GROUP by}")) {
+            refusedAction(bypass, "'{' and '}' are not allowed outside quotes");
+        }
+        for (String escape : ESCAPES) {
+            for (String statement : List.of("CREATE " + escape, "INSERT INTO t SELECT a FROM s WHERE b = " + escape,
+                "DELETE FROM t WHERE a IN (SELECT a FROM s GROUP BY a) " + escape, escape + " TRUNCATE t",
+                "UPDATE t SET a = 1 WHERE b = 'x' " + escape + " AND c = $q$ y $q$")) {
+                refusedAction(statement, "'{' and '}' are not allowed outside quotes");
+            }
+        }
+        // Custom SQL rules, a read's query and a wait-for query share the other check
+        for (String bypass : List.of("SELECT * {fn xINTO leak} FROM t", "SELECT a FROM t {fn xFOR UPDATE}",
+            "WITH x AS ({fn xDELETE FROM t RETURNING 1}) SELECT * FROM x", "SELECT * FROM ${table} {fn xINTO leak}",
+            "SELECT {fn user()} FROM ${table}", "SELECT {d '2024-01-01'}")) {
+            refusedCustom(bypass, "'{' and '}' are not allowed outside quotes");
+        }
+        for (String escape : ESCAPES) {
+            refusedCustom("SELECT * FROM ${table} WHERE a = 1 " + escape, "'{' and '}' are not allowed outside quotes");
+            refusedCustom("SELECT " + escape + " FROM t", "'{' and '}' are not allowed outside quotes");
+        }
+        // A rule's two placeholders, exactly as written, are the only braces taken; nothing else may borrow the form
+        SqlTokens.checkCustomSql("SELECT * FROM ${table} WHERE ${column} IS NULL", 10_000);
+        for (String near : List.of("SELECT * FROM ${ table}", "SELECT * FROM ${table }", "SELECT * FROM $ {table}",
+            "SELECT * FROM ${tables}", "SELECT * FROM ${fn}", "SELECT * FROM ${fn xinto}", "SELECT * FROM {table}",
+            "SELECT * FROM ${table/* c */}", "SELECT * FROM ${\"table\"}", "SELECT * FROM ${table", "SELECT 1 ${")) {
+            refusedCustom(near, "'{' and '}' are not allowed outside quotes");
+        }
+        refusedAction("TRUNCATE ${table}", "'{' and '}' are not allowed outside quotes");
+        // Braces PostgreSQL itself reads are all inside quotes or comments, and are taken as before
+        for (String ok : List.of("INSERT INTO t (tags) VALUES ('{1,2}'::int[])", "UPDATE t SET doc = '{\"a\": {\"b\": 1}}'::jsonb",
+            "DELETE FROM t WHERE code ~ '^[A-Z]{3}[0-9]{2}$'", "UPDATE t SET note = '{fn xROLE r}'",
+            "UPDATE t SET note = $q${fn xROLE r}$q$ WHERE id = 1", "INSERT INTO \"t{fn x}\" (\"{a}\") VALUES (1)",
+            "TRUNCATE t /* {fn xROLE r} */", "TRUNCATE t -- {oj x}", "INSERT INTO t VALUES (ARRAY[1, 2])")) {
+            assertEquals(ok, SqlTokens.checkAction(ok, 10_000));
+            assertNull(SqlTokens.sentAsWritten(ok), ok);
+        }
+        for (String ok : List.of("SELECT * FROM ${table} WHERE tags = '{1,2}'::int[]",
+            "SELECT * FROM ${table} WHERE ${column} !~ '^[0-9]{4}$' /* {fn x} */",
+            "SELECT * FROM t WHERE doc @> '{\"a\": 1}' AND \"{odd}\" = $x${d '2024-01-01'}$x$")) {
+            assertEquals(ok, SqlTokens.checkCustomSql(ok, 10_000));
+        }
+        // The second line asks the driver itself: it would change every escape it reads, and nothing else
+        for (String rewritten : List.of("CREATE {fn xROLE r}", "CREATE {oj GROUP by}", "SELECT {d '2024-01-01'}",
+            "SELECT {t '10:00:00'}", "SELECT {ts '2024-01-01 10:00:00'}", "SELECT {fn user()}", "SELECT a LIKE 'x' {escape '!'}")) {
+            assertEquals(SqlTokens.NO_BRACES, SqlTokens.sentAsWritten(rewritten), rewritten);
+        }
+        assertNull(SqlTokens.sentAsWritten("SELECT * FROM \"s\".\"t\" WHERE a = '{fn x}' -- {oj y}"));
+    }
+
+    private static void refusedCustom(String sql, String why) {
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+            () -> SqlTokens.checkCustomSql(sql, 10_000), sql);
+        assertTrue(e.getMessage().startsWith("params.sql: ") && e.getMessage().contains(why), sql + " gave "
+            + e.getMessage());
+    }
+
+    /** A custom SQL rule with an escape is refused when it is saved, and its filled-in SQL when it runs. */
+    @Test
+    void aCustomSqlRuleWithAnEscapeIsRefusedWhenSavedAndWhenRun() throws Exception {
+        IllegalArgumentException saved = assertThrows(IllegalArgumentException.class,
+            () -> custom("SELECT * FROM ${table} {fn xINTO leak}").check(context("postgresql", true, true), "admin"));
+        assertTrue(saved.getMessage().contains("'{' and '}' are not allowed outside quotes"), saved.getMessage());
+        Rule rule = custom("SELECT * FROM ${table} WHERE note = '{x}'").check(context("postgresql", true, true), "admin");
+        RuleRunner runner = new RuleRunner(Duration.ofSeconds(5), 0, 1 << 20, true);
+        SqlRules.Table table = new SqlRules.Table("sales", "orders");
+        assertNull(runner.customSqlRefusal(rule, SqlDialect.POSTGRESQL,
+            SqlRules.plan(rule, SqlDialect.POSTGRESQL, table, Map.of(), u -> null)));
+        // A rule saved before the check refused braces: its SQL, filled in, is refused before it is sent
+        rule.params().put("sql", "SELECT * FROM ${table} {fn xINTO leak}");
+        SqlRules.Plan plan = SqlRules.plan(rule, SqlDialect.POSTGRESQL, table, Map.of(), u -> null);
+        assertTrue(plan.failingSql().contains("\"sales\".\"orders\" {fn xINTO leak}"), plan.failingSql());
+        assertEquals("The rule's SQL does not form a single query. Rewrite it as one SELECT.",
+            runner.customSqlRefusal(rule, SqlDialect.POSTGRESQL, plan));
+    }
+
     @Test
     void ordinaryReadingSqlIsAccepted() {
         assertEquals("SELECT * FROM ${table} WHERE amount < 0",

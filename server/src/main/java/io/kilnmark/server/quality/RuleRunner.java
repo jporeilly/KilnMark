@@ -81,7 +81,9 @@ public final class RuleRunner {
         }
         // The steward's SQL (as filled in) must balance on its own, so it cannot close the query it is
         // placed in, and the whole query must be one statement.
-        if (plan == null || !SqlTokens.isSingleStatement(plan.failingSql()) || !SqlTokens.isSingleStatement(plan.countSql())) {
+        if (plan == null || !SqlTokens.isSingleStatement(plan.failingSql()) || !SqlTokens.isSingleStatement(plan.countSql())
+            // as filled in, it must reach the database as written: no {...} escape for the driver to rewrite
+            || SqlTokens.sentAsWritten(plan.failingSql()) != null || SqlTokens.sentAsWritten(plan.countSql()) != null) {
             return "The rule's SQL does not form a single query. Rewrite it as one SELECT.";
         }
         return null;
@@ -273,6 +275,8 @@ public final class RuleRunner {
             }
             Evaluation e;
             try (Statement st = c.createStatement()) {
+                // SQL a person wrote goes as written: the driver rewrites no {...} escape in it (ADR 0028)
+                st.setEscapeProcessing(rule.type() != RuleType.CUSTOM_SQL);
                 st.setQueryTimeout((int) Math.max(1, queryTimeout.toSeconds()));
                 try (ResultSet rs = st.executeQuery(plan.countSql())) {
                     if (!rs.next()) {
@@ -292,7 +296,8 @@ public final class RuleRunner {
             }
             if (e.failing() > 0 && plan.failingSql() != null && keepFailing > 0) {
                 e = new Evaluation(e.total(), e.failing(), e.method(), e.failingQuery(),
-                    failingRows(c, d.limit(plan.failingSql(), keepFailing)), e.message(), null);
+                    failingRows(c, d.limit(plan.failingSql(), keepFailing), rule.type() == RuleType.CUSTOM_SQL),
+                    e.message(), null);
             }
             return e;
         } catch (SQLException ex) {
@@ -311,8 +316,9 @@ public final class RuleRunner {
         }
     }
 
-    private RowChecks.FailingRows failingRows(Connection c, String sql) throws SQLException {
+    private RowChecks.FailingRows failingRows(Connection c, String sql, boolean written) throws SQLException {
         try (Statement st = c.createStatement()) {
+            st.setEscapeProcessing(!written);
             st.setQueryTimeout((int) Math.max(1, queryTimeout.toSeconds()));
             st.setMaxRows(keepFailing);
             try (ResultSet rs = st.executeQuery(sql)) {

@@ -427,7 +427,9 @@ The guide's "Reading" is the user's view.
 - **No parameters yet.** `${...}` in a query is refused: the setting is never filled
   (`SettingSpec.Parameters.NONE`). Bound values, `?` with each value bound so a value can never
   name a table or column, come as a later step.
-- **Checked as custom rules are** (`SqlTokens.checkCustomSql`): one statement, no `;`, nothing that
+- **Checked as custom rules are** (`SqlTokens.checkCustomSql`): one statement, no `;`, no `{` or
+  `}` outside quotes and comments (a JDBC escape the driver would rewrite after the check; see the
+  sql node in docs/design/flows.md; it is also run with the driver's escape processing off), nothing that
   writes, no function that reaches out of the query (files, other sessions or databases, large
   objects, advisory locks, settings). Checked when the pipeline is checked and again when the run
   sets the node up. Before any row is read the login is checked as for custom SQL rules

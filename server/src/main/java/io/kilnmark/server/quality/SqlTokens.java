@@ -198,6 +198,67 @@ public final class SqlTokens {
         }
     }
 
+    /** What a refused brace is told: the same words wherever it is found. */
+    static final String NO_BRACES = "'{' and '}' are not allowed outside quotes: the database driver reads {...} as "
+        + "an instruction to rewrite the SQL (a JDBC escape), so what ran would not be what was checked. Write "
+        + "dates, functions and joins as PostgreSQL does, and an array as '{1,2}' in quotes";
+
+    /**
+     * Why the braces in {@code tokens} are refused, or null when there are none to refuse. The
+     * PostgreSQL driver rewrites JDBC escapes after any check has read the text ({@code {fn ...}},
+     * {@code {oj ...}}, {@code {d ...}}, {@code {t ...}}, {@code {ts ...}}, {@code {call ...}},
+     * {@code {escape ...}}), and one form of it removes a character, so {@code CREATE {fn xROLE r}}
+     * read as the harmless word {@code xrole} and was sent as {@code CREATE ROLE r}. PostgreSQL's own
+     * SQL has no brace outside a string, a quoted name, a dollar-quoted string or a comment, none of
+     * which is a symbol here, so every brace that is a symbol is refused. With {@code placeholders}
+     * (custom SQL rules) the two a rule may write, {@code ${table}} and {@code ${column}}, are let
+     * through, exactly as written: Kilnmark replaces them with quoted names before anything is sent.
+     */
+    static String braces(List<Token> tokens, boolean placeholders) {
+        for (int i = 0; i < tokens.size(); i++) {
+            Token t = tokens.get(i);
+            if (t.kind() != Kind.SYMBOL || !(t.text().equals("{") || t.text().equals("}"))) {
+                continue;
+            }
+            if (placeholders && t.text().equals("{") && placeholder(tokens, i)) {
+                i += 2; // the name and the closing brace
+                continue;
+            }
+            return NO_BRACES;
+        }
+        return null;
+    }
+
+    /** Whether the opening brace at {@code i} is the one of {@code ${table}} or {@code ${column}}, with nothing between. */
+    private static boolean placeholder(List<Token> tokens, int i) {
+        if (i == 0 || i + 2 >= tokens.size()) {
+            return false;
+        }
+        Token dollar = tokens.get(i - 1);
+        Token open = tokens.get(i);
+        Token name = tokens.get(i + 1);
+        Token close = tokens.get(i + 2);
+        return dollar.kind() == Kind.SYMBOL && dollar.text().equals("$") && dollar.at() + 1 == open.at()
+            && name.kind() == Kind.WORD && (name.text().equals("table") || name.text().equals("column"))
+            && name.at() == open.at() + 1
+            && close.kind() == Kind.SYMBOL && close.text().equals("}") && close.at() == name.at() + name.text().length();
+    }
+
+    /**
+     * Why {@code sql} would not reach the database as written, or null when it would: the driver's
+     * own escape processing is run over it, as the driver runs it when a statement is prepared, and
+     * must change nothing. The second line behind {@link #braces}: it asks the driver itself, so it
+     * holds whatever escape forms the driver reads now or learns later. Public for the places that
+     * send SQL a person wrote after filling it in (a custom rule's {@code ${table}}).
+     */
+    public static String sentAsWritten(String sql) {
+        try {
+            return org.postgresql.core.Parser.replaceProcessing(sql, true, true).equals(sql) ? null : NO_BRACES;
+        } catch (java.sql.SQLException | RuntimeException e) {
+            return "the database driver cannot read it as one statement";
+        }
+    }
+
     /**
      * Why a string may not be used, or null: an {@code E'...'} string, whose backslash escapes can
      * carry on into a following string in a way that hides where it ends.
@@ -285,9 +346,15 @@ public final class SqlTokens {
         if (first.kind() != Kind.WORD || !(first.text().equals("select") || first.text().equals("with"))) {
             throw new IllegalArgumentException("params.sql: must start with SELECT or WITH");
         }
-        String problem = singleStatement(tokens);
+        String problem = braces(tokens, true);
+        if (problem == null) {
+            problem = singleStatement(tokens);
+        }
         if (problem == null) {
             problem = driverSplits(s);
+        }
+        if (problem == null) {
+            problem = sentAsWritten(s);
         }
         if (problem != null) {
             throw new IllegalArgumentException("params.sql: " + problem);
@@ -401,6 +468,11 @@ public final class SqlTokens {
         if (tokens.isEmpty() || s.length() > maxLength) {
             throw new IllegalArgumentException("one SQL statement, at most " + maxLength + " characters");
         }
+        // Before the first word: a statement that starts with an escape is told about the braces
+        String escape = braces(tokens, false);
+        if (escape != null) {
+            throw new IllegalArgumentException(escape);
+        }
         Token first = tokens.getFirst();
         if (first.kind() != Kind.WORD || !ACTION_FIRST_WORDS.contains(first.text())) {
             throw new IllegalArgumentException("a statement starts with " + String.join(", ",
@@ -413,6 +485,10 @@ public final class SqlTokens {
         }
         if (problem != null) {
             throw new IllegalArgumentException(problem + "; give each statement as its own item");
+        }
+        String rewritten = sentAsWritten(s);
+        if (rewritten != null) {
+            throw new IllegalArgumentException(rewritten);
         }
         for (int i = 0; i < tokens.size(); i++) {
             Token t = tokens.get(i);

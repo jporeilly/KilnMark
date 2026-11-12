@@ -221,7 +221,9 @@ put into SQL could change what it does. Each must start with `TRUNCATE`, `INSERT
 A statement may total rows with `GROUP BY` (`INSERT INTO totals SELECT status, count(*) FROM orders
 GROUP BY status`). Words that create or change accounts, rights or code that runs later are refused
 where they stand unquoted, such as `ROLE`, `USER`, `FUNCTION`, `VIEW`, `FOREIGN` and `GROUP`
-anywhere but in `GROUP BY`; quote a column or table that has such a name (`"role"`).
+anywhere but in `GROUP BY`; quote a column or table that has such a name (`"role"`). Braces, `{`
+and `}`, are refused outside quotes and comments: the database driver would read `{fn ...}` and
+the like as instructions to rewrite the statement. Write an array as `'{1,2}'`, in quotes.
 If one fails, all roll back, and the node's message names which one and its SQLSTATE, never the
 database's words.
 
