@@ -314,7 +314,9 @@ installed from its own files, given real state, upgraded to the build under test
 - on pull requests that change what an upgrade goes through: `containers/**`, the migrations
   (`graph/src/main/resources/db/migration/**`), `ci/upgrade-rehearsal/**`, `ci/install-cosign.sh`,
   `upgrade.yml`, `release.yml`, `build.gradle.kts`, `server/build.gradle.kts`,
-  `settings.gradle.kts` and `gradle.properties`;
+  `settings.gradle.kts`, `gradle.properties`, the server's code and settings (`server/src/main/**`:
+  it runs the migrations and opens the stored secrets), the samples and the release key
+  (`config/release/**`);
 - every night on main, at 02:30 UTC;
 - by hand (**Actions**, **Upgrade rehearsal**, **Run workflow**), and **on main before every tag**,
   which must pass first (see the steps under Releasing).

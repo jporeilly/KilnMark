@@ -11,7 +11,8 @@ on:
   pull_request:
     paths: ["containers/**", "graph/src/main/resources/db/migration/**", "ci/upgrade-rehearsal/**",
             "ci/install-cosign.sh", ".github/workflows/upgrade.yml", ".github/workflows/release.yml",
-            "build.gradle.kts", "server/build.gradle.kts", "settings.gradle.kts", "gradle.properties"]
+            "build.gradle.kts", "server/build.gradle.kts", "settings.gradle.kts", "gradle.properties",
+            "server/src/main/**", "samples/**", "config/release/**"]
   schedule:
     # 02:30 UTC (02:30 or 03:30 in the UK), on the default branch, main
     - cron: "30 2 * * *"
@@ -20,10 +21,11 @@ on:
 permissions:
   contents: read   # the checkout, and the previous release's files (the repository is private)
 
-# A newer push to a pull request ends the rehearsal of the older one.
+# A newer push to a pull request ends the rehearsal of the older one. On main, the nightly run and
+# one started by hand before a tag wait for each other rather than end each other.
 concurrency:
-  group: upgrade-${{ github.ref }}
-  cancel-in-progress: true
+  group: upgrade-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   upgrade:
