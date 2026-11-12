@@ -160,7 +160,12 @@ docs in the same release:
   (`PostgresSession.asWritten`), as its author meant; a write puts it back once its checks are done
   (`PostgresSession.loginPath`), so the table's own triggers find what they always found. Chosen
   over qualifying every name: one rule at the connection covers the SQL nobody thought to qualify.
-  A PostgreSQL database reached through the generic JDBC connector is not covered.
+  A PostgreSQL database reached through the generic JDBC connector is not covered. The table a write
+  creates is made after the login's path is back, so its type names that are not SQL keywords
+  (`text`, `bytea`, `date`, `timestamptz`) are named `pg_catalog.` (the sixth review: a login whose
+  path lists `public` before `pg_catalog` got a planted `text` domain, its check run for every value).
+  A connection pooler in transaction mode (PgBouncer) does not keep a session's `search_path`: point
+  sources at the database itself, or a pooler in session mode.
 - **The login check cannot be talked out of its answer** (12 November 2026, the fourth review).
   Every function, operator and type it uses is named with `pg_catalog.`, and it runs with
   `SET LOCAL search_path = pg_catalog, pg_temp` in its own transaction, rolled back after: a

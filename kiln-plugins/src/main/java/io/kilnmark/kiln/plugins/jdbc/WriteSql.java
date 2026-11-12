@@ -471,6 +471,27 @@ abstract class WriteSql {
             };
         }
 
+        /**
+         * As every database's, but the type names that are not SQL keywords are named in pg_catalog: the
+         * table is created after the write has put the login's own search path back, and a login whose
+         * path lists a schema others may create in before pg_catalog would otherwise get a planted
+         * {@code text} or {@code date} domain, whose checks run for every value written. Keyword types
+         * (integer, varchar(n), timestamp ...) always mean PostgreSQL's own.
+         */
+        @Override
+        String createTable(TableName t, List<WriteColumn> columns, int textLength) {
+            return "CREATE TABLE " + table(t) + " (" + columns.stream()
+                .map(c -> quote(storedName(c.name())) + " " + inCatalog(columnType(c, textLength)))
+                .collect(Collectors.joining(", ")) + ")";
+        }
+
+        private static String inCatalog(String type) {
+            return switch (type) {
+                case "text", "bytea", "date", "timestamptz" -> "pg_catalog." + type;
+                default -> type;
+            };
+        }
+
         @Override
         String upsert(TableName t, List<String> columns, List<String> key) {
             List<String> rest = columns.stream().filter(c -> !key.contains(c)).toList();

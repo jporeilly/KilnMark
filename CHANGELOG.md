@@ -26,7 +26,10 @@ released.
   Kilnmark opens to a PostgreSQL source resolves names in `pg_catalog` alone (`search_path =
   pg_catalog, pg_temp`), and the row-level security check refuses to replace when it gets no
   answer. Once its checks are done, a write puts the login's own search path back, so the table's
-  own triggers behave as before.
+  own triggers behave as before; the table it creates names `text`, `bytea`, `date` and
+  `timestamptz` as `pg_catalog`'s, so a login whose path lists `public` first cannot get a planted
+  type. A connection pooler in transaction mode does not keep the search path: point sources at
+  the database or a pooler in session mode.
 - **On PostgreSQL 14 and older, a number written against a name hid SQL from the check.** Severity
   **High**: a designer whose token sees unmasked values could call any function the checks refuse
   (settings, other sessions of the same login, locks, `set_config('role', ...)`), in a flow's `sql`

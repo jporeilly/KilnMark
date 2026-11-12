@@ -53,9 +53,10 @@ class WriteSqlTest {
     @Test
     void createdTablesMapEveryKind() {
         assertEquals("CREATE TABLE \"billing\".\"customer_spend\" (\"ok\" boolean, \"tiny\" smallint, \"small\" smallint, "
-            + "\"n\" integer, \"id\" bigint, \"r\" real, \"d\" double precision, \"amount\" numeric(12,2), \"name\" text, "
-            + "\"raw\" bytea, \"born\" date, \"at\" time, \"local\" timestamp, \"utc\" timestamptz, "
-            + "\"u64\" numeric(20,0), \"tags\" text)", WriteSql.Postgres.INSTANCE.createTable(T, ALL, 0));
+            + "\"n\" integer, \"id\" bigint, \"r\" real, \"d\" double precision, \"amount\" numeric(12,2), "
+            + "\"name\" pg_catalog.text, \"raw\" pg_catalog.bytea, \"born\" pg_catalog.date, \"at\" time, "
+            + "\"local\" timestamp, \"utc\" pg_catalog.timestamptz, \"u64\" numeric(20,0), \"tags\" pg_catalog.text)",
+            WriteSql.Postgres.INSTANCE.createTable(T, ALL, 0));
         assertEquals("CREATE TABLE [billing].[customer_spend] ([ok] bit, [tiny] smallint, [small] smallint, [n] int, "
             + "[id] bigint, [r] real, [d] float, [amount] decimal(12,2), [name] nvarchar(max), [raw] varbinary(max), "
             + "[born] date, [at] time(6), [local] datetime2(6), [utc] datetimeoffset(6), [u64] decimal(20,0), "
