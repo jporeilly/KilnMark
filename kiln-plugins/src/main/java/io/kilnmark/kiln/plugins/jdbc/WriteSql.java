@@ -114,10 +114,19 @@ abstract class WriteSql {
     /** The column type a table created from the input gets. */
     abstract String columnType(WriteColumn c, int textLength);
 
+    /**
+     * The column type as a {@code CREATE TABLE} names it: {@link #columnType} unless a database must
+     * name it more exactly. Both a write's created table and a database operation's DDL use it, so
+     * the two are the same.
+     */
+    String createdType(WriteColumn c, int textLength) {
+        return columnType(c, textLength);
+    }
+
     /** {@code CREATE TABLE} with every input column, all allowing nulls. */
     String createTable(TableName t, List<WriteColumn> columns, int textLength) {
         return "CREATE TABLE " + table(t) + " (" + columns.stream()
-            .map(c -> quote(storedName(c.name())) + " " + columnType(c, textLength))
+            .map(c -> quote(storedName(c.name())) + " " + createdType(c, textLength))
             .collect(Collectors.joining(", ")) + ")";
     }
 
@@ -472,17 +481,15 @@ abstract class WriteSql {
         }
 
         /**
-         * As every database's, but the type names that are not SQL keywords are named in pg_catalog: the
-         * table is created after the write has put the login's own search path back, and a login whose
-         * path lists a schema others may create in before pg_catalog would otherwise get a planted
-         * {@code text} or {@code date} domain, whose checks run for every value written. Keyword types
-         * (integer, varchar(n), timestamp ...) always mean PostgreSQL's own.
+         * The type names that are not SQL keywords are named in pg_catalog: a write creates its table
+         * after putting the login's own search path back, and a login whose path lists a schema others
+         * may create in before pg_catalog would otherwise get a planted {@code text} or {@code date}
+         * domain, whose checks run for every value written. Keyword types (integer, varchar(n),
+         * timestamp ...) always mean PostgreSQL's own, but only while unquoted: never quote them here.
          */
         @Override
-        String createTable(TableName t, List<WriteColumn> columns, int textLength) {
-            return "CREATE TABLE " + table(t) + " (" + columns.stream()
-                .map(c -> quote(storedName(c.name())) + " " + inCatalog(columnType(c, textLength)))
-                .collect(Collectors.joining(", ")) + ")";
+        String createdType(WriteColumn c, int textLength) {
+            return inCatalog(columnType(c, textLength));
         }
 
         private static String inCatalog(String type) {
