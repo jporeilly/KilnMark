@@ -432,6 +432,46 @@ class NodePreviewTest {
         }
     }
 
+    /**
+     * An except or intersect comparing a hidden column is refused for that reason, with both inputs'
+     * columns known (so the check that a union's inputs agree in type passes first); comparing only
+     * visible columns is previewed, the hidden one masked.
+     */
+    @Test
+    void anExceptOrIntersectComparingASensitiveColumnIsRefused() {
+        sources.asset(PEOPLE, "id:int64", "name:text");
+        for (String node : List.of("""
+              - {id: x, type: union, input: [people, again], mode: except}
+            """, """
+              - {id: x, type: union, input: [again, people], mode: intersect, compare_on: [id, name]}
+            """)) {
+            String y = yaml("""
+                  - {id: people, type: read, source: lab-db, asset: lab.people}
+                  - {id: again, type: read, source: lab-db, asset: lab.people}
+                """ + node);
+            WebApplicationException r = assertThrows(WebApplicationException.class, () -> previews().preview(y, "x",
+                null, 5, "jo", AccessRole.STEWARD, viewer(false, "name"), () -> false), node);
+            assertEquals(403, status(r), node);
+            String why = node.contains("compare_on") ? "compares rows by name, which is marked sensitive"
+                : "compares whole rows, which include name, which is marked sensitive";
+            assertTrue(error(r).startsWith("Only a designer who sees unmasked values can preview this: node x (union) "
+                + why), error(r));
+        }
+        String visible = yaml("""
+              - {id: people, type: read, source: lab-db, asset: lab.people}
+              - {id: again, type: read, source: lab-db, asset: lab.people}
+              - {id: a, type: limit, input: people, rows: 20}
+              - {id: b, type: limit, input: again, rows: 20}
+              - {id: x, type: union, input: [a, b], mode: intersect, compare_on: [id]}
+            """);
+        PipelineViews.NodePreviewView v = previews().preview(visible, "x", null, 5, "jo", AccessRole.STEWARD,
+            viewer(false, "name"), () -> false);
+        assertEquals(5, v.rowCount());
+        assertEquals(List.of("name"), v.masked(), "comparing visible columns passes a hidden one through masked");
+        assertEquals(List.of("Node x (union, intersect) reads every row of all its inputs before it passes any on, so "
+            + "every row before it was read."), v.waits());
+    }
+
     @Test
     void aSortIsPreviewedInOrderAndPassesHiddenColumnsThroughMasked() {
         String y = yaml("""

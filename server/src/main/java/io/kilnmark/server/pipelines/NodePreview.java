@@ -302,6 +302,10 @@ final class NodePreview {
             } else if ("join".equals(s.type())) {
                 out.add("Node " + s.id() + " (join) reads every row of both its inputs before it passes any on, so every "
                     + "row before it was read.");
+            } else if ("union".equals(s.type()) && List.of("except", "intersect")
+                .contains(String.valueOf(c.configs().getOrDefault(s.id(), Map.of()).get("mode")))) {
+                out.add("Node " + s.id() + " (union, " + c.configs().get(s.id()).get("mode") + ") reads every row of all "
+                    + "its inputs before it passes any on, so every row before it was read.");
             } else if ("lookup".equals(s.type())) {
                 List<String> from = c.edges().stream().filter(e -> e.toNode().equals(s.id())
                     && e.toPort().equals("lookup")).map(PipelineCompilerPort.EdgeOutline::fromNode).distinct().toList();
@@ -654,7 +658,9 @@ final class NodePreview {
                 if ("except".equals(mode) || "intersect".equals(mode)) {
                     // which rows come out shows whether the other inputs hold the same values
                     List<String> on = list(config.get("compare_on"));
-                    uses(id, t, any, on.isEmpty() ? null : on, on.isEmpty() ? "compares whole rows, which include"
+                    // whole rows: every hidden column is compared, so the message can name one
+                    List<String> whole = any.all() ? null : any.names().stream().sorted().toList();
+                    uses(id, t, any, on.isEmpty() ? whole : on, on.isEmpty() ? "compares whole rows, which include"
                         : "compares rows by");
                 }
                 // Every input's hidden columns, also under except and intersect, where only the first

@@ -19,9 +19,10 @@ released.
   an empty key never matches, so `anti` keeps such rows). By whole row: a `union` node gains
   **Mode**, with `except` (the rows of the first input that no other input has) and `intersect`
   (those every other input has), and **Compare on** to compare chosen columns only. Empty values
-  are equal to each other there, as in SQL's `EXCEPT`; unlike SQL's, repeats are not folded into
-  one. A column only one input has is refused when the pipeline is checked, with what to do, since
-  it would make every row differ. Both sort on disk past their memory limit, so either side may be
+  are equal to each other there, and repeats fold into one, as in SQL's `EXCEPT`; columns are
+  matched by name. With **Compare on**, the first row met for each distinct set of compared values
+  comes out. A column only one input has is refused when the pipeline is checked, with what to do,
+  since it would make every row differ. Both sort on disk past their memory limit, so either side may be
   larger than memory. A union with no mode appends as before.
   [Rows in one input and not the other](docs/guide/pipelines.md#rows-in-one-input-and-not-the-other)
   says when to use which, and the new sample `sample-only-in-archived` finds the archived
@@ -29,10 +30,13 @@ released.
 
 ### Details
 
-- **Semi and anti joins, except and intersect** (ADR 0056). `JoinFactory` walks the sorted left
-  beside the sorted right without holding the right's rows; `UnionFactory.SetNode` sorts every
-  input by the compared columns (`KeyCodec.rows`: values by family, as join keys, with nulls equal)
-  and walks the first beside the others. A preview by someone who may not see unmasked values is
+- **Semi and anti joins, except and intersect** (ADR 0056). `JoinFactory` sorts both sides as for
+  any join (the right too, in memory up to half of `memory_limit_mb` and on disk past it), then
+  walks the sorted left beside the sorted right without grouping or copying the right's rows per
+  key; `UnionFactory.SetNode` sorts every input by the compared columns (`KeyCodec.rows`: values by
+  family, as join keys, with nulls equal, every input's key built over one column order) and walks
+  the first beside the others, skipping repeats of a key so each comes out once (the sort is
+  stable, so the row kept is the first met). A preview by someone who may not see unmasked values is
   refused when an except or intersect compares a column marked sensitive, as a dedupe's is, and a
   semi or anti join passes on nothing of its right input. Quality prediction reports the rows of an
   except or intersect as not known. On the canvas a comparing union's card says which input's rows

@@ -1,6 +1,6 @@
 # 0056 Rows in one input and not the other: semi and anti joins, except and intersect
 
-Status: Accepted (11 November 2026)
+Status: Accepted (11 November 2026; point 6 changed by the owner on 12 November 2026)
 
 ## Context
 
@@ -35,7 +35,8 @@ stays planned.
 3. **`union` gains `mode`**: `all` (the default, and what a union did before: append), `except` and
    `intersect`. `except` keeps the rows of the **first** input found in **no** other input;
    `intersect` those found in **every** other input. The first input is the first in
-   `input: [...]`. Only the first input's rows and columns come out, with their types.
+   `input: [...]`. Only the first input's rows and columns come out, with their types, and each
+   distinct row once (point 6). Columns are matched by name, not by position as in SQL.
 
 4. **Whole rows are compared, or the columns of `compare_on`.** Without `compare_on`, every input
    must have the same column names (in any order): a column only one input has would make every row
@@ -50,19 +51,25 @@ stays planned.
    except when a compared column is empty. That is SQL's own difference, and the guide's recipe says
    so: by key, a row with an empty key is always "not there"; by row, an empty value is a value.
 
-6. **Rows are not folded: one difference from SQL.** SQL's `EXCEPT` and `INTERSECT` also remove
-   repeats from what they return. Here each row of the first input comes out or does not, so a row
-   that is in the first input twice comes out twice (or not at all). Reasons: with `compare_on` the
-   rows that agree on the compared columns can differ elsewhere, and folding them would have to
-   choose one without a rule; `dedupe` already does that, with a rule the designer states; and a
-   pipeline whose rows in equal rows out plus rows found can be reconciled by counting. Add a
-   `dedupe` after it for SQL's exact result. (`EXCEPT ALL`, which subtracts counts, is not offered.)
+6. **Repeats fold into one, as in SQL.** SQL's `EXCEPT` and `INTERSECT` return distinct rows, and
+   so do these: a row that is in the first input twice comes out once (or not at all). This was
+   first built the other way (rows not folded); the owner decided on 12 November 2026 that
+   Kilnmark's nodes give SQL's outcome as closely as possible, so they fold. With `compare_on`,
+   which SQL has no form of, one row comes out for each distinct combination of the compared
+   values: the **first** such row met in the first input, in its order, whatever its other columns.
+   The engine knows which that is cheaply: its sort is stable (rows with equal keys keep the order
+   they were added in, in memory and across the parts written to disk), and the first input's
+   batches are added in the order they arrive, so the first of a run of equal keys is the first
+   met. `dedupe` remains the node for keeping another row (the last, or the newest by a column).
+   (`EXCEPT ALL` and `INTERSECT ALL`, which count repeats, are not offered.)
 
 7. **How they run.** Both reuse the join's engine: each input is sorted by its key or compared
    columns within `memory_limit_mb`, on disk past it, and the sorted streams are walked together.
    Any number of rows can be compared. Rows come out in the order of the key or compared columns,
-   empty values last. A semi or anti join never holds the right's rows; except and intersect never
-   hold the other inputs' rows.
+   empty values last. Every input is sorted in full, the right of a semi or anti join included (in
+   memory up to its share of `memory_limit_mb`, on disk past it); what a semi or anti join never
+   does is group or copy the right's rows per key, as the other joins do, since only whether a
+   match exists counts. Except and intersect likewise only walk the other inputs once sorted.
 
 8. **Sensitive columns.** A preview by someone who may not see unmasked values is refused when a
    semi or anti join matches on a column marked sensitive (as every join's keys are), and when an
@@ -85,6 +92,11 @@ stays planned.
 - **A new `difference` node.** One more node to learn for what SQL users already know by name; the
   two questions would still need two settings.
 - **`NOT IN` nulls for anti.** Faithful to one SQL form, and a known trap.
-- **Folding repeats as SQL does.** See point 6.
+- **Keeping repeats** (each row of the first input in or out, so rows in equal rows out plus rows
+  found). Built first, and overturned by the owner on 12 November 2026: SQL folds them, and
+  Kilnmark's nodes give SQL's outcome as closely as possible (point 6).
+- **With `compare_on`, a rule other than the first met** (the first in the sorted order of every
+  column, say). Deterministic too, but it would surprise anyone who expects the order of their data
+  to decide, as `dedupe`'s default does; and the first met costs nothing, the sort being stable.
 - **Treating a column one input lacks as empty.** A union in `mode: all` does that, rightly; in a
   comparison it would silently make every row differ.

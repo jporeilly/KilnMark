@@ -655,8 +655,8 @@ Appends the rows of all its inputs, matching columns by name.
 
 | Setting | Type | Required | Default | Parameters | What it does |
 | --- | --- | --- | --- | --- | --- |
-| `mode` | choice | no | `all` | no | Which rows come out: all appends the rows of every input. Except keeps the rows of the first input found in no other input, and intersect those found in every other input, comparing whole rows; only the first input's rows and columns come out. One of `all`, `except`, `intersect`. |
-| `compare_on` | list of columns | no |  | no | For except and intersect: the columns to compare, when not every column. Leave out a column only one input has, or one that differs on every row, such as a load time. |
+| `mode` | choice | no | `all` | no | Which rows come out: all appends the rows of every input. Except keeps the rows of the first input found in no other input, and intersect those found in every other input, comparing whole rows by column name; only the first input's columns come out, each distinct row once, as in SQL. One of `all`, `except`, `intersect`. |
+| `compare_on` | list of columns | no |  | no | For except and intersect: the columns to compare, when not every column. One row comes out for each distinct set of their values, the first met in the first input. Leave out a column only one input has, or one that differs on every row, such as a load time. |
 | `strict` | true or false | no | `false` | whole value | Fail unless every input has exactly the same columns, with the same types. |
 | `memory_limit_mb` | number | no | `256` | whole value | The most memory batches may take while the union waits for every input's first batch. For except and intersect, the most the inputs may take while they are sorted; past it, they are sorted on disk. |
 
@@ -676,6 +676,7 @@ Appends the rows of all its inputs, matching columns by name.
   first input (the first in `input: [...]`) that no other input has, and `intersect` those that
   every other input has. Only the first input's rows and columns come out; the canvas says which
   input that is on the node.
+- Columns are matched by name, not by position as in SQL.
 - Whole rows are compared, so every input must then have the same column names, in any order. A
   column only one input has is refused when the pipeline is checked, since no row could be the
   same. Name the columns to compare with `compare_on` instead, leaving out that column and any
@@ -684,8 +685,10 @@ Appends the rows of all its inputs, matching columns by name.
   a number. Empty (null) values are equal to each other, as in SQL's `EXCEPT` and `INTERSECT`, so
   two rows that are empty in the same column and equal elsewhere are the same row. (A join's keys
   differ: an empty key matches nothing.)
-- Unlike SQL's `EXCEPT` and `INTERSECT`, repeats are not folded into one: a row that is in the
-  first input twice comes out twice, or not at all. Add a `dedupe` after it to fold them.
+- As in SQL's `EXCEPT` and `INTERSECT`, repeats fold into one: a row that is in the first input
+  twice comes out once, or not at all. With `compare_on`, one row comes out for each distinct set
+  of the compared values: the first such row in the first input, whatever its other columns. To
+  keep another (the last, or the newest by a column), use a `dedupe` on those columns instead.
 - Under `except` and `intersect` every input is sorted by the compared columns, in memory up to
   `memory_limit_mb` between them and on disk past it, so any number of rows can be compared. Rows
   come out in the order of those columns, empty values last, once every input has ended.

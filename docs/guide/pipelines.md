@@ -561,8 +561,11 @@ comes out, and so does a row that has gone.
 - **Empty values are equal to each other here**, as in SQL's `EXCEPT`: two rows that are both empty
   in a column, and equal in the rest, are the same row. This is the opposite of a join's keys, and
   it is why the two ways can disagree about rows with an empty value.
-- Repeats are kept: a row that is in the first input twice comes out twice, or not at all. SQL's
-  `EXCEPT` would give it once; add a `dedupe` node after the union for that.
+- **Columns are matched by name**, not by position as in SQL, so the inputs' columns may come in
+  any order.
+- Repeats fold into one, as in SQL's `EXCEPT`: a row that is in the first input twice comes out
+  once, or not at all. With `compare_on`, one row comes out for each distinct set of the compared
+  values, the first such row in the first input.
 
 ### Which one?
 

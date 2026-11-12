@@ -344,7 +344,7 @@ class CombiningNodesTest {
 
     /**
      * Whole rows, the first input against the other: nulls are equal to each other, as SQL's EXCEPT and
-     * INTERSECT count them, and a repeat in the first input stays a repeat (SQL would fold the two).
+     * INTERSECT count them, and repeats in the first input fold into one, as SQL's do.
      */
     @Test
     void exceptAndIntersectCompareWholeRowsWithNullsEqual() throws Exception {
@@ -356,9 +356,40 @@ class CombiningNodesTest {
         }
         try (Harness h = people(new Harness()).connect("out")) {
             h.run(new UnionFactory(), config("mode", "intersect"));
-            // in the order of the compared columns; row 2 is twice in the first input and comes out twice
-            assertEquals(List.of(1L, 2L, 2L, 4L), h.column("out", "id"));
-            assertEquals(Arrays.asList("gold", null, null, "gold"), h.column("out", "tier"));
+            // in the order of the compared columns; row 2 is twice in the first input and comes out once
+            assertEquals(List.of(1L, 2L, 4L), h.column("out", "id"));
+            assertEquals(Arrays.asList("gold", null, "gold"), h.column("out", "tier"));
+        }
+        // except folds too: a row twice in the first input and in no other comes out once
+        Schema s = schema(field("n", INT64), field("t", UTF8));
+        try (Harness h = new Harness()) {
+            h.input("in", h.batch(s, row(5L, null), row(1L, "a")), h.batch(s, row(5L, null), row(1L, "a"), row(5L, "b")))
+                .input("in", h.batch(s, row(1L, "a"))).connect("out");
+            h.run(new UnionFactory(), config("mode", "except"));
+            assertEquals(List.of(5L, 5L), h.column("out", "n"));
+            assertEquals(Arrays.asList("b", null), h.column("out", "t"), "5 with b and 5 with nothing are two rows");
+        }
+    }
+
+    /**
+     * With compare_on, one row for each distinct combination of the compared values: the first such row
+     * met in the first input, whatever its other columns, across batches.
+     */
+    @Test
+    void compareOnKeepsTheFirstRowMetInTheFirstInput() throws Exception {
+        java.util.function.Function<Harness, VectorSchemaRoot[]> first = h -> new VectorSchemaRoot[] {
+            h.batch(PEOPLE, row(9L, "z@x", "gold"), row(2L, "b@x", "late")),
+            h.batch(PEOPLE, row(1L, "b@x", "early"), row(3L, "b@x", null), row(8L, "z@x", "new"))};
+        try (Harness h = new Harness()) {
+            h.input("in", first.apply(h)).input("in", h.batch(PEOPLE, row(0L, "b@x", "x"))).connect("out");
+            h.run(new UnionFactory(), config("mode", "intersect", "compare_on", "email"));
+            assertEquals(List.of(2L), h.column("out", "id"));
+            assertEquals(List.of("late"), h.column("out", "tier"));
+        }
+        try (Harness h = new Harness()) {
+            h.input("in", first.apply(h)).input("in", h.batch(PEOPLE, row(0L, "q@x", "x"))).connect("out");
+            h.run(new UnionFactory(), config("mode", "except", "compare_on", "email"));
+            assertEquals(List.of(2L, 9L), h.column("out", "id"), "in the order of email; the first of each met");
         }
     }
 
@@ -370,7 +401,7 @@ class CombiningNodesTest {
         }
         try (Harness h = people(new Harness()).connect("out")) {
             h.run(new UnionFactory(), config("mode", "intersect", "compare_on", List.of("email", "tier")));
-            assertEquals(List.of(1L, 2L, 2L, 4L), h.column("out", "id"), "a null email equals a null email");
+            assertEquals(List.of(1L, 2L, 4L), h.column("out", "id"), "a null email equals a null email");
         }
         // The other input has other columns and types: only the compared ones need be there, and 1 equals 1.00
         Schema other = schema(field("note", UTF8), field("id", decimal(6, 2)));
@@ -455,6 +486,37 @@ class CombiningNodesTest {
         }
     }
 
+    /**
+     * The first input's batches hold its columns in another order than the pipeline check worked out,
+     * and the other input's batches are sorted first: every input's key is still built in one order.
+     */
+    @Test
+    void everyInputsKeyIsBuiltInOneOrder() throws Exception {
+        Schema declared = schema(field("id", INT64), field("email", UTF8));
+        Schema swapped = schema(field("email", UTF8), field("id", INT64));
+        try (Harness h = new Harness()) {
+            RowSet first = new RowSet("first", 1);
+            RowSet second = new RowSet("second", 1);
+            h.input("in", first).input("in", second).connect("out");
+            h.declare("in[0]", declared).declare("in[1]", declared);
+            Thread upstream = Thread.ofVirtual().start(() -> {
+                try {
+                    // the second put waits until the first batch is taken: so input 2 is sorted before input 1 sends
+                    second.put(h.batch(declared, row(1L, "a@x")));
+                    second.put(h.batch(declared, row(3L, "c@x")));
+                    second.finish();
+                    first.put(h.batch(swapped, row("a@x", 1L), row("b@x", 2L)));
+                    first.finish();
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+            });
+            assertTimeoutPreemptively(Duration.ofSeconds(20), () -> h.run(new UnionFactory(), config("mode", "except")));
+            upstream.join();
+            assertEquals(List.of(2L), h.column("out", "id"));
+        }
+    }
+
     @Test
     void exceptAndIntersectProblemsSayWhatToDo() throws Exception {
         UnionFactory f = new UnionFactory();
@@ -523,11 +585,17 @@ class CombiningNodesTest {
             for (Object[] r : second) {
                 there.add(Arrays.asList(r[1] == null ? null : ((java.math.BigDecimal) r[1]).intValueExact(), r[0]));
             }
+            // one row for each distinct (k, t), the first met: v counts the first input's rows in order
             List<Long> found = new java.util.ArrayList<>();
             List<Long> lacking = new java.util.ArrayList<>();
+            java.util.Set<List<Object>> met = new java.util.HashSet<>();
             for (Object[] r : first) {
-                (there.contains(Arrays.asList(r[0], r[1])) ? found : lacking).add((Long) r[2]);
+                List<Object> key = Arrays.asList(r[0], r[1]);
+                if (met.add(key)) {
+                    (there.contains(key) ? found : lacking).add((Long) r[2]);
+                }
             }
+            assertTrue(met.size() < first.size() || !big, "round " + round + " should have repeats to fold");
             for (String mode : List.of("except", "intersect")) {
                 try (Harness h = new Harness()) {
                     h.input("in", chunks(h, a, first)).input("in", chunks(h, b, second)).connect("out");

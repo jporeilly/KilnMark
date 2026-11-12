@@ -855,7 +855,9 @@ Two questions, two tools, as in SQL: by key (`join` with `how: semi` or `anti`, 
 - **Semi and anti joins** use the join's sorters and keys unchanged, and a walk of their own
   (`JoinNode.leftOnly`): for each left row in key order the right is moved up to its key, and the
   left row comes out when a right row of that key is there (`semi`) or is not (`anti`). The right
-  is never held, so no group is built and a left row comes out once however many right rows match.
+  is sorted in full, as for any join (its `ExternalSorter` holds up to half of `memory_limit_mb`
+  and spills to disk past it), but it is only walked after that: no group of right rows is built or
+  copied per key, and a left row comes out once however many right rows match.
   The output is the left's columns as they are (`JoinFactory.plan` returns the left's schema and
   skips the names walk, so no clash is possible). Null keys never match, as in every join: such
   left rows sort last and are kept by `anti`, never by `semi`; this is `NOT EXISTS`, never
@@ -864,10 +866,17 @@ Two questions, two tools, as in SQL: by key (`join` with `how: semi` or `anti`, 
 - **Except and intersect** are a second running node of the union factory (`UnionFactory.SetNode`;
   `mode: all` runs the union as before). Every input goes into an `ExternalSorter` of its own,
   sharing `memory_limit_mb` (the largest spills when together they pass it), keyed by the compared
-  columns: `compare_on`, or every column of the first input. Then the first input is walked in
-  that order beside the others: each other input is moved up to the first's row, and the row comes
-  out when none has it (`except`) or all have it (`intersect`). `intersect` stops when any other
-  input is used up or ends empty. Rows of the first input are never folded (ADR 0056, point 6).
+  columns: `compare_on`, or every column of the first input. Every input's key is built over one
+  column order, fixed when the first key is built (the first input's columns as the pipeline check
+  worked them out, or its first batch's), so a batch whose columns come in another order still
+  compares. Then the first input is walked in that order beside the others: each other input is
+  moved up to the first's row, and the row comes out when none has it (`except`) or all have it
+  (`intersect`). `intersect` stops when any other input is used up or ends empty.
+- **Repeats fold, as in SQL** (ADR 0056, point 6). After a row of the first input is decided, the
+  walk skips the rows after it with the same key, so each distinct row (or, with `compare_on`, each
+  distinct combination of the compared values) comes out once at most. The row kept is the first
+  of them met in the first input: `ExternalSorter` is stable (ties keep the order rows were added,
+  in memory and across spilled runs), and the first input's batches are added in its own order.
 - **Row keys.** `KeyCodec.rows` encodes each compared column by family, as a join key's part, so
   inputs whose types differ compare by value (`1` and `1.00`); but a null has a byte of its own
   (sorting last) instead of collapsing the key, so nulls are equal to each other, as SQL's `EXCEPT`
@@ -883,6 +892,8 @@ Two questions, two tools, as in SQL: by key (`join` with `how: semi` or `anti`, 
   nothing for them. An except or intersect comparing a hidden column (any, when whole rows are
   compared) is refused in a preview, as a `dedupe` is. Its output keeps every input's hidden
   columns and marks, though only the first's values come out: more than need be, never less.
+  `NodePreview.waits` says an except or intersect reads every row of all its inputs before it
+  passes any on, as it says of a sort or a join.
 - **Quality predictor.** An except or intersect is reported as rows not known, as a join is.
 
 ### Window functions (ADR 0049)

@@ -37,11 +37,13 @@ import io.kilnmark.kiln.nodes.expr.Type;
  * <p>{@code mode: except} and {@code mode: intersect} compare instead of appending (ADR 0056): the
  * rows of the first input found in no other input, or in every other input. Whole rows are compared,
  * or the columns of {@code compare_on}; nulls are equal to each other, as in SQL's {@code EXCEPT}
- * and {@code INTERSECT}. Unlike SQL's, each row of the first input comes out or does not: rows are
- * never folded into one, so a repeat in the first input stays a repeat. Only the first input's
- * columns come out. Every input is sorted by the compared columns ({@link ExternalSorter}, sharing
- * {@code memory_limit_mb} and spilling to disk past it), then the sorted streams are walked
- * together, so rows come out in the order of those columns, nulls last.
+ * and {@code INTERSECT}. Repeats fold into one, as SQL's do: each distinct row comes out once at
+ * most. With {@code compare_on}, one row comes out for each distinct combination of the compared
+ * values, the first such row in the first input's order (the sort is stable, so the first of equal
+ * rows is the first met). Only the first input's columns come out. Every input is sorted by the
+ * compared columns ({@link ExternalSorter}, sharing {@code memory_limit_mb} and spilling to disk
+ * past it), then the sorted streams are walked together, so rows come out in the order of those
+ * columns, nulls last.
  */
 public final class UnionFactory implements NodeFactory {
 
@@ -91,9 +93,11 @@ public final class UnionFactory implements NodeFactory {
             SettingSpec.choice("mode", "Mode", false, "all",
                 "Which rows come out: all appends the rows of every input. Except keeps the rows of the first "
                     + "input found in no other input, and intersect those found in every other input, comparing "
-                    + "whole rows; only the first input's rows and columns come out.", MODES),
+                    + "whole rows by column name; only the first input's columns come out, each distinct row once, "
+                    + "as in SQL.", MODES),
             SettingSpec.optional("compare_on", "Compare on", SettingSpec.Kind.COLUMNS, null,
-                "For except and intersect: the columns to compare, when not every column. Leave out a column only "
+                "For except and intersect: the columns to compare, when not every column. One row comes out for "
+                    + "each distinct set of their values, the first met in the first input. Leave out a column only "
                     + "one input has, or one that differs on every row, such as a load time."),
             SettingSpec.optional("strict", "Same columns only", SettingSpec.Kind.BOOLEAN, false,
                 "Fail unless every input has exactly the same columns, with the same types."),
@@ -469,6 +473,8 @@ public final class UnionFactory implements NodeFactory {
         /** Each input's columns: its first batch's, or until then what the pipeline check worked out. */
         private Schema[] schemas;
         private boolean[] seen;
+        /** The columns, in order, that every input's key is built over; fixed by the first key built. */
+        private Schema order;
         private ExternalSorter[] sorters;
         /** Batches of other inputs that came before the first input's columns were known. */
         private final List<RowSet.Taken> waiting = new ArrayList<>();
@@ -581,9 +587,14 @@ public final class UnionFactory implements NodeFactory {
             try {
                 if (!seen[i]) {
                     seen[i] = true;
+                    if (order == null) {
+                        // one schema orders every input's key: input 1's as the pipeline check worked it
+                        // out, or its first batch's; columns are found by name, so each input's own
+                        // order does not matter
+                        order = schemas[0] != null ? schemas[0] : t.batch().getSchema();
+                    }
                     schemas[i] = t.batch().getSchema();
-                    KeyCodec codec = i == 0 ? comparison(schemas[0], schemas[0], 0, settings)[0]
-                        : comparison(schemas[0], schemas[i], i, settings)[1];
+                    KeyCodec codec = comparison(order, schemas[i], i, settings)[1];
                     if (i == 0) {
                         // inputs whose batches came first were checked against what the pipeline check worked out
                         for (int j = 1; j < schemas.length; j++) {
@@ -667,7 +678,12 @@ public final class UnionFactory implements NodeFactory {
                     if (except ? found == 0 : found == others.size()) {
                         out.left(first.rows(), first.pos);
                     }
-                    first.advance();
+                    // repeats fold into one, as in SQL: the sort is stable, so the row kept is the
+                    // first of them met in the first input, and the rest are skipped
+                    KeyCodec.KeyBlock kept = first.key();
+                    do {
+                        first.advance();
+                    } while (first.has() && first.sameKey(kept));
                 }
                 out.flush();
             } finally {

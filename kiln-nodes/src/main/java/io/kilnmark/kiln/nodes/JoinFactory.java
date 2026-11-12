@@ -482,8 +482,9 @@ public final class JoinFactory implements NodeFactory {
 
         /**
          * Semi and anti: each left row, in key order, comes out when the right has a row of its key
-         * (semi) or has none (anti). The right is only walked, never held: a left row comes out once
-         * however many right rows match. Left rows whose key has a null come last and match nothing,
+         * (semi) or has none (anti). The right is sorted as for any join (in memory up to half of
+         * {@code memory_limit_mb}, on disk past it), then only walked: its rows are never grouped by
+         * key or copied, and a left row comes out once however many right rows match. Left rows whose key has a null come last and match nothing,
          * so anti keeps them and semi does not.
          */
         private void leftOnly(Cursor l, Cursor r, Output out) throws NodeException, IOException, InterruptedException {

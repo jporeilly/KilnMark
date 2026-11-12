@@ -214,6 +214,8 @@ class JoinNodeTest {
                     && rightKeys.contains(Arrays.asList(l[1], twoKeys ? l[2] : ""));
                 (has ? matched : unmatched).add((Long) l[0]);
             }
+            // both kinds must have rows to give, or the columns they come out with go unchecked
+            assertFalse(matched.isEmpty() || unmatched.isEmpty(), "round " + round + " should give rows to both");
             for (String how : List.of("semi", "anti")) {
                 try (Harness h = new Harness()) {
                     h.input("left", batches(h, LEFT, left)).input("right", batches(h, RIGHT, right)).connect("out");
@@ -221,7 +223,7 @@ class JoinNodeTest {
                     List<Object> got = new ArrayList<>(h.column("out", "lid"));
                     got.sort(null);
                     assertEquals(how.equals("semi") ? matched : unmatched, got, "round " + round + ": " + how);
-                    assertEquals(LEFT, h.schemas.get("out") == null ? LEFT : h.schemas.get("out"));
+                    assertEquals(LEFT, h.schemas.get("out"), "round " + round + ": " + how + ": the left's columns only");
                     if (big) {
                         assertTrue(h.spilled.get() > 0, "round " + round + " should have written to disk");
                     }
