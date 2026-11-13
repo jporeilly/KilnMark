@@ -10,7 +10,7 @@ import {
   type RunTries as Tries,
   type RunTry,
 } from "../api";
-import { Who } from "./Who";
+import { isToken, Who } from "./Who";
 
 /** "14:05": when a run's next try starts, in the reader's time. */
 export function clock(iso: string): string {
@@ -41,6 +41,15 @@ const ENDED: Record<RunTry["status"], string> = {
 };
 
 /**
+ * Whether a try's message already says what came next. A run's last try carries the run's error,
+ * which ends with why it was not tried again ("…, after 2 tries. Not tried again: all 2 tries were
+ * made"), and the same words as what came next: they are shown once.
+ */
+export function saysNext(t: Pick<RunTry, "message" | "next">): boolean {
+  return !!t.next && !!t.message && t.message.includes(t.next);
+}
+
+/**
  * Each ended try of a run, in order, with how it ended and what came next (ADR 0053). Nothing for a run
  * that has had one try and is still on it.
  */
@@ -65,12 +74,13 @@ export function RunTriesList({ tries, run }: { tries: RunTry[] | undefined; run:
               {formatTime(t.startedAt)} to {formatTime(t.finishedAt)}
             </span>
             {t.message && <div>{t.message}</div>}
-            {t.next && (
+            {t.next && !saysNext(t) && (
               <div className="muted">
                 {t.next}
                 {t.askedBy ? ` (asked by ${t.askedBy})` : ""}
               </div>
             )}
+            {saysNext(t) && t.askedBy && <div className="muted">Asked by {t.askedBy}</div>}
           </li>
         ))}
       </ol>
@@ -141,7 +151,7 @@ export function OwnersSection({ kind, name, role }: { kind: "pipeline" | "flow";
                   {o.kind === "team" ? <span className="km-who">{o.label}</span> : <Who name={o.label} />}
                   {/* A team address hidden from this reader is labelled "A team address" already. */}
                   {(o.kind !== "team" || o.entry != null) && (
-                    <span className="small muted">{o.kind === "team" ? "Team address" : "Person"}</span>
+                    <span className="small muted">{o.kind === "team" ? "Team address" : isToken(o.label) ? "API token" : "Person"}</span>
                   )}
                 </li>
               ))}

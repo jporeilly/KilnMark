@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { api, formatTime, type DriverItem } from "../api";
 import { href } from "../router";
+import { docHref } from "../docs/links";
 import { useTitle } from "../components/useTitle";
 import { Card, EmptyState, PageHeader, StatusChip, type Tone } from "../components/ui";
 
@@ -44,6 +45,28 @@ export function DriversPage() {
         <EmptyState title="Nothing to install">Every connector on this server has what it needs.</EmptyState>
       )}
       {items?.map((d) => <DriverCard key={d.id} driver={d} onChange={replace} />)}
+    </>
+  );
+}
+
+/** Where the guide says how to copy a file into the drivers folder, with containers and without. */
+export const DRIVERS_FOLDER_GUIDE = docHref("drivers", "a-server-without-internet-access");
+
+/**
+ * Where the drivers folder is. The server names it by its own path, which on a container install
+ * (the usual one) is a path inside Kilnmark's container and not a folder on the machine that runs
+ * it: so the path is given as the server's, and the guide says how to copy a file there.
+ */
+export function DriversFolderWhere({ folder }: { folder: string | null | undefined }) {
+  return (
+    <>
+      {folder && (
+        <>
+          The server knows it as <span className="mono">{folder}</span>: on an install that runs in containers, that is a
+          folder inside Kilnmark's container, not one on the machine itself.{" "}
+        </>
+      )}
+      <a href={DRIVERS_FOLDER_GUIDE}>How to copy a file there</a>.
     </>
   );
 }
@@ -113,7 +136,7 @@ function DriverCard({ driver: d, onChange }: { driver: DriverItem; onChange: (d:
               machine with internet access.
             </li>
             <li>
-              Put it, unchanged, in the drivers folder <span className="mono">{d.folder}</span> on the server.
+              Put it, unchanged, in the server's drivers folder. <DriversFolderWhere folder={d.folder} />
             </li>
             <li>Reload this page: it should say Installed. No restart is needed.</li>
           </ol>
@@ -129,7 +152,7 @@ function DriverCard({ driver: d, onChange }: { driver: DriverItem; onChange: (d:
       )}
       {d.state === "ready" && (
         <p className="hint">
-          <span className="mono">{d.fileName}</span> is in <span className="mono">{d.folder}</span> and checked.
+          <span className="mono">{d.fileName}</span> is in the server's drivers folder and checked.
         </p>
       )}
     </Card>

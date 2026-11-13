@@ -21,10 +21,10 @@
   overflow-wrap: anywhere;
 }
 
+/* As wide as what holds it (the page, or the panel under the canvas): its text is never held to a column. */
 .lib-sample-about {
   margin: 12px 0;
-  padding: 12px 16px;
-  max-width: 80ch;
+  padding: 6px 16px;
   border: 1px solid var(--km-border);
   border-radius: 8px;
   background: var(--km-surface);
@@ -35,8 +35,39 @@
   font-size: var(--km-text-md);
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+/* The heading is the button that opens and closes the panel: it reads as a heading, not a boxed button. */
+.lib-sample-about-toggle {
+  gap: 6px;
+  min-height: 32px;
+  margin-left: -6px;
+  padding: 4px 8px 4px 4px;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--km-ink);
+}
+
+.lib-sample-about-toggle:hover {
+  background: none;
+  text-decoration: underline;
+}
+
+.lib-sample-about-body {
+  padding-bottom: 8px;
+}
+
+.lib-sample-about-body[hidden] {
+  display: none;
+}
+
+.lib-sample-about-body > :first-child {
+  margin-top: 0;
 }
 
 .lib-sample-about p {

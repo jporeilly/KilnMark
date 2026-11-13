@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, test } from "vitest";
 import type { Schedule } from "../api";
 import { SchedulesTable } from "../schedules/SchedulesTable";
-import { whoParts } from "./Who";
+import { whoParts, wrapPieces } from "./Who";
 
 /** A stylesheet's text, read from disk: in tests a CSS import is empty. Node's fs, untyped here (no Node types in the UI). */
 async function stylesheet(path: string): Promise<string> {
@@ -88,5 +88,25 @@ describe("the schedules table keeps its last columns in view", () => {
       if (selectors.some((x: string) => x === ".sc-setby" || x === ".sc-target")) expect(rule[2]).not.toMatch(/nowrap/);
     }
     expect(await stylesheet("src/app.css")).toMatch(/\.km-who\s*\{[^}]*overflow-wrap:\s*anywhere/);
+  });
+
+  test("a name wraps between its words, not in the middle of one", async () => {
+    expect(wrapPieces("KILNMARK_ADMIN_TOKEN")).toEqual(["KILNMARK_", "ADMIN_", "TOKEN"]);
+    expect(wrapPieces("sso:dana.reyes@kilnmark.com")).toEqual(["sso:dana.", "reyes@", "kilnmark.", "com"]);
+    expect(wrapPieces("dana")).toEqual(["dana"]);
+    expect(wrapPieces("a__b")).toEqual(["a__", "b"]);
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () =>
+      root.render(
+        <SchedulesTable schedules={[schedule({ updatedBy: "token 1 (KILNMARK_ADMIN_TOKEN)", createdBy: "token 1 (KILNMARK_ADMIN_TOKEN)" })]} role="admin" label="Schedules" names={new Map()} onEdit={() => {}} onToggle={() => {}} onDelete={() => {}} />,
+      ),
+    );
+    const setBy = host.querySelector(".sc-setby .km-who")!;
+    // The name reads as it is; the places it may wrap are between its words.
+    expect(setBy.textContent).toBe("KILNMARK_ADMIN_TOKEN");
+    expect(setBy.innerHTML).toBe("KILNMARK_<wbr>ADMIN_<wbr>TOKEN");
+    await act(async () => root.unmount());
   });
 });

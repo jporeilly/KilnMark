@@ -10,6 +10,7 @@ import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { Button, Card, EmptyState, PageHeader, StatusChip, type Tone } from "../components/ui";
 import { Who } from "../components/Who";
+import { DriversFolderWhere } from "./DriversPage";
 
 const STATE: Record<string, { tone: Tone; label: string }> = {
   ready: { tone: "good", label: "Ready" },
@@ -233,7 +234,7 @@ function RegisterDriver({
       return;
     }
     if (folder && file.size > folder.maxUploadBytes) {
-      fail(new Error(`${file.name} is ${size(file.size)}, more than this server accepts as an upload (${size(folder.maxUploadBytes)}). Copy it into the drivers folder ${folder.folder} on the server instead, then choose it above.`));
+      fail(new Error(`${file.name} is ${size(file.size)}, more than this server accepts as an upload (${size(folder.maxUploadBytes)}). Copy it into the server's drivers folder instead (the hint under Jar in the drivers folder says where it is), then choose it above.`));
       return;
     }
     setBusy("upload");
@@ -318,8 +319,8 @@ function RegisterDriver({
               ))}
             </select>
             <p id="reg-file-hint" className="hint">
-              Jars not yet registered in <span className="mono">{folder?.folder ?? "the drivers folder"}</span>. Copy one
-              there, or upload it below.
+              Jars in the server's drivers folder that are not yet registered. Upload one below, or copy it there.{" "}
+              <DriversFolderWhere folder={folder?.folder} />
             </p>
           </div>
           <div className="field">

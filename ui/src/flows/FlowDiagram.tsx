@@ -9,6 +9,8 @@ import {
   MarkerType,
   Position,
   ReactFlow,
+  useNodesInitialized,
+  useReactFlow,
   type Edge,
   type EdgeChange,
   type EdgeProps,
@@ -173,6 +175,44 @@ function Bowed({ data, markerEnd, sourceX, sourceY, targetX, targetY, interactio
 
 /** A fit point: nothing to see. */
 const FitPoint = () => null;
+
+/**
+ * The space kept between the frame's left edge and the first node, when the flow starts there:
+ * room for the zoom buttons in the frame's bottom-left corner, so they do not cover that node.
+ */
+const START_PAD = 56;
+
+/**
+ * Where the view starts for a flow too wide to show whole: `x` moved so the flow's left edge (where it
+ * begins) is in view, when fitting has left it off the frame's left. The fit centres the flow, and it
+ * goes no smaller than its least zoom: a wide flow would otherwise open with its first node cut off
+ * and its last node's far side shown instead. A flow that fits is left as fitted. Pure, so it is tested.
+ */
+export function startInView(view: { x: number; y: number; zoom: number }, left: number, pad = START_PAD) {
+  return left * view.zoom + view.x < 0 ? { ...view, x: pad - left * view.zoom } : view;
+}
+
+/** Once the nodes are drawn and fitted: a flow too wide for its frame shows its start. Draws nothing. */
+function ShowTheStart() {
+  const flow = useReactFlow();
+  const drawn = useNodesInitialized();
+  const done = useRef(false);
+  useEffect(() => {
+    if (!drawn || done.current) return;
+    // After the first fit, which the nodes' sizes set off. Done only once the move is made: a
+    // frame cancelled by a re-run of this effect is asked for again.
+    const frame = window.requestAnimationFrame(() => {
+      done.current = true;
+      const nodes = flow.getNodes();
+      if (nodes.length === 0) return;
+      const view = flow.getViewport();
+      const next = startInView(view, flow.getNodesBounds(nodes).x);
+      if (next !== view) void flow.setViewport(next);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [drawn, flow]);
+  return null;
+}
 
 const nodeTypes = { flowNode: FlowNodeBox, fitAnchor: FitPoint };
 const edgeTypes = { routed: Routed, bowed: Bowed };
@@ -412,6 +452,7 @@ export default function FlowDiagram({
           }}
         >
           <Background gap={20} size={1} />
+          <ShowTheStart />
           <CanvasNotes
             notes={graph.notes}
             anchors={noteAnchors}

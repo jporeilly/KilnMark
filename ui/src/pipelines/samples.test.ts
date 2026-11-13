@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { SampleInfo, SamplePlaceholder, Source } from "../api";
-import { addable, chosenSources, defaultSchema, fileTargets, sourceGroups, sourceLabel, tableTargets } from "./AddSamples";
+import { addable, addedHref, chosenSources, comesWith, defaultSchema, fileTargets, sourceGroups, sourceLabel, tableTargets, using } from "./AddSamples";
 
 const source = (name: string, category: string, over: Partial<Source> = {}): Source =>
   ({ name, displayName: name, category, kind: "x", settings: {}, assets: 0, formats: {}, ...over }) as Source;
@@ -36,6 +36,31 @@ describe("Add samples", () => {
     const all = [sample("a", ["crm-db", "files"]), sample("b", ["shop-db", "files"]), sample("f", [], "flow")];
     expect(addable(all, { "crm-db": "pg" })).toEqual([]);
     expect(addable(all, { "crm-db": "pg", files: "bucket" }).map((s) => s.name)).toEqual(["a"]);
+  });
+
+  test("says what comes with Kilnmark from the samples listed, flows included, never from fixed numbers", () => {
+    const sample = (name: string, type: SampleInfo["type"], sources: string[] = []): SampleInfo => ({
+      file: `${name}.yaml`, name, type, description: null, sources, exists: false, explanation: null,
+    });
+    const many = [
+      ...Array.from({ length: 34 }, (_, i) => sample(`sample-p${i}`, "pipeline", ["files"])),
+      ...Array.from({ length: 9 }, (_, i) => sample(`sample-f${i}`, "flow", i === 0 ? ["crm-db"] : [])),
+    ];
+    expect(comesWith(many)).toBe("34 small sample pipelines and 9 sample flows that run them");
+    // Whatever the list holds: one more pipeline and one fewer flow change the words with it.
+    expect(comesWith([...many.slice(0, 42), sample("sample-extra", "pipeline")])).toBe(
+      "35 small sample pipelines and 8 sample flows that run them",
+    );
+    expect(comesWith([sample("a", "pipeline"), sample("f", "flow")])).toBe("1 small sample pipeline and 1 sample flow that runs them");
+    expect(comesWith([sample("a", "pipeline")])).toBe("1 small sample pipeline");
+    expect(comesWith([sample("f", "flow")])).toBe("1 sample flow");
+    expect(comesWith([])).toBeNull();
+    expect(comesWith(null)).toBeNull();
+    // A placeholder's samples count the flows that name it too, and a flow just added links to its own page.
+    expect(using(many, "crm-db").map((s) => s.name)).toEqual(["sample-f0"]);
+    expect(using(many, "files")).toHaveLength(34);
+    expect(addedHref(many, { name: "sample-f0", file: "sample-f0.yaml" })).toBe("#/flows/sample-f0");
+    expect(addedHref(many, { name: "sample-p0", file: "sample-p0.yaml" })).toBe("#/pipelines/sample-p0");
   });
 
   test("the sample tables go in a database that allows writing, in its first schema or its kind's usual one", () => {
