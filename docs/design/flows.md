@@ -381,6 +381,13 @@ open until that name's next success, or until it is purged. No node runs another
   (deleted, or from before they were recorded) has an unsplit bar, and the totals say of how many
   pipeline runs they speak. The flow page's panel keeps its open or collapsed state under its own
   key (`kilnmark.flow.panel`), and reads the latest run only while its Run or Nodes tab is shown.
+  Run now shows the Run tab (`dock.show("run")`), whichever tab was showing, as the pipeline page
+  does. Saving a version empties the diagram's undo steps and the line that says the last change.
+- **Where the diagram starts.** The diagram is fitted on opening, never below half size
+  (`fitViewOptions.minZoom`). A flow wider than its frame at half size would be centred, its first
+  node off the left edge: `ShowTheStart` (`FlowDiagram.tsx`) then moves the view so the flow's left
+  edge is 56 pixels in, clear of the zoom buttons (`startInView`, pure and tested). A flow that
+  fits is left as fitted.
 - **The panel's Nodes and Settings tabs, built.** The flow page's panel has the pipeline page's
   tabs in the same order: Nodes, Settings (only while a designer has a node or connection chosen),
   Run, History, Versions; a new flow has Nodes and Settings. Nodes is a table of every node, what it

@@ -27,7 +27,7 @@ function lands(href: string) {
 describe("About this sample", () => {
   test("the four parts, as the server sends them, with a link to the samples in the guide", () => {
     const out = renderToStaticMarkup(<SampleAbout about={ABOUT} kind="pipeline" id="a" />);
-    expect(out).toContain("<h2 id=\"a\" class=\"lib-sample-about-h\">About this sample</h2>");
+    expect(out).toMatch(/<h2 id="a" class="lib-sample-about-h"><button type="button" class="lib-sample-about-toggle" aria-expanded="true" aria-controls="a-body">.*About this sample<\/button><\/h2>/);
     for (const part of ["What it shows", "Why it matters", "Look for when it runs", "Needs"]) expect(out).toContain(`<dt>${part}</dt>`);
     expect(out).toContain("<dd>The note under the read node.</dd>");
     expect(out).toContain('href="#/docs/library/samples"');
@@ -39,6 +39,14 @@ describe("About this sample", () => {
     expect(out).toContain("<h3");
     expect(out).toContain("Based on a sample; changed since");
     expect(out).toContain("This flow started as the sample below");
+  });
+
+  test("uses the width of what holds it: no rule holds the panel or its text to a column", async () => {
+    const fs = await import(/* @vite-ignore */ ["node", "fs"].join(":"));
+    // Relative to ui/, where the tests run.
+    const css: string = fs.readFileSync("src/library/explanation.css", "utf8");
+    expect(css).toContain(".lib-sample-about {");
+    expect(css).not.toMatch(/max-width|max-inline-size/);
   });
 
   test("nothing for a pipeline not added from the samples", () => {

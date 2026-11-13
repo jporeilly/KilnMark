@@ -30,7 +30,8 @@ page's tabs:
 
 - **Nodes**: every node, what it runs after, and how it went in the latest run;
 - **Settings**: the node or connection chosen on the diagram, while one is chosen (designers only);
-- **Run**: the latest run's summary, as its run page gives it, kept current while it goes;
+- **Run**: the latest run's summary, as its run page gives it, kept current while it goes. **Run
+  now** shows this tab, whichever was showing;
 - **History**: each run with its status, version, when it was asked for and by whom, how long it
   took, and the rows its pipeline runs wrote;
 - **Schedules**: the times it runs on its own, with the next and the last
@@ -343,7 +344,8 @@ run:
   more. When a run then succeeds, **Flow run recovered** is told. See [Owners](#owners).
 - `timeout` is for each try: past it the try is stopped, as a cancel would stop it, and fails; it
   may be tried again. `warn_after` tells the owners once, a run, and stops nothing.
-- The run's page lists every try under **Tries**: how it ended, when, and what came next.
+- The run's page lists every try under **Tries**: how it ended, when, and what came next. The last
+  try of a run that failed says why it was not tried again, once, at the end of its message.
 
 ## Run again from the failure
 
@@ -559,6 +561,9 @@ The panel under the diagram has the same tabs as a pipeline's:
 - **Run**, **History** and **Versions** show the latest run, every run and every saved version.
 - **Schedules** shows its schedules; designers and admins add and change them there.
 
+A flow too wide to show whole opens at its start, its first nodes at the left of the diagram, not at
+its middle; drag the diagram, or use the buttons in its corner, to see the rest.
+
 ![The page of the sample flow sample-quality-decides: the diagram, with the node check, which runs a pipeline, joined from its out connector to a notice and to a second pipeline by two amber connections labelled with their conditions, and to a stop node by a red dashed connection on failure that runs round the nodes between; the notice joins the stop node on success. Under it the Nodes tab, a table giving each node, what it does, what it runs after, and its status, start, time and result in the latest run](images/flow-diagram-edit.png)
 
 - **Add a node.** In the **Nodes** tab, choose its type (and, for one that runs a pipeline, the
@@ -586,7 +591,9 @@ The panel under the diagram has the same tabs as a pipeline's:
   are drawn over the nodes. **Lay out again** removes the block, and the diagram lays the flow out
   itself.
 - **Undo** puts back what the last change on the diagram changed, while the YAML is as that change
-  left it. To go back to the saved version, choose **Undo my changes** under the flow.
+  left it. Once you save a new version, what you changed is saved: the line saying what the last
+  change was, and **Undo**, go. To go back to the saved version before you save, choose **Undo my
+  changes** under the flow.
 
 The `layout:` block only says where the diagram draws each node: a flow runs the same however it
 is drawn.

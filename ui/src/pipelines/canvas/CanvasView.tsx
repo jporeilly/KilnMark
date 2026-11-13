@@ -133,6 +133,8 @@ const loadCatalogue = () => (catalogueLoad ??= pipelinesApi.nodes().catch((e) =>
 }));
 
 const nodeTypes = { node: NodeCard };
+/** The overview map's size, in pixels: about two fifths of the library's own 200 by 150. */
+export const MINIMAP_SIZE = { width: 128, height: 88 };
 const SuggestionsPanel = lazy(() => import("./SuggestionsPanel"));
 /** How long after the last change the predicted scores are worked out again. */
 const PREDICT_AFTER_MS = 700;
@@ -1447,6 +1449,8 @@ function Canvas(props: CanvasProps) {
               zoomable
               position="bottom-right"
               ariaLabel="Overview of the pipeline: drag to move the view"
+              // Small, in the corner: it is a map to steer by, and must not cover the nodes it maps.
+              style={MINIMAP_SIZE}
               nodeBorderRadius={6}
               nodeStrokeWidth={2}
               nodeClassName={(n) => `cv-mini-${(n.data as { kind?: string | null }).kind ?? "unknown"}`}

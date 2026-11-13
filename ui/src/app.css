@@ -1964,6 +1964,35 @@ a.km-stat--link:hover {
   color: var(--km-ink-strong);
 }
 
+/*
+ * A name as a tile's value (a node's id: up to 64 characters). It keeps inside the tile: set smaller
+ * the longer it is, wrapping after _ and - (StatName puts the breaks in), and anywhere if one word
+ * is still wider than the tile.
+ */
+.km-stat-value:has(> .km-stat-name) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.km-stat-name {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  letter-spacing: 0;
+}
+
+.km-stat-name--long {
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.km-stat-name--longer {
+  font-size: 15px;
+  line-height: 1.3;
+  font-weight: 700;
+}
+
 .km-stat-note {
   font-size: var(--km-text-sm);
   font-weight: 500;

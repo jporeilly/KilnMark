@@ -1,6 +1,6 @@
 import { IconClockHour4, IconHourglass, IconStack2, IconTargetArrow } from "@tabler/icons-react";
 import { type PipelineRunDetail, plural } from "../api";
-import { StatTile, StatusChip } from "../components/ui";
+import { StatName, StatTile, StatusChip } from "../components/ui";
 import { qualityMark } from "./RunTimeline";
 import { shares, timeSpent, type SpentRow } from "./timeSpent";
 import { offsetWords, peakConcurrent, shareOfRun, shareWords, slowestNode, timeline, type Clock } from "./timeline";
@@ -85,7 +85,7 @@ export function RunTimeSpent({ detail, clock }: { detail: PipelineRunDetail; clo
         />
         <StatTile
           label={t.live ? "Slowest node now" : "Longest node"}
-          value={longest ? <span className="mono">{longest.node}</span> : "–"}
+          value={longest ? <StatName name={longest.node} /> : "–"}
           icon={<IconHourglass size={18} aria-hidden="true" />}
           tint="orange"
           note={
@@ -100,7 +100,7 @@ export function RunTimeSpent({ detail, clock }: { detail: PipelineRunDetail; clo
         />
         <StatTile
           label="What limited this run"
-          value={spent.limit ? <span className="mono">{spent.limit.node}</span> : "–"}
+          value={spent.limit ? <StatName name={spent.limit.node} /> : "–"}
           icon={<IconTargetArrow size={18} aria-hidden="true" />}
           tint="teal"
           note={

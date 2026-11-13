@@ -38,7 +38,8 @@ The explanation is the comment at the top of the sample's file, so it reads the 
 the YAML and in the release's `samples` folder.
 
 Once added, a sample's own page shows the same explanation under its name, as **About this
-sample**, and a pipeline's canvas shows it in **Settings** when no node is selected. It comes from
+sample**, and a pipeline's canvas shows it in **Settings** when no node is selected. There it uses
+the full width of the page or the panel, and its heading closes and opens it. It comes from
 the sample's file as this release ships it, not from the saved pipeline or flow. A sample changed
 since it was added (more than moving its nodes on the canvas) still shows it, labelled **Based on a
 sample; changed since**. The business scenarios' samples link to
@@ -90,13 +91,16 @@ on.
 Without the Starter Pack, the quickest way to try the samples, with nothing of your own to prepare
 but a database and a file source that allow writing:
 
-1. In the **Library**, on the **Samples** tab, choose **Add samples** (designers and admins).
+1. In the **Library**, on the **Samples** tab, choose **Add samples** (designers and admins). The
+   dialog says how many sample pipelines and sample flows this release has, counted from the
+   samples themselves.
 2. Under **Starter pack**, choose the **Database for the tables**, a **Schema** in it (it must
    exist; tables of the same names there are replaced), and where the samples' **Files go to**.
 3. Choose **Add the starter pack**.
 
 Kilnmark creates the sample tables in that schema (`crm_customers`, `shop_orders` and so on) with a
-pipeline called `sample-tables`, which you can open and run again to put them back as they were.
+pipeline called `sample-tables` (one more than the sample pipelines the dialog counts, made for
+this), which you can open and run again to put them back as they were.
 Adding the starter pack again recreates the tables too, but not while they are being created, and
 not over a `sample-tables` pipeline that has been changed (rename or delete it first). It
 adds every sample, reading those tables, and sets the server variable `sample_region` to `EMEA` if it
@@ -118,7 +122,9 @@ The samples name their sources by placeholders rather than real sources:
 2. Under **Or choose your own sources**, choose one of your saved sources for each placeholder, or
    leave it as **Don't add the samples that use it**. The dialog says how many samples use each.
    Once the sample tables have been created, it offers to read them instead.
-3. Choose **Add samples**. The dialog lists what happened to each: added, already here (a sample
+3. Choose **Add samples** (the button says how many sample pipelines will be added). The sample
+   flows are added too, each once the pipelines it runs are here; a flow that runs SQL also needs
+   a source for its placeholder. The dialog lists what happened to each: added, already here (a sample
    whose name is taken is left as it is, so your changes are kept), or not added and why.
 
 Each sample is checked against what Kilnmark has scanned of your sources, so scan them first: a
