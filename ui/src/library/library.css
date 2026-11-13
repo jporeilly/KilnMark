@@ -12,7 +12,11 @@
 .lib-bar p,
 .lib-bar-text {
   margin: 12px 0;
-  max-width: 72ch;
+}
+
+/* Beside its button, the line of counts takes the width the button leaves. */
+.lib-bar p {
+  flex: 1 1 320px;
 }
 
 .lib-group h2 {
@@ -123,7 +127,6 @@
 /* What a sample or template explains about itself: what it shows, what to look for, what it needs. */
 .lib-about {
   margin-top: 6px;
-  max-width: 80ch;
 }
 
 .lib-about summary {

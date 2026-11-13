@@ -2,7 +2,7 @@ import { useState } from "react";
 import { IconClockHour4, IconHourglass, IconRoute, IconStack2 } from "@tabler/icons-react";
 import { formatClock, formatNumber, type PipelineRunDetail, type PipelineNodeQuality, plural } from "../api";
 import { formatBytes, formatDuration } from "./RunStatus";
-import { StatTile, StatusChip, type Tone } from "../components/ui";
+import { StatName, StatTile, StatusChip, type Tone } from "../components/ui";
 import { scoreTone, scoreWords } from "./quality";
 import {
   criticalPath,
@@ -151,7 +151,7 @@ export function RunTimeline({
           />
           <StatTile
             label={t.live ? "Slowest node now" : "Longest node"}
-            value={longest ? <span className="mono">{longest.node}</span> : "–"}
+            value={longest ? <StatName name={longest.node} /> : "–"}
             icon={<IconHourglass size={18} aria-hidden="true" />}
             tint="orange"
             note={

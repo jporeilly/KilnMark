@@ -710,8 +710,38 @@ main:has(.pl-wide) {
   font-weight: 600;
 }
 
+/*
+ * The Nodes table under the canvas is a list to scan: its rows are close together (5px above and
+ * below, whatever the density), so more of the pipeline shows in the panel without scrolling.
+ */
+.pl-nodes-table th,
+.pl-nodes-table td {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.pl-nodes-table thead th {
+  padding-top: 4px;
+  padding-bottom: 6px;
+}
+
+/* A node's columns, once opened, use the width the table gives them. */
 .pl-nodes-cols {
-  max-width: 420px;
+  min-width: 14ch;
+}
+
+/*
+ * "12 columns" sits on the row's line, so the row is as high as its words. Rows are 29px apart, so
+ * each row's name and summary keep 24px to themselves (WCAG 2.2, 2.5.8, by spacing).
+ */
+.pl-nodes-table .pl-nodes-cols summary {
+  min-height: 0;
+  padding: 0;
+}
+
+.pl-nodes-table tbody th,
+.pl-nodes-table td {
+  line-height: 1.35;
 }
 
 .pl-nodes-cols summary {
@@ -988,6 +1018,14 @@ main:has(.pl-wide) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* The node filter lists node ids, which can be 64 characters: it stays inside the panel. */
+.pl-log-filter select {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .pl-log-downloads {
@@ -1090,8 +1128,10 @@ main:has(.pl-wide) {
 
 /* ---- Where each node spent its time (RunTimeSpent): a 100% bar per node, each part its own pattern ---- */
 
+/* It names a node, whose id can be 64 characters with no space: it wraps inside the card. */
 .pl-ts-limit {
   margin: 4px 0 12px;
+  overflow-wrap: anywhere;
 }
 
 .pl-ts-rows {
@@ -1367,6 +1407,19 @@ main:has(.pl-wide) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/*
+ * A name too long for its column (a node's id can be 64 characters) is cut at its end, with an
+ * ellipsis, beside its mark: a button is a flex box, which would centre the name and cut both ends,
+ * and the name would drop to a line of its own under the mark.
+ */
+button.run-name {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: calc(100% - 20px);
+  text-align: left;
 }
 
 [aria-current="true"].run-name {

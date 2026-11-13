@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { IconChevronDown, IconChevronRight } from "@tabler/icons-react";
 import type { SampleAbout as About, SampleExplanation } from "../api";
 import { docHref } from "../docs/links";
 import "./explanation.css";
@@ -49,11 +51,24 @@ export const isScenario = (file: string) => file.startsWith("10-scenarios/");
 /** Where the guide says more about a sample: the business scenarios, or the Library's samples. */
 export const sampleGuideHref = (file: string) => (isScenario(file) ? docHref("scenarios") : docHref("library", "samples"));
 
+/** Where a viewer's choice to keep About this sample closed is remembered. */
+export const ABOUT_OPEN_KEY = "kilnmark.sample.about";
+
+function savedAboutOpen(): boolean {
+  try {
+    return window.localStorage.getItem(ABOUT_OPEN_KEY) !== "collapsed";
+  } catch {
+    return true;
+  }
+}
+
 /**
  * About this sample, on the page of a pipeline or flow added from the samples (and in the canvas's
  * pipeline settings): the sample's own explanation, sent by the server from the bundled file so it
  * reads as the Library and the YAML do, with a link to the guide. Once the pipeline or flow has been
  * changed since it was added, it says so: the explanation is of the sample, not of the changes.
+ * Its heading opens and closes it. It starts open; a viewer who closes it finds it closed on every
+ * sample until they open it again.
  */
 export function SampleAbout({
   about,
@@ -67,25 +82,46 @@ export function SampleAbout({
   id: string;
   level?: 2 | 3;
 }) {
+  const [open, setOpenState] = useState(savedAboutOpen);
   if (!about || !explains(about.explanation)) return null;
+  const setOpen = (o: boolean) => {
+    setOpenState(o);
+    try {
+      window.localStorage.setItem(ABOUT_OPEN_KEY, o ? "open" : "collapsed");
+    } catch {
+      // A remembered panel is a convenience only.
+    }
+  };
   const Heading = level === 2 ? "h2" : "h3";
+  const Chevron = open ? IconChevronDown : IconChevronRight;
   return (
-    <section className="lib-sample-about" aria-labelledby={id}>
+    <section className={`lib-sample-about${open ? "" : " is-closed"}`} aria-labelledby={id}>
       <Heading id={id} className="lib-sample-about-h">
-        About this sample
+        <button
+          type="button"
+          className="lib-sample-about-toggle"
+          aria-expanded={open}
+          aria-controls={`${id}-body`}
+          onClick={() => setOpen(!open)}
+        >
+          <Chevron size={18} stroke={1.8} aria-hidden="true" />
+          About this sample
+        </button>
         {about.changed && <span className="lib-changed">Based on a sample; changed since</span>}
       </Heading>
-      {about.changed && (
-        <p className="small muted">
-          This {kind} started as the sample below and has been changed since it was added, so it may no longer do all of
-          what the sample describes.
+      <div id={`${id}-body`} className="lib-sample-about-body" hidden={!open}>
+        {about.changed && (
+          <p className="small muted">
+            This {kind} started as the sample below and has been changed since it was added, so it may no longer do all of
+            what the sample describes.
+          </p>
+        )}
+        <Explanation explanation={about.explanation} />
+        <p className="small">
+          <a href={sampleGuideHref(about.file)}>{isScenario(about.file) ? "The business scenarios, in the guide" : "The samples, in the guide"}</a>
+          <span className="muted"> · samples/{about.file}</span>
         </p>
-      )}
-      <Explanation explanation={about.explanation} />
-      <p className="small">
-        <a href={sampleGuideHref(about.file)}>{isScenario(about.file) ? "The business scenarios, in the guide" : "The samples, in the guide"}</a>
-        <span className="muted"> · samples/{about.file}</span>
-      </p>
+      </div>
     </section>
   );
 }

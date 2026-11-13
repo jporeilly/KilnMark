@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import type { Tone } from "./StatusChip";
 
 export type Tint = "sky" | "violet" | "green" | "orange" | "red" | "amber" | "teal" | "pink" | "slate" | "blue";
@@ -8,6 +8,30 @@ export function IconTile({ tint, size = "md", children }: { tint: Tint; size?: "
   return (
     <span className={`km-icon-tile km-icon-tile--${size} km-tint-${tint}`} aria-hidden="true">
       {children}
+    </span>
+  );
+}
+
+/** How long a name may be before a tile sets it smaller, and smaller again. */
+export const STAT_NAME_LONG = 12;
+export const STAT_NAME_LONGER = 24;
+
+/**
+ * A name (a node's id, say) as a tile's value. A tile's figures are large, and a name can be 64
+ * characters: it is set smaller the longer it is, wraps after _ and - (and anywhere, if one word is
+ * still wider than the tile), and never runs past the tile's edge. The full name is its tooltip.
+ */
+export function StatName({ name }: { name: string }) {
+  const size = name.length > STAT_NAME_LONGER ? " km-stat-name--longer" : name.length > STAT_NAME_LONG ? " km-stat-name--long" : "";
+  const pieces = name.split(/(?<=[_-])(?=[^_-])/);
+  return (
+    <span className={`km-stat-name mono${size}`} title={name}>
+      {pieces.map((p, i) => (
+        <Fragment key={i}>
+          {i > 0 && <wbr />}
+          {p}
+        </Fragment>
+      ))}
     </span>
   );
 }

@@ -59,7 +59,9 @@ If your server cannot reach Maven Central, your administrator may have turned do
 
 - the file to get, with its address, for example `ojdbc11-23.26.3.0.0.jar`;
 - its checksum (SHA-256); and
-- the drivers folder on the server.
+- the drivers folder, by the path the server knows it by. On an install that runs in containers
+  that is a folder inside Kilnmark's container, not one on the machine itself; the page says so and
+  links here.
 
 Download the file on a machine that can, after accepting its licence, and copy it, unchanged, into
 the drivers folder. With the release's `compose.yaml`, the folder is `/var/lib/kilnmark/drivers`
@@ -104,7 +106,9 @@ and write files on the machine they run on for ordinary SQL (`PUT` and `GET`, `C
 
 Open **Settings**, **JDBC drivers**.
 
-1. Put the driver's jar in the drivers folder (above), or use **Upload to the drivers folder**,
+1. Put the driver's jar in the drivers folder ([above](#a-server-without-internet-access): the hint
+   under **Jar in the drivers folder** gives its path as the server knows it, which with containers
+   is inside Kilnmark's container), or use **Upload to the drivers folder**,
    up to the size the page shows (the server's upload limit, 10 MB unless your administrator raised
    it). Larger jars, such as Snowflake's, are copied into the drivers folder by hand. A file of the
    same name is never replaced.

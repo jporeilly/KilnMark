@@ -395,6 +395,9 @@ export function FlowPage({
       setSavedYaml(yaml);
       setMine(null);
       setMessage("");
+      // What was changed on the diagram is saved: its last change is no longer said, nor offered to undo.
+      undos.current = [];
+      setCanvasNote(null);
       setNotice(
         `Saved as version ${d.latestVersion}${d.latest && !d.latest.valid ? ", as a draft: fix its problems before running it" : ""}.`,
       );
@@ -440,6 +443,8 @@ export function FlowPage({
   const queued = (run: FlowRun) => {
     setError(null);
     setNotice({ run: run.id, of: `version ${run.version}` });
+    // Its progress is in the Run tab: shown whichever tab was showing (Schedules, say), as a pipeline's is.
+    dock.show("run");
     loadLists();
   };
 

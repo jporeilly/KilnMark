@@ -10,7 +10,7 @@
  */
 export { Card } from "./Card";
 export { PageHeader, type Crumb } from "./PageHeader";
-export { StatTile, IconTile, type Tint } from "./StatTile";
+export { StatTile, StatName, IconTile, type Tint } from "./StatTile";
 export { StatusChip, SeverityChip, type Tone } from "./StatusChip";
 export { DataTable } from "./DataTable";
 export { Switch } from "./Switch";
