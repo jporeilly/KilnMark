@@ -82,7 +82,7 @@ class StarterPeopleSetupTest {
      * people: the password on its standard input, one line ending CR LF as Windows PowerShell sends it.
      */
     private static ExecResult setup(String starter, String mode, String action, String password) throws Exception {
-        return KC.execInContainer("bash", "-c", env(starter, mode, action) + "; printf '%s\\r\\n' '" + password
+        return ContainerExec.exec(KC, "bash", "-c", env(starter, mode, action) + "; printf '%s\\r\\n' '" + password
             + "' | bash /opt/kilnmark/setup.sh");
     }
 
@@ -206,7 +206,7 @@ class StarterPeopleSetupTest {
             assertTrue(r.getStderr().contains("Starter Pack install"), r.getStderr());
         }
         // the password comes on standard input only, never from the environment
-        r = KC.execInContainer("bash", "-c", env("allowed", STARTER, "add") + " KILNMARK_STARTER_PEOPLE_PASSWORD='" + FIRST
+        r = ContainerExec.exec(KC, "bash", "-c", env("allowed", STARTER, "add") + " KILNMARK_STARTER_PEOPLE_PASSWORD='" + FIRST
             + "'; bash /opt/kilnmark/setup.sh < /dev/null");
         assertNotEquals(0, r.getExitCode(), "no password on its input: refused");
         assertTrue(r.getStderr().contains("on standard input"), r.getStderr());
@@ -372,7 +372,7 @@ class StarterPeopleSetupTest {
     /** people add as keycloak-setup does it alone: the person made, and left disabled. */
     private static ExecResult addPersonOnly(String mode, String email, String first, String last, String groups,
         String password) throws Exception {
-        return KC.execInContainer("bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "") + " KILNMARK_PEOPLE_ACTION=add KILNMARK_PERSON_EMAIL='"
+        return ContainerExec.exec(KC, "bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "") + " KILNMARK_PEOPLE_ACTION=add KILNMARK_PERSON_EMAIL='"
             + email + "' KILNMARK_PERSON_FIRST_NAME='" + first + "' KILNMARK_PERSON_LAST_NAME='" + last
             + "' KILNMARK_PERSON_GROUPS='" + groups + "'; printf '%s\\r\\n' '" + password + "' | bash /opt/kilnmark/setup.sh");
     }
@@ -389,13 +389,13 @@ class StarterPeopleSetupTest {
     private static ExecResult importPeople(String mode, String password, String csv, String extra) throws Exception {
         KC.copyFileToContainer(org.testcontainers.images.builder.Transferable.of(
             (password == null ? "" : password + "\r\n") + csv), "/tmp/people-in");
-        return enabled(mode, KC.execInContainer("bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "") + " " + extra
+        return enabled(mode, ContainerExec.exec(KC, "bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "") + " " + extra
             + " KILNMARK_PEOPLE_ACTION=import; bash /opt/kilnmark/setup.sh < /tmp/people-in; rc=$?; rm -f /tmp/people-in; exit $rc"));
     }
 
     /** people activate: the email in setup's environment, the password on its input. */
     private static ExecResult activate(String mode, String email, String password) throws Exception {
-        return enabled(mode, KC.execInContainer("bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "")
+        return enabled(mode, ContainerExec.exec(KC, "bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "")
             + " KILNMARK_PEOPLE_ACTION=activate KILNMARK_PERSON_EMAIL='" + email + "'; printf '%s\\n' '" + password
             + "' | bash /opt/kilnmark/setup.sh"));
     }
@@ -403,13 +403,13 @@ class StarterPeopleSetupTest {
     /** An ordinary run, as if at {@code hoursLater} hours from now (KILNMARK_SETUP_NOW_MS, for tests only). */
     private static ExecResult later(String mode, int hoursLater, String activationHours) throws Exception {
         long at = System.currentTimeMillis() + hoursLater * 3_600_000L;
-        return KC.execInContainer("bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "")
+        return ContainerExec.exec(KC, "bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "")
             + " KILNMARK_SETUP_NOW_MS=" + at + (activationHours == null ? "" : " KILNMARK_PEOPLE_ACTIVATION_HOURS=" + activationHours)
             + "; bash /opt/kilnmark/setup.sh < /dev/null");
     }
 
     private static ExecResult listPeople(String mode) throws Exception {
-        return KC.execInContainer("bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "") + " KILNMARK_PEOPLE_ACTION=list; bash /opt/kilnmark/setup.sh"
+        return ContainerExec.exec(KC, "bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "") + " KILNMARK_PEOPLE_ACTION=list; bash /opt/kilnmark/setup.sh"
             + " < /dev/null");
     }
 
@@ -521,7 +521,7 @@ class StarterPeopleSetupTest {
         assertTrue(r.getStderr().contains("control character"), r.getStderr());
         assertNull(user("kim@bank.example"));
         // never in the same run as the example people
-        r = KC.execInContainer("bash", "-c", env("allowed", STARTER, "add") + " KILNMARK_PEOPLE_ACTION=add"
+        r = ContainerExec.exec(KC, "bash", "-c", env("allowed", STARTER, "add") + " KILNMARK_PEOPLE_ACTION=add"
             + " KILNMARK_PERSON_EMAIL=kim@bank.example KILNMARK_PERSON_FIRST_NAME=Kim KILNMARK_PERSON_LAST_NAME=Lee"
             + " KILNMARK_PERSON_GROUPS=kilnmark-viewers; printf '%s\\n' '" + RITAS_FIRST + "' | bash /opt/kilnmark/setup.sh");
         assertNotEquals(0, r.getExitCode());
@@ -742,7 +742,7 @@ class StarterPeopleSetupTest {
 
     /** One run of setup with these settings beside the usual ones, and one line on its input. */
     private static ExecResult run(String mode, String extra, String input) throws Exception {
-        return KC.execInContainer("bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "") + " " + extra
+        return ContainerExec.exec(KC, "bash", "-c", env(STARTER.equals(mode) ? "allowed" : "", mode, "") + " " + extra
             + "; printf '%s\\n' '" + input + "' | bash /opt/kilnmark/setup.sh");
     }
 
@@ -861,7 +861,7 @@ class StarterPeopleSetupTest {
         // nor in a group of the site's own that config/.env maps to a role
         String team = makeGroup(null, "team-admins");
         assertEquals(204, call(admin(), "PUT", "/admin/realms/kilnmark/default-groups/" + team, null).statusCode());
-        r = KC.execInContainer("bash", "-c", env("allowed", STARTER, "") + " KILNMARK_OIDC_ADMIN_GROUPS='kilnmark-admins, team-admins'"
+        r = ContainerExec.exec(KC, "bash", "-c", env("allowed", STARTER, "") + " KILNMARK_OIDC_ADMIN_GROUPS='kilnmark-admins, team-admins'"
             + " KILNMARK_PEOPLE_ACTION=add KILNMARK_PERSON_EMAIL=hal@bank.example KILNMARK_PERSON_FIRST_NAME=Hal"
             + " KILNMARK_PERSON_LAST_NAME=Ross KILNMARK_PERSON_GROUPS=kilnmark-viewers; printf '%s\\n' '" + RITAS_FIRST
             + "' | bash /opt/kilnmark/setup.sh");
@@ -922,7 +922,7 @@ class StarterPeopleSetupTest {
         ok(r);
         assertTrue(r.getStdout().contains("disabled zz-late@bank.example"), "expiry reaches the last page too: " + r.getStdout());
         // kcadm's token for the master realm is never left behind
-        ExecResult left = KC.execInContainer("bash", "-c", "ls -a \"$HOME/.keycloak\" 2> /dev/null; ls /tmp");
+        ExecResult left = ContainerExec.exec(KC, "bash", "-c", "ls -a \"$HOME/.keycloak\" 2> /dev/null; ls /tmp");
         assertFalse(left.getStdout().contains("kcadm.config"), left.getStdout());
         assertFalse(left.getStdout().contains("tmp."), "its private folder goes too: " + left.getStdout());
     }
@@ -935,7 +935,7 @@ class StarterPeopleSetupTest {
             + ADMIN_PASSWORD + "\" # quoted" + NL + "KILNMARK_OIDC_CLIENT_SECRET='oidc-0123456789' # single quotes" + NL, Integer.parseInt("644", 8)),
             "/run/kilnmark/env");
         String id = "6f1e2d3c-4b5a-4968-8776-655443322110";
-        ExecResult r = KC.execInContainer("bash", "-c", "export KEYCLOAK_URL=http:" + "/" + "/localhost:8080 KC_ADMIN_USER=admin"
+        ExecResult r = ContainerExec.exec(KC, "bash", "-c", "export KEYCLOAK_URL=http:" + "/" + "/localhost:8080 KC_ADMIN_USER=admin"
             + " KILNMARK_URL=http:" + "/" + "/localhost:8780 KILNMARK_MODE=production KILNMARK_INSTALL_ID=" + id
             + "; bash /opt/kilnmark/setup.sh < /dev/null");
         ok(r);

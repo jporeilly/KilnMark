@@ -11,6 +11,10 @@ released.
 
 ## Unreleased
 
+### Details
+
+- Two server tests that run commands in a test container (the people set-up and the samples database checks) now fail after three minutes when the container engine loses a command's answer. Before, such a test waited with no limit and held a CI runner until the build timed out hours later.
+
 ## 0.1.2 (11 November 2026)
 
 ### What's new
