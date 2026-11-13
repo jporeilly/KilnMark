@@ -218,11 +218,18 @@ before a load, say, or refresh a summary after one. It changes data and returns 
 put into SQL could change what it does. Each must start with `TRUNCATE`, `INSERT`, `UPDATE`,
 `DELETE`, `MERGE`, `CREATE`, `DROP`, `ALTER`, `CALL`, `ANALYZE`, `REFRESH`, `COMMENT`, `REINDEX`,
 `CLUSTER` or `LOCK`; never a query, transaction control, `SET`, `COPY`, `DO`, `GRANT` or `REVOKE`.
+A statement may total rows with `GROUP BY` (`INSERT INTO totals SELECT status, count(*) FROM orders
+GROUP BY status`). Words that create or change accounts, rights or code that runs later are refused
+where they stand unquoted, such as `ROLE`, `USER`, `FUNCTION`, `VIEW`, `FOREIGN` and `GROUP`
+anywhere but in `GROUP BY`; quote a column or table that has such a name (`"role"`). Braces, `{`
+and `}`, are refused outside quotes and comments: the database driver would read `{fn ...}` and
+the like as instructions to rewrite the statement. Write an array as `'{1,2}'`, in quotes.
 If one fails, all roll back, and the node's message names which one and its SQLSTATE, never the
 database's words.
 
 **Governance.** Saved only by a designer whose token sees unmasked values. At run time the login is
-checked again: never a superuser, nor one that may read files or run programs. Each sql node that
+checked again: never a superuser, nor one that may create roles, read files or run programs, nor a
+member of a role that is a superuser or may create roles, nor one with REPLICATION. Each sql node that
 starts is recorded in the audit log, without its statements.
 
 ```yaml

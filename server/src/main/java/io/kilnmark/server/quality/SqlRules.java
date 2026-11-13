@@ -26,8 +26,16 @@ public final class SqlRules {
         ROWS
     }
 
-    /** The SQL for one rule. {@code failingSql} is null for checks on the asset as a whole. */
-    public record Plan(String countSql, String failingSql, Shape shape) {
+    /**
+     * The SQL for one rule. {@code failingSql} is null for checks on the asset as a whole. For custom
+     * SQL, {@code filledNames} are the places in {@code failingSql} where Kilnmark put the table's and
+     * column's names, so the check before it runs can tell them from what the rule's author wrote.
+     */
+    public record Plan(String countSql, String failingSql, Shape shape, List<SqlTokens.Span> filledNames) {
+
+        public Plan(String countSql, String failingSql, Shape shape) {
+            this(countSql, failingSql, shape, List.of());
+        }
     }
 
     /** A table elsewhere in the source: schema and name. */
@@ -95,29 +103,46 @@ public final class SqlRules {
                     "SELECT t.* FROM " + join + " WHERE " + cond, Shape.TOTAL_AND_FAILING);
             }
             case CUSTOM_SQL -> {
-                String sql = placeholders(p.path("sql").asText(), d.table(table.schema(), table.name()),
+                Filled f = fill(p.path("sql").asText(), d.table(table.schema(), table.name()),
                     rule.field() == null ? null : d.quote(rule.field()));
-                yield new Plan("SELECT (SELECT COUNT(*) FROM " + from + "), (SELECT COUNT(*) FROM (" + sql + ") f)", sql,
-                    Shape.TOTAL_AND_FAILING);
+                yield new Plan("SELECT (SELECT COUNT(*) FROM " + from + "), (SELECT COUNT(*) FROM (" + f.sql() + ") f)",
+                    f.sql(), Shape.TOTAL_AND_FAILING, f.names());
             }
         };
     }
 
-    private static final java.util.regex.Pattern PLACEHOLDER = java.util.regex.Pattern.compile("\\$\\{(table|column)}");
+    /** Custom SQL filled in, and where each name filled in is in it. */
+    record Filled(String sql, List<SqlTokens.Span> names) {
+    }
 
     /**
      * Custom SQL with {@code ${table}} and {@code ${column}} filled in, in one pass, so a name that
-     * itself holds {@code ${column}} is not filled in again.
+     * itself holds {@code ${column}} is not filled in again: only where they stand as SQL
+     * ({@link SqlTokens#placeholders}), never inside a string, a quoted name or a comment, where a name
+     * holding a quote could end the string and add SQL. A rule with one there is refused when it is
+     * saved; one saved before that is left unfilled there, and refused when it runs.
      */
-    static String placeholders(String sql, String table, String column) {
-        java.util.regex.Matcher m = PLACEHOLDER.matcher(sql);
+    static Filled fill(String sql, String table, String column) {
         StringBuilder b = new StringBuilder();
-        while (m.find()) {
-            String with = m.group(1).equals("table") ? table : column == null ? m.group() : column;
-            m.appendReplacement(b, java.util.regex.Matcher.quoteReplacement(with));
+        List<SqlTokens.Span> names = new ArrayList<>();
+        int from = 0;
+        for (SqlTokens.Placeholder p : SqlTokens.placeholders(sql)) {
+            String with = p.name().equals("table") ? table : column;
+            if (with == null) {
+                continue;
+            }
+            b.append(sql, from, p.at().start());
+            names.add(new SqlTokens.Span(b.length(), b.length() + with.length()));
+            b.append(with);
+            from = p.at().end();
         }
-        m.appendTail(b);
-        return b.toString();
+        b.append(sql.substring(from));
+        return new Filled(b.toString(), List.copyOf(names));
+    }
+
+    /** {@link #fill}'s text alone: for showing a rule's SQL in another form (ODCS). */
+    static String placeholders(String sql, String table, String column) {
+        return fill(sql, table, column).sql();
     }
 
     private static Plan counting(String from, String failingCondition) {

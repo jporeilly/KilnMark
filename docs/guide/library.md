@@ -137,11 +137,6 @@ pipeline it needs. `sample-sql-before-and-after` and `sample-close-month-end` ru
 added only when the database it runs SQL on (`shop-db` and `crm-db`) is a PostgreSQL source with
 **Allow SQL** on, by a designer who may see unmasked values.
 
-**Known issue in 0.1.2:** `sample-sql-before-and-after` can be added and read, but **Run now**
-refuses it. A flow's `sql` node refuses a statement holding the word `GROUP`, and one of this sample's
-statements uses `GROUP BY`. Nothing is run or changed. The other samples run; this one
-will run from the next release.
-
 ## Templates
 
 ![The Library's Templates tab: each template as a card, a pipeline or a flow, with what it does, its YAML to look at, and Use this template](images/library-templates.png)

@@ -645,8 +645,90 @@ class FlowSqlNodeTest {
         assertTrue(why.contains("a wait-for node's query"), why);
     }
 
+    /**
+     * The driver rewrites JDBC escapes as it prepares a statement, after the check has read it: here
+     * {@code {fn xVIEW ...}} loses its braces, its {@code fn} and the {@code x}, and creates a view,
+     * which a sql node never does. So the check refuses braces: when a flow is saved, and again as the
+     * node runs, before anything reaches the database (a version saved before the check knew is
+     * refused there). Turning escape processing off does nothing for a prepared statement, so the
+     * check is what holds for the sql node and for a wait-for node's query.
+     */
     @Test
     @Order(20)
+    void aStatementWithAJdbcEscapeNeverReachesTheDatabase() throws Exception {
+        String hidden = "CREATE {fn xVIEW fsql.hidden_view AS SELECT 1 AS a}";
+        String views = "SELECT count(*) FROM pg_views WHERE schemaname = 'fsql' AND viewname = 'hidden_view'";
+        // What the driver does with it, as the sql node sends it: under the node's own kind of login
+        try (Connection c = DriverManager.getConnection(url, WRITER, WRITER_PW)) {
+            c.setAutoCommit(false);
+            try (java.sql.PreparedStatement st = c.prepareStatement(hidden)) {
+                st.setEscapeProcessing(false); // too late: it was rewritten when it was prepared
+                st.execute();
+                try (Statement look = c.createStatement(); ResultSet rs = look.executeQuery(views)) {
+                    assertTrue(rs.next() && rs.getLong(1) == 1, "the driver sent CREATE VIEW, and the database ran it");
+                }
+            }
+            c.rollback();
+            // A plain statement with escape processing off is sent as written, which PostgreSQL cannot read
+            try (Statement st = c.createStatement()) {
+                st.setEscapeProcessing(false);
+                SQLException asWritten = assertThrows(SQLException.class, () -> st.execute(hidden));
+                assertEquals("42601", asWritten.getSQLState());
+            }
+            c.rollback();
+        }
+        assertEquals(0, count(views));
+
+        // Saved: a problem, so the flow is a draft that does not run
+        String yaml = LOAD.replace("name: fsql-load", "name: fsql-escape")
+            .replace("[\"DELETE FROM fsql.staging WHERE id > 3\"]", "['" + hidden + "']");
+        assertTrue(yaml.contains(hidden), yaml);
+        List<String> problems = flows.validate(yaml).problems().stream().map(io.kilnmark.kiln.yaml.Problem::message)
+            .toList();
+        assertTrue(problems.stream().anyMatch(m -> m.startsWith("Node trim statement 1: '{' and '}' are not allowed "
+            + "outside quotes")), problems.toString());
+        for (String escape : List.of("DELETE FROM fsql.target {fn xRETURNING id}", "CREATE {oj GROUP by}",
+            "DELETE FROM fsql.target WHERE at < {d '2024-01-01'}", "{call fsql.p()}")) {
+            List<String> why = flows.validate(yaml.replace(hidden, escape.replace("'", "''"))).problems().stream()
+                .map(io.kilnmark.kiln.yaml.Problem::message).toList();
+            assertTrue(why.stream().anyMatch(m -> m.contains("'{' and '}' are not allowed outside quotes")),
+                escape + ": " + why);
+        }
+        // A wait-for node's query is checked the same way
+        List<String> waits = flows.validate("""
+            kilnmark: flow/v1
+            name: fsql-wait-escape
+            nodes:
+              - { id: loaded, type: wait-for, source: fsql-db, query: "select true {fn xinto fsql.leak}" }
+            """).problems().stream().map(io.kilnmark.kiln.yaml.Problem::message).toList();
+        assertTrue(waits.stream().anyMatch(m -> m.contains("'{' and '}' are not allowed outside quotes")),
+            waits.toString());
+
+        // Run: a version saved before the check refused braces (as one saved under 0.1.2 would be) is
+        // refused by the node itself, and nothing is sent
+        superuser("UPDATE kilnmark.flow_version SET sql_checked = true WHERE flow = 'fsql-load'");
+        long target = count("SELECT count(*) FROM fsql.target");
+        FlowStore.Flow f = flows.find("fsql-load").orElseThrow();
+        superuser("UPDATE kilnmark.flow_version SET yaml = replace(yaml, 'TRUNCATE fsql.target', '" + hidden
+            + "') WHERE flow = 'fsql-load' AND n = " + f.latestVersion());
+        try {
+            long run = store.queueRun("fsql-load", f.latestVersion(), "tester", "steward", "{}", "{}").id();
+            FlowStore.Run done = finished(run);
+            assertEquals("failed", done.status(), done.error());
+            FlowStore.NodeRun load = node(run, "load");
+            assertEquals("failed", load.status(), load.message());
+            assertTrue(load.message().startsWith("Node load statement 1: '{' and '}' are not allowed outside quotes"),
+                load.message());
+            assertEquals(0, count(views), "the view was never created");
+            assertEquals(target, count("SELECT count(*) FROM fsql.target"), "and the statement after it never ran");
+        } finally {
+            superuser("UPDATE kilnmark.flow_version SET yaml = replace(yaml, '" + hidden
+                + "', 'TRUNCATE fsql.target') WHERE flow = 'fsql-load'");
+        }
+    }
+
+    @Test
+    @Order(30)
     void cleanUp() throws Exception {
         superuser("DROP SCHEMA fsql CASCADE", "DROP OWNED BY " + WRITER, "DROP OWNED BY fsql_maker",
             "DROP OWNED BY fsql_replica", "DROP ROLE fsql_maker", "DROP ROLE fsql_replica");

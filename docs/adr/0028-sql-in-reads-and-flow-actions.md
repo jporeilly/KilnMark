@@ -115,7 +115,9 @@ docs in the same release:
   functions already in the database, with their own rights, can be named; the login's grants decide
   which. A review may ask to refuse these too.
 - **The login check** refuses, before any SQL a person wrote runs: a superuser; a login that may
-  create roles; one in a role that reads or writes the server's files, runs programs or stops other
+  create roles, or is a member of a role that is a superuser or may, or has REPLICATION (since 12
+  November 2026); one in a
+  role that reads or writes the server's files, runs programs or stops other
   sessions; one acting as another role than it signed in as; one whose `session_replication_role` is
   not `origin`; one that may run dblink or use a foreign server; and a database with user mappings or
   foreign tables. **Open owner decisions** (seven reviews, 2 November 2026): whether to refuse logins
@@ -124,6 +126,65 @@ docs in the same release:
   database (a sql node there could change Kilnmark's own tables if its login may).
 - **Query reads stay read-only in the transaction itself** (`SET TRANSACTION READ ONLY`), not only
   through the driver, and a PostgreSQL URL may not say `readOnlyMode` or `preferQueryMode`.
+- **Read as PostgreSQL reads it, and names only where names go** (12 November 2026, the second
+  review; security fixes to 0.0.7 to 0.1.2). The tokenizer read `1e$a$` as a number and a
+  `$`-quoted string where PostgreSQL 14 reads `1` and a name, so a refused function after it ran on
+  14 and older; a number is now read as PostgreSQL 16 reads one, and one followed straight away by
+  a letter, digit, `_` or `$` is refused. A custom rule's `${table}` and `${column}` were filled in
+  inside strings and comments too, where a name holding a quote could end the string; they are now
+  filled in only where they stand as SQL (`SqlTokens.placeholders`), refused anywhere else when the
+  rule is saved, written in lower case only, and the SQL as filled in is checked again in full
+  before it runs (`SqlTokens.checkFilledCustomSql`), each name filled in having to stay one quoted
+  name. Only PostgreSQL's whitespace is taken off SQL text (never Java's `strip()`), the text
+  sent must read as the tokens checked, and a space beyond ASCII outside quotes is refused (the
+  third review: `SECURITY` plus U+2003 before a `;` was sent as `SECURITY`). Housekeeping that
+  writes despite a read-only transaction (`brin_`, `gin_clean_pending_list`) and functions that
+  change statistics, caches or the write-ahead log are refused with the other functions.
+- **Membership counts as much as the login's own rights** (decided by the owner, 12 November 2026).
+  The login check looked only at the login's own attributes, so a login granted a superuser or
+  role-creating role passed it, and SQL that reached `SET ROLE` (as the number flaw did) could act
+  as that role. It now also refuses a login that is a member, directly or through any chain of
+  roles, of a role that is a superuser or may create roles, whether the membership is inherited or
+  only lets it `SET ROLE` (and, on PostgreSQL 16 and later, even a grant that does neither:
+  `pg_has_role(..., 'MEMBER')` counts every membership). The refusal names the role and the
+  `REVOKE` that removes it. Proven on PostgreSQL 13, 14, 16 and 18.
+- **Kilnmark's own SQL resolves names in pg_catalog alone** (12 November 2026, the fifth review).
+  Every connection Kilnmark opens to a PostgreSQL source (scans, explore, reads, previews, profiles,
+  counts, the library's quality rules, the write node and its checks) starts with `search_path =
+  pg_catalog, pg_temp` (`PostgresSession.kilnmarkOnly`), so nothing another database user plants on
+  the login's search path can answer for a built-in or run as the login in SQL Kilnmark writes: a
+  planted `=` for `oid` and `regclass` had let `mode: replace` drop a table with row-level security,
+  and a planted `rtrim(varchar)` had changed a library rule's count. Kilnmark names every table it
+  reads and writes with its schema, so which table is read does not change. SQL a person wrote
+  runs with the login's own search path, put back for its transaction alone
+  (`PostgresSession.asWritten`), as its author meant; a write puts it back once its checks are done
+  (`PostgresSession.loginPath`), so the table's own triggers find what they always found. Chosen
+  over qualifying every name: one rule at the connection covers the SQL nobody thought to qualify.
+  A PostgreSQL database reached through the generic JDBC connector is not covered. The table a write
+  creates is made after the login's path is back, so its type names that are not SQL keywords
+  (`text`, `bytea`, `date`, `timestamptz`) are named `pg_catalog.` (the sixth review: a login whose
+  path lists `public` before `pg_catalog` got a planted `text` domain, its check run for every value).
+  A connection pooler in transaction mode (PgBouncer) does not keep a session's `search_path`: point
+  sources at the database itself, or a pooler in session mode.
+- **The login check cannot be talked out of its answer** (12 November 2026, the fourth review).
+  Every function, operator and type it uses is named with `pg_catalog.`, and it runs with
+  `SET LOCAL search_path = pg_catalog, pg_temp` in its own transaction, rolled back after: a
+  function another user put in `public` that matched a name better than the built-in one (as
+  `public.quote_ident(name)` did) neither changes the answer nor runs as the login. Both, because
+  qualifying alone needs every name right, and the search path alone needs a transaction the
+  check does not own; Kilnmark's own catalogue queries for writes and row estimates name their
+  functions with `pg_catalog.` too. A login with REPLICATION is refused as well (decided by the
+  delivery lead, 12 November 2026): copying a replication slot makes a permanent slot even from a
+  read-only transaction, and `pg_copy_` and `pg_sync_replication_slots` are refused functions.
+- **What is checked is what is sent** (12 November 2026, a security fix to 0.0.10 to 0.1.2). The
+  PostgreSQL driver rewrites JDBC escapes (`{fn ...}`, `{oj ...}`, `{d ...}` and others) after the
+  checks have read the text, so `CREATE {fn xVIEW ...}` passed the sql node's check as the word
+  `xview` and was sent as `CREATE VIEW`. Every check of SQL a person writes now refuses `{` and `}`
+  outside quotes, comments and dollar-quoted strings (a custom rule's `${table}` and `${column}`
+  apart, filled in by Kilnmark), and asks the driver to confirm it would send the text unchanged.
+  Custom rules, query reads and their plans also run with escape processing off; a prepared
+  statement (the sql node, a wait-for query) cannot have it turned off before the driver rewrites
+  it, so the check is what holds there.
 - The flows design's "Not in this plan: a SQL check node" is superseded by this record. The flow
   node is an action, not a check: a check (rows in a table, say) is a pipeline with a `read` and a
   `gate`, as before.

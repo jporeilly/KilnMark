@@ -449,7 +449,8 @@ On a PostgreSQL source with **Allow SQL** on, a read can run one `SELECT` in pla
 - A read gives `asset` or `query`, not both. `columns` and `where` do not go with a query: choose
   the columns and rows in the SQL. `row_limit` does, and the database stops at that many rows.
 - The query is checked as custom SQL rules are (see [Quality rules](quality-rules.md)): one
-  `SELECT` or `WITH`, no `;` between statements, nothing that writes, and no function that reaches
+  `SELECT` or `WITH`, no `;` between statements, no `{` or `}` outside quotes, nothing that writes,
+  and no function that reaches
   outside the query, such as reading files or other databases. It runs on a read-only connection,
   and not at all when the source's login is a superuser or may read the server's files.
 - Parameters (`${name}`) are not filled in a query yet; write the value in the SQL.

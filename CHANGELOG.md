@@ -11,6 +11,123 @@ released.
 
 ## Unreleased
 
+### Security
+
+- **Another database user could silence a write's checks and run code as the write's login.**
+  Severity **High**: anyone who may create objects in a schema on the login's search path of a
+  source Kilnmark writes to (`public`, by default on PostgreSQL 14 and older) could plant an
+  operator, such as an `=` for `oid` and `regclass`, that matched the write node's checks better
+  than PostgreSQL's own. The check for row-level security then found nothing, so `mode: replace`
+  dropped a table with row-level security and its new table showed the rows the policies had
+  hidden to everyone its grants allow; the other checks (rights, what would break, owner, grants,
+  unique keys) could be answered the same way. The planted code ran as the write's login, which
+  the login check does not vet, inside the write's own transaction, so what it did was committed
+  with the write. In 0.0.7 to 0.1.2. Confirmed on PostgreSQL 14 and 18. Now every connection
+  Kilnmark opens to a PostgreSQL source resolves names in `pg_catalog` alone (`search_path =
+  pg_catalog, pg_temp`), and the row-level security check refuses to replace when it gets no
+  answer. Once its checks are done, a write puts the login's own search path back, so the table's
+  own triggers behave as before; the table it creates names `text`, `bytea`, `date` and
+  `timestamptz` as `pg_catalog`'s, so a login whose path lists `public` first cannot get a planted
+  type. A connection pooler in transaction mode does not keep the search path: point sources at
+  the database or a pooler in session mode.
+- **On PostgreSQL 14 and older, a number written against a name hid SQL from the check.** Severity
+  **High**: a designer whose token sees unmasked values could call any function the checks refuse
+  (settings, other sessions of the same login, locks, `set_config('role', ...)`), in a flow's `sql`
+  node, a custom SQL rule, a read's query or a wait-for query, on a source running PostgreSQL 14 or
+  older. In 0.0.7 to 0.1.2 (custom rules from 0.0.7, the other three as they arrived). The check
+  read `1e$a$` as a number and the start of a `$`-quoted string, so a call written after it seemed
+  to be inside the string; PostgreSQL 14 reads the number `1` and then the name `e$a$`, so the call
+  ran (`1_$a$` and `1E'...'` the same way; PostgreSQL 15 and later refuse such text). Rules,
+  queries and wait-for queries still ran read-only, so nothing could be written, but settings could
+  be changed and the login's other sessions ended. It is High because `set_config('role', ...)`
+  becomes any role the source's login is a member of, and the login check looked only at the login's
+  own attributes: a login granted a superuser role could become a superuser. The login check now
+  refuses such a login too (see Changed), which closes that route to superuser. Now a number is read
+  as PostgreSQL 16 reads one (digits with single `_` between them, a point, an exponent with at
+  least one digit, `0x`, `0o` and `0b`), and a number followed straight away by a letter, a digit,
+  `_` or `$` is refused, as PostgreSQL 15 and later refuse it. Put a space after the number.
+- **Another database user could change what Kilnmark's own queries answered.** Severity
+  **Medium**: the same planting could make the refusal of a table an extension owns (such as
+  `pg_stat_statements`, which keeps other sessions' statements) miss it, in 0.1.1 to 0.1.2, and make
+  a library quality rule count wrongly (`public.rtrim(varchar)` turned 2 blank or missing values
+  into 1) while running as the source's login, in 0.0.7 to 0.1.2. Reads, previews, profiles,
+  counts and scans used the login's search path too. They all resolve names in `pg_catalog` alone
+  now, and names bound to the catalogue's lookups are cast to its own type. SQL a person wrote (a
+  read's query, a custom rule, a wait-for query, a flow's `sql` node) still runs with the login's
+  own search path, as its author meant.
+- **A custom SQL rule's `${column}` inside a string or a comment let a column's name add SQL.**
+  Severity **Medium**: whoever could name a column of a table a rule checks (a designer with a
+  `sql` node, the database's owner, or a pipeline writing a file's headers as columns) could have
+  SQL run when a custom rule held `'${column}'` or `/* ${column} */`. In 0.0.7 to 0.1.2. The name was
+  filled in everywhere, inside strings and comments too, and the SQL was not checked again once
+  filled in, so a name holding a quote ended the string and its SQL ran, never checked, in the
+  rule's read-only transaction: settings, locks and the login's other sessions, not writes. Now
+  `${table}` and `${column}` are filled in only where they stand as SQL, a rule with one inside
+  quotes or a comment is refused when it is saved, they must be written in lower case (as they were
+  filled in; `${TABLE}` was taken when saved and failed when run), and the rule's SQL as filled in
+  is checked again in full just before it runs, each name filled in having to stay one quoted name.
+- **SQL a person wrote could reach the database other than as it was checked.** Severity
+  **Medium**: a designer whose token sees unmasked values, writing a flow's `sql` node on a
+  PostgreSQL source with Allow SQL and Allow writing on, could run statements the node's check
+  refuses, within the rights of that source's login. In 0.0.10 to 0.1.2. The PostgreSQL driver
+  rewrites JDBC escapes (`{fn ...}`, `{oj ...}`, `{d ...}` and the like) after the check had read
+  the text, and one form drops the first letter of the word inside it, so `CREATE {fn xVIEW v AS
+  SELECT * FROM t}` was checked as the harmless `xview` and sent as `CREATE VIEW`. Through it, the
+  node could change its own login's password or settings (for every later session of that login),
+  create views and rules, change default privileges, and turn row-level security on or off. The
+  rewrite hides a word only when no `(` follows it in the statement, so no function or trigger
+  could be made and no refused function called. The login check still held: Kilnmark runs SQL only under a
+  login that is not a superuser and may not create roles, so no role could be made or given more
+  rights, and each run is in the audit log with its flow's version and author. Custom SQL rules, a
+  read's query and a wait-for query took the same rewrite, but they run in a read-only transaction:
+  every write the rewrite could reach was refused by the database, and no refused function could be
+  reached, so nothing was found there. Now every check of SQL a person wrote refuses `{` and `}`
+  outside quotes, comments and dollar-quoted strings, and asks the driver to confirm it would send
+  the text unchanged; a custom rule, a read's query and its plan go with the driver's escape
+  processing off too. The two placeholders a custom rule may hold, `${table}` and `${column}`, are
+  taken exactly as written. A flow, rule or pipeline saved with such a statement is refused when it
+  next runs, before anything is sent, and its check says why. Nothing in the samples or templates
+  uses braces. Write an array as `'{1,2}'`, in quotes, as before. A form that the
+  `GROUP BY` change below would have opened (`CREATE {oj GROUP by}`) was found in review before
+  any release.
+- **Another database user could switch the login check off by planting a function.** Severity
+  **Medium**: anyone who may create functions in a schema on the source login's search path
+  (`public` by default on PostgreSQL 14 and older) could make the login check miss a foreign
+  server the login may use, and have their function run as the login whenever Kilnmark checked
+  it, before every custom SQL rule, query read, wait-for query and `sql` node on that source. In
+  0.0.7 to 0.1.2. The check called `quote_ident` on names without saying it meant PostgreSQL's
+  own, and a `public.quote_ident(name)` matches a name exactly, so it was chosen over the built-in
+  one and could answer nothing (confirmed on PostgreSQL 14 and 18: the 0.1.2 check found
+  `server:elsewhere` without it and nothing with it). Every function, operator and type in the
+  check is now named with `pg_catalog.`, and the check runs with the search path set to
+  `pg_catalog` alone for its own transaction. Kilnmark's own catalogue queries for writes and row
+  estimates name their functions with `pg_catalog.` too.
+- **A query could make a permanent replication slot.** Severity **Medium**: a designer whose
+  token sees unmasked values could, in a custom rule, a query, a wait-for query or a `sql` node,
+  copy a replication slot (`pg_copy_physical_replication_slot`,
+  `pg_copy_logical_replication_slot`) when the source's login has REPLICATION and a slot exists to
+  copy. The new slot outlives a read-only transaction rolled back, and holds the server's
+  write-ahead log without limit, which can fill its disk. In 0.0.7 to 0.1.2. `pg_copy_` and
+  `pg_sync_replication_slots` are now refused, and so is a login with REPLICATION (see Changed).
+- **A space beyond ASCII before a closing `;` hid a refused last word.** Severity **Low**: a
+  designer whose token sees unmasked values could end a flow's `sql` node statement with a refused
+  word, such as `ENABLE ROW LEVEL SECURITY`, within the rights of the source's login. In 0.0.10 to
+  0.1.2. The check read `SECURITY` followed by an em space (U+2003) as one name, not on its list,
+  then took the `;` off and trimmed the text with Java's idea of whitespace, which includes that
+  space, and sent the text without it. Custom rules, query reads and wait-for queries were trimmed
+  the same way but run read-only. Now only PostgreSQL's own whitespace is ever taken off, the text
+  sent must read as exactly what was checked, and a space beyond ASCII (U+00A0, U+2000 to U+200B,
+  U+3000, U+FEFF and the like) outside quotes and comments is refused, as PostgreSQL reads it as
+  part of a name. Type an ordinary space instead.
+- **Housekeeping functions wrote from a read-only check.** Severity **Low**: a designer whose token
+  sees unmasked values could, in a custom rule, a query or a wait-for query, summarise a BRIN index
+  or clean a GIN index's pending list, work that a rolled-back read-only transaction keeps; and in a
+  flow's `sql` node, on PostgreSQL 18, change a table's statistics in the catalogue. In 0.0.7 to
+  0.1.2. They are now refused in every check, with others of their kind: `brin_`,
+  `gin_clean_pending_list`, `pg_clear_`, `pg_restore_`, `pg_set_`, `pg_stat_reset`, `pg_prewarm`,
+  `autoprewarm`, `pg_wal_`, `pg_truncate_` and `heap_force_`. Sequences stay refused in reads and
+  allowed in a `sql` node, as before.
+
 ### Fixed
 
 - **A long node name no longer runs past its tile on a run's page.** Under **Where each node spent
@@ -49,6 +166,20 @@ released.
   Samples already added keep their note where it was: delete the sample and add it again, or drag
   the note down.
 
+- **A flow's `sql` node takes `GROUP BY`, so the sample flow `sample-sql-before-and-after` runs.**
+  A `sql` node refused any statement holding the word `GROUP`, meant for `CREATE GROUP` and the
+  like, so a statement that totals rows (`INSERT ... SELECT ... GROUP BY`) was refused when saved
+  and by **Run now**; so since 0.0.10, and the known issue of 0.1.2. `GROUP BY` is now taken,
+  however the two words are spaced, cased or commented. `GROUP` stays refused everywhere else:
+  where it names an account (`CREATE`, `ALTER` and `DROP GROUP`, also for an account called `by`,
+  and after `TO`, `FROM`, `IN`, `ON` or a comma), alone, before a quoted `"by"`, and in `WITHIN GROUP`.
+  Nothing else a `sql` node refuses has changed. The known-issue notes are gone from
+  [The Library](docs/guide/library.md) and the samples' README.
+- **A sample that cannot run now fails the build.** Every sample flow is checked as **Run now**
+  checks it (its sources, each `sql` statement and `wait-for` query, and the pipelines it runs),
+  and the samples that run SQL a person wrote (`sample-sql-before-and-after` and
+  `sample-read-query`) are run for real in the tests, under a login that is not a superuser.
+
 ### Changed
 
 - **About this sample** (on the page of a pipeline or flow added from the samples, and in a
@@ -62,6 +193,24 @@ released.
   to the corner, so it covers fewer nodes.
 - **The Nodes tab under a pipeline's canvas and a flow's diagram** has its rows closer together,
   about half the height, so more nodes show without scrolling.
+
+- **A source whose login has REPLICATION no longer runs SQL a person wrote.** Custom SQL rules,
+  reads with a query, wait-for queries and flow `sql` nodes are refused, before anything runs, when
+  the source's login has the REPLICATION attribute, which can make replication slots that keep
+  the server's write-ahead log (decided by the delivery lead, 12 November 2026). What to do: give
+  the source a login without REPLICATION (`ALTER ROLE <login> NOREPLICATION`, or another login).
+  A source that reads changes from the write-ahead log, when Kilnmark has one, would use a login
+  of its own.
+- **A source whose login is a member of a superuser or role-creating role no longer runs SQL a
+  person wrote.** Custom SQL rules, reads with a query, wait-for queries and flow `sql` nodes are
+  refused, before anything runs, when the source's login is a member, directly or through other
+  roles, of a role that is a superuser or may create roles, whether the membership is inherited or
+  only lets the login switch to that role (owner decision, 12 November 2026). Such a login could act
+  as that role, and the check had looked only at the login's own attributes. What to do: the
+  message names the role and the statement that removes the membership (`REVOKE <role> FROM
+  <login>`); run it, or revoke the role from whichever role the login has it through, then run
+  again. Logins that are members of ordinary roles are not affected. Sources that read tables,
+  write, scan or profile are not affected either.
 
 ## 0.1.2 (11 November 2026)
 

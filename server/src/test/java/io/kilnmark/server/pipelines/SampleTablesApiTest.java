@@ -197,6 +197,59 @@ class SampleTablesApiTest {
         }
     }
 
+    /** The login the samples that run SQL use: never a superuser, with only the rights their SQL needs. */
+    static final String SQL_LOGIN = "samples_e2e_sql";
+    private static final String SQL_LOGIN_PW = "samples-e2e-sql-pw";
+
+    private void dropSqlLogin() throws Exception {
+        sql("DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '" + SQL_LOGIN + "') THEN EXECUTE "
+            + "'DROP OWNED BY " + SQL_LOGIN + "'; EXECUTE 'DROP ROLE " + SQL_LOGIN + "'; END IF; END $$");
+    }
+
+    /**
+     * The samples that run SQL a person wrote, run for real: skipped above, as e2e-db does not allow
+     * SQL, they are added again on a source that does (Allow SQL and Allow writing, a login that is not
+     * a superuser, the sample tables' schema on its search path, as the samples ask). The flow
+     * sample-sql-before-and-after runs through, its second sql node totalling the orders with GROUP BY,
+     * which a sql node refused until 0.1.2; and the pipeline that reads with a query runs.
+     */
+    private void sqlSamples() throws Exception {
+        dropSqlLogin();
+        sql("CREATE ROLE " + SQL_LOGIN + " LOGIN PASSWORD '" + SQL_LOGIN_PW + "'");
+        sql("GRANT USAGE, CREATE ON SCHEMA " + SCHEMA + " TO " + SQL_LOGIN);
+        sql("GRANT SELECT ON ALL TABLES IN SCHEMA " + SCHEMA + " TO " + SQL_LOGIN);
+        sql("ALTER ROLE " + SQL_LOGIN + " SET search_path = " + SCHEMA);
+        source("e2e-db-sql", "postgresql", Map.of("url", url, "username", SQL_LOGIN, "schemas", SCHEMA,
+            "allow_sql", "true", "allow_writing", "true"), SQL_LOGIN_PW);
+        // SQL a person wrote is added, and run, only by a designer who may see unmasked values (ADR 0028).
+        String designer = Tokens.newToken("designer", true);
+        JsonPath added = as(designer).body(Map.of("sources", Map.of("crm-db", "e2e-db-sql", "shop-db", "e2e-db-sql",
+            "files", "e2e-files"), "schema", SCHEMA)).post("/api/v1/samples").then().statusCode(200).extract().jsonPath();
+        assertEquals(List.of("sample-close-month-end", "sample-read-query", "sample-sql-before-and-after"),
+            added.getList("samples.findAll { it.outcome == 'added' }.name").stream().sorted().toList(),
+            added.prettify());
+        assertEquals(List.of(true), added.getList("samples.findAll { it.outcome == 'added' }.valid").stream()
+            .distinct().toList(), "each passes what Run now checks: " + added.prettify());
+
+        JsonPath flow = waitForFlowRun(designer, as(designer).body(Map.of())
+            .post("/api/v1/flows/sample-sql-before-and-after/runs").then().statusCode(202).extract().jsonPath()
+            .getLong("id"));
+        assertEquals("succeeded", flow.getString("run.status"), flow.prettify());
+        assertEquals(List.of("succeeded"), flow.getList("nodes.findAll { it.node in ['empty', 'orders', 'totals', "
+            + "'done'] }.status").stream().distinct().toList(), flow.prettify());
+        assertEquals("skipped", flow.getString("nodes.find { it.node == 'nothing' }.status"), flow.prettify());
+        String totals = SCHEMA + ".sample_order_totals";
+        long statuses = query("SELECT count(DISTINCT status) FROM " + SCHEMA + ".shop_orders");
+        assertTrue(statuses > 1, "the orders have several statuses: " + statuses);
+        assertEquals(statuses, count(totals), "one total per status");
+        assertEquals(count(SCHEMA + ".shop_orders"), query("SELECT sum(orders) FROM " + totals),
+            "every order is in one total");
+
+        JsonPath read = runPipeline(designer, "sample-read-query", Map.of());
+        assertEquals("succeeded", read.getString("run.status"), read.prettify());
+        assertEquals(count(SCHEMA + ".crm_customers"), read.getLong("run.rowsWritten"), "one row per customer");
+    }
+
     @Test
     void theSamplesRunOnTheSampleTables() throws Exception {
         sql("CREATE SCHEMA IF NOT EXISTS " + SCHEMA);
@@ -216,10 +269,11 @@ class SampleTablesApiTest {
             }
             admin().delete("/api/v1/pipelines/" + Samples.SETUP);
             admin().delete("/api/v1/variables/" + Samples.REGION_VARIABLE);
-            for (String s : List.of("e2e-db", "e2e-db-readonly", "e2e-files", Samples.SAMPLE_DATA)) {
+            for (String s : List.of("e2e-db", "e2e-db-sql", "e2e-db-readonly", "e2e-files", Samples.SAMPLE_DATA)) {
                 admin().delete("/api/v1/sources/" + s);
             }
             sql("DROP SCHEMA IF EXISTS " + SCHEMA + " CASCADE");
+            dropSqlLogin();
         }
     }
 
@@ -385,6 +439,8 @@ class SampleTablesApiTest {
         JsonPath retried = waitForFlowRun(designer, as(designer).body(Map.of())
             .post("/api/v1/flows/sample-retries/runs").then().statusCode(202).extract().jsonPath().getLong("id"));
         assertEquals("succeeded", retried.getString("run.status"), retried.prettify());
+
+        sqlSamples();
 
         // The gate that is meant to stop does: two shipping fees are out of range.
         JsonPath stop = waitForRun(designer, as(designer).body(Map.of()).post("/api/v1/pipelines/sample-gate-stop/runs")

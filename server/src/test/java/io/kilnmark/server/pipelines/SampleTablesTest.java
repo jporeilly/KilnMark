@@ -116,6 +116,48 @@ class SampleTablesTest {
         assertEquals(34, checked);
     }
 
+    /**
+     * Every sample flow, pointed at the sample tables as Add samples points it, passes what Run now
+     * checks before it queues a run ({@code FlowService.validate}): it reads without problems, each
+     * source its sql, wait-for and check-source nodes name allows what the node does, each sql
+     * statement and wait-for query is one Kilnmark runs, and each pipeline it runs is a sample that
+     * takes what the flow gives it. A sample that cannot run fails here: sample-sql-before-and-after
+     * shipped in 0.1.2 with a statement its own sql node refused (GROUP BY).
+     */
+    @Test
+    void everySampleFlowPassesWhatRunNowChecks() throws Exception {
+        FakeSources s = sources();
+        Map<String, String> mapping = Map.of("crm-db", "my-db", "shop-db", "my-db", "files", "my-bucket");
+        Map<String, io.kilnmark.kiln.yaml.PipelineDefinition> pipelines = new java.util.HashMap<>();
+        for (Samples.Sample sample : Samples.bundled()) {
+            if ("pipeline".equals(sample.type())) {
+                pipelines.put(sample.name(), io.kilnmark.kiln.yaml.PipelineDefinition.parse(
+                    Samples.withTables(Samples.withSources(sample.yaml(), mapping), SCHEMA)).definition());
+            }
+        }
+        int checked = 0;
+        int statements = 0;
+        for (Samples.Sample sample : Samples.bundled()) {
+            if (!"flow".equals(sample.type())) {
+                continue;
+            }
+            String yaml = Samples.withTables(Samples.withSources(sample.yaml(), mapping), SCHEMA);
+            io.kilnmark.kiln.yaml.FlowDefinition.Parsed parsed = io.kilnmark.kiln.yaml.FlowDefinition.parse(yaml);
+            assertEquals(List.of(), parsed.problems(), sample.file());
+            assertEquals(List.of(), io.kilnmark.server.flows.FlowSourceChecks.problems(parsed.definition(), s),
+                sample.file() + ": a source, statement or query Run now would refuse");
+            assertEquals(List.of(), io.kilnmark.server.flows.FlowSourceChecks.pipelineProblems(parsed.definition(),
+                pipelines), sample.file() + ": a pipeline it runs");
+            statements += parsed.definition().nodes().stream()
+                .filter(n -> io.kilnmark.kiln.yaml.FlowDefinition.SQL.equals(n.type()))
+                .mapToInt(n -> n.statements().size()).sum();
+            checked++;
+        }
+        assertEquals(9, checked);
+        // The check looked at SQL: the two samples with sql nodes hold five statements between them.
+        assertEquals(5, statements);
+    }
+
     @Test
     void thePipelineCreatingTheTablesChecks() throws Exception {
         String yaml = Samples.setupYaml("my-db", SCHEMA);

@@ -370,7 +370,12 @@ Fails the rows a query you write returns.
 
 **What to know.** PostgreSQL sources only, with Allow SQL on. It runs read-only, with a time limit
 (`kilnmark.quality.query-timeout`, 60 seconds by default), and is rolled back afterwards; never
-under a superuser or a login that may read files or run programs.
+under a superuser or a login that may read files or run programs. Braces, `{` and `}`, are refused
+outside quotes and comments, but for `${table}` and `${column}` as written: the database driver
+would read `{fn ...}` and the like as instructions to rewrite the SQL. Write an array as `'{1,2}'`.
+`${table}` and `${column}` go where a name goes, in lower case, never inside quotes or a comment;
+the SQL as filled in is checked again before it runs. A number is followed by a space, never
+straight away by a letter or `$` (`1e10` and `1_000` are fine).
 
 **Governance.** Only a designer whose token sees unmasked values writes or runs one, since it can
 read any column its login can. Its failing rows and error text are withheld from everyone else

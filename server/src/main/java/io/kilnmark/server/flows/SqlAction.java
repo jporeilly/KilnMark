@@ -179,6 +179,8 @@ final class SqlAction {
             // Backslashes in plain strings are plain characters, as the check reads them, whatever the
             // database, the login or the URL says.
             PostgresConnector.conformingStrings(c);
+            // The statements mean what their author meant: the login's own search path, for this transaction
+            io.kilnmark.kiln.plugins.jdbc.PostgresSession.asWritten(c);
             for (String sql : node.statements()) {
                 if (control.stopped()) {
                     c.rollback();

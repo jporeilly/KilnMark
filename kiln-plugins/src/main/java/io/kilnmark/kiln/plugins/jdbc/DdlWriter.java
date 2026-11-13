@@ -284,7 +284,7 @@ public final class DdlWriter {
         if (c.kind() == JdbcColumn.Kind.DECIMAL) {
             type = decimalType(c, leftOut);
         } else {
-            type = sql.columnType(new WriteColumn(c.name(), c.kind(), 0, 0, null), length);
+            type = sql.createdType(new WriteColumn(c.name(), c.kind(), 0, 0, null), length);
         }
         return name(c.name(), typedName) + " " + type + (c.nullable() ? "" : " NOT NULL");
     }
@@ -313,7 +313,7 @@ public final class DdlWriter {
                 + dialect.maxPrecision() + " on " + dialect.label() + ", and a scale no larger than it or "
                 + dialect.maxScale() + ".");
         }
-        return sql.columnType(new WriteColumn(c.name(), JdbcColumn.Kind.DECIMAL, precision, scale, null), 0);
+        return sql.createdType(new WriteColumn(c.name(), JdbcColumn.Kind.DECIMAL, precision, scale, null), 0);
     }
 
     /** A name quoted: as stored when it was read from this database; as a plain name is stored otherwise. */

@@ -228,6 +228,10 @@ public final class JdbcTableInput implements Node {
         }
         try {
             connection = reading.open(context.settings());
+            if (PostgresSession.isPostgres(context.settings().get("url"))) {
+                // What Kilnmark writes here (the read, a sample, a filter) means PostgreSQL's own names
+                PostgresSession.kilnmarkOnly(connection);
+            }
             try {
                 connection.setReadOnly(true);
                 connection.setAutoCommit(false); // PostgreSQL streams with a cursor only inside a transaction
@@ -246,6 +250,8 @@ public final class JdbcTableInput implements Node {
                 try (Statement st = connection.createStatement()) {
                     st.execute("SET TRANSACTION READ ONLY");
                 }
+                // and means what its author meant: the login's own search path, for this transaction
+                PostgresSession.asWritten(connection);
             }
             if (context.settings().containsKey(ISOLATION)) {
                 connection.setTransactionIsolation(Integer.parseInt(context.setting(ISOLATION)));
@@ -253,6 +259,11 @@ public final class JdbcTableInput implements Node {
             List<Object> values = values(context.settings());
             if (values.isEmpty()) {
                 statement = connection.createStatement();
+                if (written) {
+                    // As written: the driver rewrites no {...} escape in it, which would make what runs
+                    // differ from what was checked (ADR 0028). The check refuses braces too.
+                    statement.setEscapeProcessing(false);
+                }
                 if (context.settings().containsKey(SAMPLE_ABOVE)) {
                     sql = sampled(context, sql);
                 }

@@ -215,6 +215,8 @@ final class WaitFor {
                 }
                 PostgresConnector.conformingStrings(conn);
                 PostgresConnector.requireConformingStrings(conn);
+                // The query means what its author meant: the login's own search path, for this transaction
+                io.kilnmark.kiln.plugins.jdbc.PostgresSession.asWritten(conn);
                 try (java.sql.PreparedStatement st = conn.prepareStatement(sql)) {
                     st.setQueryTimeout((int) QUERY_TIMEOUT.toSeconds());
                     st.setMaxRows(1);

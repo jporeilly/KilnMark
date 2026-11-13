@@ -40,7 +40,7 @@ class DdlWriterTest {
               "customer" integer NOT NULL,
               "total" numeric(12,2),
               "note" varchar(200),
-              "placed at" timestamptz NOT NULL,
+              "placed at" pg_catalog.timestamptz NOT NULL,
               PRIMARY KEY ("order_id")
             )""",
             "CREATE INDEX \"orders_customer\" ON \"sales\".\"orders\" (\"customer\", \"placed at\")"), g.statements());

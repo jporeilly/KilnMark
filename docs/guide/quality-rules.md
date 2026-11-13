@@ -286,7 +286,9 @@ from everyone else while any table of the source has a column marked sensitive.
   `kilnmark.quality.custom-sql` switch is retired and does nothing.
 - **PostgreSQL sources only.** There, Kilnmark can hold the query to a read-only transaction.
 - Write **one `SELECT` that returns the failing rows.** `${table}` is replaced with the asset's
-  table, and `${column}` with the rule's column when you give one:
+  table, and `${column}` with the rule's column when you give one. Write them in lower case where a
+  name goes, never inside quotes or a comment (a rule with one there is refused), since Kilnmark
+  puts a quoted name there:
 
   ```sql
   SELECT * FROM ${table} WHERE delivered_on < ordered_on
@@ -294,7 +296,9 @@ from everyone else while any table of the source has a column marked sensitive.
 
 - It runs with a time limit (`kilnmark.quality.query-timeout`, 60 seconds by default) and is rolled
   back afterwards.
-- Kilnmark refuses to run it under a database login with superuser or file and program access.
+- Kilnmark refuses to run it under a database login with superuser or file and program access, or
+  one that is a member (directly or through other roles) of a role that is a superuser or may create
+  roles, or one with REPLICATION.
   Give every source a **read-only login**, because a custom query can read anything that login can
   see.
 

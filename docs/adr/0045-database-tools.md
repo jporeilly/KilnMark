@@ -51,6 +51,12 @@ may do, and exactly what in ADR 0028 changes and what stays.
   the database enforces that; on SQL Server it is a hint only, which is acceptable because only
   Kilnmark's own catalogue and count queries run there. Indexes are new: the scan never read them
   (`getIndexInfo`, with `approximate` on, so Oracle does not analyse the table to answer).
+- **Names mean PostgreSQL's own** (12 November 2026, the fifth security review). Every connection
+  Kilnmark opens to a PostgreSQL source starts with `search_path = pg_catalog, pg_temp`
+  (`PostgresSession`), so a function or operator another database user puts in `public` (an `=`
+  for `name` and `varchar`, say) cannot answer for a built-in in these lookups: before, it could
+  make the refusal of an extension's table miss `pg_stat_statements` (0.1.1 to 0.1.2). Names bound
+  to the lookups are cast to `pg_catalog.name` as well.
 - **Row counts** are the database's estimate (PostgreSQL `reltuples`, SQL Server partition stats,
   Oracle `NUM_ROWS`, MySQL `TABLE_ROWS`), labelled as an estimate. **Count exactly** runs
   `SELECT COUNT(*)` of the table, its names quoted as reads quote them, on the read-only

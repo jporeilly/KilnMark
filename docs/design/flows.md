@@ -425,12 +425,35 @@ reads from it. Connections follow it as any node (`success`, `failure`, a condit
   `CREATE`, `DROP`, `ALTER`, `CALL`, `ANALYZE`, `REFRESH`, `COMMENT`, `REINDEX`, `CLUSTER` or `LOCK`,
   and be one statement (`SqlTokens.checkAction`). Never a query, transaction control, `SET`, `COPY`,
   `DO`, `GRANT` or `REVOKE`; never, unquoted, `RETURNING` or the words that create or change logins,
-  rights, code that runs later or ways out of the database (`ROLE`, `USER`, `EXTENSION`, `SERVER`,
-  `FUNCTION`, `TRIGGER`, `OWNER`, `PRIVILEGES`, `SYSTEM`, `VIEW` (outside `REFRESH MATERIALIZED
-  VIEW`), `ROUTINE`, ...); and never `pg_settings` (its rules change settings) or the functions custom rules
+  rights, code that runs later or ways out of the database (`ROLE`, `USER`, `GROUP`, `EXTENSION`,
+  `SERVER`, `FOREIGN`, `FUNCTION`, `TRIGGER`, `OWNER`, `PRIVILEGES`, `SYSTEM`, `VIEW` (outside
+  `REFRESH MATERIALIZED VIEW`), `ROUTINE`, ...). `GROUP` has one exception, as the word is also a
+  clause: `GROUP BY` is taken when an unquoted `BY` is the next token (comments and whitespace are
+  not tokens) and the token before is none of `CREATE`, `ALTER`, `DROP`, `TO`, `FROM`, `IN`, `ON` or a
+  comma, the places where PostgreSQL reads an account (which may itself be called `by`, so the word
+  after is not enough). Every other use of `GROUP` stays refused, `WITHIN GROUP` among them. The
+  other words have no second meaning that quoting cannot reach, bar `FOREIGN KEY`, which stays
+  refused. Until 0.1.2 `GROUP BY` was refused too. And never `pg_settings` (its rules change settings) or the functions custom rules
   refuse (files, other sessions or databases, settings, locks, and `ts_stat` and `ts_rewrite`, which
   run a query held in a string), sequences apart. `E'...'` strings and `U&"..."` names are refused,
-  and the text may hold no control character but PostgreSQL's whitespace. The tokenizer reads
+  and the text may hold no control character but PostgreSQL's whitespace, nor a `{` or `}` outside
+  quotes, comments and dollar-quoted strings: the driver rewrites JDBC escapes (`{fn ...}`,
+  `{oj ...}`, `{d ...}` ...) as it prepares a statement, after the check, and one form drops the
+  first letter of the word inside it (`CREATE {fn xVIEW ...}` was sent as `CREATE VIEW`; 0.0.10 to
+  0.1.2). PostgreSQL's own SQL needs no brace outside those. Then the driver's escape processing
+  (`Parser.replaceProcessing`) is run over the text and must change nothing
+  (`SqlTokens.sentAsWritten`), so what is checked is what is sent whatever escapes the driver
+  learns. Turning escape processing off on the statement is no help for the sql node: a prepared
+  statement is rewritten when it is prepared, before `setEscapeProcessing` can be called
+  (`FlowSqlNodeTest` shows it). A number is read as PostgreSQL 16 reads one (digits with single
+  `_` between them, a point, an exponent with at least one digit, `0x`, `0o`, `0b`), and one followed
+  straight away by a letter, a digit, `_` or `$` is refused: PostgreSQL 14 and older read `1e$a$` as
+  `1` and the name `e$a$`, where an older reading took a `$`-quoted string, hiding a call (0.0.7 to
+  0.1.2); 15 and later refuse it as trailing junk. Only PostgreSQL's own whitespace is taken off a
+  statement's ends (never Java's `strip()`, which also takes U+2003 and the like, so `SECURITY` plus
+  U+2003 before a `;` was checked as one name and sent as `SECURITY`; 0.0.10 to 0.1.2); the text
+  returned must read as the tokens checked; and a space beyond ASCII outside quotes and comments is
+  refused, as PostgreSQL reads it as part of a name. The tokenizer reads
   comments, whitespace, dollar-quote tags and identifiers as PostgreSQL does, and on top of it the
   PostgreSQL driver's own parser must find exactly one statement. This is a first line of defence:
   the login check and the source's opt-ins below are what hold.
