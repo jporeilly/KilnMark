@@ -20,7 +20,8 @@ entries in CHANGELOG.md are (a bullet each, starting with a bold summary where i
 The sections, in the order a release lists them: **What's new**, **Security** (each fix with its
 severity, and whether the flaw was in a release), **Fixed**, **Changed** (anything a customer must
 act on, or that behaves differently) and **Details**. Use only these, each once, with `###`;
-nothing goes before the first heading, and a fragment has no `#` or `##` heading.
+nothing goes before the first heading, and a fragment has no heading other than `###`. Each
+section's entries are `- ` bullets (a bullet's continuation lines are indented under it).
 
 Everything that shows the changelog (the app's **What's new**, the assistant's bundled docs, the
 product-only check) reads CHANGELOG.md with the fragments merged into its Unreleased part:

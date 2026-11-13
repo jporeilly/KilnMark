@@ -32,8 +32,9 @@ Gradle is not needed: use the wrapper (`./gradlew`, or `gradlew.bat` on Windows)
 
 Each pull request writes its changelog entry to a fragment of its own, `changelog.d/<branch>.md`,
 with the same `###` sections CHANGELOG.md uses (What's new, Security, Fixed, Changed, Details),
-and never edits CHANGELOG.md's Unreleased part, so open pull requests never conflict there
-([changelog.d/README.md](../changelog.d/README.md) says how to write one). One script,
+each entry a `- ` bullet, and never edits CHANGELOG.md's Unreleased part, so open pull requests
+never conflict there ([changelog.d/README.md](../changelog.d/README.md) says how to write one).
+One script,
 `ui/scripts/changelog.mjs`, merges the fragments into the Unreleased part, section by section
 (CHANGELOG.md's own entries first, then the fragments in file-name order), wherever the changelog
 is read:
@@ -49,7 +50,8 @@ is read:
 
 `node ui/scripts/changelog.mjs --check` checks the fragments, and the UI build runs it first
 (`npm run build`'s `prebuild`, so `./gradlew build` and CI too): an unknown section, text before
-the first heading, an empty fragment or a `#` or `##` heading fails the build, naming the file.
+the first heading, an empty fragment, a heading other than `###`, or a section whose entries do
+not start with a `- ` bullet fails the build, naming the file.
 `--write <file>` writes the merged changelog; `--collect` is the release step (see
 [Releasing](#releasing)).
 

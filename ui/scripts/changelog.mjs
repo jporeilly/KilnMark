@@ -52,6 +52,9 @@ export function parseFragment(name, text) {
     if (current === null) return;
     const entries = trimBlank(body);
     if (!entries) fail(`"### ${current}" has no entries under it`);
+    // Entries are joined to CHANGELOG.md's with a single line end, so each section starts with a
+    // bullet: prose there would run into the bullet above it.
+    if (!entries.startsWith("- ")) fail(`"### ${current}" must start with a "- " bullet; write each entry as one`);
     sections.set(current, entries);
   };
   for (const line of lines) {

@@ -261,7 +261,8 @@ val assembleChangelog by tasks.registering(Exec::class) {
     commandLine(npm, "run", "--silent", "changelog", "--", "--write", out.absolutePath)
     inputs.file(rootProject.file("CHANGELOG.md"))
     inputs.dir(rootProject.file("changelog.d"))
-    inputs.file(uiDir.file("scripts/changelog.mjs"))
+    // package.json holds the "changelog" script npm runs.
+    inputs.files(uiDir.file("scripts/changelog.mjs"), uiDir.file("package.json"))
     outputs.file(assembledChangelog)
 }
 

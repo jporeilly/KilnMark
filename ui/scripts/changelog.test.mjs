@@ -124,6 +124,9 @@ describe("parseFragment refuses", () => {
     ["a ## heading", "### Fixed\n\n- A fix.\n\n## 0.1.3\n", /has a ## heading/],
     ["a #### heading", "### Fixed\n\n#### More\n\n- A fix.\n", /has a #### heading/],
     ["a section with no entries", "### Fixed\n\n### Details\n\n- D.\n", /"### Fixed" has no entries/],
+    ["a section that starts with prose", "### Fixed\n\nA fix, as a paragraph.\n", /must start with a "- " bullet/],
+    ["a section that starts with a setext heading", "### Fixed\n\nMore\n----\n\n- A fix.\n", /must start with a "- " bullet/],
+    ["a section that starts with a * bullet", "### Fixed\n\n* A fix.\n", /must start with a "- " bullet/],
     ["a section given twice", "### Fixed\n\n- A.\n\n### Fixed\n\n- B.\n", /"### Fixed" twice/],
   ];
   for (const [what, text, message] of cases) {

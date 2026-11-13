@@ -19,9 +19,10 @@ controls regulators expect are in
   changelog fragment.
 - Each PR's changelog entry is a fragment of its own, `changelog.d/<branch>.md`
   ([changelog.d/README.md](changelog.d/README.md)); never edit CHANGELOG.md's Unreleased part. Its
-  entries go under `###` headings for the right sections: What's new, Security (with its severity,
-  and whether the flaw was in a release), Fixed, Changed (anything a customer must act on, or that
-  behaves differently) or Details. Everything that shows the changelog merges the fragments in.
+  entries are `- ` bullets under `###` headings (no other heading) for the right sections: What's
+  new, Security (with its severity, and whether the flaw was in a release), Fixed, Changed
+  (anything a customer must act on, or that behaves differently) or Details. Everything that shows
+  the changelog merges the fragments in.
 - Ask before deleting data, rewriting history, force-pushing, or changing repository settings.
 - Stacked PRs: when a PR is moved onto `main` after the one under it merges, GitHub can report a
   conflict that is not there until the branch gets a new push. Merge `main` into the branch
