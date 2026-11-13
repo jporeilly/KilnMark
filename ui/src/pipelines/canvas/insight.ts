@@ -101,8 +101,15 @@ export function nodeSummary(node: GraphNode): string {
       if (s.cast != null) parts.push(`cast ${keysOf(s.cast).join(", ")}`);
       return parts.join("; ");
     }
-    case "union":
-      return `${plural(node.inputs.length, "input")}`;
+    case "union": {
+      // except and intersect keep rows of the first input only: say which one that is
+      const mode = s.mode != null ? t("mode") : "all";
+      if (mode !== "except" && mode !== "intersect") return `${plural(node.inputs.length, "input")}`;
+      const on = s.compare_on != null && text(s.compare_on) !== "" ? ` on ${text(s.compare_on)}` : "";
+      const first = node.inputs[0]?.from;
+      const kept = mode === "except" ? "in no other input" : "in every other input";
+      return first ? `${mode}${on}: rows of ${first} ${kept}` : `${mode}${on}`;
+    }
     case "dedupe":
       return `${s.key != null ? `key ${text(s.key)}` : "whole rows"} · ${whichRowWords(node)}`;
     case "route":

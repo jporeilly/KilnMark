@@ -46,6 +46,11 @@ import io.kilnmark.kiln.nodes.expr.Type;
  * (or cannot be matched), so such rows sort last, keep their order, and never equal another key;
  * and each part is encoded by its family alone ({@link #universal}), so the two sides of a join are
  * encoded without knowing each other's types.
+ *
+ * <p>For whole rows compared between inputs ({@link #rows}, a union's {@code except} and
+ * {@code intersect}), each part is encoded by its family alone too, but a null is a value like any
+ * other: it has its own byte (2, so nulls sort last), and two keys with a null in the same part
+ * are equal, as SQL's {@code EXCEPT} and {@code INTERSECT} count them (not distinct).
  */
 final class KeyCodec {
 
@@ -61,10 +66,25 @@ final class KeyCodec {
 
     private final List<Part> parts;
     private final boolean joinKeys;
+    /** Parts encoded by family, as a join's, with a null equal to a null. */
+    private final boolean rowKeys;
 
     KeyCodec(List<Part> parts, boolean joinKeys) {
+        this(parts, joinKeys, false);
+    }
+
+    private KeyCodec(List<Part> parts, boolean joinKeys, boolean rowKeys) {
         this.parts = List.copyOf(parts);
         this.joinKeys = joinKeys;
+        this.rowKeys = rowKeys;
+    }
+
+    /**
+     * Keys for comparing rows between inputs whose columns may differ in type: equal values give
+     * equal bytes whatever each side's type (as a join's keys), and nulls are equal to each other.
+     */
+    static KeyCodec rows(List<Part> parts) {
+        return new KeyCodec(parts, false, true);
     }
 
     List<Part> parts() {
@@ -77,7 +97,7 @@ final class KeyCodec {
         Reader[] readers = new Reader[parts.size()];
         for (int p = 0; p < readers.length; p++) {
             FieldVector v = batch.getVector(parts.get(p).column());
-            readers[p] = joinKeys ? universal(v) : reader(v, parts.get(p).as());
+            readers[p] = joinKeys || rowKeys ? universal(v) : reader(v, parts.get(p).as());
         }
         Sink out = new Sink(Math.max(16, n * 10));
         int[] offsets = new int[n + 1];

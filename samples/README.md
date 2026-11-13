@@ -129,6 +129,7 @@ bank or person.
 | `04-combine` | `sample-lookup` | Add columns from another input, like a join; no match through `rejected` | Reference data added, with a missing reference shown, not left empty |
 | | `sample-union` | The rows of several inputs together | Current and archived records together, for a review or remediation |
 | | `sample-join` | Two inputs side by side by key: a full join, with the rows that have no partner | Reconciling two systems: what is on one side and missing on the other |
+| | `sample-only-in-archived` | Rows one input has and the other lacks: an anti join (and a semi join for those in both), on an email tidied the same way on both sides | The records in one system only, before an archive is retired or two systems are merged |
 | `05-aggregate` | `sample-aggregate` | One row per group: counts, sums and distinct counts | Totals that add up to the detail, as aggregation reviews check |
 | | `sample-catalogue-summary` | A summary per category, with an expression over the group | A first look at a dataset, and a check that a load looks right |
 | `06-quality` | `sample-gate-quarantine` | A quality gate setting failing rows aside, with a threshold | Bad rows kept for review, so data-quality controls have evidence |

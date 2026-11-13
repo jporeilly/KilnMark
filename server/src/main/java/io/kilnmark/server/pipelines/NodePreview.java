@@ -302,6 +302,10 @@ final class NodePreview {
             } else if ("join".equals(s.type())) {
                 out.add("Node " + s.id() + " (join) reads every row of both its inputs before it passes any on, so every "
                     + "row before it was read.");
+            } else if ("union".equals(s.type()) && List.of("except", "intersect")
+                .contains(String.valueOf(c.configs().getOrDefault(s.id(), Map.of()).get("mode")))) {
+                out.add("Node " + s.id() + " (union, " + c.configs().get(s.id()).get("mode") + ") reads every row of all "
+                    + "its inputs before it passes any on, so every row before it was read.");
             } else if ("lookup".equals(s.type())) {
                 List<String> from = c.edges().stream().filter(e -> e.toNode().equals(s.id())
                     && e.toPort().equals("lookup")).map(PipelineCompilerPort.EdgeOutline::fromNode).distinct().toList();
@@ -649,7 +653,21 @@ final class NodePreview {
                 // column's name (one an earlier node dropped, say) is masked too
                 return main;
             }
-            case "limit", "union" -> {
+            case "union" -> {
+                String mode = text(config.get("mode"));
+                if ("except".equals(mode) || "intersect".equals(mode)) {
+                    // which rows come out shows whether the other inputs hold the same values
+                    List<String> on = list(config.get("compare_on"));
+                    // whole rows: every hidden column is compared, so the message can name one
+                    List<String> whole = any.all() ? null : any.names().stream().sorted().toList();
+                    uses(id, t, any, on.isEmpty() ? whole : on, on.isEmpty() ? "compares whole rows, which include"
+                        : "compares rows by");
+                }
+                // Every input's hidden columns, also under except and intersect, where only the first
+                // input's rows come out: more is hidden than need be, never less.
+                return any;
+            }
+            case "limit" -> {
                 return any;
             }
             default -> {
@@ -746,10 +764,16 @@ final class NodePreview {
      * ({@code JoinFactory.rightNames}): a right column whose name a left column, or an earlier right
      * column, has already left by (ignoring case) leaves as {@code right_prefix} and its name. When
      * either side's columns are not known before the run (or the names clash, so the join will not
-     * run), a hidden right column is hidden under both names.
+     * run), a hidden right column is hidden under both names. A semi or anti join keeps the left's
+     * columns alone, so nothing of the right leaves it (its keys are still checked as used, by the
+     * callers).
      */
     static Hidden joinRight(Hidden right, Map<String, Object> config, List<String> leftColumns,
                             List<String> rightColumns) {
+        Object how = config.get("how");
+        if (how != null && List.of("semi", "anti").contains(String.valueOf(how).strip())) {
+            return Hidden.NONE;
+        }
         if (right.all()) {
             return Hidden.ALL;
         }

@@ -648,15 +648,17 @@ Appends the rows of all its inputs, matching columns by name.
 
 [generated: node union]: #
 
-**Union**: a transform node, in the palette's Combine folder. Appends the rows of all its inputs, matching columns by name. Columns an input lacks are left empty (null).
+**Union**: a transform node, in the palette's Combine folder. Appends the rows of all its inputs, matching columns by name. Columns an input lacks are left empty (null). Or, with mode, keeps the rows of the first input that the other inputs lack (except) or have too (intersect).
 
 - Reads from: `in` (any number of edges)
 - Writes to: `out`
 
 | Setting | Type | Required | Default | Parameters | What it does |
 | --- | --- | --- | --- | --- | --- |
+| `mode` | choice | no | `all` | no | Which rows come out: all appends the rows of every input. Except keeps the rows of the first input found in no other input, and intersect those found in every other input, comparing whole rows by column name; only the first input's columns come out, each distinct row once, as in SQL. One of `all`, `except`, `intersect`. |
+| `compare_on` | list of columns | no |  | no | For except and intersect: the columns to compare, when not every column. One row comes out for each distinct set of their values, the first met in the first input. Leave out a column only one input has, or one that differs on every row, such as a load time. |
 | `strict` | true or false | no | `false` | whole value | Fail unless every input has exactly the same columns, with the same types. |
-| `memory_limit_mb` | number | no | `256` | whole value | The most memory batches may take while the union waits for every input's first batch. |
+| `memory_limit_mb` | number | no | `256` | whole value | The most memory batches may take while the union waits for every input's first batch. For except and intersect, the most the inputs may take while they are sorted; past it, they are sorted on disk. |
 
 [end: node union]: #
 
@@ -670,6 +672,28 @@ Appends the rows of all its inputs, matching columns by name.
   one side is a float, dates and timestamps to `timestamp`. Other differences (text and a number,
   say) stop the pipeline before it runs; change one with `select`.
 - With `strict: true`, every input must have exactly the same columns and types.
+- `mode: except` and `mode: intersect` compare instead of appending. `except` keeps the rows of the
+  first input (the first in `input: [...]`) that no other input has, and `intersect` those that
+  every other input has. Only the first input's rows and columns come out; the canvas says which
+  input that is on the node.
+- Columns are matched by name, not by position as in SQL.
+- Whole rows are compared, so every input must then have the same column names, in any order. A
+  column only one input has is refused when the pipeline is checked, since no row could be the
+  same. Name the columns to compare with `compare_on` instead, leaving out that column and any
+  that differs on every row, such as a load time or a `came_from` mark.
+- Values are compared as a join's keys are: `1`, `1.0` and `1.00` are equal, and text never equals
+  a number. Empty (null) values are equal to each other, as in SQL's `EXCEPT` and `INTERSECT`, so
+  two rows that are empty in the same column and equal elsewhere are the same row. (A join's keys
+  differ: an empty key matches nothing.)
+- As in SQL's `EXCEPT` and `INTERSECT`, repeats fold into one: a row that is in the first input
+  twice comes out once, or not at all. With `compare_on`, one row comes out for each distinct set
+  of the compared values: the first such row in the first input, whatever its other columns. To
+  keep another (the last, or the newest by a column), use a `dedupe` on those columns instead.
+- Under `except` and `intersect` every input is sorted by the compared columns, in memory up to
+  `memory_limit_mb` between them and on disk past it, so any number of rows can be compared. Rows
+  come out in the order of those columns, empty values last, once every input has ended.
+
+Appending, the default:
 
 ```yaml
 kilnmark: pipeline/v1
@@ -698,6 +722,39 @@ nodes:
     table: crm.all_customers
     mode: replace
 ```
+
+Comparing: the archived rows that today's table no longer has as they were.
+
+```yaml
+kilnmark: pipeline/v1
+name: archived-rows-not-in-current
+description: Archived customers that today's table does not have, comparing whole rows.
+
+nodes:
+  - id: archived
+    type: read
+    source: sales-db
+    asset: crm.customers_archive
+
+  - id: current
+    type: read
+    source: sales-db
+    asset: crm.customers
+
+  - id: gone_or_changed
+    type: union
+    input: [archived, current]       # the first input's rows come out
+    mode: except
+
+  - id: out
+    type: write
+    input: gone_or_changed
+    source: warehouse
+    table: crm.archived_not_in_current
+    mode: replace
+```
+
+Related: [Rows in one input and not the other](pipelines.md#rows-in-one-input-and-not-the-other).
 
 ## dedupe
 
@@ -967,7 +1024,7 @@ Joins the rows of a `left` and a `right` input whose key columns are equal, as S
 
 [generated: node join]: #
 
-**Join**: a transform node, in the palette's Combine folder. Joins rows of the left and right inputs whose key columns are equal: inner, left, right or full. Either input may be larger than memory. To add a few columns from a small table, a lookup is quicker.
+**Join**: a transform node, in the palette's Combine folder. Joins rows of the left and right inputs whose key columns are equal: inner, left, right or full. Semi and anti keep only the left rows that have a match, or have none. Either input may be larger than memory. To add a few columns from a small table, a lookup is quicker.
 
 - Reads from: `left`, `right`
 - Writes to: `out`
@@ -975,8 +1032,8 @@ Joins the rows of a `left` and a `right` input whose key columns are equal, as S
 | Setting | Type | Required | Default | Parameters | What it does |
 | --- | --- | --- | --- | --- | --- |
 | `on` | column to column | yes |  | no | Key columns: each left column and the right column it must equal. |
-| `how` | choice | no | `inner` | no | Which rows are kept: inner keeps the pairs of rows that match; left also keeps left rows with no match, right keeps right rows with none, and full keeps both, with the other side's columns empty. One of `inner`, `left`, `right`, `full`. |
-| `right_prefix` | text | no | `right_` | no | Put in front of the name of a right column that the left already has (ignoring case), so both are kept. |
+| `how` | choice | no | `inner` | no | Which rows are kept: inner keeps the pairs of rows that match; left also keeps left rows with no match, right keeps right rows with none, and full keeps both, with the other side's columns empty. Semi keeps each left row that has a match and anti each left row that has none, with the left's columns only. One of `inner`, `left`, `right`, `full`, `semi`, `anti`. |
+| `right_prefix` | text | no | `right_` | no | Put in front of the name of a right column that the left already has (ignoring case), so both are kept. Not used by semi and anti, which keep no right column. |
 | `memory_limit_mb` | number | no | `256` | whole value | The most memory the two inputs may take while they are sorted. Past it, they are sorted on disk. |
 
 [end: node join]: #
@@ -992,14 +1049,23 @@ In its settings, **Match on** pairs each left column with the right column it mu
 
 **What to know.**
 
-- Every pair comes out: a key on three left rows and two right rows gives six rows.
+- `semi` and `anti` are not in the picture: they keep left rows only. `semi` keeps each left row
+  that has at least one match on the right, and `anti` each left row that has none. Only the
+  left's columns come out, as they are, and each left row once, however many right rows match it.
+  Nothing is renamed, so `right_prefix` is not used. They are SQL's `EXISTS` and `NOT EXISTS`: a
+  left row with an empty key has no match, so `anti` keeps it and `semi` does not, and an empty
+  key on the right hides nothing. See
+  [Rows in one input and not the other](pipelines.md#rows-in-one-input-and-not-the-other).
+- Every pair comes out (but for `semi` and `anti`): a key on three left rows and two right rows
+  gives six rows.
 - Keys match by value, as a lookup's do: `1`, `1.0` and `1.00` match, and a date matches a
   timestamp at midnight. A floating-point number matches by its shortest decimal, so a very large
   float may not match the whole number it holds; cast it with `select` to match exactly.
   Timestamps match to the nanosecond. Text never matches a number; change one with `select`
   first. Several key columns must all be equal.
 - An empty (null) key never matches anything, not even another empty key, as in SQL.
-- Every column of both inputs comes out with its type, the left's first. A right column whose
+- Every column of both inputs comes out with its type, the left's first (`semi` and `anti` pass on
+  the left's only). A right column whose
   name a left column already has (ignoring case) is renamed with `right_prefix`, so a join on
   `customer_id` gives `customer_id` and `right_customer_id`; drop the one you do not need with
   `select`. Columns of a side that may have no match can be empty.
@@ -1016,7 +1082,8 @@ In its settings, **Match on** pairs each left column with the right column it mu
 it, keeping the main rows' order: quickest when one side is small, such as a table of codes. It
 uses one row of a repeated key, by a rule you state (or stops), and sends main rows with no match
 to `rejected` if you like. A `join` sorts both sides, so either may be larger than memory, keeps
-every pair when keys repeat, can keep the rows of either side with no match, and passes both
+every pair when keys repeat, can keep the rows of either side with no match (or, with `anti`,
+only the left rows with none), and passes both
 sides' columns on.
 
 ```yaml

@@ -85,6 +85,21 @@ describe("each setting kind gets its control, with help and default", () => {
     expect(out).toMatch(/<option value="replace" selected="">replace<\/option>/);
   });
 
+  test("a join's kinds and a comparing union's settings, as the node catalogue gives them", () => {
+    const how = html(spec("how", "choice", { defaultValue: "inner", choices: ["inner", "left", "right", "full", "semi", "anti"] }), "anti", { nodeType: "join" });
+    expect(how).toContain("Default (inner)");
+    expect(how).toMatch(/<option value="semi">semi<\/option>/);
+    expect(how).toMatch(/<option value="anti" selected="">anti<\/option>/);
+    const mode = html(spec("mode", "choice", { defaultValue: "all", choices: ["all", "except", "intersect"] }), "except", { nodeType: "union" });
+    expect(mode).toContain("Default (all)");
+    expect(mode).toMatch(/<option value="except" selected="">except<\/option>/);
+    expect(mode).toMatch(/<option value="intersect">intersect<\/option>/);
+    // compare_on picks from the columns arriving at the union
+    const on = html(spec("compare_on", "columns"), ["customer_id"], { nodeType: "union" });
+    expect(on).toContain('aria-label="Remove customer_id from compare on"');
+    expect(on).toMatch(/<option value="status">status \(utf8\)<\/option>/);
+  });
+
   test("SOURCE: the saved sources; for a write, those that are read-only say so", () => {
     const out = html(spec("source", "source", { required: true }), "sales-db", { writing: true });
     expect(out).toContain("Sales database (sales-db), read-only");
@@ -226,6 +241,17 @@ describe("what the canvas says about nodes", () => {
     expect(nodeSummary(node({ type: "window", settings: { order_by: ["txn_at"], columns: { n: "row_number()" } } }))).toBe("n");
     expect(nodeSummary(node({ type: "join", settings: { on: { customer_id: "id" }, how: "left" } }))).toBe("left on customer_id = id");
     expect(nodeSummary(node({ type: "join", settings: { on: { a: "b" } } }))).toBe("inner on a = b");
+    expect(nodeSummary(node({ type: "join", settings: { on: { email: "email" }, how: "anti" } }))).toBe("anti on email = email");
+    const two = [
+      { port: null, from: "archived", fromPort: "out" },
+      { port: null, from: "current", fromPort: "out" },
+    ];
+    expect(nodeSummary(node({ type: "union", inputs: two }))).toBe("2 inputs");
+    expect(nodeSummary(node({ type: "union", inputs: two, settings: { mode: "all" } }))).toBe("2 inputs");
+    expect(nodeSummary(node({ type: "union", inputs: two, settings: { mode: "except" } }))).toBe("except: rows of archived in no other input");
+    expect(nodeSummary(node({ type: "union", inputs: two, settings: { mode: "intersect", compare_on: ["id", "email"] } }))).toBe(
+      "intersect on id, email: rows of archived in every other input",
+    );
     expect(nodeSummary(node({ type: "write", settings: { source: "w", path: "x.csv", mode: "replace" } }))).toBe("w · x.csv · replace");
     // which row of a repeated key wins is always in sight, the default too
     expect(nodeSummary(node({ type: "write", settings: { source: "w", table: "a.b", mode: "upsert", key: ["id"] } }))).toBe("w · a.b · upsert · last kept");

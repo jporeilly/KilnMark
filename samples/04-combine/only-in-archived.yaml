@@ -1,0 +1,83 @@
+# Only in one input: rows the other input lacks (a Kilnmark sample).
+# Finds the customers in the 2023 archive who are not among today's CRM customers, with an anti
+# join, and those who are in both, with a semi join. The two systems number customers differently,
+# so "the same customer" is the email, tidied the same way on both sides before it is matched.
+# Why it matters: Before an archive is retired, or two systems are merged, someone must show which
+# records exist in one place only. Retention reviews and migrations both ask for that list, and for
+# proof that the records in both places add up to the whole.
+# Look for: how: anti and how: semi on the two join nodes. Only the left's columns come out, once
+# each. The two files together hold every archived customer: 60 only in the archive, 3 in both,
+# whose emails differ only in capitals and spaces until email_key tidies them.
+# Needs: crm-db (the crm schema) and files.
+kilnmark: pipeline/v1
+name: sample-only-in-archived
+description: Archived customers who are not among today's customers, and those who are.
+
+nodes:
+  - id: archived
+    type: read
+    source: crm-db
+    asset: crm.customers_archive_2023
+
+  - id: current
+    type: read
+    source: crm-db
+    asset: crm.customers
+    columns: [email]
+
+  - id: archived_keyed
+    type: compute
+    input: archived
+    columns:
+      email_key: "lower(trim(email))"
+
+  - id: current_keyed
+    type: compute
+    input: current
+    columns:
+      email_key: "lower(trim(email))"
+
+  - id: only_in_archive
+    type: join
+    inputs: { left: archived_keyed, right: current_keyed }
+    on: { email_key: email_key }
+    how: anti
+
+  - id: in_both
+    type: join
+    inputs: { left: archived_keyed, right: current_keyed }
+    on: { email_key: email_key }
+    how: semi
+
+  - id: out
+    type: write
+    input: only_in_archive
+    source: files
+    path: samples/combine/customers_only_in_archive.csv
+    mode: replace
+
+  - id: out_both
+    type: write
+    input: in_both
+    source: files
+    path: samples/combine/customers_in_archive_and_current.csv
+    mode: replace
+
+# Notes on the canvas, for people. Kilnmark ignores this list when it runs the pipeline.
+notes:
+  - text: |-
+      **Match on a key both sides make the same way.** The archive and today's table number customers differently, and write emails with different capitals and spaces. `lower(trim(email))` makes one key of them.
+    node: archived_keyed
+    x: 0
+    y: -170
+    width: 300
+    height: 140
+    colour: yellow
+  - text: |-
+      **Anti keeps the left rows with no match; semi keeps those with one.** Only the archive's columns come out, each row once. A row whose key is empty never matches, so anti keeps it.
+    node: only_in_archive
+    x: 0
+    y: -170
+    width: 300
+    height: 140
+    colour: green

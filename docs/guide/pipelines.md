@@ -489,6 +489,102 @@ and an example; the language their conditions and columns use is in [Expressions
 The node catalogue (`GET /api/v1/node-types`) lists every type this server has, with the settings
 each takes.
 
+## Rows in one input and not the other
+
+"Which customers are in the archive and not in today's table?" "Which orders are in the ledger and
+not in the feed?" There are two ways to ask, and they answer different questions. Choose by what
+makes two rows "the same".
+
+| The same row is... | Use | It is SQL's |
+| --- | --- | --- |
+| the same **key**: an id, or an email tidied the same way on both sides | a `join` with `how: anti` (or `semi` for the rows that are in both) | `NOT EXISTS` (and `EXISTS`) |
+| the same in **every column**, or in the columns you name | a `union` with `mode: except` (or `intersect` for the rows that are in both) | `EXCEPT` or `MINUS` (and `INTERSECT`) |
+
+### By key: an anti join
+
+Use this when a record has an identity. The row may have changed (a new postcode, another segment)
+and is still the same customer.
+
+```yaml
+  - id: only_in_archive
+    type: join
+    inputs: { left: archived, right: current }
+    on: { customer_id: customer_id }
+    how: anti                        # the archived rows with no current row of that key
+```
+
+- The **left** input is the one whose rows come out, with its columns only and each row once.
+  `how: semi` gives the other half: the left rows that do have a match.
+- **Make the key the same on both sides first.** Two systems seldom share an id. When "the same
+  customer" is the email, capitals and stray spaces make equal emails differ, so add the key with
+  a `compute` node on each side, written the same way, and match on that:
+
+  ```yaml
+    - id: archived_keyed
+      type: compute
+      input: archived
+      columns:
+        email_key: "lower(trim(email))"
+  ```
+
+  Then `on: { email_key: email_key }`. The sample `sample-only-in-archived` does this: three
+  archived customers turn out to be current ones too, though no email matches as written.
+- **An empty key never matches**, as in every join. So an archived row with no email is always
+  "only in the archive" under `anti`, even when the other side has rows with no email too. If that
+  is not what you want, filter those rows out first, or match on another key.
+- A key that repeats on the right changes nothing: a left row comes out once, or not at all.
+
+### By whole row: except
+
+Use this to compare two copies of one table, yesterday's and today's, say: the rows of the first
+that the second does not have exactly as they were. A row that changed in any compared column
+comes out, and so does a row that has gone.
+
+```yaml
+  - id: gone_or_changed
+    type: union
+    input: [yesterday, today]        # the first input's rows come out
+    mode: except
+```
+
+- The **first** input in `input: [...]` is the one whose rows come out; the canvas says which it
+  is on the node. `mode: intersect` gives the other half: the rows the other inputs have too.
+- **The trap: a column that only one side has, or that differs on every row.** If one side was
+  given a `came_from` column, or each copy has its own load time, no row is ever the same, and
+  `except` would give you every row. A column that only one input has is refused when the pipeline
+  is checked, saying which. A column both have that always differs is not something Kilnmark can
+  see, so leave it out yourself, naming the columns to compare:
+
+  ```yaml
+    - id: gone_or_changed
+      type: union
+      input: [yesterday, today]
+      mode: except
+      compare_on: [customer_id, email, postcode, segment]
+  ```
+
+- **Empty values are equal to each other here**, as in SQL's `EXCEPT`: two rows that are both empty
+  in a column, and equal in the rest, are the same row. This is the opposite of a join's keys, and
+  it is why the two ways can disagree about rows with an empty value.
+- **Columns are matched by name**, not by position as in SQL, so the inputs' columns may come in
+  any order.
+- Repeats fold into one, as in SQL's `EXCEPT`: a row that is in the first input twice comes out
+  once, or not at all. With `compare_on`, one row comes out for each distinct set of the compared
+  values, the first such row in the first input.
+
+### Which one?
+
+- You know the key, and want the records missing from the other side: **anti join**.
+- You want the rows that are new, changed or gone between two copies, and do not mind which:
+  **except**. Run it both ways round (swap the inputs) to see both what left and what arrived.
+- You want to know which rows are new, which changed and which went, each marked as such: that
+  takes both today, a full `join` on the key and a `route` on which side is empty. A `compare` node
+  that does it in one step is planned.
+
+Both sort their inputs, in memory up to `memory_limit_mb` and on disk past it, so either side may
+be larger than memory. The settings are in the reference:
+[`join`](reference-pipeline-nodes.md#join) and [`union`](reference-pipeline-nodes.md#union).
+
 ## Parameters and server variables
 
 A pipeline can take values when it runs, so one pipeline serves many runs: the orders in a status,
