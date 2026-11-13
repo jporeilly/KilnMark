@@ -95,7 +95,7 @@ class SamplesDatabaseIsolationTest {
         PG.copyFileToContainer(org.testcontainers.images.builder.Transferable.of("export KILNMARK_DB_PASSWORD = '"
             + SUPER_PASSWORD + "' # the database's\r\nKILNMARK_SAMPLES_DB_PASSWORD=\"" + samplesPassword
             + "\" # the samples login's\r\n"), "/run/kilnmark/env");
-        return PG.execInContainer("sh", "-c", "PGHOST=127.0.0.1 PGUSER=kilnmark PGSSLMODE=require KILNMARK_SAMPLES_DB_WAIT=4 sh "
+        return ContainerExec.exec(PG, "sh", "-c", "PGHOST=127.0.0.1 PGUSER=kilnmark PGSSLMODE=require KILNMARK_SAMPLES_DB_WAIT=4 sh "
             + SCRIPT);
     }
 
@@ -247,10 +247,10 @@ class SamplesDatabaseIsolationTest {
     void pgHbaLetsTheSamplesLoginReachItsOwnDatabaseOnlyOverTls() throws Exception {
         // as the image's start runs it, twice: the second changes nothing
         for (int run = 0; run < 2; run++) {
-            ExecResult r = PG.execInContainer("sh", "-c", "sh " + HBA + " \"$PGDATA/pg_hba.conf\"");
+            ExecResult r = ContainerExec.exec(PG, "sh", "-c", "sh " + HBA + " \"$PGDATA/pg_hba.conf\"");
             assertEquals(0, r.getExitCode(), r.getStderr());
         }
-        ExecResult head = PG.execInContainer("sh", "-c", "grep -c 'kilnmark-samples: begin' \"$PGDATA/pg_hba.conf\"");
+        ExecResult head = ContainerExec.exec(PG, "sh", "-c", "grep -c 'kilnmark-samples: begin' \"$PGDATA/pg_hba.conf\"");
         assertEquals("1", head.getStdout().strip(), "the lines once");
         try (Connection c = superuser("postgres")) {
             exec(c, "SELECT pg_reload_conf()");

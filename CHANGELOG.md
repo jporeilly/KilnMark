@@ -63,6 +63,10 @@ released.
 - **The Nodes tab under a pipeline's canvas and a flow's diagram** has its rows closer together,
   about half the height, so more nodes show without scrolling.
 
+### Details
+
+- Two server tests that run commands in a test container (the people set-up and the samples database checks) now fail after three minutes when the container engine loses a command's answer. Before, such a test waited with no limit and held a CI runner until the build timed out hours later.
+
 ## 0.1.2 (11 November 2026)
 
 ### What's new
