@@ -44,7 +44,7 @@ class SqlGeneratorTest {
         assertTrue(create.contains("\"order_id\" bigint NOT NULL"), create);
         assertTrue(create.contains("\"total\" numeric(12,2) NOT NULL"), create);
         assertTrue(create.contains("\"status\" varchar(12) NOT NULL"), create);
-        assertTrue(create.contains("\"doc\" text"), "a type without a kind of its own is written as text: " + create);
+        assertTrue(create.contains("\"doc\" pg_catalog.text"), "a type without a kind of its own is written as text: " + create);
         assertTrue(create.contains("\"amount\" numeric,"), "PostgreSQL keeps a numeric without precision: " + create);
         assertTrue(create.contains("PRIMARY KEY (\"order_id\")"), create);
         assertFalse(create.contains("jsonb") || create.contains("DEFAULT"), create);
@@ -98,7 +98,7 @@ class SqlGeneratorTest {
         Views.GeneratedSql add = SqlGenerator.generate(new SqlGenerator.Request("add-columns", "sales.orders", null,
             List.of(new SqlGenerator.NewColumn("shipped_on", "date", null, null, null, true)), null), ORDERS,
             Dialect.POSTGRESQL, Dialect.POSTGRESQL);
-        assertEquals(List.of("ALTER TABLE \"sales\".\"orders\" ADD COLUMN \"shipped_on\" date"), add.sql());
+        assertEquals(List.of("ALTER TABLE \"sales\".\"orders\" ADD COLUMN \"shipped_on\" pg_catalog.date"), add.sql());
         assertThrows(IllegalArgumentException.class, () -> SqlGenerator.generate(new SqlGenerator.Request("add-columns",
             "sales.orders", null, List.of(new SqlGenerator.NewColumn("TOTAL", "text", null, null, null, true)), null),
             ORDERS, Dialect.POSTGRESQL, Dialect.POSTGRESQL), "a column of that name is there");
