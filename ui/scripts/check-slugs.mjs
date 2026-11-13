@@ -9,6 +9,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { marked } from "marked";
 import { markdownHeadings, plainHeading, slug, uniqueSlug } from "../src/docs/anchors.js";
+import { assembleChangelog } from "./changelog.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const cases = JSON.parse(readFileSync(root + "tests/docs/slug-cases.json", "utf8"));
@@ -79,7 +80,8 @@ const pages = ["docs/guide/", "docs/guide/install/"]
   .filter((dir) => existsSync(root + dir))
   .flatMap((dir) => readdirSync(root + dir).filter((f) => f.endsWith(".md")).map((f) => dir + f))
   .map((f) => [f, readFileSync(root + f, "utf8")]);
-pages.push(["CHANGELOG.md", readFileSync(root + "CHANGELOG.md", "utf8")]);
+// The changelog as the app and the server bundle it: with the fragments in changelog.d merged in.
+pages.push(["CHANGELOG.md (with changelog.d)", assembleChangelog(root)]);
 for (const [file, markdown] of pages) {
   for (const r of risky(markdown)) wrong.push(`${file} has ${r}; use # headings and plain Markdown`);
   const viewer = markdownHeadings(markdown).map((h) => h.slug);

@@ -28,6 +28,31 @@ Gradle is not needed: use the wrapper (`./gradlew`, or `gradlew.bat` on Windows)
 ./gradlew release               # assemble dist/release/kilnmark-<version>
 ```
 
+### The changelog
+
+Each pull request writes its changelog entry to a fragment of its own, `changelog.d/<branch>.md`,
+with the same `###` sections CHANGELOG.md uses (What's new, Security, Fixed, Changed, Details),
+and never edits CHANGELOG.md's Unreleased part, so open pull requests never conflict there
+([changelog.d/README.md](../changelog.d/README.md) says how to write one). One script,
+`ui/scripts/changelog.mjs`, merges the fragments into the Unreleased part, section by section
+(CHANGELOG.md's own entries first, then the fragments in file-name order), wherever the changelog
+is read:
+
+- the app's **What's new**: `ui/vite.config.ts` answers `src/docs/index.ts`'s import of
+  `CHANGELOG.md?raw` with the merged text, in `vite build`, the dev server (which reloads when a
+  fragment changes) and vitest;
+- the anchor check, `ui/scripts/check-slugs.mjs`;
+- the assistant's bundled docs: `:server:assembleChangelog` writes the merged text, and
+  `bundleDocs` puts it in the server's resources as `kilnmark/docs/CHANGELOG.md`, which
+  `checkProductOnly` also reads. A `-PskipUi` build has no Node.js, so it bundles CHANGELOG.md as
+  it is, without the fragments; a release always builds the UI.
+
+`node ui/scripts/changelog.mjs --check` checks the fragments, and the UI build runs it first
+(`npm run build`'s `prebuild`, so `./gradlew build` and CI too): an unknown section, text before
+the first heading, an empty fragment or a `#` or `##` heading fails the build, naming the file.
+`--write <file>` writes the merged changelog; `--collect` is the release step (see
+[Releasing](#releasing)).
+
 ### Static analysis
 
 Error Prone runs inside every Java compile, main and test ([ADR 0042](adr/0042-static-analysis-and-dependency-verification.md)).
@@ -264,6 +289,18 @@ one) or sets one to a literal value, if `.env.example` fills one in, or if the r
 `config/product-only-allow.txt` with its reason. Run it on its own with `./gradlew checkProductOnly`.
 
 ## Releasing
+
+**Preparing a release.** In the pull request that sets the new version (`gradle.properties`,
+`ui/package.json` and its lock), first merge the changelog's fragments into CHANGELOG.md for good:
+
+```
+node ui/scripts/changelog.mjs --collect   # merges changelog.d/*.md into ## Unreleased, deletes them
+```
+
+Then rename `## Unreleased` to the version and date (`## 0.1.3 (20 November 2026)`), and commit
+CHANGELOG.md with the deleted fragments (stage them by path, `git rm changelog.d/<name>.md` or
+`git add -u changelog.d`). `changelog.d/README.md` stays. The next pull request's fragment makes a
+new Unreleased part when it is read.
 
 The owner tags releases; nothing else does. A tag `v<version>` (matching `gradle.properties`) on a
 commit of main starts `.github/workflows/release.yml`, which builds, signs and checks the release
@@ -1238,7 +1275,7 @@ starting `Branding folder`.
 cd ui
 npm install
 npm run dev              # http://localhost:5173, calls the server on :8780
-npm run build            # type check, contrast check, then writes dist/ui
+npm run build            # changelog and anchor checks, type check, tests, contrast check, then writes dist/ui
 npm run check:contrast   # the colour tokens against WCAG AA, for every theme and accent
 ```
 

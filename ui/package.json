@@ -9,7 +9,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "prebuild": "node scripts/check-slugs.mjs",
+    "prebuild": "node scripts/changelog.mjs --check && node scripts/check-slugs.mjs",
+    "changelog": "node scripts/changelog.mjs",
     "build": "tsc --noEmit && vitest run && node scripts/check-contrast.mjs && vite build && node scripts/ui-notices.mjs",
     "check:contrast": "node scripts/check-contrast.mjs",
     "preview": "vite preview",
