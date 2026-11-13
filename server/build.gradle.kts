@@ -219,7 +219,9 @@ val buildUi by tasks.registering(Exec::class) {
     inputs.files(uiDir.file("index.html"), uiDir.file("vite.config.ts"), uiDir.file("tsconfig.json"),
         uiDir.file("package.json"), uiDir.file("package-lock.json"))
     // The bundled documentation, and the anchor cases the pre-build check reads (scripts/check-slugs.mjs).
+    // The changelog is CHANGELOG.md with the fragments in changelog.d merged in (scripts/changelog.mjs).
     inputs.files(rootProject.fileTree("docs/guide") { include("*.md", "install/*.md") }, rootProject.file("CHANGELOG.md"))
+    inputs.dir(rootProject.file("changelog.d"))
     inputs.dir(rootProject.file("tests/docs"))
     outputs.dir(uiOut)
 }
@@ -244,14 +246,34 @@ val uiSbom by tasks.registering(Exec::class) {
 val guideDir = rootProject.layout.projectDirectory.dir("docs/guide")
 val guideFiles = arrayOf("*.md", "install/*.md")
 val docsResources = layout.buildDirectory.dir("generated/docs-resources")
+
+// The changelog as the web UI bundles it: CHANGELOG.md with the fragments in changelog.d merged
+// into its Unreleased part, by the UI's script (ui/scripts/changelog.mjs, the one implementation),
+// which also fails on a malformed fragment. It needs Node.js, as the UI does; a -PskipUi build
+// (API only, no Node.js) bundles CHANGELOG.md as it is, without the unreleased fragments.
+val assembledChangelog = layout.buildDirectory.file("generated/changelog/CHANGELOG.md")
+val assembleChangelog by tasks.registering(Exec::class) {
+    description = "Writes CHANGELOG.md with the fragments in changelog.d merged in (ui/scripts/changelog.mjs)."
+    onlyIf { !skipUi }
+    workingDir = uiDir.asFile
+    val out = assembledChangelog.get().asFile
+    doFirst { out.parentFile.mkdirs() }
+    commandLine(npm, "run", "--silent", "changelog", "--", "--write", out.absolutePath)
+    inputs.file(rootProject.file("CHANGELOG.md"))
+    inputs.dir(rootProject.file("changelog.d"))
+    // package.json holds the "changelog" script npm runs.
+    inputs.files(uiDir.file("scripts/changelog.mjs"), uiDir.file("package.json"))
+    outputs.file(assembledChangelog)
+}
+
 val bundleDocs by tasks.registering(Sync::class) {
-    description = "Copies docs/guide/*.md, docs/guide/install/*.md and CHANGELOG.md into the server's resources."
+    description = "Copies docs/guide/*.md, docs/guide/install/*.md and the changelog (with changelog.d) into the server's resources."
     from(guideDir) {
         include(*guideFiles)
         eachFile { path = "kilnmark/docs/guide/$name" }
         includeEmptyDirs = false
     }
-    from(rootProject.layout.projectDirectory.file("CHANGELOG.md")) {
+    from(if (skipUi) rootProject.layout.projectDirectory.file("CHANGELOG.md") else assembleChangelog) {
         into("kilnmark/docs")
     }
     into(docsResources)

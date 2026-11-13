@@ -16,21 +16,25 @@ controls regulators expect are in
   bypass. At most two agents at a time.
 - Each change ships with its tests, samples or templates where it has them, the user guide
   (`docs/guide`), the design notes (`docs/design`), an ADR for a decision (`docs/adr`), and a
-  CHANGELOG entry under Unreleased.
-- Each PR's CHANGELOG entry goes under Unreleased in the right section: What's new, Security (with
-  its severity, and whether the flaw was in a release), Fixed, Changed (anything a customer must
-  act on, or that behaves differently) or Details.
+  changelog fragment.
+- Each PR's changelog entry is a fragment of its own, `changelog.d/<branch>.md`
+  ([changelog.d/README.md](changelog.d/README.md)); never edit CHANGELOG.md's Unreleased part. Its
+  entries are `- ` bullets under `###` headings (no other heading) for the right sections: What's
+  new, Security (with its severity, and whether the flaw was in a release), Fixed, Changed
+  (anything a customer must act on, or that behaves differently) or Details. Everything that shows
+  the changelog merges the fragments in.
 - Ask before deleting data, rewriting history, force-pushing, or changing repository settings.
 - Stacked PRs: when a PR is moved onto `main` after the one under it merges, GitHub can report a
   conflict that is not there until the branch gets a new push. Merge `main` into the branch
-  (a merge commit, never a rebase) and push.
+  (a merge commit, never a rebase) and push. Each PR in a stack has its own fragment, so the
+  changelog is never the conflict.
 
 ## Checks to run before pushing
 
 - Server: `./gradlew build` (Windows: `build.ps1`). CI compiles with JDK 25 and
   `-Xlint:all -Werror`: a doc comment not attached to a declaration fails the build.
 - UI, in `ui/`: `npx tsc --noEmit -p .`, `npx vitest run`, `node scripts/check-contrast.mjs`,
-  `node scripts/check-slugs.mjs`.
+  `node scripts/check-slugs.mjs`, `node scripts/changelog.mjs --check`.
 - `SightsUseTest` reads the api, mcp and assistant packages as text: never put `//` inside a Java
   string literal there (write `":/"` or `"https:" + "/" + "/"`).
 - Database migrations are `graph/src/main/resources/db/migration/V<n>__*.sql`, numbered in the

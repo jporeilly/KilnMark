@@ -219,12 +219,15 @@ class ProductOnly(private val root: java.io.File, allowFile: java.io.File) {
         }
     }
 
+    private val heading = Regex("""^#{1,6}(\s|$)""")
+
     /** "What's new" is for customers: no lab at all. The rest may describe lab changes. */
     private fun changelog(where: String, text: String) {
         val details = StringBuilder()
         var whatsNew = false
         for (line in text.split('\n')) {
-            if (line.startsWith("#")) whatsNew = line.trimStart('#').trim().equals("What's new", ignoreCase = true)
+            // A Markdown heading: one to six # and then a space or nothing ("#1 feature" is text).
+            if (heading.containsMatchIn(line)) whatsNew = line.trimStart('#').trim().equals("What's new", ignoreCase = true)
             if (whatsNew) {
                 scan(where, line, names + word, corpus = false, section = "What's new ")
             } else {
