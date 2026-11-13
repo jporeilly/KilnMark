@@ -63,6 +63,27 @@ released.
 - **The Nodes tab under a pipeline's canvas and a flow's diagram** has its rows closer together,
   about half the height, so more nodes show without scrolling.
 
+### Details
+
+- **CI proves that the build upgrades from the previous release.** A new workflow, the upgrade
+  rehearsal (`.github/workflows/upgrade.yml`: on pull requests that change the containers, the
+  migrations, the server, the samples, the build or the rehearsal itself, every night on main, and by hand on main before
+  every tag), downloads the
+  previous published release (the newest one below the build's version, never one from before
+  0.1.2), checks its files against `config/release/cosign.pub` and `SHA256SUMS`, installs it with
+  its own control script from its offline images file, puts state in (people, a source, a pipeline
+  saved and run, a flow run, a schedule, a token), upgrades to the build as the upgrade guide says,
+  and fails unless `status` and `check` pass, the health endpoint is ready, no migration failed
+  and the database is at the build's newest, the backup upgrade takes is there and whole, and
+  everything put in before is still there and still runs. Then, with the build's own control
+  script: a backup, a restore of it and `uninstall --purge`. It runs on a machine of its own, a
+  container with systemd and rootless Podman that is removed afterwards
+  (`ci/upgrade-rehearsal`), so on the local runners too, beside any other job. The release
+  workflow's own install step is gone: it ran only on GitHub's runners and still called
+  `prepare`, a command the control script lost with the guided install. `ci/install-cosign.sh`
+  now says which cosign both workflows use. See docs/development.md, "The upgrade rehearsal".
+- **Version 0.1.3.** The build's own version is 0.1.3 (`gradle.properties`, the UI's package).
+
 ## 0.1.2 (11 November 2026)
 
 ### What's new

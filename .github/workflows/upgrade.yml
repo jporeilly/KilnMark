@@ -1,0 +1,120 @@
+name: Upgrade rehearsal
+
+# Proves that this build upgrades from the previous published release (docs/development.md, "The
+# upgrade rehearsal"): the previous release is downloaded and checked against Kilnmark's key,
+# installed with its own control script from its own images files, given real state, upgraded to
+# this build as the upgrade guide says, and checked afterwards. From 0.1.2 on, every release
+# upgrades from the one before it. A run takes 35 to 45 minutes, so it runs on the pull requests
+# that change what an upgrade goes through, every night on main, and by hand on main before every
+# tag (docs/development.md, "Releasing").
+on:
+  pull_request:
+    paths: ["containers/**", "graph/src/main/resources/db/migration/**", "ci/upgrade-rehearsal/**",
+            "ci/install-cosign.sh", ".github/workflows/upgrade.yml", ".github/workflows/release.yml",
+            "build.gradle.kts", "server/build.gradle.kts", "settings.gradle.kts", "gradle.properties",
+            "server/src/main/**", "samples/**", "config/release/**"]
+  schedule:
+    # 02:30 UTC (02:30 or 03:30 in the UK), on the default branch, main
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read   # the checkout, and the previous release's files (the repository is private)
+
+# A newer push to a pull request ends the rehearsal of the older one. On main, the nightly run and
+# one started by hand before a tag wait for each other rather than end each other.
+concurrency:
+  group: upgrade-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  upgrade:
+    # GitHub's runner, or the local one KILNMARK_RUNNER names for the owner's own work, as in ci.yml
+    # (docs/development.md, "CI on a local runner").
+    runs-on: ${{ vars.KILNMARK_RUNNER && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && (github.event_name != 'pull_request' || (github.event.pull_request.user.login == github.repository_owner && !startsWith(github.head_ref, 'dependabot/'))) && fromJSON(vars.KILNMARK_RUNNER) || 'ubuntu-latest' }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Which release this build must upgrade from: the newest published one below its own version
+      # (ci/upgrade-rehearsal/previous-release.sh, which also says where upgrades begin). With none,
+      # the job says so and does nothing more.
+      - name: The previous release
+        id: versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash ci/upgrade-rehearsal/previous-release-test.sh
+          version=$(sed -n 's/^version=//p' gradle.properties)
+          tags=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[] | select((.draft or .prerelease) | not) | .tag_name')
+          previous=$(printf '%s\n' "$tags" | bash ci/upgrade-rehearsal/previous-release.sh "$version")
+          migration=$(ls graph/src/main/resources/db/migration | sed -n 's/^V\([0-9]*\)__.*/\1/p' | sort -n | tail -n 1)
+          {
+            echo "version=$version"
+            echo "previous=$previous"
+            echo "migration=$migration"
+          } >> "$GITHUB_OUTPUT"
+          if [ -n "$previous" ]; then
+            say="Rehearsing the upgrade from the published Kilnmark $previous to this build, Kilnmark $version (database migration $migration)."
+          else
+            say="No upgrade was rehearsed: no published release is both lower than this build's version ($version) and one that later releases upgrade from. Published: $(echo $tags | tr -s ' ' | sed 's/^$/none/')."
+          fi
+          echo "::notice::$say"
+          echo "$say" >> "$GITHUB_STEP_SUMMARY"
+
+      # The wrapper's jar must be one Gradle published, before it runs (ADR 0042).
+      - uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        if: steps.versions.outputs.previous != ''
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.versions.outputs.previous != ''
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        if: steps.versions.outputs.previous != ''
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      # No tests here: CI runs them on the same commit. The release folder is what a release ships.
+      - name: Build the release folder
+        if: steps.versions.outputs.previous != ''
+        run: ./gradlew release --no-daemon
+
+      - name: Install cosign
+        if: steps.versions.outputs.previous != ''
+        run: bash ci/install-cosign.sh "$RUNNER_TEMP/bin"
+
+      # With the workflow's own token: the repository is private, and so are its image packages,
+      # which is why the rehearsal installs from the release's offline images files.
+      - name: Download the previous release
+        if: steps.versions.outputs.previous != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS: ${{ steps.versions.outputs.previous }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/previous"
+          gh release download "v$PREVIOUS" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/previous" \
+            --pattern "kilnmark-$PREVIOUS.tar.gz*" --pattern "kilnmark-$PREVIOUS-images.tar.gz*" \
+            --pattern "kilnmark-$PREVIOUS-keycloak-images.tar.gz*" --pattern "SHA256SUMS*"
+          ls -la "$RUNNER_TEMP/previous"
+
+      # On a machine of its own, a container started here and removed below: its project, ports,
+      # volumes and images are that machine's alone, whatever else runs on this runner's engine.
+      - name: Rehearse the upgrade
+        if: steps.versions.outputs.previous != ''
+        env:
+          VERSION: ${{ steps.versions.outputs.version }}
+          PREVIOUS: ${{ steps.versions.outputs.previous }}
+          MIGRATION: ${{ steps.versions.outputs.migration }}
+        run: |
+          bash ci/upgrade-rehearsal/machine.sh run --previous "$RUNNER_TEMP/previous" \
+            --release "dist/release/kilnmark-$VERSION" --key config/release/cosign.pub \
+            --cosign "$RUNNER_TEMP/bin/cosign" --expect-migration "$MIGRATION"
+          echo "Kilnmark $PREVIOUS upgraded to $VERSION with its state kept." >> "$GITHUB_STEP_SUMMARY"
+
+      # However the job ended, a cancelled one too.
+      - name: Remove the rehearsal's machine
+        if: always()
+        run: bash ci/upgrade-rehearsal/machine.sh remove

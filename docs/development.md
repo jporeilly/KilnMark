@@ -270,6 +270,13 @@ commit of main starts `.github/workflows/release.yml`, which builds, signs and c
 and leaves a draft GitHub release to publish ([Supply chain](design/supply-chain.md),
 [ADR 0033](adr/0033-sboms-scanning-and-signed-releases.md)).
 
+Before every tag:
+
+1. CI is green on the commit of main to be tagged.
+2. Run the upgrade rehearsal by hand on that commit of main (**Actions**, **Upgrade rehearsal**,
+   **Run workflow**, branch `main`), and tag only when it passes
+   ([The upgrade rehearsal](#the-upgrade-rehearsal)).
+
 **Release candidates.** A pull request that touches the release's files rehearses the release, and
 keeps its package for three days as the workflow artifact `kilnmark-<version>-rc`, so it can be
 installed on a test machine before any tag. Fetch it with `gh run download <run id> -R
@@ -291,20 +298,119 @@ Then:
 
 On a tag the release runs where CI runs: on the local runner when `KILNMARK_RUNNER` names it (see
 "CI on a local runner"). It then builds, signs with the real key, pushes the images and drafts the
-release there too, but leaves out the install rehearsal, which runs only on GitHub's runners (it
-makes system accounts with `sudo` and starts Kilnmark on its usual ports, which the local machine's
-own install uses). The rehearsal is run on every pull request that changes what it covers.
+release there too. Installing what it builds is the upgrade rehearsal's part (below).
 
 Without them a tag fails at the **Key** step, saying what is missing. A changed key is a new
 `cosign.pub`, announced in the next release's changelog.
+
+### The upgrade rehearsal
+
+From 0.1.2 on, every release upgrades from the one before it; installs from before 0.1.2 are
+installed afresh. `.github/workflows/upgrade.yml` proves it: the previous published release is
+installed from its own files, given real state, upgraded to the build under test, and checked.
+
+**When it runs.** A run takes 35 to 45 minutes of one runner, so not on every pull request:
+
+- on pull requests that change what an upgrade goes through: `containers/**`, the migrations
+  (`graph/src/main/resources/db/migration/**`), `ci/upgrade-rehearsal/**`, `ci/install-cosign.sh`,
+  `upgrade.yml`, `release.yml`, `build.gradle.kts`, `server/build.gradle.kts`,
+  `settings.gradle.kts`, `gradle.properties`, the server's code and settings (`server/src/main/**`:
+  it runs the migrations and opens the stored secrets), the samples and the release key
+  (`config/release/**`);
+- every night on main, at 02:30 UTC;
+- by hand (**Actions**, **Upgrade rehearsal**, **Run workflow**), and **on main before every tag**,
+  which must pass first (see the steps under Releasing).
+
+```mermaid
+flowchart LR
+    prev[Previous release, as published] -->|checked against cosign.pub and SHA256SUMS| install[Installed with its own kilnmark.sh]
+    install --> state[State put in: people, a source, a pipeline run, a flow run, a schedule, a token]
+    build[This commit's release folder] -->|packed and signed for this run| upgrade
+    state --> upgrade[kilnmark.sh upgrade, as the upgrade guide says]
+    upgrade --> checks[Checked: version, status, check, health, migrations, the backup, the state, runs]
+    checks --> day[The build's own backup, restore and uninstall --purge]
+```
+
+**Which release is the previous one.** `ci/upgrade-rehearsal/previous-release.sh` picks it from the
+published releases (drafts and pre-releases left out): the newest one lower than the version in
+`gradle.properties`, and no older than the first release later ones upgrade from, which that
+script names in one line (`first=0.1.2`). Nothing else names a version. When no release applies
+(the build is that first release, or nothing is published), the job says so in a notice and in its
+summary, and does nothing more.
+
+**Where it runs.** Kilnmark's control script installs as root, makes the account that runs
+Kilnmark, and runs its containers under that account's rootless Podman, with a systemd session and
+an hourly timer. A CI runner has none of that: the local runners are containers with only the
+engine's socket. So the rehearsal brings a machine of its own: one privileged container from
+`ci/upgrade-rehearsal/Containerfile` (Ubuntu 26.04 with systemd, Podman and podman-compose, as
+[the Linux walk](development/walk-linux.md) sets one up), started by
+`ci/upgrade-rehearsal/machine.sh` and removed when the job ends, however it ends (a last step
+removes it after a cancelled job too, and a later run removes one more than three hours old).
+Kilnmark's containers, volumes, images and ports (28780, 28443, 25442 and 28180, project
+`kmupgrade`) are inside that machine: nothing is published on, tagged in or left in the engine the
+runners share, so it runs beside any other job. The build's two images are built inside the
+machine as well, from the release folder, as the release workflow builds them.
+
+**What it does**, in `ci/upgrade-rehearsal/rehearse.sh`, each step OK or FAILED with its time, the
+first failure ending the job with the server's and the control script's last lines:
+
+1. Checks the previous release's archive, its two images files and `SHA256SUMS` against
+   `config/release/cosign.pub` (the repository's, which must also be the one in the archive), and
+   the files against `SHA256SUMS`.
+2. Installs it with its own `kilnmark.sh install --answers ... --offline
+   kilnmark-<version>-images.tar.gz`: a Starter Pack install, which runs every service (Keycloak
+   and the samples database too). Kilnmark's images come from the release's file, never the
+   registry, whose packages are private; Keycloak's is pulled from quay.io, as `compose.yaml` names
+   it by digest. Install adds the first admin and turns the Starter Pack on.
+3. Puts state in: a second person (`people add`), a files source, a pipeline saved and run (it
+   reads the Starter Pack's database with the password Kilnmark stored, so the key in the `keys`
+   volume must still open it afterwards), a run of one of the pack's flows, a schedule and a
+   steward's token. Requests use the install's admin token from a file only root reads; no token or
+   password is printed.
+4. Upgrades as [the upgrade guide](guide/install/upgrade.md) says, with the installed (previous)
+   control script: `/opt/kilnmark/kilnmark.sh upgrade kilnmark-<version>.tar.gz --offline
+   kilnmark-<version>-images.tar.gz`. The build is signed with a key made for the run
+   (`KILNMARK_COSIGN_PUB`), so the upgrade checks signatures as it does for a release.
+5. Checks afterwards: `version`, `status` (the new version, `Health: ready`, the hourly expiry),
+   `check`, `/q/health/ready` and `/api/v1/info`, the containers' images; that no migration failed
+   and the database is at the build's newest (`V<n>__*.sql`, counted from the checkout); that
+   upgrade left exactly one backup, whole by its own `SHA256SUMS`; that every source, pipeline,
+   flow, schedule, token, run and person from before is still there unchanged, with the recorded
+   mode and install id; that the steward's token still works; and that the pipeline writes the same
+   rows again and the flow ends as it did.
+6. With the build's own control script: `backup`, `restore` of that backup, the state again, a
+   pipeline run, and `uninstall --purge`, after which no folder, container or volume is left.
+
+**Run it yourself** before pushing a change to the control scripts, the compose file, a migration
+or the rehearsal: on a machine with Podman (or Docker), with the previous release's files in a
+folder and cosign for Linux:
+
+```
+./gradlew release
+gh release download v0.1.2 -R jporeilly/KilnMark -D previous -p 'kilnmark-0.1.2*.tar.gz*' -p 'SHA256SUMS*'
+KILNMARK_CI_ENGINE=podman bash ci/upgrade-rehearsal/machine.sh run --previous previous \
+  --release dist/release/kilnmark-<version> --key config/release/cosign.pub --cosign /path/to/cosign \
+  --expect-migration <n>
+```
+
+`KILNMARK_UPGRADE_KEEP=1` leaves the machine running to look at (`machine.sh remove` removes it).
+Or, without the container, on a throwaway Linux with systemd and rootless Podman (a WSL
+distribution that holds nothing else, set up as for the Linux walk): `pack.sh` there packs the
+release folder's archive, and `rehearse.sh --previous ... --build ... --key ...` runs the steps;
+its `--keep` leaves the install to look at.
+
+**What it does not prove:** the Windows edition, an install with your own identity provider or
+TLS, and an upgrade across more than one release. On GitHub's own runners the machine runs on
+Docker, with the settings systemd needs there; that path has not been run yet.
 
 ## CI on a local runner
 
 CI normally runs on GitHub's own runners. When those are not available (for example while the
 account's Actions minutes are stopped), the same workflows can run on a Linux runner in Podman on a
 machine of your own: `pc-kilnmark-linux`, built from `ci/local-runner`. It takes the `build`,
-`heavy-databases` and `scan` jobs. The release rehearsal stays on GitHub's runners, because it makes
-system accounts with `sudo`.
+`heavy-databases` and `scan` jobs, the release and its rehearsal, and the upgrade rehearsal, which
+brings a machine of its own for what needs root, an account and systemd
+([The upgrade rehearsal](#the-upgrade-rehearsal)).
 
 ```mermaid
 flowchart LR
@@ -315,7 +421,7 @@ flowchart LR
 ```
 
 **Which runner a job uses** is the repository variable `KILNMARK_RUNNER`, read by `runs-on` in
-`ci.yml` and `supply-chain.yml`:
+`ci.yml`, `supply-chain.yml`, `release.yml` and `upgrade.yml`:
 
 - to use the local runner: `gh variable set KILNMARK_RUNNER --body '["self-hosted","kilnmark-linux"]'`;
 - to go back to GitHub's runners: `gh variable delete KILNMARK_RUNNER`.

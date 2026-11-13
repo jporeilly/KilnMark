@@ -10,15 +10,10 @@ on:
   pull_request:
     # what the rehearsal exercises: the workflow and the builds that make the release's files
     paths: [".github/workflows/release.yml", "build.gradle.kts", "server/build.gradle.kts", "ui/scripts/ui-sbom.mjs",
-            "containers/**"]
+            "containers/**", "ci/install-cosign.sh"]
 
 permissions:
   contents: read
-
-env:
-  # cosign, downloaded from its release and checked against this checksum (no third-party action).
-  COSIGN_VERSION: "3.1.4"
-  COSIGN_SHA256: "424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa"
 
 jobs:
   release:
@@ -88,11 +83,11 @@ jobs:
           cp "dist/release/kilnmark-${VERSION}/sbom/kilnmark-ui.cdx.json" "out/kilnmark-${VERSION}-ui.cdx.json"
           cd out && sha256sum * > SHA256SUMS && cat SHA256SUMS
 
+      # cosign, downloaded from its release and checked against its checksum (no third-party action):
+      # ci/install-cosign.sh says which, for this workflow and the upgrade rehearsal.
       - name: Install cosign
         run: |
-          curl -sSfL -o cosign "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
-          echo "${COSIGN_SHA256}  cosign" | sha256sum -c -
-          chmod +x cosign && mkdir -p "$RUNNER_TEMP/bin" && mv cosign "$RUNNER_TEMP/bin/"
+          bash ci/install-cosign.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       # The real key lives in the repository's secrets; its public half is config/release/cosign.pub.
@@ -181,53 +176,9 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
-      # The release installed as a customer would (INSTALL.md, section A): prepare as root makes the
-      # kilnmark account and /opt/kilnmark; then, as that account, install from the offline images
-      # file on Docker, status, check, a backup, a restore of it, down, up, and a purge.
-      # Only on GitHub's runners: it makes system accounts with sudo and starts Kilnmark on its usual
-      # ports, which a self-hosted runner shares with the machine's own installs.
-      - name: Install the release with kilnmark.sh
-        if: runner.environment == 'github-hosted'
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -eux
-          sudo cp "$(command -v cosign)" /usr/local/bin/cosign
-          sudo "dist/release/kilnmark-${VERSION}/kilnmark.sh" prepare --engine docker
-          sudo cp "out/kilnmark-${VERSION}-images.tar.gz" "out/kilnmark-${VERSION}-images.tar.gz.sigstore.json" \
-            "$RUNNER_TEMP/verify.pub" /opt/kilnmark/downloads/
-          sudo chown -R kilnmark:kilnmark /opt/kilnmark/downloads
-          as_kilnmark() {
-            sudo -iu kilnmark env KILNMARK_ENGINE=docker KILNMARK_COSIGN_PUB=/opt/kilnmark/downloads/verify.pub "$@"
-          }
-          as_kilnmark "/opt/kilnmark/versions/${VERSION}/kilnmark.sh" install \
-            --offline "/opt/kilnmark/downloads/kilnmark-${VERSION}-images.tar.gz"
-          test "$(sudo stat -c '%U %a' /opt/kilnmark/config/.env)" = "kilnmark 600"
-          if sudo grep -E '^KILNMARK_(DB_PASSWORD|ADMIN_TOKEN)=$' /opt/kilnmark/config/.env; then exit 1; fi
-          as_kilnmark /opt/kilnmark/kilnmark.sh status
-          as_kilnmark /opt/kilnmark/kilnmark.sh check
-          as_kilnmark /opt/kilnmark/kilnmark.sh backup
-          backup=$(sudo sh -c 'ls -1d /opt/kilnmark/backups/kilnmark-*' | tail -n 1)
-          as_kilnmark sh -c "cd $backup && sha256sum -c SHA256SUMS"
-          as_kilnmark /opt/kilnmark/kilnmark.sh restore "$backup" --yes
-          as_kilnmark /opt/kilnmark/kilnmark.sh down
-          as_kilnmark /opt/kilnmark/kilnmark.sh up --no-browser
-          # An upgrade, to a next release made from this one: its images re-tagged, its archive unsigned.
-          next="${VERSION}.1"
-          mkdir -p "$RUNNER_TEMP/next"
-          cp -a "dist/release/kilnmark-${VERSION}" "$RUNNER_TEMP/next/kilnmark-${next}"
-          sed -i "s/:${VERSION}\$/:${next}/" "$RUNNER_TEMP/next/kilnmark-${next}/compose.yaml"
-          for name in kilnmark-server kilnmark-postgres; do
-            docker tag "ghcr.io/jporeilly/${name}:${VERSION}" "ghcr.io/jporeilly/${name}:${next}"
-          done
-          tar -czf "$RUNNER_TEMP/kilnmark-${next}.tar.gz" -C "$RUNNER_TEMP/next" "kilnmark-${next}"
-          sudo cp "$RUNNER_TEMP/kilnmark-${next}.tar.gz" /opt/kilnmark/downloads/
-          sudo chown kilnmark:kilnmark "/opt/kilnmark/downloads/kilnmark-${next}.tar.gz"
-          as_kilnmark /opt/kilnmark/kilnmark.sh upgrade "/opt/kilnmark/downloads/kilnmark-${next}.tar.gz" --skip-verify
-          test "$(as_kilnmark /opt/kilnmark/kilnmark.sh version)" = "Kilnmark ${next}"
-          test "$(sudo sh -c 'ls -1d /opt/kilnmark/backups/kilnmark-*' | wc -l)" = 2
-          echo DELETE | as_kilnmark /opt/kilnmark/kilnmark.sh uninstall --purge
-          test -z "$(docker volume ls -q --filter name=kilnmark_)"
+      # Installing what is built here, upgrading to it, backing it up, restoring and uninstalling it
+      # are rehearsed by the upgrade rehearsal (upgrade.yml) on the pull requests that change them, on a machine of
+      # its own, so on the local runners too.
 
       - name: Draft release
         if: github.event_name == 'push'

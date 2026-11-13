@@ -1,0 +1,36 @@
+# The throwaway machine the upgrade rehearsal installs Kilnmark on (docs/development.md, "The upgrade
+# rehearsal"): a fresh Ubuntu with systemd, rootless Podman and podman-compose, as a customer's
+# server has them, run as one privileged container that is removed when the rehearsal ends. It is
+# never shipped: the release takes nothing from ci/.
+#
+# Kilnmark's control script installs as root, makes the account that runs Kilnmark, and runs
+# Kilnmark's containers under that account's rootless Podman, with a systemd session of its own
+# (lingering) and an hourly timer. A CI runner has none of that (the local runners are containers
+# with only the engine's socket; GitHub's have another Podman than Kilnmark supports), so the
+# rehearsal brings its own machine, and nothing it does touches the runner or what else runs there.
+FROM docker.io/library/ubuntu:26.04@sha256:157dc3d6e4a3e4f2c68d12df9df9ed6e808b59af6d4c3757b432b4f519916725
+
+ENV DEBIAN_FRONTEND=noninteractive
+# What docs/development/walk/setup.sh installs for the Linux walk, with systemd itself (a container
+# image has none), sudo (the guides' commands use it) and jq (the rehearsal reads Kilnmark's API).
+# fuse-overlayfs is Podman's fallback where the kernel refuses its own overlay to a rootless user.
+# Podman comes with what apt recommends for it, as on a customer's server (its networks need
+# nftables and aardvark-dns, which are recommended, not required).
+RUN apt-get update -q \
+ && apt-get install -y -q --no-install-recommends ca-certificates curl tar gzip jq sudo \
+      systemd systemd-sysv dbus dbus-user-session libpam-systemd \
+ && apt-get install -y -q podman podman-compose uidmap slirp4netns passt fuse-overlayfs \
+ && rm -rf /var/lib/apt/lists/* \
+ # what a container cannot or need not do: consoles, the first boot's questions, the clock, the
+ # network (the engine's), kernel modules (the host's) and the daily package updates
+ && systemctl mask getty.target console-getty.service systemd-firstboot.service systemd-timesyncd.service \
+      systemd-resolved.service systemd-networkd.service systemd-networkd-wait-online.service \
+      systemd-modules-load.service e2scrub_reap.service apt-daily.timer apt-daily-upgrade.timer > /dev/null
+
+# systemd stops on this signal, and tells a container apart by this variable.
+STOPSIGNAL SIGRTMIN+3
+ENV container=podman
+# The engine keeps its images and volumes here: on a volume, not on the container's own layer, where
+# rootless Podman's overlay would sit on another overlay and fall back to copying every layer.
+VOLUME /var/lib
+CMD ["/sbin/init"]
