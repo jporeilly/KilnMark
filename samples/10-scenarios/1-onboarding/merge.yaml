@@ -122,7 +122,7 @@ notes:
       **Steward:** review the rows in *quarantined_customers.csv* the morning after each run. They were set aside, not loaded.
     node: quarantine
     x: 0
-    y: 150
+    y: 200
     width: 240
     height: 120
     colour: yellow

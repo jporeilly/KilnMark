@@ -18,6 +18,7 @@ const OWNERS: Owners = {
   owners: [
     { entry: "token 1 (KILNMARK_ADMIN_TOKEN)", kind: "person", label: "token 1 (KILNMARK_ADMIN_TOKEN)" },
     { entry: "sso:dana (2f6c41)", kind: "person", label: "sso:dana (2f6c41)" },
+    { entry: "alice", kind: "person", label: "alice" },
     { entry: "data-team@example.com", kind: "team", label: "data-team@example.com" },
   ],
   none: false,
@@ -48,9 +49,10 @@ describe.each(["pipeline", "flow"] as const)("the %s's owners", (kind) => {
     vi.stubGlobal("fetch", vi.fn(async () => json(OWNERS)));
     const el = await mount(<OwnersSection kind={kind} name="orders" role="viewer" />);
     const items = [...el.querySelectorAll(".owners-list li")];
-    expect(items.map((li) => li.querySelector(".km-who")!.textContent)).toEqual(["KILNMARK_ADMIN_TOKEN", "sso:dana", "data-team@example.com"]);
+    expect(items.map((li) => li.querySelector(".km-who")!.textContent)).toEqual(["KILNMARK_ADMIN_TOKEN", "sso:dana", "alice", "data-team@example.com"]);
     expect(items[0].querySelector(".km-who")!.getAttribute("title")).toBe("token 1 (KILNMARK_ADMIN_TOKEN)");
-    expect(items.map((li) => li.querySelector(".muted")!.textContent)).toEqual(["Person", "Person", "Team address"]);
+    // An API token is not a person: KILNMARK_ADMIN_TOKEN is labelled as the token it is. A typed sign-in name is a person.
+    expect(items.map((li) => li.querySelector(".muted")!.textContent)).toEqual(["API token", "Person", "Person", "Team address"]);
     expect(el.textContent).not.toContain("Change owners"); // a viewer
   });
 
@@ -67,7 +69,7 @@ describe.each(["pipeline", "flow"] as const)("the %s's owners", (kind) => {
     expect(field.querySelector("label")!.getAttribute("for")).toBe("owners-edit");
     expect(field.querySelector("textarea")!.getAttribute("aria-describedby")).toBe("owners-edit-hint");
     expect(field.nextElementSibling!.className).toBe("buttons");
-    expect(field.querySelector("textarea")!.value).toBe("token 1 (KILNMARK_ADMIN_TOKEN)\nsso:dana (2f6c41)\ndata-team@example.com");
+    expect(field.querySelector("textarea")!.value).toBe("token 1 (KILNMARK_ADMIN_TOKEN)\nsso:dana (2f6c41)\nalice\ndata-team@example.com");
   });
 });
 

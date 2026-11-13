@@ -101,8 +101,8 @@ shows:
   above also see the **Values** its runs start with; viewers do not;
 - **Set by**: who last added or changed it, the role its runs have, and when. Its runs carry
   this name. A token shows by its name; a person who signs in through your identity provider by
-  their `sso:` name, with the provider's ID for them when you hover over it. Long names wrap, so
-  the table keeps every column in view;
+  their `sso:` name, with the provider's ID for them when you hover over it. Long names wrap
+  between their words (after a `_`, a `.` or the `@`), so the table keeps every column in view;
 - **State and next run**: **On** or **Paused**, and the next run in your own time, with your zone
   named; when the schedule's zone is another, the same time in that zone too;
 - **Last time it was due**: what happened, in a word with a colour (**Started**, **Starting**,

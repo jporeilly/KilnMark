@@ -58,7 +58,9 @@ Pipelines page. On the Pipelines page, **From a template** opens the Library's t
 
 A pipeline added from the samples shows **About this sample** under its name: what it shows, why it
 matters, what to look for when it runs and what it needs, as the Library shows them, with a link to
-this guide. Once the pipeline has been changed since it was added (more than moving its nodes), it
+this guide. Its text uses the page's full width. Choose its heading, **About this sample**, to close
+it, and again to open it: Kilnmark remembers which you chose, for every sample, in this browser.
+Once the pipeline has been changed since it was added (more than moving its nodes), it
 is labelled **Based on a sample; changed since**: what it says is about the sample as it was added.
 
 ![The page of the sample pipeline sample-gate-quarantine: under its name and description, About this sample with What it shows, Why it matters, Look for when it runs and Needs, a link to the samples in the guide and the sample's file; then its version, its last run and its Owners](images/pipeline-about-sample.png)
@@ -72,8 +74,9 @@ lines it changes in the YAML, so your comments, layout and every other setting s
 they were, and a change to the YAML redraws the canvas. Kilnmark remembers which tab you used last.
 
 The canvas uses the page's full width. On the left is the node list, which **Nodes** in the canvas
-toolbar hides and shows again; the pipeline fills the rest, with an overview in its corner for
-finding your way around a large one. Nothing covers the canvas: under it is one panel of tabs,
+toolbar hides and shows again; the pipeline fills the rest, with a small overview in its bottom
+right corner for finding your way around a large one (drag in it to move the view; **Fit** keeps
+the nodes clear of it). Nothing covers the canvas: under it is one panel of tabs,
 which **Collapse** in its tab bar folds away to give the canvas more room (Kilnmark remembers which
 you chose):
 
@@ -89,7 +92,9 @@ you chose):
   took, the rows read and written, and each node's rows in and out, time, peak memory, quality and
   error. While it runs it updates every two seconds. **Open run** goes to the run's own page, with
   its timeline and log.
-- **Suggestions**, **Nodes** (the nodes as a table), **History** (every run), **Schedules** (the
+- **Suggestions**, **Nodes** (the nodes as a table, a row a node, close together so that more of
+  the pipeline shows: its type, what it reads from and, opened, the columns it gives out; after a
+  run, its rows, time and how its time went), **History** (every run), **Schedules** (the
   times it runs on its own; see [Running pipelines and flows on a schedule](schedules.md)) and
   **Versions**.
 
@@ -861,7 +866,9 @@ status changes.
   failure started.
 - **The run at a glance:** four tiles: its **wall-clock time**, the **most nodes at once**, the
   **longest node** (while it runs, the slowest node now) and **what limited this run**. Every time
-  on the page counts from when the worker started on the run, by the worker's own clock.
+  on the page counts from when the worker started on the run, by the worker's own clock. A node's
+  name in a tile is set smaller the longer it is and wraps inside the tile, so even the longest
+  (64 characters) is shown whole; hover over it for the name on one line.
 - **Where each node spent its time:** one bar per node, its whole time from start to end split into
   **Working** (solid), **Waiting for rows** (light hatching: the nodes before it had nothing for it)
   and **Held up by the next node** (amber cross-hatching: the node after it was not keeping up, so

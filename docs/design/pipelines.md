@@ -1513,7 +1513,8 @@ its run ends, and a retried start never to run the work twice.
   searchable tree docked in a column of its own, so the canvas narrows rather than being covered (over
   the canvas on a phone); a folder's rail button opens the tree at that folder. The settings are a
   drawer over the canvas, open while a node is selected; a
-  minimap shows large pipelines. **Fit** fits the whole pipeline into the part of the canvas not
+  minimap, small (128 by 88 pixels, 8 from the canvas's bottom right corner) so that it covers
+  little, shows large pipelines. **Fit** fits the whole pipeline into the part of the canvas not
   under the list or the drawer; **Readable size** never goes below a readable zoom.
 - **React Flow** (`@xyflow/react` 12.12.0, MIT) draws the canvas; the canvas, React Flow and
   `yaml` load lazily with the pipeline page, outside the main bundle. React Flow's own keyboard

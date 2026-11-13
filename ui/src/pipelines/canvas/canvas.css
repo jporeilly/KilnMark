@@ -283,6 +283,8 @@
   --xy-minimap-node-stroke-color: var(--km-ink-soft);
   border: 1px solid var(--km-border-control);
   border-radius: 6px;
+  /* Tucked into the corner: 8px from the canvas's edges, not the library's 15px. */
+  margin: 8px;
 }
 
 .cv-flow .react-flow__minimap .cv-mini-source {

@@ -57,6 +57,32 @@ export function addable(samples: SampleInfo[], picks: Record<string, string>): S
   return samples.filter((s) => s.type === "pipeline" && s.sources.every((p) => picks[p]));
 }
 
+/**
+ * What comes with Kilnmark, counted from the samples the server lists: "34 small sample pipelines
+ * and 9 sample flows that run them". Either part is left out when there are none of it; null when
+ * there is nothing to count (the list has not arrived, or is empty).
+ */
+export function comesWith(samples: SampleInfo[] | null | undefined): string | null {
+  const pipelines = (samples ?? []).filter((s) => s.type === "pipeline").length;
+  const flows = (samples ?? []).filter((s) => s.type === "flow").length;
+  const parts = [
+    pipelines > 0 ? `${pipelines} small sample ${pipelines === 1 ? "pipeline" : "pipelines"}` : null,
+    flows > 0 ? `${plural(flows, "sample flow")}${pipelines > 0 ? ` that ${flows === 1 ? "runs" : "run"} them` : ""}` : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" and ") : null;
+}
+
+/** The page of a sample just added: a flow's for a sample flow (told by its file in the list), else a pipeline's. */
+export function addedHref(samples: SampleInfo[] | null | undefined, added: Pick<SampleOutcome, "name" | "file">): string {
+  const flow = (samples ?? []).some((s) => s.file === added.file && s.type === "flow");
+  return flow ? href.flow(added.name) : href.pipeline(added.name);
+}
+
+/** The samples that name a placeholder, pipelines and flows alike. */
+export function using(samples: SampleInfo[], placeholder: string): SampleInfo[] {
+  return samples.filter((s) => s.sources.includes(placeholder));
+}
+
 /** The placeholders given a source, as the API takes them; one left unset is left out. */
 export function chosenSources(picks: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(picks).filter(([, v]) => v));
@@ -133,7 +159,7 @@ export function AddSamples({ onAdded }: { onAdded: () => void }) {
     try {
       const r = await samplesApi.add(sourcesFor, tablesSchema);
       if (mine !== opening.current) return;
-      setResults(r.samples.filter((s) => !(s.outcome === "skipped" && s.reason?.startsWith("a flow"))));
+      setResults(r.samples);
     } finally {
       // Some samples may have been added even when the request failed part way.
       onAdded();
@@ -199,7 +225,7 @@ export function AddSamples({ onAdded }: { onAdded: () => void }) {
         {!results && (
           <>
             <p>
-              Kilnmark comes with {pipelines.length || "some"} small sample pipelines, one idea each, named{" "}
+              Kilnmark comes with {comesWith(catalogue?.samples) ?? "small sample pipelines and flows"}, one idea each, named{" "}
               <span className="mono">sample-…</span>, and synthetic sample data for them to read. A sample already here
               is left as it is.
             </p>
@@ -209,8 +235,8 @@ export function AddSamples({ onAdded }: { onAdded: () => void }) {
                 <legend>Starter pack</legend>
                 <p className="hint">
                   Everything at once: the sample data created as tables in one schema of a database (crm_customers,
-                  shop_orders and so on, by a pipeline called <span className="mono">sample-tables</span>), and every
-                  sample added reading them, writing its files to a file source.
+                  shop_orders and so on, by one more pipeline, <span className="mono">sample-tables</span>, made for
+                  the purpose), and every sample added reading them, writing its files to a file source.
                 </p>
                 {databases.length === 0 || fileStores.length === 0 ? (
                   <p className="hint">
@@ -307,15 +333,15 @@ export function AddSamples({ onAdded }: { onAdded: () => void }) {
                 )}
                 {catalogue.placeholders.map((p) => {
                   const fixed = useTables && tables && TABLE_PLACEHOLDERS.includes(p.name);
-                  const using = pipelines.filter((s) => s.sources.includes(p.name)).length;
-                  const all = pipelines.length > 0 && using === pipelines.length;
+                  const users = using(catalogue.samples, p.name).length;
+                  const all = pipelines.length > 0 && pipelines.every((s) => s.sources.includes(p.name));
                   const { fitting, others } = sourceGroups(p, sources);
                   return (
                     <div className="field" key={p.name}>
                       <label htmlFor={`sample-src-${p.name}`}>
                         <span className="mono">{p.name}</span>{" "}
                         <span className="muted small">
-                          ({all ? "every sample writes here" : `${plural(using, "sample")}`})
+                          ({all ? "every sample pipeline writes here" : `${plural(users, "sample")}`})
                         </span>
                       </label>
                       <select
@@ -368,16 +394,16 @@ export function AddSamples({ onAdded }: { onAdded: () => void }) {
                       ? "Adding…"
                       : toAdd.length === 0
                         ? "Add samples"
-                        : `Add ${plural(toAdd.length, "sample")}`}
+                        : `Add ${plural(toAdd.length, "sample pipeline")}${flows.length > 0 ? " and their flows" : ""}`}
                   </button>
                 </div>
+                {flows.length > 0 && (
+                  <p className="hint">
+                    {flows.length === 1 ? "The sample flow is" : `The ${flows.length} sample flows are`} added too, each
+                    once the pipelines it runs are here; one that runs SQL needs a source for its placeholder as well.
+                  </p>
+                )}
               </fieldset>
-            )}
-            {flows.length > 0 && (
-              <p className="hint">
-                The {flows.length} sample flows are not added: flows are added once the flows API comes. They are in
-                the release's <span className="mono">samples</span> folder to read.
-              </p>
             )}
           </>
         )}
@@ -397,7 +423,7 @@ export function AddSamples({ onAdded }: { onAdded: () => void }) {
             <ul className="pl-sample-results">
               {results.map((r) => (
                 <li key={r.name}>
-                  {r.outcome === "added" ? <a href={href.pipeline(r.name)}>{r.name}</a> : <span className="mono">{r.name}</span>}
+                  {r.outcome === "added" ? <a href={addedHref(catalogue?.samples, r)}>{r.name}</a> : <span className="mono">{r.name}</span>}
                   {": "}
                   {r.outcome === "added" && (r.valid ? "added" : <span className="pl-bad">added as a draft, with problems</span>)}
                   {r.outcome === "exists" && "already here, left as it is"}
